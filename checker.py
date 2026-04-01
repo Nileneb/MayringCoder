@@ -1,233 +1,42 @@
 #!/usr/bin/env python3
-"""RepoChecker — Lokales Code-Analyse-Tool mit gitingest + Ollama."""
+"""RepoChecker — Einstiegspunkt. Orchestriert die Mayring-Analyse-Pipeline."""
 
 import argparse
-import hashlib
 import os
 import re
-import sqlite3
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 from dotenv import load_dotenv
-from gitingest import ingest
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-SEPARATOR = "=" * 48
-MAX_CONTENT_LENGTH = 3000
-OLLAMA_TIMEOUT = 120
-BASE_DIR = Path(__file__).parent
-CACHE_DIR = BASE_DIR / "cache"
-REPORTS_DIR = BASE_DIR / "reports"
-DEFAULT_PROMPT = BASE_DIR / "prompts" / "smell_inspector.md"
-
-
-# ---------------------------------------------------------------------------
-# Repo fetching
-# ---------------------------------------------------------------------------
-
-
-def fetch_repo(repo_url: str, token: str | None = None) -> tuple[str, str, str]:
-    kwargs = {"source": repo_url}
-    if token:
-        kwargs["token"] = token
-    summary, tree, content = ingest(**kwargs)
-    return summary, tree, content
-
-
-# ---------------------------------------------------------------------------
-# Splitter
-# ---------------------------------------------------------------------------
-
-_FILE_BLOCK_RE = re.compile(
-    rf"{re.escape(SEPARATOR)}\nFILE: (.+?)\n{re.escape(SEPARATOR)}\n(.*?)(?=\n{re.escape(SEPARATOR)}\n|$)",
-    re.DOTALL,
-)
-
-SKIP_MARKERS = {"[Binary file]", "[Empty file]"}
-
-
-def split_into_files(content: str) -> list[dict]:
-    files = []
-    for match in _FILE_BLOCK_RE.finditer(content):
-        filename = match.group(1).strip()
-        file_content = match.group(2).rstrip("\n")
-        if file_content.strip() in SKIP_MARKERS:
-            continue
-        file_hash = hashlib.sha256(file_content.encode()).hexdigest()[:16]
-        files.append({"filename": filename, "content": file_content, "hash": file_hash})
-    return files
-
-
-# ---------------------------------------------------------------------------
-# SQLite Cache & Diff
-# ---------------------------------------------------------------------------
-
-
-def _repo_slug(repo_url: str) -> str:
-    parsed = urlparse(repo_url)
-    slug = parsed.path.strip("/").replace("/", "-").lower()
-    slug = re.sub(r"[^a-z0-9\-]", "", slug)
-    return slug or "repo"
-
-
-def init_db(repo_url: str) -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    db_path = CACHE_DIR / f"{_repo_slug(repo_url)}.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS file_hashes (
-               filename TEXT PRIMARY KEY,
-               hash     TEXT NOT NULL,
-               updated_at TEXT NOT NULL
-           )"""
-    )
-    conn.commit()
-    return conn
-
-
-def find_changed_files(
-    conn: sqlite3.Connection, files: list[dict]
-) -> dict[str, list[str]]:
-    now = datetime.now().isoformat()
-
-    old_rows = conn.execute("SELECT filename, hash FROM file_hashes").fetchall()
-    old_map = {row[0]: row[1] for row in old_rows}
-
-    new_map = {f["filename"]: f["hash"] for f in files}
-
-    added = [fn for fn in new_map if fn not in old_map]
-    removed = [fn for fn in old_map if fn not in new_map]
-    changed = [fn for fn in new_map if fn in old_map and new_map[fn] != old_map[fn]]
-    unchanged = [fn for fn in new_map if fn in old_map and new_map[fn] == old_map[fn]]
-
-    # Persist new state
-    conn.execute("DELETE FROM file_hashes")
-    conn.executemany(
-        "INSERT INTO file_hashes (filename, hash, updated_at) VALUES (?, ?, ?)",
-        [(fn, h, now) for fn, h in new_map.items()],
-    )
-    conn.commit()
-
-    return {"changed": changed, "added": added, "removed": removed, "unchanged": unchanged}
-
-
-# ---------------------------------------------------------------------------
-# LLM analysis
-# ---------------------------------------------------------------------------
-
-
-def _load_prompt(prompt_path: Path) -> str:
-    return prompt_path.read_text(encoding="utf-8")
-
-
-def analyze_file(
-    filename: str,
-    content: str,
-    prompt_template: str,
-    ollama_url: str,
-    model: str,
-) -> str:
-    if len(content) > MAX_CONTENT_LENGTH:
-        content = content[:MAX_CONTENT_LENGTH] + f"\n\n[... gekuerzt, Original {len(content)} Zeichen]"
-
-    prompt = f"{prompt_template}\n\nDatei: {filename}\n```\n{content}\n```"
-
-    try:
-        resp = httpx.post(
-            f"{ollama_url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=OLLAMA_TIMEOUT,
-        )
-        resp.raise_for_status()
-        return resp.json()["response"]
-    except httpx.ConnectError:
-        return f"FEHLER: Ollama nicht erreichbar unter {ollama_url}. Laeuft `ollama serve`?"
-    except httpx.TimeoutException:
-        return f"FEHLER: Timeout ({OLLAMA_TIMEOUT}s) bei Analyse von {filename}."
-    except (httpx.HTTPStatusError, KeyError) as exc:
-        return f"FEHLER: Ollama-Anfrage fehlgeschlagen: {exc}"
-
-
-def analyze_files(
-    files: list[dict],
-    filenames_to_check: list[str],
-    prompt_path: Path,
-    ollama_url: str,
-    model: str,
-) -> list[dict]:
-    prompt_template = _load_prompt(prompt_path)
-    file_map = {f["filename"]: f["content"] for f in files}
-    results = []
-    total = len(filenames_to_check)
-
-    for i, fn in enumerate(filenames_to_check, 1):
-        print(f"  [{i}/{total}] {fn} ...", flush=True)
-        response = analyze_file(fn, file_map[fn], prompt_template, ollama_url, model)
-        results.append({"filename": fn, "analysis": response})
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Report
-# ---------------------------------------------------------------------------
-
-
-def generate_report(
-    repo_url: str,
-    model: str,
-    results: list[dict],
-) -> str:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    report_path = REPORTS_DIR / f"repo-check-{timestamp}.md"
-
-    lines = [
-        "---",
-        f"repo: {repo_url}",
-        f"date: {datetime.now().isoformat()}",
-        f"model: {model}",
-        f"files_checked: {len(results)}",
-        "---",
-        "",
-        f"# RepoChecker Report — {timestamp}",
-        "",
-    ]
-
-    for r in results:
-        lines.append(f"## {r['filename']}")
-        lines.append("")
-        lines.append(r["analysis"])
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-
-    report_text = "\n".join(lines)
-    report_path.write_text(report_text, encoding="utf-8")
-    return str(report_path)
-
-
-# ---------------------------------------------------------------------------
-# CLI & main
-# ---------------------------------------------------------------------------
+from src.aggregator import aggregate_findings
+from src.analyzer import analyze_files
+from src.cache import find_changed_files, init_db, mark_files_analyzed
+from src.categorizer import categorize_files, load_codebook
+from src.config import CACHE_DIR, DEFAULT_PROMPT, MAX_FILES_PER_RUN
+from src.fetcher import fetch_repo
+from src.report import generate_report
+from src.splitter import split_into_files
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="RepoChecker — lokale Code-Analyse mit Ollama")
-    p.add_argument("--repo", help="GitHub-Repo URL (ueberschreibt .env)")
-    p.add_argument("--model", help="Ollama-Modell (ueberschreibt .env)")
-    p.add_argument("--full", action="store_true", help="Cache ignorieren, alles analysieren")
-    p.add_argument("--dry-run", action="store_true", help="Nur Diff zeigen, keine Analyse")
+    p.add_argument("--repo", help="GitHub-Repo URL (überschreibt .env)")
+    p.add_argument("--model", help="Ollama-Modell (überschreibt .env)")
+    p.add_argument("--full", action="store_true", help="Cache ignorieren, alle Dateien analysieren")
+    p.add_argument("--dry-run", action="store_true", help="Nur Diff + Selektion zeigen, keine Analyse")
+    p.add_argument("--show-selection", action="store_true", help="Zeigt ausgewählte Dateien inkl. Kategorie")
     p.add_argument("--prompt", help="Pfad zu einem alternativen Prompt")
+    p.add_argument("--debug", action="store_true", help="Speichert Raw-Snapshot lokal unter cache/")
     return p.parse_args()
+
+
+def _repo_slug_for_debug(repo_url: str) -> str:
+    parsed = urlparse(repo_url)
+    slug = parsed.path.strip("/").replace("/", "-").lower()
+    return re.sub(r"[^a-z0-9\-]", "", slug) or "repo"
 
 
 def main() -> None:
@@ -250,11 +59,17 @@ def main() -> None:
 
     start = time.perf_counter()
 
-    # --- Fetch ---
+    # 1. Fetch
     print(f"Repository laden: {repo_url} ...")
     summary, tree, content = fetch_repo(repo_url, token)
 
-    # --- Split ---
+    if args.debug:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        raw_path = CACHE_DIR / f"{_repo_slug_for_debug(repo_url)}_raw_latest.txt"
+        raw_path.write_text(content, encoding="utf-8")
+        print(f"  [debug] Raw-Snapshot: {raw_path}")
+
+    # 2. Split
     files = split_into_files(content)
     print(f"{len(files)} Dateien gefunden")
 
@@ -262,48 +77,82 @@ def main() -> None:
         print("Keine analysierbaren Dateien im Repository.")
         sys.exit(0)
 
-    # --- Diff ---
+    # 3. Categorize (Mayring Stufe 1: Strukturierung)
+    codebook = load_codebook()
+    files = categorize_files(files, codebook)
+    categories = {f["filename"]: f["category"] for f in files}
+
+    # 4. Diff
     if args.full:
         filenames_to_check = [f["filename"] for f in files]
-        print(f"--full: Alle {len(filenames_to_check)} Dateien werden analysiert")
+        diff: dict = {
+            "changed": [], "added": filenames_to_check, "removed": [],
+            "unchanged": [], "unanalyzed": filenames_to_check,
+            "selected": filenames_to_check, "skipped": [],
+            "snapshot_id": None,
+        }
+        conn = None
+        print(f"--full: {len(filenames_to_check)} Dateien werden analysiert")
     else:
         conn = init_db(repo_url)
-        diff = find_changed_files(conn, files)
-        conn.close()
+        diff = find_changed_files(conn, repo_url, files, categories)
+        # conn stays open — needed for mark_files_analyzed after analysis
 
-        n_changed = len(diff["changed"])
-        n_added = len(diff["added"])
-        n_removed = len(diff["removed"])
-        n_unchanged = len(diff["unchanged"])
-        print(
-            f"{n_changed} geaendert, {n_added} neu, "
-            f"{n_removed} geloescht, {n_unchanged} unveraendert"
+        n_c, n_a, n_r, n_u = (
+            len(diff["changed"]), len(diff["added"]),
+            len(diff["removed"]), len(diff["unchanged"]),
         )
+        n_queue = len(diff["unanalyzed"])
+        print(f"{n_c} geändert, {n_a} neu, {n_r} gelöscht, {n_u} unverändert | {n_queue} in Analyse-Queue")
 
-        filenames_to_check = diff["changed"] + diff["added"]
+        filenames_to_check = diff["selected"]
+        if diff.get("skipped"):
+            print(
+                f"  → {len(filenames_to_check)} ausgewählt"
+                f" (Budget-Limit: {MAX_FILES_PER_RUN}),"
+                f" {len(diff['skipped'])} verbleiben auf nächste Runs"
+            )
 
     if not filenames_to_check:
         elapsed = time.perf_counter() - start
-        print(f"Keine Aenderungen seit dem letzten Run. Fertig in {elapsed:.0f}s")
+        print(f"Keine Änderungen seit dem letzten Run. Fertig in {elapsed:.0f}s")
+        if conn:
+            conn.close()
         sys.exit(0)
 
-    if args.dry_run:
-        print("\n--dry-run: Dateien die analysiert wuerden:")
+    if args.show_selection or args.dry_run:
+        print("\nDateien zur Analyse:")
         for fn in filenames_to_check:
-            print(f"  • {fn}")
+            print(f"  • [{categories.get(fn, 'uncategorized')}] {fn}")
+        if diff.get("skipped"):
+            print(f"\nÜbersprungen ({len(diff['skipped'])}):")
+            for fn in diff["skipped"]:
+                print(f"  ○ {fn}")
+
+    if args.dry_run:
         elapsed = time.perf_counter() - start
         print(f"\nFertig in {elapsed:.0f}s")
         sys.exit(0)
 
-    # --- Analyse ---
-    print(f"Analysiere {len(filenames_to_check)} Dateien mit {model} ...")
+    # 5. Analyze (Mayring Stufe 2: Reduktion + Stufe 3: Explikations-Markierung)
+    print(f"\nAnalysiere {len(filenames_to_check)} Dateien mit {model} ...")
     results = analyze_files(files, filenames_to_check, prompt_path, ollama_url, model)
 
-    # --- Report ---
-    report_path = generate_report(repo_url, model, results)
-    print(f"Report: {report_path}")
+    # Mark successfully analyzed files so they leave the backlog queue
+    if conn is not None and diff.get("snapshot_id") is not None:
+        analyzed_ok = [r["filename"] for r in results if "error" not in r]
+        mark_files_analyzed(conn, diff["snapshot_id"], analyzed_ok)
+        remaining = len(diff["unanalyzed"]) - len(analyzed_ok)
+        print(f"  → {len(analyzed_ok)} analysiert, {max(0, remaining)} verbleiben in Queue")
+    conn and conn.close()
 
+    # 6. Aggregate (Mayring Stufe 4: Zusammenführung)
+    aggregation = aggregate_findings(results)
+
+    # 7. Report
     elapsed = time.perf_counter() - start
+    report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed)
+    print(f"\nReport: {report_path}")
     print(f"Fertig in {elapsed:.0f}s")
 
 

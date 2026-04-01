@@ -1,3 +1,4 @@
 gitingest
 httpx
 python-dotenv
+pyyaml

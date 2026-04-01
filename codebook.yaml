@@ -1,0 +1,99 @@
+categories:
+  - name: api
+    description: API-Endpunkte, Routes, Controller, REST/GraphQL/gRPC-Handler
+    patterns:
+      - "*/api/*"
+      - "*/routes/*"
+      - "*/controllers/*"
+      - "*/endpoints/*"
+      - "*route*.py"
+      - "*controller*.py"
+      - "*endpoint*.py"
+      - "*handler*.py"
+      - "*/graphql/*"
+      - "*/grpc/*"
+
+  - name: data_access
+    description: Datenbankzugriff, ORM-Modelle, Migrations, Repositories
+    patterns:
+      - "*/models/*"
+      - "*/db/*"
+      - "*/database/*"
+      - "*/migrations/*"
+      - "*/repositories/*"
+      - "*model*.py"
+      - "*schema*.py"
+      - "*migration*.py"
+      - "*repository*.py"
+      - "*dao*.py"
+
+  - name: domain
+    description: Business-Logik, Domain-Services, Use Cases
+    patterns:
+      - "*/services/*"
+      - "*/domain/*"
+      - "*/usecases/*"
+      - "*/use_cases/*"
+      - "*service*.py"
+      - "*usecase*.py"
+      - "*business*.py"
+
+  - name: ui
+    description: Frontend, Templates, UI-Komponenten, Views
+    patterns:
+      - "*.html"
+      - "*.jsx"
+      - "*.tsx"
+      - "*.vue"
+      - "*.svelte"
+      - "*/templates/*"
+      - "*/components/*"
+      - "*/pages/*"
+      - "*/views/*"
+      - "*view*.py"
+
+  - name: config
+    description: Konfiguration, Settings, Environment-Handling
+    patterns:
+      - "*config*.py"
+      - "*settings*.py"
+      - "*.yaml"
+      - "*.yml"
+      - "*.toml"
+      - "*.ini"
+      - "*.cfg"
+      - ".env*"
+      - "*/config/*"
+
+  - name: utils
+    description: Hilfsfunktionen, Utilities, Helpers, Mixins
+    patterns:
+      - "*util*.py"
+      - "*helper*.py"
+      - "*mixin*.py"
+      - "*common*.py"
+      - "*/utils/*"
+      - "*/helpers/*"
+
+  - name: tests
+    description: Unit-Tests, Integrationstests, Fixtures
+    patterns:
+      - "test_*.py"
+      - "*_test.py"
+      - "*/tests/*"
+      - "*/test/*"
+      - "conftest.py"
+      - "*/fixtures/*"
+
+  - name: temp_dummy
+    description: Temporärer Code, Dummy-Implementierungen, Placeholder
+    patterns:
+      - "*tmp*"
+      - "*temp*"
+      - "*dummy*"
+      - "*placeholder*"
+      - "*scaffold*"
+      - "*stub*"
+      - "*.bak"
+      - "*_old.*"
+      - "*_backup.*"
