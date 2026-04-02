@@ -1,0 +1,32 @@
+{
+  "repo": "https://github.com/Nileneb/app.linn.games",
+  "timestamp": "2026-04-02_1151",
+  "model": "llama3.2:latest",
+  "run_id": "llama3.2:latest",
+  "diff_stats": {
+    "changed": 0,
+    "added": 2,
+    "removed": 0,
+    "unchanged": 246
+  },
+  "selected_files": [
+    "app/Jobs/TriggerLangdockAgent.php",
+    "app/Models/Webhook.php",
+    "database/migrations/2026_03_31_099999_create_recherche_tables_sqlite.php",
+    "database/migrations/2026_03_31_200001_create_webhooks_table.php",
+    "resources/views/livewire/settings/webhooks.blade.php",
+    "storage/app/.gitignore",
+    "storage/logs/.gitignore",
+    "tests/Feature/Settings/WebhooksTest.php"
+  ],
+  "skipped_files": [],
+  "truncation_flags": [
+    "database/migrations/2026_03_31_099999_create_recherche_tables_sqlite.php"
+  ],
+  "parse_errors": [
+    "app/Jobs/TriggerLangdockAgent.php",
+    "app/Models/Webhook.php",
+    "database/migrations/2026_03_31_200001_create_webhooks_table.php"
+  ],
+  "run_time_s": 45.53
+}

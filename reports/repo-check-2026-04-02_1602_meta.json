@@ -1,0 +1,48 @@
+{
+  "repo": "https://github.com/Nileneb/app.linn.games",
+  "timestamp": "2026-04-02_1602",
+  "model": "qwen2.5-coder:7b",
+  "run_id": "qwen2.5-coder:7b",
+  "diff_stats": {
+    "changed": 6,
+    "added": 4,
+    "removed": 2,
+    "unchanged": 242
+  },
+  "selected_files": [
+    "CLAUDE.md",
+    ".env.example",
+    "app/Http/Controllers/LangdockChatCallbackController.php",
+    "app/Http/Controllers/PaperRagController.php",
+    "app/Http/Middleware/VerifyLangdockSignature.php",
+    "app/Http/Middleware/VerifyMcpToken.php",
+    "app/Jobs/IngestPaperJob.php",
+    "app/Models/ChatMessage.php",
+    "app/Models/Recherche/Projekt.php",
+    "config/app.php",
+    "config/services.php",
+    "database/migrations/2026_03_31_099999_create_recherche_tables_sqlite.php",
+    "database/migrations/2026_04_02_160000_make_chat_messages_content_nullable.php",
+    "database/seeders/RechercheDemoSeeder.php",
+    "resources/views/livewire/chat/big-research-chat.blade.php",
+    "resources/views/livewire/settings/webhooks.blade.php",
+    "storage/app/.gitignore",
+    "storage/app/public/.gitignore",
+    "tests/Feature/IngestPaperJobTest.php",
+    "tests/Feature/PaperRagTest.php",
+    ".claude/agents/code-quality-architect.md",
+    ".github/instructions/app_linn_games_custom.instructions.md"
+  ],
+  "skipped_files": [],
+  "truncation_flags": [
+    "database/migrations/2026_03_31_099999_create_recherche_tables_sqlite.php",
+    "database/seeders/RechercheDemoSeeder.php",
+    "resources/views/livewire/chat/big-research-chat.blade.php",
+    ".claude/agents/code-quality-architect.md",
+    ".github/instructions/app_linn_games_custom.instructions.md"
+  ],
+  "parse_errors": [
+    "database/seeders/RechercheDemoSeeder.php"
+  ],
+  "run_time_s": 304.55
+}

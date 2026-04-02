@@ -1,0 +1,46 @@
+{
+  "repo": "https://github.com/Nileneb/app.linn.games",
+  "timestamp": "2026-04-02_1233",
+  "model": "qwen2.5-coder:7b",
+  "run_id": "qwen2.5-coder:7b",
+  "diff_stats": {
+    "changed": 0,
+    "added": 0,
+    "removed": 1,
+    "unchanged": 247
+  },
+  "selected_files": [
+    "docker-compose.yml",
+    "vite.config.js",
+    "app/Jobs/TriggerLangdockAgent.php",
+    "app/Models/Webhook.php",
+    "bootstrap/cache/.gitignore",
+    "database/migrations/2026_03_31_099999_create_recherche_tables_sqlite.php",
+    "database/migrations/2026_03_31_200001_create_webhooks_table.php",
+    "docs/overview-2026-04-02_0617.md",
+    "public/site.webmanifest",
+    "resources/css/welcome.css",
+    "resources/js/welcome.js",
+    "resources/views/welcome.blade.php",
+    "resources/views/livewire/settings/webhooks.blade.php",
+    "resources/views/partials/head.blade.php",
+    "tests/Feature/IngestPaperJobTest.php",
+    "tests/Feature/PaperRagTest.php",
+    "tests/Feature/WebhookTest.php",
+    "tests/Feature/Settings/WebhooksTest.php",
+    ".github/copilot-instructions.md",
+    ".github/instructions/app_linn_games_custom.instructions.md"
+  ],
+  "skipped_files": [],
+  "truncation_flags": [
+    "database/migrations/2026_03_31_099999_create_recherche_tables_sqlite.php",
+    "docs/overview-2026-04-02_0617.md",
+    "resources/css/welcome.css",
+    "resources/views/welcome.blade.php",
+    ".github/instructions/app_linn_games_custom.instructions.md"
+  ],
+  "parse_errors": [
+    "resources/css/welcome.css"
+  ],
+  "run_time_s": 177.44
+}

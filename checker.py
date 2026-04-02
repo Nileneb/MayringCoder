@@ -306,10 +306,13 @@ def main() -> None:
         ctx_path = save_overview_context(results, repo_url)
         print(f"  Kontext gespeichert: {ctx_path}")
 
-        # Index into vector DB for RAG (Phase 2)
-        n_indexed = index_overview_to_vectordb(repo_url, ollama_url)
-        if n_indexed:
-            print(f"  Vektor-DB indiziert: {n_indexed} Einträge ({EMBEDDING_MODEL})")
+        # Index into vector DB for RAG (Phase 2) — non-fatal; analyze falls back to flat context.
+        try:
+            n_indexed = index_overview_to_vectordb(repo_url, ollama_url)
+            if n_indexed:
+                print(f"  Vektor-DB indiziert: {n_indexed} Einträge ({EMBEDDING_MODEL})")
+        except Exception as exc:
+            print(f"  ⚠ Vektor-DB Indexierung fehlgeschlagen (RAG deaktiviert): {exc}")
 
         # 7. Overview Report (kein Aggregate nötig)
         elapsed = time.perf_counter() - start

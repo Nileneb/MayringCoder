@@ -6,9 +6,11 @@ COMMON="--no-limit --max-chars 9000 --cache-by-model"
 
 MODELS=(
     "llama3.1:8b"
-    "llama3.2:latest"
     "codellama:latest"
     "qwen2.5-coder:7b"
+    "mistral:7b-instruct"
+    "deepseek-coder:6.7b-instruct"
+    "starcoder2:7b"
 )
 
 for model in "${MODELS[@]}"; do

@@ -9,12 +9,16 @@ Phase 2: Indexes overview entries into a local ChromaDB collection.
 
 import json
 import re
+import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 
 from src.config import (
+    BATCH_DELAY_SECONDS,
+    BATCH_SIZE,
     CACHE_DIR,
     EMBEDDING_MODEL,
     MAX_CONTEXT_CHARS,
@@ -111,22 +115,53 @@ def _chroma_dir(repo_url: str) -> Path:
 
 
 def _embed_texts(texts: list[str], ollama_url: str) -> list[list[float]]:
-    """Get embeddings from Ollama for a batch of texts."""
+    """Get embeddings from Ollama with retry and GPU-friendly batching."""
+    max_retries = 5
+    retry_delays = (3, 6, 12, 20, 30)
     embeddings: list[list[float]] = []
-    for text in texts:
-        resp = httpx.post(
-            f"{ollama_url}/api/embeddings",
-            json={"model": EMBEDDING_MODEL, "prompt": text},
-            timeout=OLLAMA_TIMEOUT,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        embeddings.append(data["embedding"])
+    total = len(texts)
+
+    for i, text in enumerate(texts):
+        # Retry loop — mirrors analyzer.py pattern with longer cooldown for 500s.
+        for attempt in range(max_retries):
+            try:
+                resp = httpx.post(
+                    f"{ollama_url}/api/embeddings",
+                    json={"model": EMBEDDING_MODEL, "prompt": text},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                resp.raise_for_status()
+                embeddings.append(resp.json()["embedding"])
+                break
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+                if attempt < max_retries - 1:
+                    delay = retry_delays[min(attempt, len(retry_delays) - 1)]
+                    print(
+                        f"    ⟳ Embedding-Retry {attempt + 1}/{max_retries} [{i + 1}/{total}] (in {delay}s) …",
+                        file=sys.stderr, flush=True,
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+
+        # GPU pause — same cadence as analyzer batch processing.
+        if BATCH_SIZE > 0 and (i + 1) % BATCH_SIZE == 0 and (i + 1) < total:
+            print(
+                f"  ⏸ Embedding-Pause ({BATCH_DELAY_SECONDS}s nach {i + 1} Docs) …",
+                flush=True,
+            )
+            time.sleep(BATCH_DELAY_SECONDS)
+
     return embeddings
 
 
-def index_overview_to_vectordb(repo_url: str, ollama_url: str) -> int:
-    """Index overview JSON entries into ChromaDB. Returns number of entries indexed."""
+def index_overview_to_vectordb(repo_url: str, ollama_url: str, force: bool = False) -> int:
+    """Index overview JSON entries into ChromaDB. Returns number of entries indexed.
+
+    Skips re-indexing if the collection already has the same number of entries
+    (embeddings use a fixed model and don't depend on the analysis model).
+    Pass force=True to re-index regardless.
+    """
     if not _HAS_CHROMADB:
         return 0
 
@@ -142,7 +177,18 @@ def index_overview_to_vectordb(repo_url: str, ollama_url: str) -> int:
     chroma_path.mkdir(parents=True, exist_ok=True)
 
     client = chromadb.PersistentClient(path=str(chroma_path))
-    # Delete existing collection to re-index
+
+    # Staleness check: skip if collection already has the right number of entries.
+    if not force:
+        try:
+            existing = client.get_collection("overview")
+            if existing.count() == len(entries):
+                print(f"  Vektor-DB bereits aktuell ({len(entries)} Einträge) — übersprungen.", flush=True)
+                return len(entries)
+        except Exception:
+            pass  # Collection doesn't exist yet — proceed with indexing.
+
+    # (Re-)create collection.
     try:
         client.delete_collection("overview")
     except Exception:
@@ -150,13 +196,18 @@ def index_overview_to_vectordb(repo_url: str, ollama_url: str) -> int:
     collection = client.create_collection("overview")
 
     # Build documents + metadata
+    # Truncate summaries — embedding models work best with short texts and
+    # very long inputs can cause Ollama 500 errors (GPU OOM / context overflow).
+    _MAX_EMBED_CHARS = 500
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict] = []
     for i, e in enumerate(entries):
         fn = e["filename"]
         cat = e.get("category", "uncategorized")
-        summary = e.get("file_summary", "").replace("\n", " ").strip()
+        summary = (e.get("file_summary") or "").replace("\n", " ").strip()
+        if len(summary) > _MAX_EMBED_CHARS:
+            summary = summary[:_MAX_EMBED_CHARS - 3] + "..."
         doc = f"[{cat}] {fn}: {summary}"
         ids.append(str(i))
         documents.append(doc)
