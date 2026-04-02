@@ -7,11 +7,18 @@ Stufe 3 (Explikation): Findings mit confidence=low werden als needs_explikation=
 
 import json
 import re
+import time
 from pathlib import Path
 
 import httpx
 
-from src.config import MAX_CHARS_PER_FILE, MAX_FINDINGS_PER_FILE, OLLAMA_TIMEOUT
+from src.config import (
+    BATCH_DELAY_SECONDS,
+    BATCH_SIZE,
+    MAX_CHARS_PER_FILE,
+    MAX_FINDINGS_PER_FILE,
+    OLLAMA_TIMEOUT,
+)
 
 
 def _load_prompt(path: Path | str) -> str:
@@ -129,4 +136,75 @@ def analyze_files(
     for i, fn in enumerate(filenames_to_check, 1):
         print(f"  [{i}/{total}] {fn} ...", flush=True)
         results.append(analyze_file(file_map[fn], prompt_template, ollama_url, model))
+        if BATCH_SIZE > 0 and i % BATCH_SIZE == 0 and i < total:
+            print(f"  ⏸ GPU-Pause ({BATCH_DELAY_SECONDS}s nach {i} Dateien) ...", flush=True)
+            time.sleep(BATCH_DELAY_SECONDS)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Overview mode — only file summaries, no findings
+# ---------------------------------------------------------------------------
+
+def overview_file(
+    file: dict,
+    prompt_template: str,
+    ollama_url: str,
+    model: str,
+) -> dict:
+    """Ask the LLM for a max-10-line summary of what the file does — no findings."""
+    filename = file["filename"]
+    category = file.get("category", "uncategorized")
+    content, truncated = _truncate(file["content"])
+
+    prompt = (
+        f"{prompt_template}\n\n"
+        f"Datei: {filename}\n"
+        f"Kategorie: {category}\n"
+        f"```\n{content}\n```"
+    )
+
+    try:
+        resp = httpx.post(
+            f"{ollama_url}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=OLLAMA_TIMEOUT,
+        )
+        resp.raise_for_status()
+        raw_response = resp.json()["response"]
+    except httpx.ConnectError:
+        return {"filename": filename, "error": f"Ollama nicht erreichbar unter {ollama_url}"}
+    except httpx.TimeoutException:
+        return {"filename": filename, "error": f"Timeout ({OLLAMA_TIMEOUT}s)"}
+    except (httpx.HTTPStatusError, KeyError) as exc:
+        return {"filename": filename, "error": str(exc)}
+
+    parsed = _parse_llm_json(raw_response)
+    summary = parsed.get("file_summary", raw_response.strip()) if parsed else raw_response.strip()
+
+    return {
+        "filename": filename,
+        "category": category,
+        "truncated": truncated,
+        "file_summary": summary,
+    }
+
+
+def overview_files(
+    files: list[dict],
+    filenames: list[str],
+    prompt_path: Path | str,
+    ollama_url: str,
+    model: str,
+) -> list[dict]:
+    prompt_template = _load_prompt(prompt_path)
+    file_map = {f["filename"]: f for f in files}
+    results = []
+    total = len(filenames)
+    for i, fn in enumerate(filenames, 1):
+        print(f"  [{i}/{total}] {fn} ...", flush=True)
+        results.append(overview_file(file_map[fn], prompt_template, ollama_url, model))
+        if BATCH_SIZE > 0 and i % BATCH_SIZE == 0 and i < total:
+            print(f"  ⏸ GPU-Pause ({BATCH_DELAY_SECONDS}s nach {i} Dateien) ...", flush=True)
+            time.sleep(BATCH_DELAY_SECONDS)
     return results

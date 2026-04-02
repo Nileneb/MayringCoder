@@ -12,12 +12,12 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from src.aggregator import aggregate_findings
-from src.analyzer import analyze_files
-from src.cache import find_changed_files, init_db, mark_files_analyzed
+from src.analyzer import analyze_files, overview_files
+from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
 from src.categorizer import categorize_files, load_codebook
-from src.config import CACHE_DIR, DEFAULT_PROMPT, MAX_FILES_PER_RUN
+from src.config import CACHE_DIR, DEFAULT_PROMPT, MAX_FILES_PER_RUN, OVERVIEW_PROMPT
 from src.fetcher import fetch_repo
-from src.report import generate_report
+from src.report import generate_report, generate_overview_report
 from src.splitter import split_into_files
 
 
@@ -30,6 +30,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--show-selection", action="store_true", help="Zeigt ausgewählte Dateien inkl. Kategorie")
     p.add_argument("--prompt", help="Pfad zu einem alternativen Prompt")
     p.add_argument("--debug", action="store_true", help="Speichert Raw-Snapshot lokal unter cache/")
+    p.add_argument("--reset", action="store_true", help="Cache-DB für das Repo löschen (alle Analysen zurücksetzen)")
+    p.add_argument("--mode", choices=["analyze", "overview"], default="analyze",
+                   help="Modus: 'overview' = nur Funktions-Übersicht, 'analyze' = volle Fehlersuche (Standard)")
+    p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
     return p.parse_args()
 
 
@@ -52,6 +56,16 @@ def main() -> None:
     if not repo_url:
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")
         sys.exit(1)
+
+    # --reset: delete cache DB and exit
+    if args.reset:
+        removed = reset_repo(repo_url)
+        if removed:
+            print(f"Cache gelöscht: {removed}")
+            print("Nächster Lauf analysiert alle Dateien von vorn.")
+        else:
+            print("Kein Cache vorhanden — nichts zu löschen.")
+        sys.exit(0)
 
     if not prompt_path.exists():
         print(f"Fehler: Prompt-Datei nicht gefunden: {prompt_path}")
@@ -82,6 +96,9 @@ def main() -> None:
     files = categorize_files(files, codebook)
     categories = {f["filename"]: f["category"] for f in files}
 
+    # Determine effective file limit
+    max_files = 0 if args.no_limit else MAX_FILES_PER_RUN
+
     # 4. Diff
     if args.full:
         filenames_to_check = [f["filename"] for f in files]
@@ -93,9 +110,20 @@ def main() -> None:
         }
         conn = None
         print(f"--full: {len(filenames_to_check)} Dateien werden analysiert")
+    elif args.mode == "overview":
+        # Overview processes ALL files, no cache interaction
+        filenames_to_check = [f["filename"] for f in files]
+        diff = {
+            "changed": [], "added": filenames_to_check, "removed": [],
+            "unchanged": [], "unanalyzed": filenames_to_check,
+            "selected": filenames_to_check, "skipped": [],
+            "snapshot_id": None,
+        }
+        conn = None
+        print(f"--mode overview: {len(filenames_to_check)} Dateien kartieren (keine Fehlersuche)")
     else:
         conn = init_db(repo_url)
-        diff = find_changed_files(conn, repo_url, files, categories)
+        diff = find_changed_files(conn, repo_url, files, categories, max_files)
         # conn stays open — needed for mark_files_analyzed after analysis
 
         n_c, n_a, n_r, n_u = (
@@ -134,26 +162,39 @@ def main() -> None:
         print(f"\nFertig in {elapsed:.0f}s")
         sys.exit(0)
 
-    # 5. Analyze (Mayring Stufe 2: Reduktion + Stufe 3: Explikations-Markierung)
-    print(f"\nAnalysiere {len(filenames_to_check)} Dateien mit {model} ...")
-    results = analyze_files(files, filenames_to_check, prompt_path, ollama_url, model)
+    # 5. Run the selected mode
+    if args.mode == "overview":
+        overview_prompt = OVERVIEW_PROMPT
+        print(f"\nErstelle Übersicht für {len(filenames_to_check)} Dateien mit {model} ...")
+        results = overview_files(files, filenames_to_check, overview_prompt, ollama_url, model)
 
-    # Mark successfully analyzed files so they leave the backlog queue
-    if conn is not None and diff.get("snapshot_id") is not None:
-        analyzed_ok = [r["filename"] for r in results if "error" not in r]
-        mark_files_analyzed(conn, diff["snapshot_id"], analyzed_ok)
-        remaining = len(diff["unanalyzed"]) - len(analyzed_ok)
-        print(f"  → {len(analyzed_ok)} analysiert, {max(0, remaining)} verbleiben in Queue")
-    conn and conn.close()
+        # 7. Overview Report (kein Aggregate nötig)
+        elapsed = time.perf_counter() - start
+        report_path = generate_overview_report(repo_url, model, results, diff, elapsed)
+        print(f"\nReport: {report_path}")
+        print(f"Fertig in {elapsed:.0f}s")
+    else:
+        # 5. Analyze (Mayring Stufe 2: Reduktion + Stufe 3: Explikations-Markierung)
+        print(f"\nAnalysiere {len(filenames_to_check)} Dateien mit {model} ...")
+        results = analyze_files(files, filenames_to_check, prompt_path, ollama_url, model)
 
-    # 6. Aggregate (Mayring Stufe 4: Zusammenführung)
-    aggregation = aggregate_findings(results)
+        # Mark successfully analyzed files so they leave the backlog queue
+        if conn is not None and diff.get("snapshot_id") is not None:
+            analyzed_ok = [r["filename"] for r in results if "error" not in r]
+            mark_files_analyzed(conn, diff["snapshot_id"], analyzed_ok)
+            remaining = len(diff["unanalyzed"]) - len(analyzed_ok)
+            print(f"  → {len(analyzed_ok)} analysiert, {max(0, remaining)} verbleiben in Queue")
+        if conn:
+            conn.close()
 
-    # 7. Report
-    elapsed = time.perf_counter() - start
-    report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed)
-    print(f"\nReport: {report_path}")
-    print(f"Fertig in {elapsed:.0f}s")
+        # 6. Aggregate (Mayring Stufe 4: Zusammenführung)
+        aggregation = aggregate_findings(results)
+
+        # 7. Report
+        elapsed = time.perf_counter() - start
+        report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed)
+        print(f"\nReport: {report_path}")
+        print(f"Fertig in {elapsed:.0f}s")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,15 @@ def _repo_slug(repo_url: str) -> str:
     return slug or "repo"
 
 
+def reset_repo(repo_url: str) -> str | None:
+    """Delete the SQLite DB for a repo, returning the path removed (or None)."""
+    db_path = CACHE_DIR / f"{_repo_slug(repo_url)}.db"
+    if db_path.exists():
+        db_path.unlink()
+        return str(db_path)
+    return None
+
+
 def init_db(repo_url: str) -> sqlite3.Connection:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     db_path = CACHE_DIR / f"{_repo_slug(repo_url)}.db"
@@ -116,9 +125,14 @@ def _select_top_k(
     filenames: list[str],
     file_map: dict[str, dict],
     categories: dict[str, str] | None,
+    max_files: int | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Prioritize risk categories then by descending file size, cap at MAX_FILES_PER_RUN."""
-    if len(filenames) <= MAX_FILES_PER_RUN:
+    """Prioritize risk categories then by descending file size, cap at max_files.
+
+    max_files=0 or None means no limit.
+    """
+    limit = max_files if max_files is not None else MAX_FILES_PER_RUN
+    if limit <= 0 or len(filenames) <= limit:
         return filenames, []
 
     def _priority(fn: str) -> tuple[int, int]:
@@ -127,7 +141,7 @@ def _select_top_k(
         return (risk_rank, -(file_map[fn].get("size", 0)))
 
     ranked = sorted(filenames, key=_priority)
-    return ranked[:MAX_FILES_PER_RUN], ranked[MAX_FILES_PER_RUN:]
+    return ranked[:limit], ranked[limit:]
 
 
 def find_changed_files(
@@ -135,6 +149,7 @@ def find_changed_files(
     repo: str,
     files: list[dict],
     categories: dict[str, str] | None = None,
+    max_files: int | None = None,
 ) -> dict:
     """Diff against last snapshot, persist new snapshot, return diff + selection."""
     last_id = _last_snapshot_id(conn, repo)
@@ -163,7 +178,7 @@ def find_changed_files(
         (new_snap_id,),
     ).fetchall()
     unanalyzed = [r[0] for r in rows]
-    selected, skipped = _select_top_k(unanalyzed, new_map, categories)
+    selected, skipped = _select_top_k(unanalyzed, new_map, categories, max_files)
 
     return {
         "changed": changed,

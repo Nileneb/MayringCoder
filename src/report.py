@@ -178,3 +178,62 @@ def generate_report(
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return str(report_path)
+
+
+def generate_overview_report(
+    repo_url: str,
+    model: str,
+    results: list[dict],
+    diff: dict,
+    timing: float,
+) -> str:
+    """Generate a lightweight overview-only report (no findings / aggregation)."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    report_path = REPORTS_DIR / f"overview-{timestamp}.md"
+
+    files_total = len(results)
+    errors = [r for r in results if "error" in r]
+
+    lines: list[str] = [
+        "---",
+        f"repo: {repo_url}",
+        f"date: {datetime.now().isoformat()}",
+        f"model: {model}",
+        f"mode: overview",
+        f"files_total: {files_total}",
+        f"errors: {len(errors)}",
+        f"run_time_s: {timing:.1f}",
+        "---",
+        "",
+        f"# Funktions-Übersicht — {timestamp}",
+        "",
+        f"- **Repo:** {repo_url}",
+        f"- **Dateien:** {files_total}",
+        f"- **Fehler:** {len(errors)}",
+        f"- **Laufzeit:** {timing:.1f}s",
+        "",
+    ]
+
+    # Group by category
+    cat_groups: dict[str, list[dict]] = {}
+    for r in results:
+        cat = r.get("category", "uncategorized")
+        cat_groups.setdefault(cat, []).append(r)
+
+    for cat, items in sorted(cat_groups.items()):
+        lines += [f"## {cat}", ""]
+        for r in items:
+            lines.append(f"### {r['filename']}")
+            if "error" in r:
+                lines.append(f"⚠ FEHLER: {r['error']}")
+            elif r.get("file_summary"):
+                lines.append(r["file_summary"])
+            else:
+                lines.append("*(keine Zusammenfassung)*")
+            lines += ["", "---", ""]
+
+    report_text = "\n".join(lines)
+    print(report_text)
+    report_path.write_text(report_text, encoding="utf-8")
+    return str(report_path)

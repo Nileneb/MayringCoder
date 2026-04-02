@@ -10,11 +10,16 @@ CODEBOOK_PATH = BASE_DIR / "codebook.yaml"
 
 DEFAULT_PROMPT = PROMPTS_DIR / "file_inspector.md"
 EXPLAINER_PROMPT = PROMPTS_DIR / "explainer.md"
+OVERVIEW_PROMPT = PROMPTS_DIR / "overview.md"
 
 # Token / budget limits
 MAX_CHARS_PER_FILE = 3000
-MAX_FILES_PER_RUN = 20
+MAX_FILES_PER_RUN = 20          # 0 = kein Limit
 MAX_FINDINGS_PER_FILE = 10
+
+# GPU batching — pause every BATCH_SIZE files to cool down
+BATCH_SIZE = 25
+BATCH_DELAY_SECONDS = 5
 
 # Ollama
 OLLAMA_TIMEOUT = 120
