@@ -23,6 +23,7 @@ def generate_report(
     aggregation: dict,
     diff: dict,
     timing: float,
+    run_id: str | None = None,
     commit: str | None = None,
 ) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,6 +46,7 @@ def generate_report(
         f"commit: {commit or 'unknown'}",
         f"date: {datetime.now().isoformat()}",
         f"model: {model}",
+        f"run_id: {run_id or 'default'}",
         f"files_total: {files_total}",
         f"files_checked: {files_checked}",
         f"files_skipped: {len(diff.get('skipped', []))}",
@@ -219,6 +221,7 @@ def generate_report(
         "repo": repo_url,
         "timestamp": timestamp,
         "model": model,
+        "run_id": run_id or "default",
         "diff_stats": {
             "changed": len(diff.get("changed", [])),
             "added": len(diff.get("added", [])),
@@ -242,6 +245,7 @@ def generate_overview_report(
     results: list[dict],
     diff: dict,
     timing: float,
+    run_id: str | None = None,
 ) -> str:
     """Generate a lightweight overview-only report (no findings / aggregation)."""
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -256,6 +260,7 @@ def generate_overview_report(
         f"repo: {repo_url}",
         f"date: {datetime.now().isoformat()}",
         f"model: {model}",
+        f"run_id: {run_id or 'default'}",
         f"mode: overview",
         f"files_total: {files_total}",
         f"errors: {len(errors)}",

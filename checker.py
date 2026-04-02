@@ -32,6 +32,7 @@ from src.context import (
 from src.exporter import export_results
 from src.fetcher import fetch_repo
 from src.history import cleanup_runs, compare_runs, generate_run_id, list_runs, save_run
+from src.model_selector import resolve_model
 from src.report import generate_report, generate_overview_report, set_max_chars_per_file as set_report_max_chars
 from src.splitter import split_into_files
 
@@ -51,11 +52,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
     p.add_argument("--max-chars", type=int, metavar="N", help="Zeichenlimit pro Datei überschreiben (Kontextlimit wird automatisch angepasst)")
     p.add_argument("--budget", type=int, metavar="N", help="Datei-Limit pro Lauf überschreiben (Standard: 20)")
+    p.add_argument("--run-id", help="Logischer Run-Key für Cache + Report (ermöglicht Modell-/Run-Vergleiche)")
+    p.add_argument("--cache-by-model", action="store_true", help="Modellnamen als Cache-Key verwenden (wenn kein --run-id gesetzt ist)")
     p.add_argument("--codebook", help="Pfad zu einem alternativen Codebook (YAML)")
     p.add_argument("--export", metavar="DATEI", help="Ergebnisse exportieren (.csv oder .json)")
     p.add_argument("--history", action="store_true", help="Vergangene Runs anzeigen")
     p.add_argument("--compare", nargs=2, metavar="RUN_ID", help="Zwei Runs vergleichen (alt neu)")
     p.add_argument("--cleanup", type=int, metavar="N", help="Nur die N neuesten Runs behalten, Rest löschen")
+    p.add_argument("--resolve-model-only", action="store_true",
+                   help="Gibt nur den aufgelösten Modellnamen aus und beendet (für Shell-Skripting)")
     return p.parse_args()
 
 
@@ -71,10 +76,18 @@ def main() -> None:
 
     repo_url = args.repo or os.getenv("GITHUB_REPO", "")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    model = args.model or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    _env_model = (os.getenv("OLLAMA_MODEL") or "").strip() or None
+    model = resolve_model(ollama_url, args.model, _env_model)
+
+    # Shell-helper: print model name and exit (used by run.sh to avoid double-prompting).
+    if args.resolve_model_only:
+        print(model)
+        sys.exit(0)
+
     token = os.getenv("GITHUB_TOKEN") or None
     prompt_path = Path(args.prompt) if args.prompt else DEFAULT_PROMPT
     codebook_path = Path(args.codebook) if args.codebook else CODEBOOK_PATH
+    cache_run_key = args.run_id or (model if args.cache_by_model else "default")
 
     if args.max_chars is not None:
         if args.max_chars < 500:
@@ -98,7 +111,7 @@ def main() -> None:
 
     # --reset: delete cache DB and exit
     if args.reset:
-        removed = reset_repo(repo_url)
+        removed = reset_repo(repo_url, run_key=(cache_run_key if args.run_id or args.cache_by_model else None))
         if removed:
             print(f"Cache gelöscht: {removed}")
             print("Nächster Lauf analysiert alle Dateien von vorn.")
@@ -175,6 +188,9 @@ def main() -> None:
 
     start = time.perf_counter()
 
+    if cache_run_key != "default":
+        print(f"Cache-Run-Key aktiv: {cache_run_key}")
+
     # 1. Fetch
     print(f"Repository laden: {repo_url} ...")
     summary, tree, content = fetch_repo(repo_url, token)
@@ -241,7 +257,7 @@ def main() -> None:
         print(f"--mode overview: {len(filenames_to_check)} Dateien kartieren (keine Fehlersuche)")
     else:
         conn = init_db(repo_url)
-        diff = find_changed_files(conn, repo_url, files, categories, max_files)
+        diff = find_changed_files(conn, repo_url, files, categories, max_files, run_key=cache_run_key)
         # conn stays open — needed for mark_files_analyzed after analysis
 
         n_c, n_a, n_r, n_u = (
@@ -255,7 +271,7 @@ def main() -> None:
         if diff.get("skipped"):
             print(
                 f"  → {len(filenames_to_check)} ausgewählt"
-                f" (Budget-Limit: {MAX_FILES_PER_RUN}),"
+                f" (Budget-Limit: {max_files}),"
                 f" {len(diff['skipped'])} verbleiben auf nächste Runs"
             )
 
@@ -297,14 +313,14 @@ def main() -> None:
 
         # 7. Overview Report (kein Aggregate nötig)
         elapsed = time.perf_counter() - start
-        report_path = generate_overview_report(repo_url, model, results, diff, elapsed)
+        report_path = generate_overview_report(repo_url, model, results, diff, elapsed, run_id=cache_run_key)
         print(f"\nReport: {report_path}")
         if args.export:
             ep = export_results(results, args.export, codebook_path.name, "overview")
             print(f"Export: {ep}")
 
         # Save run history
-        rid = generate_run_id()
+        rid = args.run_id or generate_run_id()
         run_path = save_run(rid, repo_url, model, "overview", results, diff, elapsed)
         print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
@@ -337,7 +353,7 @@ def main() -> None:
         # Mark successfully analyzed files so they leave the backlog queue
         if conn is not None and diff.get("snapshot_id") is not None:
             analyzed_ok = [r["filename"] for r in results if "error" not in r]
-            mark_files_analyzed(conn, diff["snapshot_id"], analyzed_ok)
+            mark_files_analyzed(conn, diff["snapshot_id"], analyzed_ok, run_key=cache_run_key)
             remaining = len(diff["unanalyzed"]) - len(analyzed_ok)
             print(f"  → {len(analyzed_ok)} analysiert, {max(0, remaining)} verbleiben in Queue")
         if conn:
@@ -348,14 +364,14 @@ def main() -> None:
 
         # 7. Report
         elapsed = time.perf_counter() - start
-        report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed)
+        report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed, run_id=cache_run_key)
         print(f"\nReport: {report_path}")
         if args.export:
             ep = export_results(results, args.export, codebook_path.name, "analyze")
             print(f"Export: {ep}")
 
         # Save run history
-        rid = generate_run_id()
+        rid = args.run_id or generate_run_id()
         run_path = save_run(rid, repo_url, model, "analyze", results, diff, elapsed, aggregation)
         print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")

@@ -129,6 +129,15 @@ python checker.py --codebook codebook_sozialforschung.yaml
 # Budget-Limit pro Lauf anpassen (Standard: 20)
 python checker.py --budget 50
 
+# Mehr Kontext pro Datei und im Projektkontext
+python checker.py --max-chars 9000
+
+# Modell als Cache-Key verwenden (Modellvergleich ohne Cache-Kollision)
+python checker.py --cache-by-model
+
+# Eigenen Run-Key setzen (voll manuell)
+python checker.py --run-id llama-vs-qwen-20260402
+
 # Raw-Snapshot lokal speichern (Debugging)
 python checker.py --debug
 ```
@@ -292,13 +301,27 @@ MayringCoder legt für jedes Repository eine SQLite-Datenbank unter `cache/<repo
 
 - Bei jedem Lauf wird ein neuer **Snapshot** erstellt
 - Dateien werden per **SHA256-Hash** verglichen
-- Nur Dateien ohne `analyzed_at`-Stempel kommen in die Queue
+- Nur Dateien ohne `analyzed_at`-Stempel für den aktiven Cache-Key kommen in die Queue
 - Das **Budget-Limit** (Standard: 20 Dateien) verhindert zu lange Laufzeiten
 - Verbleibende Dateien werden beim nächsten `python checker.py` automatisch fortgesetzt
 
+### Cache-Key Verhalten
+
+- Standard ohne Flags: Cache-Key = `default` (bisheriges Verhalten)
+- Mit `--cache-by-model`: Cache-Key = Modellname (z. B. `qwen2.5-coder:7b`)
+- Mit `--run-id xyz`: Cache-Key = `xyz` (überschreibt `--cache-by-model`)
+
+Damit sind Modellvergleiche möglich, ohne dass ein Lauf den anderen als "bereits analysiert" markiert.
+
 ```bash
-# Cache zurücksetzen / alle Dateien erneut analysieren:
-python checker.py --full
+# Gesamten Repo-Cache löschen:
+python checker.py --reset
+
+# Nur einen bestimmten Run-Key zurücksetzen:
+python checker.py --reset --run-id llama-vs-qwen-20260402
+
+# Modellgebundenen Cache-Key zurücksetzen:
+python checker.py --reset --cache-by-model
 ```
 
 ---

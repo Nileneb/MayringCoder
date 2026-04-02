@@ -21,9 +21,24 @@ def _repo_slug(repo_url: str) -> str:
     return slug or "repo"
 
 
-def reset_repo(repo_url: str) -> str | None:
-    """Delete the SQLite DB for a repo, returning the path removed (or None)."""
+def reset_repo(repo_url: str, run_key: str | None = None) -> str | None:
+    """Reset cache for a repo.
+
+    - Without run_key: delete the SQLite DB for the repo (legacy behavior).
+    - With run_key: clear analyzed_at stamps only for that run key.
+    """
     db_path = CACHE_DIR / f"{_repo_slug(repo_url)}.db"
+    if run_key is not None:
+        if not db_path.exists():
+            return None
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "UPDATE file_versions SET analyzed_at = NULL WHERE COALESCE(run_key, 'default') = ?",
+            (run_key,),
+        )
+        conn.commit()
+        conn.close()
+        return f"{db_path} (run_key={run_key})"
     if db_path.exists():
         db_path.unlink()
         return str(db_path)
@@ -49,7 +64,8 @@ def init_db(repo_url: str) -> sqlite3.Connection:
             filename    TEXT    NOT NULL,
             hash        TEXT    NOT NULL,
             size        INTEGER NOT NULL DEFAULT 0,
-            analyzed_at TEXT
+            analyzed_at TEXT,
+            run_key     TEXT    NOT NULL DEFAULT 'default'
         );
         CREATE INDEX IF NOT EXISTS idx_fv_snapshot
             ON file_versions(snapshot_id);
@@ -62,6 +78,11 @@ def init_db(repo_url: str) -> sqlite3.Connection:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(file_versions)").fetchall()}
     if "analyzed_at" not in cols:
         conn.execute("ALTER TABLE file_versions ADD COLUMN analyzed_at TEXT")
+        conn.commit()
+
+    if "run_key" not in cols:
+        conn.execute("ALTER TABLE file_versions ADD COLUMN run_key TEXT")
+        conn.execute("UPDATE file_versions SET run_key = 'default' WHERE run_key IS NULL")
         conn.commit()
 
     return conn
@@ -90,33 +111,36 @@ def _create_snapshot(
 
 
 def _insert_file_versions(
-    conn: sqlite3.Connection, snapshot_id: int, files: list[dict]
+    conn: sqlite3.Connection, snapshot_id: int, files: list[dict], run_key: str = "default"
 ) -> None:
     """Insert file versions, carrying over analyzed_at from a prior row with same filename+hash."""
     for f in files:
         row = conn.execute(
             "SELECT analyzed_at FROM file_versions"
-            " WHERE filename = ? AND hash = ? AND analyzed_at IS NOT NULL"
+            " WHERE filename = ? AND hash = ?"
+            "   AND COALESCE(run_key, 'default') = ?"
+            "   AND analyzed_at IS NOT NULL"
             " ORDER BY id DESC LIMIT 1",
-            (f["filename"], f["hash"]),
+            (f["filename"], f["hash"], run_key),
         ).fetchone()
         analyzed_at = row[0] if row else None
         conn.execute(
-            "INSERT INTO file_versions (snapshot_id, filename, hash, size, analyzed_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (snapshot_id, f["filename"], f["hash"], f.get("size", 0), analyzed_at),
+            "INSERT INTO file_versions (snapshot_id, filename, hash, size, analyzed_at, run_key)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (snapshot_id, f["filename"], f["hash"], f.get("size", 0), analyzed_at, run_key),
         )
     conn.commit()
 
 
 def mark_files_analyzed(
-    conn: sqlite3.Connection, snapshot_id: int, filenames: list[str]
+    conn: sqlite3.Connection, snapshot_id: int, filenames: list[str], run_key: str = "default"
 ) -> None:
     """Stamp analyzed_at = now for the given files in this snapshot."""
     now = datetime.now().isoformat()
     conn.executemany(
-        "UPDATE file_versions SET analyzed_at = ? WHERE snapshot_id = ? AND filename = ?",
-        [(now, snapshot_id, fn) for fn in filenames],
+        "UPDATE file_versions SET analyzed_at = ?"
+        " WHERE snapshot_id = ? AND filename = ? AND COALESCE(run_key, 'default') = ?",
+        [(now, snapshot_id, fn, run_key) for fn in filenames],
     )
     conn.commit()
 
@@ -150,6 +174,7 @@ def find_changed_files(
     files: list[dict],
     categories: dict[str, str] | None = None,
     max_files: int | None = None,
+    run_key: str = "default",
 ) -> dict:
     """Diff against last snapshot, persist new snapshot, return diff + selection."""
     last_id = _last_snapshot_id(conn, repo)
@@ -170,12 +195,13 @@ def find_changed_files(
 
     # Persist new snapshot (carry-over analyzed_at for same filename+hash)
     new_snap_id = _create_snapshot(conn, repo)
-    _insert_file_versions(conn, new_snap_id, files)
+    _insert_file_versions(conn, new_snap_id, files, run_key)
 
     # Select all files not yet analyzed in this snapshot
     rows = conn.execute(
-        "SELECT filename FROM file_versions WHERE snapshot_id = ? AND analyzed_at IS NULL",
-        (new_snap_id,),
+        "SELECT filename FROM file_versions"
+        " WHERE snapshot_id = ? AND analyzed_at IS NULL AND COALESCE(run_key, 'default') = ?",
+        (new_snap_id, run_key),
     ).fetchall()
     unanalyzed = [r[0] for r in rows]
     selected, skipped = _select_top_k(unanalyzed, new_map, categories, max_files)
