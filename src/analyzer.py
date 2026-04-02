@@ -28,6 +28,15 @@ def set_max_chars_per_file(limit: int) -> None:
     global _ACTIVE_MAX_CHARS_PER_FILE
     _ACTIVE_MAX_CHARS_PER_FILE = max(1, int(limit))
 
+
+def _ensure_str(value: object) -> str:
+    """Coerce an LLM-returned value to a plain string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return " ".join(str(v) for v in value)
+    return str(value) if value is not None else ""
+
 # Retry settings for Ollama connection failures
 _MAX_RETRIES = 3
 _RETRY_DELAYS = (2, 5, 10)  # seconds between retries
@@ -162,13 +171,17 @@ def analyze_file(
         "filename": filename,
         "category": category,
         "truncated": truncated,
-        "file_summary": parsed.get("file_summary", ""),
+        "file_summary": _ensure_str(parsed.get("file_summary", "")),
         "_parse_error": parsed.get("_parse_error", False),
     }
 
     if is_sozial:
         codierungen = parsed.get("codierungen", [])[:MAX_FINDINGS_PER_FILE]
         for c in codierungen:
+            # Sanitize null values from LLM output.
+            for key in ("evidence_excerpt", "reasoning", "type", "kategorie"):
+                if c.get(key) is None:
+                    c[key] = ""
             if c.get("confidence", "high").lower() == "low":
                 c["needs_explikation"] = True
         result["codierungen"] = codierungen
@@ -177,6 +190,10 @@ def analyze_file(
     else:
         smells = parsed.get("potential_smells", [])[:MAX_FINDINGS_PER_FILE]
         for smell in smells:
+            # Sanitize null values from LLM output.
+            for key in ("evidence_excerpt", "reasoning", "type", "severity"):
+                if smell.get(key) is None:
+                    smell[key] = ""
             if smell.get("confidence", "high").lower() == "low":
                 smell["needs_explikation"] = True
         result["potential_smells"] = smells
@@ -265,6 +282,7 @@ def overview_file(
 
     parsed = _parse_llm_json(raw_response)
     summary = parsed.get("file_summary", raw_response.strip()) if parsed else raw_response.strip()
+    summary = _ensure_str(summary)
 
     return {
         "filename": filename,

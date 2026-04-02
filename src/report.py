@@ -198,7 +198,7 @@ def generate_report(
             "",
         ]
         for e in explik_list:
-            excerpt = e.get("evidence_excerpt", "")[:100]
+            excerpt = (e.get("evidence_excerpt") or "")[:100]
             lines.append(f"- `{e['filename']}` — **{e['type']}**: `{excerpt}`")
         lines += [""]
 
