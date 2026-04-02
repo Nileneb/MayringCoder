@@ -21,6 +21,13 @@ MAX_FINDINGS_PER_FILE = 10
 BATCH_SIZE = 25
 BATCH_DELAY_SECONDS = 5
 
+# Project context budget (Phase 1: overview cache → prompt prefix)
+MAX_CONTEXT_CHARS = 2000  # ~500 tokens
+
+# RAG context (Phase 2: ChromaDB similarity search)
+RAG_TOP_K = 5                          # Number of similar context entries to inject
+EMBEDDING_MODEL = "nomic-embed-text"   # Ollama embedding model (offline)
+
 # Ollama
 OLLAMA_TIMEOUT = 120
 

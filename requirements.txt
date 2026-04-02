@@ -2,3 +2,4 @@ gitingest
 httpx
 python-dotenv
 pyyaml
+chromadb

@@ -72,17 +72,21 @@ def analyze_file(
     prompt_template: str,
     ollama_url: str,
     model: str,
+    project_context: str | None = None,
 ) -> dict:
     filename = file["filename"]
     category = file.get("category", "uncategorized")
     content, truncated = _truncate(file["content"])
 
-    prompt = (
-        f"{prompt_template}\n\n"
-        f"Datei: {filename}\n"
+    parts = [prompt_template]
+    if project_context:
+        parts.append(f"\n{project_context}\n")
+    parts.append(
+        f"\nDatei: {filename}\n"
         f"Kategorie: {category}\n"
         f"```\n{content}\n```"
     )
+    prompt = "\n".join(parts)
 
     try:
         resp = httpx.post(
@@ -128,6 +132,8 @@ def analyze_files(
     prompt_path: Path | str,
     ollama_url: str,
     model: str,
+    project_context: str | None = None,
+    context_fn: "Callable[[dict], str | None] | None" = None,
 ) -> list[dict]:
     prompt_template = _load_prompt(prompt_path)
     file_map = {f["filename"]: f for f in files}
@@ -135,7 +141,14 @@ def analyze_files(
     total = len(filenames_to_check)
     for i, fn in enumerate(filenames_to_check, 1):
         print(f"  [{i}/{total}] {fn} ...", flush=True)
-        results.append(analyze_file(file_map[fn], prompt_template, ollama_url, model))
+        file = file_map[fn]
+        # Per-file RAG context takes priority, then global fallback
+        ctx = None
+        if context_fn is not None:
+            ctx = context_fn(file)
+        if ctx is None:
+            ctx = project_context
+        results.append(analyze_file(file, prompt_template, ollama_url, model, ctx))
         if BATCH_SIZE > 0 and i % BATCH_SIZE == 0 and i < total:
             print(f"  ⏸ GPU-Pause ({BATCH_DELAY_SECONDS}s nach {i} Dateien) ...", flush=True)
             time.sleep(BATCH_DELAY_SECONDS)

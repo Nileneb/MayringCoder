@@ -20,15 +20,56 @@ except ImportError:
     _HAS_YAML = False
 
 
+def _load_yaml(path: Path) -> dict | list | None:
+    if not _HAS_YAML or not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as fh:
+        return _yaml.safe_load(fh)
+
+
 def load_codebook(path: Path | None = None) -> list[dict]:
-    target = path or CODEBOOK_PATH
-    if not _HAS_YAML or not target.exists():
-        return []
-    with target.open("r", encoding="utf-8") as fh:
-        data = _yaml.safe_load(fh)
+    data = _load_yaml(path or CODEBOOK_PATH)
     if isinstance(data, dict):
         return data.get("categories", [])
+    if isinstance(data, list):
+        return data
     return []
+
+
+def load_exclude_patterns(path: Path | None = None) -> list[str]:
+    """Load exclude_patterns from codebook YAML."""
+    data = _load_yaml(path or CODEBOOK_PATH)
+    if isinstance(data, dict):
+        return data.get("exclude_patterns", [])
+    return []
+
+
+def load_mayringignore(path: Path | None = None) -> list[str]:
+    """Load extra exclude patterns from a .mayringignore file (optional)."""
+    target = path or Path(".mayringignore")
+    if not target.exists():
+        return []
+    patterns: list[str] = []
+    for line in target.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            patterns.append(stripped)
+    return patterns
+
+
+def filter_excluded_files(
+    files: list[dict], patterns: list[str]
+) -> tuple[list[dict], list[dict]]:
+    """Split *files* into (included, excluded) based on exclude patterns."""
+    if not patterns:
+        return files, []
+    included, excluded = [], []
+    for f in files:
+        if _matches_patterns(f["filename"], patterns):
+            excluded.append(f)
+        else:
+            included.append(f)
+    return included, excluded
 
 
 def _matches_patterns(filename: str, patterns: list[str]) -> bool:
@@ -40,6 +81,12 @@ def _matches_patterns(filename: str, patterns: list[str]) -> bool:
             # Convert glob wildcards to regex
             # "**" matches any path segment, "*" matches within a segment
             regex = re.escape(pat).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+            # Allow */dir/* to also match at root level (dir/*)
+            if regex.startswith("[^/]*/"):
+                regex = "(?:[^/]*/)?" + regex[len("[^/]*/"):]
+            # Trailing /* should match any depth inside a directory
+            if regex.endswith("/[^/]*"):
+                regex = regex[: -len("[^/]*")] + ".*"
             if re.search(regex + r"$", filename, re.IGNORECASE):
                 return True
     return False

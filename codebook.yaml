@@ -1,3 +1,114 @@
+# ---------------------------------------------------------------------------
+# Exclude-Patterns — Dateien, die VOR der Analyse herausgefiltert werden.
+# Glob-Syntax (* = Segment, ** = beliebig tief) oder re:... für Regex.
+# ---------------------------------------------------------------------------
+exclude_patterns:
+  # 1. Build-Artefakte & kompilierter Code
+  - "*/dist/*"
+  - "*/build/*"
+  - "*/out/*"
+  - "*/output/*"
+  - "*.min.js"
+  - "*.min.css"
+  - "*.bundle.js"
+  - "*.chunk.js"
+  - "*.map"
+
+  # 2. Paketmanager & Lock-Files
+  - "*.lock"
+  - "package-lock.json"
+  - "yarn.lock"
+  - "pnpm-lock.yaml"
+  - "composer.lock"
+  - "Gemfile.lock"
+  - "poetry.lock"
+  - "Pipfile.lock"
+  - "go.sum"
+  - "Cargo.lock"
+
+  # 3. Abhängigkeits-Verzeichnisse
+  - "*/node_modules/*"
+  - "*/vendor/*"
+  - "*/.venv/*"
+  - "*/venv/*"
+  - "*/__pycache__/*"
+  - "*/.tox/*"
+  - "*/site-packages/*"
+
+  # 4. Generierte / Framework-eigene Assets
+  - "public/js/*"
+  - "public/css/*"
+  - "public/fonts/*"
+  - "public/build/*"
+  - "public/hot"
+  - "*/storage/framework/*"
+  - "*/@generated*"
+  - "*/.generated/*"
+  - "*/auto-generated/*"
+
+  # 5. Binärdateien & Medien
+  - "*.png"
+  - "*.jpg"
+  - "*.jpeg"
+  - "*.gif"
+  - "*.ico"
+  - "*.svg"
+  - "*.webp"
+  - "*.bmp"
+  - "*.woff"
+  - "*.woff2"
+  - "*.ttf"
+  - "*.eot"
+  - "*.otf"
+  - "*.pdf"
+  - "*.zip"
+  - "*.tar"
+  - "*.gz"
+  - "*.rar"
+  - "*.exe"
+  - "*.dll"
+  - "*.so"
+  - "*.dylib"
+  - "*.pyc"
+  - "*.pyo"
+  - "*.class"
+  - "*.o"
+  - "*.a"
+  - "*.wasm"
+  - "*.sqlite"
+  - "*.sqlite3"
+  - "*.db"
+
+  # 6. IDE & Tooling
+  - "*/.idea/*"
+  - "*/.vscode/*"
+  - "*/.vs/*"
+  - "*/.eclipse/*"
+  - "*.swp"
+  - "*.swo"
+  - "*~"
+  - ".DS_Store"
+  - "Thumbs.db"
+
+  # 7. CI/CD-Caches & temporäre Verzeichnisse
+  - "*/.cache/*"
+  - "*/.tmp/*"
+  - "*/.temp/*"
+  - "*/tmp/*"
+  - "*/coverage/*"
+  - "*/.nyc_output/*"
+  - "*/.pytest_cache/*"
+  - "*/.phpunit.cache/*"
+
+  # 8. Dokumentation & statische Seiten (generiert)
+  - "*/docs/_build/*"
+  - "*/docs/api/*"
+  - "*/.docusaurus/*"
+  - "*/_site/*"
+
+# ---------------------------------------------------------------------------
+# Kategorien — Mayring Stufe 1: Strukturierung
+# ---------------------------------------------------------------------------
 categories:
   - name: api
     description: API-Endpunkte, Routes, Controller, REST/GraphQL/gRPC-Handler

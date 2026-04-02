@@ -14,8 +14,21 @@ from dotenv import load_dotenv
 from src.aggregator import aggregate_findings
 from src.analyzer import analyze_files, overview_files
 from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
-from src.categorizer import categorize_files, load_codebook
-from src.config import CACHE_DIR, DEFAULT_PROMPT, MAX_FILES_PER_RUN, OVERVIEW_PROMPT
+from src.categorizer import (
+    categorize_files,
+    filter_excluded_files,
+    load_codebook,
+    load_exclude_patterns,
+    load_mayringignore,
+)
+from src.config import CACHE_DIR, CODEBOOK_PATH, DEFAULT_PROMPT, EMBEDDING_MODEL, MAX_FILES_PER_RUN, OVERVIEW_PROMPT
+from src.context import (
+    index_overview_to_vectordb,
+    load_overview_context,
+    query_similar_context,
+    save_overview_context,
+)
+from src.exporter import export_results
 from src.fetcher import fetch_repo
 from src.report import generate_report, generate_overview_report
 from src.splitter import split_into_files
@@ -34,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["analyze", "overview"], default="analyze",
                    help="Modus: 'overview' = nur Funktions-Übersicht, 'analyze' = volle Fehlersuche (Standard)")
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
+    p.add_argument("--export", metavar="DATEI", help="Ergebnisse exportieren (.csv oder .json)")
     return p.parse_args()
 
 
@@ -89,6 +103,17 @@ def main() -> None:
 
     if not files:
         print("Keine analysierbaren Dateien im Repository.")
+        sys.exit(0)
+
+    # 2b. Exclude-Patterns anwenden (vor Kategorisierung)
+    exclude_pats = load_exclude_patterns() + load_mayringignore()
+    files, excluded = filter_excluded_files(files, exclude_pats)
+    if excluded:
+        print(f"  ✗ {len(excluded)} Dateien ausgeschlossen (exclude patterns)")
+    print(f"  → {len(files)} Dateien nach Filter")
+
+    if not files:
+        print("Alle Dateien wurden durch Exclude-Patterns herausgefiltert.")
         sys.exit(0)
 
     # 3. Categorize (Mayring Stufe 1: Strukturierung)
@@ -168,15 +193,48 @@ def main() -> None:
         print(f"\nErstelle Übersicht für {len(filenames_to_check)} Dateien mit {model} ...")
         results = overview_files(files, filenames_to_check, overview_prompt, ollama_url, model)
 
+        # Save overview context for later analyze runs
+        ctx_path = save_overview_context(results, repo_url)
+        print(f"  Kontext gespeichert: {ctx_path}")
+
+        # Index into vector DB for RAG (Phase 2)
+        n_indexed = index_overview_to_vectordb(repo_url, ollama_url)
+        if n_indexed:
+            print(f"  Vektor-DB indiziert: {n_indexed} Einträge ({EMBEDDING_MODEL})")
+
         # 7. Overview Report (kein Aggregate nötig)
         elapsed = time.perf_counter() - start
         report_path = generate_overview_report(repo_url, model, results, diff, elapsed)
         print(f"\nReport: {report_path}")
+        if args.export:
+            ep = export_results(results, args.export, CODEBOOK_PATH.name, "overview")
+            print(f"Export: {ep}")
         print(f"Fertig in {elapsed:.0f}s")
     else:
         # 5. Analyze (Mayring Stufe 2: Reduktion + Stufe 3: Explikations-Markierung)
+        # Try RAG context (Phase 2), fall back to flat overview context (Phase 1)
+        rag_context_fn = None
+        project_context = None
+
+        # Check if vector DB exists for this repo
+        from src.context import _chroma_dir
+        if _chroma_dir(repo_url).exists():
+            def _rag_ctx(file: dict) -> str | None:
+                query = f"[{file.get('category', '?')}] {file['filename']}"
+                return query_similar_context(query, repo_url, ollama_url)
+            rag_context_fn = _rag_ctx
+            print("  RAG-Kontext aktiv (ChromaDB → Similarity Search)")
+        else:
+            project_context = load_overview_context(repo_url)
+            if project_context:
+                print("  Projektkontext aus Overview-Cache geladen (Phase 1 Fallback)")
+
         print(f"\nAnalysiere {len(filenames_to_check)} Dateien mit {model} ...")
-        results = analyze_files(files, filenames_to_check, prompt_path, ollama_url, model)
+        results = analyze_files(
+            files, filenames_to_check, prompt_path, ollama_url, model,
+            project_context=project_context,
+            context_fn=rag_context_fn,
+        )
 
         # Mark successfully analyzed files so they leave the backlog queue
         if conn is not None and diff.get("snapshot_id") is not None:
@@ -194,6 +252,9 @@ def main() -> None:
         elapsed = time.perf_counter() - start
         report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed)
         print(f"\nReport: {report_path}")
+        if args.export:
+            ep = export_results(results, args.export, CODEBOOK_PATH.name, "analyze")
+            print(f"Export: {ep}")
         print(f"Fertig in {elapsed:.0f}s")
 
 
