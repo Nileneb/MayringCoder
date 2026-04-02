@@ -20,6 +20,14 @@ from src.config import (
     OLLAMA_TIMEOUT,
 )
 
+_ACTIVE_MAX_CHARS_PER_FILE = MAX_CHARS_PER_FILE
+
+
+def set_max_chars_per_file(limit: int) -> None:
+    """Override per-file truncation limit at runtime."""
+    global _ACTIVE_MAX_CHARS_PER_FILE
+    _ACTIVE_MAX_CHARS_PER_FILE = max(1, int(limit))
+
 # Retry settings for Ollama connection failures
 _MAX_RETRIES = 3
 _RETRY_DELAYS = (2, 5, 10)  # seconds between retries
@@ -30,8 +38,8 @@ def _load_prompt(path: Path | str) -> str:
 
 
 def _truncate(content: str) -> tuple[str, bool]:
-    if len(content) > MAX_CHARS_PER_FILE:
-        trimmed = content[:MAX_CHARS_PER_FILE]
+    if len(content) > _ACTIVE_MAX_CHARS_PER_FILE:
+        trimmed = content[:_ACTIVE_MAX_CHARS_PER_FILE]
         suffix = f"\n\n[... gekürzt, Original {len(content)} Zeichen]"
         return trimmed + suffix, True
     return content, False

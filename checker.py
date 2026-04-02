@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from src.aggregator import aggregate_findings
-from src.analyzer import analyze_files, overview_files
+from src.analyzer import analyze_files, overview_files, set_max_chars_per_file as set_analyzer_max_chars
 from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
 from src.categorizer import (
     categorize_files,
@@ -27,11 +27,12 @@ from src.context import (
     load_overview_context,
     query_similar_context,
     save_overview_context,
+    set_max_context_chars,
 )
 from src.exporter import export_results
 from src.fetcher import fetch_repo
 from src.history import cleanup_runs, compare_runs, generate_run_id, list_runs, save_run
-from src.report import generate_report, generate_overview_report
+from src.report import generate_report, generate_overview_report, set_max_chars_per_file as set_report_max_chars
 from src.splitter import split_into_files
 
 
@@ -48,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["analyze", "overview"], default="analyze",
                    help="Modus: 'overview' = nur Funktions-Übersicht, 'analyze' = volle Fehlersuche (Standard)")
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
+    p.add_argument("--max-chars", type=int, metavar="N", help="Zeichenlimit pro Datei überschreiben (Kontextlimit wird automatisch angepasst)")
     p.add_argument("--budget", type=int, metavar="N", help="Datei-Limit pro Lauf überschreiben (Standard: 20)")
     p.add_argument("--codebook", help="Pfad zu einem alternativen Codebook (YAML)")
     p.add_argument("--export", metavar="DATEI", help="Ergebnisse exportieren (.csv oder .json)")
@@ -73,6 +75,22 @@ def main() -> None:
     token = os.getenv("GITHUB_TOKEN") or None
     prompt_path = Path(args.prompt) if args.prompt else DEFAULT_PROMPT
     codebook_path = Path(args.codebook) if args.codebook else CODEBOOK_PATH
+
+    if args.max_chars is not None:
+        if args.max_chars < 500:
+            print("Fehler: --max-chars muss mindestens 500 sein.")
+            sys.exit(1)
+
+        # Keep one control variable: context budget follows per-file budget (2/3 ratio).
+        max_chars_per_file = args.max_chars
+        max_context_chars = max(500, (max_chars_per_file * 2) // 3)
+        set_analyzer_max_chars(max_chars_per_file)
+        set_report_max_chars(max_chars_per_file)
+        set_max_context_chars(max_context_chars)
+        print(
+            f"Limits aktiv: Datei={max_chars_per_file} Zeichen, "
+            f"Kontext={max_context_chars} Zeichen"
+        )
 
     if not repo_url:
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")

@@ -22,6 +22,14 @@ from src.config import (
     RAG_TOP_K,
 )
 
+_ACTIVE_MAX_CONTEXT_CHARS = MAX_CONTEXT_CHARS
+
+
+def set_max_context_chars(limit: int) -> None:
+    """Override project-context char budget at runtime."""
+    global _ACTIVE_MAX_CONTEXT_CHARS
+    _ACTIVE_MAX_CONTEXT_CHARS = max(1, int(limit))
+
 try:
     import chromadb
     _HAS_CHROMADB = True
@@ -60,7 +68,7 @@ def load_overview_context(repo_url: str) -> str | None:
     """Load overview cache and build a compact context string.
 
     Returns None if no overview cache exists (no breaking change).
-    The returned string is capped at MAX_CONTEXT_CHARS.
+    The returned string is capped at the active context budget.
     """
     path = _overview_path(repo_url)
     if not path.exists():
@@ -75,7 +83,7 @@ def load_overview_context(repo_url: str) -> str | None:
         f"Das Projekt enthält {len(entries)} Dateien. Übersicht:",
         "",
     ]
-    char_budget = MAX_CONTEXT_CHARS - sum(len(l) + 1 for l in lines)
+    char_budget = _ACTIVE_MAX_CONTEXT_CHARS - sum(len(l) + 1 for l in lines)
 
     for e in entries:
         summary = e.get("file_summary", "").replace("\n", " ").strip()
@@ -216,6 +224,6 @@ def query_similar_context(
 
     context = "\n".join(lines)
     # Cap to budget
-    if len(context) > MAX_CONTEXT_CHARS:
-        context = context[:MAX_CONTEXT_CHARS - 3] + "..."
+    if len(context) > _ACTIVE_MAX_CONTEXT_CHARS:
+        context = context[:_ACTIVE_MAX_CONTEXT_CHARS - 3] + "..."
     return context
