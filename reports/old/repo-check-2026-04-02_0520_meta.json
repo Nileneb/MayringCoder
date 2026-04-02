@@ -1,0 +1,16 @@
+{
+  "repo": "url",
+  "timestamp": "2026-04-02_0520",
+  "model": "model",
+  "diff_stats": {
+    "changed": 0,
+    "added": 1,
+    "removed": 0,
+    "unchanged": 0
+  },
+  "selected_files": [],
+  "skipped_files": [],
+  "truncation_flags": [],
+  "parse_errors": [],
+  "run_time_s": 1.0
+}
