@@ -23,7 +23,8 @@ Strukturierung → Reduktion → Explikation → Zusammenführung.
 - **Automatische Dateikategorisierung** — YAML-Codebook sortiert Dateien in Kategorien
 - **Priorisierung nach Risiko** — sicherheitskritische Kategorien (api, data_access, domain) werden bevorzugt
 - **Mehrere Analyse-Modi** — Code-Review, qualitative Inhaltsanalyse (deduktiv/induktiv), Explikation
-- **Budget-Limit** — maximal 20 Dateien pro Lauf (konfigurierbar), Rest bleibt in der Queue
+- **Budget-Limit** — maximal 20 Dateien pro Lauf (konfigurierbar via `--budget N`), Rest bleibt in der Queue
+- **Run-History** — jeden Lauf als Snapshot speichern, Runs vergleichen (`--compare`), alte aufräumen (`--cleanup`)
 - **Explikations-Flag** — Findings mit niedriger Konfidenz werden markiert und können per Re-Run vertieft werden
 
 ---
@@ -122,8 +123,27 @@ python checker.py --show-selection
 # Alternativen Prompt verwenden
 python checker.py --prompt prompts/smell_inspector.md
 
+# Anderes Codebook verwenden
+python checker.py --codebook codebook_sozialforschung.yaml
+
+# Budget-Limit pro Lauf anpassen (Standard: 20)
+python checker.py --budget 50
+
 # Raw-Snapshot lokal speichern (Debugging)
 python checker.py --debug
+```
+
+### Run-History & Vergleich
+
+```bash
+# Vergangene Runs anzeigen
+python checker.py --history
+
+# Zwei Runs vergleichen (welche Findings neu / behoben / geändert)
+python checker.py --compare 20260402-143012 20260402-160045
+
+# Nur die 10 neuesten Runs behalten, Rest löschen
+python checker.py --cleanup 10
 ```
 
 ### Qualitative Inhaltsanalyse (Sozialforschung)
@@ -155,7 +175,7 @@ python checker.py --repo https://github.com/user/repo \
 | Datei | Modus | Ausgabe |
 |---|---|---|
 | `prompts/file_inspector.md` | **Standard** — strukturierte JSON-Analyse | JSON mit `file_summary` + `potential_smells` |
-| `prompts/smell_inspector.md` | Freie Code-Review-Analyse | Fließtext mit Severity-Emojis |
+| `prompts/smell_inspector.md` | Breitere Code-Review-Analyse (5 Fokus-Bereiche) | JSON mit `file_summary` + `potential_smells` |
 | `prompts/explainer.md` | Explikation für unklare Findings | Klärung ob Finding berechtigt + Fix-Vorschlag |
 
 ### Sozialforschungs-Prompts
@@ -291,21 +311,25 @@ MayringCoder/
 ├── codebook.yaml                     # Dateikategorie-Definitionen (Code-Review)
 ├── codebook_sozialforschung.yaml     # Dateikategorie-Definitionen (Sozialforschung)
 ├── requirements.txt
+├── run.sh                            # Komplett-Lauf (Overview → Analyze)
 ├── .env.example
 ├── prompts/
 │   ├── file_inspector.md             # Standard-Prompt (strukturiertes JSON, Code-Review)
-│   ├── smell_inspector.md            # Alternativer Fließtext-Prompt (Code-Review)
+│   ├── smell_inspector.md            # Alternativer Review-Prompt (5 Fokus-Bereiche, JSON)
 │   ├── explainer.md                  # Explikations-Prompt für unklare Findings
 │   ├── mayring_deduktiv.md           # Deduktive Inhaltsanalyse (feste Kategorien)
 │   └── mayring_induktiv.md           # Induktive Inhaltsanalyse (offene Kategorien)
 └── src/
     ├── fetcher.py                    # Repo laden via gitingest
     ├── splitter.py                   # gitingest-Output in Datei-Dicts aufteilen
-    ├── categorizer.py                # Dateien per Codebook kategorisieren
+    ├── categorizer.py                # Dateien per Codebook kategorisieren + Exclude-Filter
     ├── cache.py                      # SQLite Snapshot-Diff & Queue-Management
-    ├── analyzer.py                   # LLM-Analyse via Ollama (JSON-Parsing, Fallback)
+    ├── context.py                    # Projektkontext: Overview-Cache + ChromaDB RAG
+    ├── analyzer.py                   # LLM-Analyse via Ollama (JSON-Parsing, Retry, Fallback)
     ├── aggregator.py                 # Findings zusammenführen, ranken, deduplizieren
     ├── report.py                     # Markdown-Report + run_meta.json generieren
+    ├── exporter.py                   # Export als CSV/JSON
+    ├── history.py                    # Run-History: Speichern, Vergleichen, Aufräumen
     └── config.py                     # Zentrale Konstanten und Pfade
 ```
 
@@ -331,11 +355,7 @@ ollama pull qwen2.5-coder:7b
 - Dateien werden auf **3.000 Zeichen** gekürzt — sehr große Dateien werden nur teilweise analysiert
 - Die LLM-Ausgabe ist nicht deterministisch — gleiche Dateien können bei unterschiedlichen Runs leicht abweichende Findings liefern
 - Findings mit `confidence: low` sollten mit dem Explainer-Prompt manuell nachgeprüft werden
-- Der `smell_inspector`-Prompt erzeugt Fließtext statt JSON — Aggregation und Report-Detail-Ansicht sind dort eingeschränkt
+- Der `smell_inspector`-Prompt nutzt breitere Fokus-Bereiche als `file_inspector` — die Types im JSON unterscheiden sich entsprechend
 - Der Sozialforschungs-Modus erwartet Textdateien (.md, .txt, .pdf, .docx) — bei reinen Code-Repos liefert er keine sinnvollen Ergebnisse
 
 ---
-
-## Lizenz
-
-Proprietär — Alle Rechte vorbehalten.

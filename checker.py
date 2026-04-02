@@ -30,6 +30,7 @@ from src.context import (
 )
 from src.exporter import export_results
 from src.fetcher import fetch_repo
+from src.history import cleanup_runs, compare_runs, generate_run_id, list_runs, save_run
 from src.report import generate_report, generate_overview_report
 from src.splitter import split_into_files
 
@@ -47,7 +48,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["analyze", "overview"], default="analyze",
                    help="Modus: 'overview' = nur Funktions-Übersicht, 'analyze' = volle Fehlersuche (Standard)")
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
+    p.add_argument("--budget", type=int, metavar="N", help="Datei-Limit pro Lauf überschreiben (Standard: 20)")
+    p.add_argument("--codebook", help="Pfad zu einem alternativen Codebook (YAML)")
     p.add_argument("--export", metavar="DATEI", help="Ergebnisse exportieren (.csv oder .json)")
+    p.add_argument("--history", action="store_true", help="Vergangene Runs anzeigen")
+    p.add_argument("--compare", nargs=2, metavar="RUN_ID", help="Zwei Runs vergleichen (alt neu)")
+    p.add_argument("--cleanup", type=int, metavar="N", help="Nur die N neuesten Runs behalten, Rest löschen")
     return p.parse_args()
 
 
@@ -66,6 +72,7 @@ def main() -> None:
     model = args.model or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
     token = os.getenv("GITHUB_TOKEN") or None
     prompt_path = Path(args.prompt) if args.prompt else DEFAULT_PROMPT
+    codebook_path = Path(args.codebook) if args.codebook else CODEBOOK_PATH
 
     if not repo_url:
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")
@@ -81,9 +88,72 @@ def main() -> None:
             print("Kein Cache vorhanden — nichts zu löschen.")
         sys.exit(0)
 
+    # --history: show past runs and exit
+    if args.history:
+        runs = list_runs(repo_url)
+        if not runs:
+            print("Keine Run-History vorhanden.")
+        else:
+            print(f"{'Run-ID':<20} {'Modus':<10} {'Modell':<18} {'Dateien':>7} {'Zeit (s)':>8}  Zeitstempel")
+            print("-" * 90)
+            for r in runs:
+                print(
+                    f"{r['run_id']:<20} {r['mode']:<10} {r['model']:<18} "
+                    f"{r['files_checked']:>7} {r['timing_seconds']:>8.1f}  {r['timestamp']}"
+                )
+        sys.exit(0)
+
+    # --compare: diff two runs and exit
+    if args.compare:
+        try:
+            cmp = compare_runs(args.compare[0], args.compare[1], repo_url)
+        except FileNotFoundError as exc:
+            print(f"Fehler: {exc}")
+            sys.exit(1)
+        s = cmp["summary"]
+        print(f"Vergleich: {cmp['run_a']} → {cmp['run_b']}")
+        print(f"  Dateien: {s['files_a']} → {s['files_b']}")
+        print(f"  Neu:      {s['new_count']}")
+        print(f"  Behoben:  {s['resolved_count']}")
+        print(f"  Severity: {s['severity_changed_count']} geändert")
+        if cmp["new"]:
+            print("\nNeue Findings:")
+            for f in cmp["new"]:
+                print(f"  + [{f.get('severity','?')}] {f['_filename']}: {f.get('type','')}")
+        if cmp["resolved"]:
+            print("\nBehobene Findings:")
+            for f in cmp["resolved"]:
+                print(f"  - [{f.get('severity','?')}] {f['_filename']}: {f.get('type','')}")
+        if cmp["severity_changed"]:
+            print("\nSeverity geändert:")
+            for f in cmp["severity_changed"]:
+                print(f"  ~ {f['_filename']}: {f.get('type','')} {f['_old_severity']} → {f['_new_severity']}")
+        sys.exit(0)
+
+    # --cleanup: keep only N newest runs and exit
+    if args.cleanup is not None:
+        deleted = cleanup_runs(repo_url, keep=args.cleanup)
+        print(f"{deleted} alte Runs gelöscht, {args.cleanup} behalten.")
+        sys.exit(0)
+
     if not prompt_path.exists():
         print(f"Fehler: Prompt-Datei nicht gefunden: {prompt_path}")
         sys.exit(1)
+
+    # Codebook/Prompt-Kompatibilitätscheck
+    _COMPAT_MAP = {
+        "codebook_sozialforschung.yaml": {"mayring_deduktiv.md", "mayring_induktiv.md"},
+        "codebook.yaml": {"file_inspector.md", "smell_inspector.md", "explainer.md"},
+    }
+    cb_name = codebook_path.name
+    pr_name = prompt_path.name
+    for cb_pattern, prompt_set in _COMPAT_MAP.items():
+        if cb_name == cb_pattern and pr_name not in prompt_set:
+            print(
+                f"⚠ Warnung: Codebook '{cb_name}' passt üblicherweise zu"
+                f" {', '.join(sorted(prompt_set))} — nicht zu '{pr_name}'."
+                f" Ergebnisse könnten unbrauchbar sein."
+            )
 
     start = time.perf_counter()
 
@@ -106,7 +176,7 @@ def main() -> None:
         sys.exit(0)
 
     # 2b. Exclude-Patterns anwenden (vor Kategorisierung)
-    exclude_pats = load_exclude_patterns() + load_mayringignore()
+    exclude_pats = load_exclude_patterns(codebook_path) + load_mayringignore()
     files, excluded = filter_excluded_files(files, exclude_pats)
     if excluded:
         print(f"  ✗ {len(excluded)} Dateien ausgeschlossen (exclude patterns)")
@@ -117,12 +187,17 @@ def main() -> None:
         sys.exit(0)
 
     # 3. Categorize (Mayring Stufe 1: Strukturierung)
-    codebook = load_codebook()
+    codebook = load_codebook(codebook_path)
     files = categorize_files(files, codebook)
     categories = {f["filename"]: f["category"] for f in files}
 
     # Determine effective file limit
-    max_files = 0 if args.no_limit else MAX_FILES_PER_RUN
+    if args.no_limit:
+        max_files = 0
+    elif args.budget is not None:
+        max_files = args.budget
+    else:
+        max_files = MAX_FILES_PER_RUN
 
     # 4. Diff
     if args.full:
@@ -207,8 +282,13 @@ def main() -> None:
         report_path = generate_overview_report(repo_url, model, results, diff, elapsed)
         print(f"\nReport: {report_path}")
         if args.export:
-            ep = export_results(results, args.export, CODEBOOK_PATH.name, "overview")
+            ep = export_results(results, args.export, codebook_path.name, "overview")
             print(f"Export: {ep}")
+
+        # Save run history
+        rid = generate_run_id()
+        run_path = save_run(rid, repo_url, model, "overview", results, diff, elapsed)
+        print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
     else:
         # 5. Analyze (Mayring Stufe 2: Reduktion + Stufe 3: Explikations-Markierung)
@@ -253,8 +333,13 @@ def main() -> None:
         report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed)
         print(f"\nReport: {report_path}")
         if args.export:
-            ep = export_results(results, args.export, CODEBOOK_PATH.name, "analyze")
+            ep = export_results(results, args.export, codebook_path.name, "analyze")
             print(f"Export: {ep}")
+
+        # Save run history
+        rid = generate_run_id()
+        run_path = save_run(rid, repo_url, model, "analyze", results, diff, elapsed, aggregation)
+        print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
 
 

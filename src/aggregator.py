@@ -27,15 +27,31 @@ def aggregate_findings(results: list[dict]) -> dict:
     for r in results:
         if "error" in r:
             continue
-        for smell in r.get("potential_smells", []):
-            enriched = {**smell, "_filename": r["filename"]}
-            all_smells.append(enriched)
-            if smell.get("needs_explikation"):
-                needs_explikation.append({
-                    "filename": r["filename"],
-                    "type": smell.get("type", ""),
-                    "evidence_excerpt": smell.get("evidence_excerpt", ""),
-                })
+
+        # Social-research mode: codierungen instead of potential_smells
+        if "codierungen" in r:
+            for cod in r.get("codierungen", []):
+                enriched = {**cod, "_filename": r["filename"]}
+                # Map to severity-like field for unified ranking
+                enriched.setdefault("severity", "info")
+                all_smells.append(enriched)
+                if cod.get("needs_explikation"):
+                    needs_explikation.append({
+                        "filename": r["filename"],
+                        "type": cod.get("category", ""),
+                        "evidence_excerpt": cod.get("evidence_excerpt", ""),
+                    })
+        else:
+            for smell in r.get("potential_smells", []):
+                enriched = {**smell, "_filename": r["filename"]}
+                all_smells.append(enriched)
+                if smell.get("needs_explikation"):
+                    needs_explikation.append({
+                        "filename": r["filename"],
+                        "type": smell.get("type", ""),
+                        "evidence_excerpt": smell.get("evidence_excerpt", ""),
+                    })
+
         if r.get("_parse_error"):
             parse_errors.append(r["filename"])
 

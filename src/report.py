@@ -93,6 +93,10 @@ def generate_report(
 
     # --- Per-File Findings ---
     lines += ["## Per-File Findings", ""]
+
+    # Detect social-research mode: any result has 'codierungen' instead of 'potential_smells'
+    is_sozial = any("codierungen" in r for r in results if "error" not in r)
+
     for r in results:
         if "error" in r:
             lines += [f"### ⚠ {r['filename']}", "", f"FEHLER: {r['error']}", "", "---", ""]
@@ -109,25 +113,69 @@ def generate_report(
             lines.append(r["file_summary"])
             lines.append("")
 
-        smells = r.get("potential_smells", [])
-        if not smells:
-            lines.append("Keine Auffälligkeiten gefunden.")
+        if is_sozial:
+            codierungen = r.get("codierungen", [])
+            if not codierungen:
+                lines.append("Keine Codierungen gefunden.")
+            else:
+                for c in codierungen:
+                    conf = c.get("confidence", "?")
+                    explik_note = " *(Explikation empfohlen)*" if c.get("needs_explikation") else ""
+                    lines.append(
+                        f"- **{c.get('category', '?')}**{explik_note}"
+                        f" (Zeile ~{c.get('line_hint', '?')}"
+                        f", Konfidenz: {conf})"
+                    )
+                    if c.get("evidence_excerpt"):
+                        lines.append(f"  > {c['evidence_excerpt'][:200]}")
+                    if c.get("reasoning"):
+                        lines.append(f"  → {c['reasoning']}")
         else:
-            for s in smells:
-                sev = s.get("severity", "info").lower()
-                emoji = _SEV_EMOJI.get(sev, "🟢")
-                explik_note = " *(Explikation empfohlen)*" if s.get("needs_explikation") else ""
-                lines.append(
-                    f"- {emoji} **{s.get('type', '?')}**{explik_note}"
-                    f" (Zeile ~{s.get('line_hint', '?')}"
-                    f", Konfidenz: {s.get('confidence', '?')})"
-                )
-                if s.get("evidence_excerpt"):
-                    lines.append(f"  > `{s['evidence_excerpt'][:150]}`")
-                if s.get("fix_suggestion"):
-                    lines.append(f"  → {s['fix_suggestion']}")
+            smells = r.get("potential_smells", [])
+            if not smells:
+                lines.append("Keine Auffälligkeiten gefunden.")
+            else:
+                for s in smells:
+                    sev = s.get("severity", "info").lower()
+                    emoji = _SEV_EMOJI.get(sev, "🟢")
+                    explik_note = " *(Explikation empfohlen)*" if s.get("needs_explikation") else ""
+                    lines.append(
+                        f"- {emoji} **{s.get('type', '?')}**{explik_note}"
+                        f" (Zeile ~{s.get('line_hint', '?')}"
+                        f", Konfidenz: {s.get('confidence', '?')})"
+                    )
+                    if s.get("evidence_excerpt"):
+                        lines.append(f"  > `{s['evidence_excerpt'][:150]}`")
+                    if s.get("fix_suggestion"):
+                        lines.append(f"  → {s['fix_suggestion']}")
 
         lines += ["", "---", ""]
+
+    # --- Induktiv: Category Summary (aggregiert über alle Dateien) ---
+    all_cat_summaries: list[dict] = []
+    for r in results:
+        all_cat_summaries.extend(r.get("category_summary", []))
+    if all_cat_summaries:
+        # Merge counts for same category across files
+        merged: dict[str, dict] = {}
+        for cs in all_cat_summaries:
+            cat = cs.get("category", "?")
+            if cat in merged:
+                merged[cat]["count"] += cs.get("count", 0)
+            else:
+                merged[cat] = {
+                    "definition": cs.get("definition", ""),
+                    "count": cs.get("count", 0),
+                }
+        lines += [
+            "## Induktiv entwickelte Kategorien",
+            "",
+            "| Kategorie | Definition | Anzahl |",
+            "|---|---|---:|",
+        ]
+        for cat, info in sorted(merged.items(), key=lambda x: -x[1]["count"]):
+            lines.append(f"| {cat} | {info['definition']} | {info['count']} |")
+        lines += [""]
 
     # --- Explikation ---
     explik_list = aggregation.get("needs_explikation", [])

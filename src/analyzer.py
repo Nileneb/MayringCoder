@@ -20,6 +20,10 @@ from src.config import (
     OLLAMA_TIMEOUT,
 )
 
+# Retry settings for Ollama connection failures
+_MAX_RETRIES = 3
+_RETRY_DELAYS = (2, 5, 10)  # seconds between retries
+
 
 def _load_prompt(path: Path | str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -67,6 +71,22 @@ def _freetext_fallback(raw: str) -> dict:
     }
 
 
+def _freetext_fallback_sozial(raw: str) -> dict:
+    return {
+        "file_summary": "",
+        "codierungen": [
+            {
+                "category": "unklar",
+                "confidence": "low",
+                "line_hint": "",
+                "evidence_excerpt": raw[:500],
+                "reasoning": "Freetext-Fallback — LLM lieferte kein valides JSON",
+            }
+        ],
+        "_parse_error": True,
+    }
+
+
 def analyze_file(
     file: dict,
     prompt_template: str,
@@ -89,13 +109,26 @@ def analyze_file(
     prompt = "\n".join(parts)
 
     try:
-        resp = httpx.post(
-            f"{ollama_url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=OLLAMA_TIMEOUT,
-        )
-        resp.raise_for_status()
-        raw_response = resp.json()["response"]
+        raw_response = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = httpx.post(
+                    f"{ollama_url}/api/generate",
+                    json={"model": model, "prompt": prompt, "stream": False},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                resp.raise_for_status()
+                raw_response = resp.json()["response"]
+                break
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
+                    print(f"    ⟳ Retry {attempt + 1}/{_MAX_RETRIES} für {filename} (in {delay}s) …", flush=True)
+                    time.sleep(delay)
+                else:
+                    raise
+        if raw_response is None:
+            return {"filename": filename, "error": "Kein Response nach Retries."}
     except httpx.ConnectError:
         return {
             "filename": filename,
@@ -109,21 +142,38 @@ def analyze_file(
     except (httpx.HTTPStatusError, KeyError) as exc:
         return {"filename": filename, "error": str(exc)}
 
-    parsed = _parse_llm_json(raw_response) or _freetext_fallback(raw_response)
+    parsed = _parse_llm_json(raw_response)
 
-    smells = parsed.get("potential_smells", [])[:MAX_FINDINGS_PER_FILE]
-    for smell in smells:
-        if smell.get("confidence", "high").lower() == "low":
-            smell["needs_explikation"] = True
+    # Detect social-research mode (codierungen) vs code-review mode (potential_smells)
+    is_sozial = parsed is not None and "codierungen" in parsed
 
-    return {
+    if parsed is None:
+        parsed = _freetext_fallback_sozial(raw_response) if is_sozial else _freetext_fallback(raw_response)
+
+    result: dict = {
         "filename": filename,
         "category": category,
         "truncated": truncated,
         "file_summary": parsed.get("file_summary", ""),
-        "potential_smells": smells,
         "_parse_error": parsed.get("_parse_error", False),
     }
+
+    if is_sozial:
+        codierungen = parsed.get("codierungen", [])[:MAX_FINDINGS_PER_FILE]
+        for c in codierungen:
+            if c.get("confidence", "high").lower() == "low":
+                c["needs_explikation"] = True
+        result["codierungen"] = codierungen
+        if "category_summary" in parsed:
+            result["category_summary"] = parsed["category_summary"]
+    else:
+        smells = parsed.get("potential_smells", [])[:MAX_FINDINGS_PER_FILE]
+        for smell in smells:
+            if smell.get("confidence", "high").lower() == "low":
+                smell["needs_explikation"] = True
+        result["potential_smells"] = smells
+
+    return result
 
 
 def analyze_files(
@@ -178,13 +228,26 @@ def overview_file(
     )
 
     try:
-        resp = httpx.post(
-            f"{ollama_url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=OLLAMA_TIMEOUT,
-        )
-        resp.raise_for_status()
-        raw_response = resp.json()["response"]
+        raw_response = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = httpx.post(
+                    f"{ollama_url}/api/generate",
+                    json={"model": model, "prompt": prompt, "stream": False},
+                    timeout=OLLAMA_TIMEOUT,
+                )
+                resp.raise_for_status()
+                raw_response = resp.json()["response"]
+                break
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
+                    print(f"    ⟳ Retry {attempt + 1}/{_MAX_RETRIES} für {filename} (in {delay}s) …", flush=True)
+                    time.sleep(delay)
+                else:
+                    raise
+        if raw_response is None:
+            return {"filename": filename, "error": "Kein Response nach Retries."}
     except httpx.ConnectError:
         return {"filename": filename, "error": f"Ollama nicht erreichbar unter {ollama_url}"}
     except httpx.TimeoutException:
