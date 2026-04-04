@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from src.fetcher import fetch_repo
 from src.splitter import split_into_files
 from src.turbulence_analyzer import analyze_repo
+from src.turbulence_report import build_markdown
 from src.config import REPORTS_DIR
 
 
@@ -39,65 +40,6 @@ def _write_files_to_tmpdir(files: list[dict], tmpdir: str) -> int:
         except OSError:
             pass
     return written
-
-
-def _build_markdown(report: dict, repo_url: str, model: str, elapsed: float) -> str:
-    s = report["summary"]
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [
-        "---",
-        f"repo: {repo_url}",
-        f"date: {datetime.now().isoformat()}",
-        f"model: {model}",
-        f"mode: turbulence",
-        f"files_total: {s.get('total_files', 0)}",
-        f"run_time_s: {elapsed:.1f}",
-        "---",
-        "",
-        f"# Turbulenz-Analyse — {ts}",
-        "",
-        "## Zusammenfassung",
-        "",
-        f"| Metrik | Wert |",
-        f"|--------|------|",
-        f"| Dateien gesamt | {s.get('total_files', 0)} |",
-        f"| 🔴 Kritisch (>50%) | {s.get('critical', 0)} |",
-        f"| 🟡 Mittel (20-50%) | {s.get('medium', 0)} |",
-        f"| ⬛ Stabil (<20%) | {s.get('stable', 0)} |",
-        f"| Findings | {s.get('findings', 0)} |",
-        f"| Redundanzen | {s.get('redundancies', 0)} |",
-        "",
-    ]
-
-    critical = report.get("critical_files", [])
-    if critical:
-        lines += ["## 🔴 Kritische Dateien", ""]
-        for f in critical:
-            pct = round(f["turbulence"] * 100)
-            lines.append(f"### `{f['path']}` — {pct}% Turbulenz")
-            lines.append("")
-            for hz in f.get("hot_zones", []):
-                lines.append(
-                    f"- Hot-Zone Zeile {hz['start_line']}–{hz['end_line']} "
-                    f"(Peak: {round(hz['peak_score']*100)}%)"
-                )
-            for finding in f.get("findings", []):
-                sev = finding.get("severity", "medium").upper()
-                lines.append(f"\n**[{sev}]** {finding.get('problem', '—')}")
-                lines.append(f"> Empfehlung: {finding.get('refactoring', '—')}")
-            lines.append("")
-
-    redundancies = report.get("redundancies", [])
-    if redundancies:
-        lines += ["## 🔄 Mögliche Redundanzen", ""]
-        for r in redundancies:
-            lines.append(
-                f"- `{r['name_a']}` ≈ `{r['name_b']}` "
-                f"({round(r['similarity']*100)}% Ähnlichkeit)"
-            )
-        lines.append("")
-
-    return "\n".join(lines)
 
 
 def main() -> None:
@@ -165,7 +107,7 @@ def main() -> None:
 
     md_path = REPORTS_DIR / f"turbulence-{ts}.md"
     md_path.write_text(
-        _build_markdown(report, repo_url, turb_model, elapsed),
+        build_markdown(report, repo_url, turb_model, elapsed),
         encoding="utf-8",
     )
 
