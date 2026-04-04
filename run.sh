@@ -18,4 +18,4 @@ fi
 
 # Stufe 3: Turbulenz-Analyse (vermischte Verantwortlichkeiten / Hot-Zones)
 # Heuristik-Modus (kein Ollama nötig). Für LLM-Modus: --llm anhängen.
-"$PYTHON" turbulence_run.py --llm
+"$PYTHON" checker.py --mode turbulence --llm

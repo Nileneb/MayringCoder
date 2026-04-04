@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
+import tempfile
+
 from src.aggregator import aggregate_findings, aggregate_with_redundancy
 from src.analyzer import analyze_files, overview_files
 from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
@@ -47,8 +49,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompt", help="Pfad zu einem alternativen Prompt")
     p.add_argument("--debug", action="store_true", help="Speichert Raw-Snapshot lokal unter cache/")
     p.add_argument("--reset", action="store_true", help="Cache-DB für das Repo löschen (alle Analysen zurücksetzen)")
-    p.add_argument("--mode", choices=["analyze", "overview"], default="analyze",
-                   help="Modus: 'overview' = nur Funktions-Übersicht, 'analyze' = volle Fehlersuche (Standard)")
+    p.add_argument("--mode", choices=["analyze", "overview", "turbulence"], default="analyze",
+                   help="Modus: 'overview' = Funktions-Übersicht, 'analyze' = Fehlersuche (Standard), "
+                        "'turbulence' = Hot-Zone-Analyse (vermischte Verantwortlichkeiten)")
+    p.add_argument("--llm", action="store_true",
+                   help="Turbulenz-Modus: LLM für Chunk-Kategorisierung nutzen (langsamer, genauer). "
+                        "Standard: Heuristik (kein Ollama nötig).")
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
     p.add_argument("--max-chars", type=int, metavar="N", help="Zeichenlimit pro Datei überschreiben (Kontextlimit wird automatisch angepasst)")
     p.add_argument("--budget", type=int, metavar="N", help="Datei-Limit pro Lauf überschreiben (Standard: 20)")
@@ -326,8 +332,15 @@ def main() -> None:
             print("Embedding-Vorfilter hat alle Dateien herausgefiltert. Abbruch.")
             sys.exit(0)
 
-    # 4. Diff
-    if args.full:
+    # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
+    if args.mode == "turbulence":
+        turb_model = os.getenv("TURB_MODEL", "mistral:7b-instruct")
+        os.environ["OLLAMA_URL"] = ollama_url
+        os.environ["TURB_MODEL"] = turb_model
+        _run_turbulence(args, repo_url, ollama_url, turb_model)
+        sys.exit(0)
+
+    # 5. Diff
         filenames_to_check = [f["filename"] for f in files]
         diff: dict = {
             "changed": [], "added": filenames_to_check, "removed": [],
@@ -556,6 +569,72 @@ def main() -> None:
         run_path = save_run(rid, repo_url, model, "analyze", results, diff, elapsed, aggregation)
         print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
+
+
+def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> None:
+    """Turbulenz-Analyse (Stufe 3): Hot-Zone-Erkennung über alle Repo-Dateien."""
+    import json
+    from datetime import datetime
+    from src.config import REPORTS_DIR
+    from src.turbulence_analyzer import analyze_repo
+    from src.turbulence_report import build_markdown
+
+    print(f"\n{'='*60}")
+    print("  Stufe 3: Turbulenz-Analyse")
+    print(f"  Repo:    {repo_url}")
+    print(f"  Modus:   {'LLM (' + turb_model + ')' if args.llm else 'Heuristik (schnell)'}")
+    print(f"{'='*60}")
+
+    start = time.perf_counter()
+
+    print(f"\nRepository laden: {repo_url} ...")
+    _, _, content = fetch_repo(repo_url, os.getenv("GITHUB_TOKEN") or None)
+
+    files = split_into_files(content)
+    print(f"{len(files)} Dateien gefunden")
+
+    if not files:
+        print("Keine analysierbaren Dateien — Turbulenz-Analyse übersprungen.")
+        return
+
+    def _write_files(file_list: list[dict], target_dir: str) -> int:
+        base = Path(target_dir)
+        written = 0
+        for f in file_list:
+            p = base / f["filename"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                p.write_text(f["content"], encoding="utf-8")
+                written += 1
+            except OSError:
+                pass
+        return written
+
+    with tempfile.TemporaryDirectory(prefix="turb_") as tmpdir:
+        written = _write_files(files, tmpdir)
+        print(f"{written} Dateien ins Arbeitsverzeichnis geschrieben\n")
+        report = analyze_repo(tmpdir, use_llm=args.llm)
+
+    elapsed = time.perf_counter() - start
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+
+    json_path = REPORTS_DIR / f"turbulence-{ts}.json"
+    json_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+
+    md_path = REPORTS_DIR / f"turbulence-{ts}.md"
+    md_path.write_text(
+        build_markdown(report, repo_url, turb_model, elapsed),
+        encoding="utf-8",
+    )
+
+    print(f"\nReport (JSON): {json_path}")
+    print(f"Report (MD):   {md_path}")
+    print(f"Fertig in {elapsed:.0f}s")
 
 
 if __name__ == "__main__":
