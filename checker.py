@@ -339,7 +339,13 @@ def main() -> None:
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
     if args.mode == "turbulence":
-        turb_model = os.getenv("TURB_MODEL", "mistral:7b-instruct")
+        from src.model_selector import resolve_model
+        # Priority: --model CLI flag → TURB_MODEL env → interactive (if --llm) → fallback
+        turb_model = resolve_model(
+            ollama_url,
+            cli_model=args.model,
+            env_model=os.getenv("TURB_MODEL"),
+        ) if args.llm else (args.model or os.getenv("TURB_MODEL", "mistral:7b-instruct"))
         os.environ["OLLAMA_URL"] = ollama_url
         os.environ["TURB_MODEL"] = turb_model
         _run_turbulence(args, repo_url, ollama_url, turb_model)
@@ -660,7 +666,7 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
     with tempfile.TemporaryDirectory(prefix="turb_") as tmpdir:
         written = _write_files(files, tmpdir)
         print(f"{written} Dateien ins Arbeitsverzeichnis geschrieben\n")
-        report = analyze_repo(tmpdir, use_llm=args.llm)
+        report = analyze_repo(tmpdir, use_llm=args.llm, model=turb_model if args.llm else None)
 
     elapsed = time.perf_counter() - start
 

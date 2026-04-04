@@ -25,16 +25,18 @@ from src.turbulence_calculator import (
     find_redundancies,
     THRESHOLD_SKIP,
     THRESHOLD_DEEP,
+    MIN_CHUNKS_FOR_TRIAGE,
 )
 from src.turbulence_report import build_report
 
 
-def analyze_repo(repo_path: str, use_llm: bool = False) -> dict:
+def analyze_repo(repo_path: str, use_llm: bool = False, model: str | None = None) -> dict:
     """Analysiert ein ganzes Repository auf Turbulenz.
 
     Args:
         repo_path: Pfad zum (temporären) Repository-Verzeichnis.
         use_llm:   True = LLM-Kategorisierung (Ollama), False = Heuristik (schnell).
+        model:     Ollama-Modellname für LLM-Modus. Wenn None, wird TURB_MODEL / Fallback verwendet.
 
     Returns:
         Report-Dict mit summary, critical_files, redundancies.
@@ -73,18 +75,27 @@ def analyze_repo(repo_path: str, use_llm: bool = False) -> dict:
             continue
 
         for chunk in chunks:
-            categorize_fn(chunk)
+            if use_llm:
+                categorize_chunk_llm(chunk, model=model)
+            else:
+                categorize_chunk_heuristic(chunk)
 
         all_chunks.extend(chunks)
 
-        turb_score, hot_zones = calculate_turbulence(chunks)
-
-        if turb_score < THRESHOLD_SKIP:
-            tier = "skip"
-        elif turb_score < THRESHOLD_DEEP:
-            tier = "light"
+        # Dateien mit zu wenig Chunks liefern keinen verlässlichen Score —
+        # ein 2-Chunk-File mit zwei Kategorien würde immer 50% ergeben (Artefakt).
+        if len(chunks) < MIN_CHUNKS_FOR_TRIAGE:
+            tier = "stable"
+            turb_score = 0.0
+            hot_zones: list = []
         else:
-            tier = "deep"
+            turb_score, hot_zones = calculate_turbulence(chunks)
+            if turb_score < THRESHOLD_SKIP:
+                tier = "skip"
+            elif turb_score < THRESHOLD_DEEP:
+                tier = "light"
+            else:
+                tier = "deep"
 
         analysis = FileAnalysis(
             path=rel_path,
@@ -103,11 +114,12 @@ def analyze_repo(repo_path: str, use_llm: bool = False) -> dict:
                     zone["end_line"],
                     zone["peak_score"],
                     use_llm=use_llm,
+                    model=model,
                 )
                 if finding:
                     analysis.findings.append({"zone": zone, **finding})
 
-        icon = {"skip": "⬛", "light": "🟡", "deep": "🔴"}[tier]
+        icon = {"stable": "⬜", "skip": "⬛", "light": "🟡", "deep": "🔴"}[tier]
         print(f"  {icon} {rel_path:50s} Turbulenz: {turb_score:.0%} [{tier}]")
 
         all_analyses.append(analysis)

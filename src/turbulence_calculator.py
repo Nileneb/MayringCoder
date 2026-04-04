@@ -31,6 +31,11 @@ THRESHOLD_SKIP = 0.20       # < 20% → Datei überspringen
 THRESHOLD_HIGH_ONLY = 0.50  # 20-50% → nur high-confidence Findings
 THRESHOLD_DEEP = 0.50       # > 50% → volle Tiefenanalyse + Refactoring
 
+# Mindestanzahl Chunks für sinnvollen Turbulenz-Score.
+# Dateien mit weniger Chunks haben zu wenig Datenpunkte — der Score wäre
+# ein mathematisches Artefakt (z. B. exakt 50% bei 2 verschiedenen Chunks).
+MIN_CHUNKS_FOR_TRIAGE = 3
+
 # Ähnlichkeitsschwelle für Redundanz-Erkennung
 SIMILARITY_THRESHOLD = 0.70
 
@@ -158,9 +163,16 @@ Code-Abschnitt ({file}, Zeile {start}-{end}):
 Antworte NUR mit dem JSON-Objekt, kein weiterer Text."""
 
 
-def categorize_chunk_llm(chunk: Chunk) -> Chunk:
-    """Ruft das LLM auf, um einen Chunk zu kategorisieren."""
+def categorize_chunk_llm(chunk: Chunk, model: str | None = None) -> Chunk:
+    """Ruft das LLM auf, um einen Chunk zu kategorisieren.
+
+    Args:
+        chunk: Der zu kategorisierende Chunk.
+        model: Ollama-Modellname. Wenn None, wird der Modulwert MODEL verwendet.
+    """
     import urllib.request
+
+    _model = model if model is not None else MODEL
 
     prompt = CATEGORIZE_PROMPT.format(
         file=Path(chunk.file).name,
@@ -170,7 +182,7 @@ def categorize_chunk_llm(chunk: Chunk) -> Chunk:
     )
 
     payload = json.dumps({
-        "model": MODEL,
+        "model": _model,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0.1, "num_predict": 100},
@@ -321,7 +333,7 @@ def find_redundancies(all_chunks: list[Chunk]) -> list[Redundancy]:
         c for c in all_chunks
         if not c.functional_name.startswith("block_")
         and not c.functional_name.startswith("fehler_")
-        and c.functional_name != "unbekannt"
+        and c.functional_name not in ("unbekannt", "nicht_erkannt")
     ]
 
     redundancies = []
@@ -390,8 +402,18 @@ def deep_analyze_hotzone(
     end: int,
     score: float,
     use_llm: bool = True,
+    model: str | None = None,
 ) -> Optional[dict]:
-    """Analysiert eine Hot-Zone heuristisch oder per LLM."""
+    """Analysiert eine Hot-Zone heuristisch oder per LLM.
+
+    Args:
+        filepath: Pfad zur Quelldatei.
+        start:    Startzeile der Hot-Zone.
+        end:      Endzeile der Hot-Zone.
+        score:    Turbulenz-Score der Zone.
+        use_llm:  True = LLM-Analyse, False = Heuristik.
+        model:    Ollama-Modellname. Wenn None, wird MODEL verwendet.
+    """
     if not use_llm:
         return {
             "problem": f"Hohe Turbulenz ({score:.0%}) – vermischte Verantwortlichkeiten",
@@ -401,6 +423,8 @@ def deep_analyze_hotzone(
         }
 
     import urllib.request
+
+    _model = model if model is not None else MODEL
 
     path = Path(filepath)
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -416,7 +440,7 @@ def deep_analyze_hotzone(
     )
 
     payload = json.dumps({
-        "model": MODEL,
+        "model": _model,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0.2, "num_predict": 200},

@@ -11,6 +11,7 @@ from src.turbulence_calculator import (
     SIMILARITY_THRESHOLD,
     THRESHOLD_DEEP,
     THRESHOLD_SKIP,
+    MIN_CHUNKS_FOR_TRIAGE,
     calculate_turbulence,
     categorize_chunk_heuristic,
     chunkify,
@@ -235,6 +236,14 @@ class TestFindRedundancies:
         ]
         assert find_redundancies(chunks) == []
 
+    def test_skips_nicht_erkannt(self):
+        """LLM returned 'nicht_erkannt' for both chunks — must not create false redundancy."""
+        chunks = [
+            _make_chunk(file="a.py", functional_name="nicht_erkannt"),
+            _make_chunk(file="b.py", functional_name="nicht_erkannt"),
+        ]
+        assert find_redundancies(chunks) == []
+
     def test_sorted_by_descending_similarity(self):
         chunks = [
             _make_chunk(file="a.py", functional_name="save_user"),
@@ -294,3 +303,55 @@ class TestBuildReport:
         assert isinstance(md, str)
         assert "Turbulenz-Analyse" in md
         assert "Zusammenfassung" in md
+
+    def test_stable_tier_counted_in_summary(self):
+        """Files with < MIN_CHUNKS_FOR_TRIAGE should be counted in stable summary."""
+        from src.turbulence_report import build_report
+        analyses = [
+            FileAnalysis(path="tiny.py", total_lines=5, tier="stable", turbulence_score=0.0),
+            FileAnalysis(path="normal.py", total_lines=50, tier="deep", turbulence_score=0.7),
+        ]
+        report = build_report(analyses, [])
+        assert report["summary"]["stable"] == 1
+        assert report["summary"]["critical"] == 1
+
+    def test_stable_and_skip_both_counted_as_stable(self):
+        from src.turbulence_report import build_report
+        analyses = [
+            FileAnalysis(path="a.py", total_lines=5, tier="stable", turbulence_score=0.0),
+            FileAnalysis(path="b.py", total_lines=20, tier="skip", turbulence_score=0.1),
+        ]
+        report = build_report(analyses, [])
+        assert report["summary"]["stable"] == 2
+
+
+# ---------------------------------------------------------------------------
+# MIN_CHUNKS_FOR_TRIAGE constant
+# ---------------------------------------------------------------------------
+
+class TestMinChunksForTriage:
+    def test_constant_is_at_least_3(self):
+        assert MIN_CHUNKS_FOR_TRIAGE >= 3
+
+    def test_analyze_repo_marks_tiny_file_as_stable(self, tmp_path):
+        """A file that produces < MIN_CHUNKS_FOR_TRIAGE chunks must get tier='stable'."""
+        from src.turbulence_analyzer import analyze_repo
+
+        # Write a tiny file (< 30 lines → at most 2 chunks with default chunk_size=15)
+        tiny = tmp_path / "tiny.py"
+        tiny.write_text("\n".join(f"line{i}" for i in range(20)))
+
+        report = analyze_repo(str(tmp_path), use_llm=False)
+        # Should not appear in critical_files
+        critical_paths = [f["path"] for f in report.get("critical_files", [])]
+        assert "tiny.py" not in critical_paths
+
+    def test_model_param_passed_to_report(self, tmp_path):
+        """analyze_repo with model param runs without error and returns report dict."""
+        from src.turbulence_analyzer import analyze_repo
+
+        f = tmp_path / "sample.py"
+        f.write_text("\n".join(f"x = {i}" for i in range(50)))
+
+        report = analyze_repo(str(tmp_path), use_llm=False, model="some-model")
+        assert "summary" in report

@@ -22,21 +22,27 @@ def build_report(
 
     analyses.sort(key=lambda a: -a.turbulence_score)
 
+    # "stable" tier = files too small for a meaningful score (< MIN_CHUNKS_FOR_TRIAGE)
+    # "skip"   tier = files with a calculable score below THRESHOLD_SKIP
+    # Both are reported as stable in the summary.
+    stable  = [a for a in analyses if a.tier == "stable"]
     skipped = [a for a in analyses if a.tier == "skip"]
     light   = [a for a in analyses if a.tier == "light"]
     deep    = [a for a in analyses if a.tier == "deep"]
+    stable_total = stable + skipped
 
     total_findings = sum(len(a.findings) for a in analyses)
 
     print("\n" + "=" * 60)
     print("📊 TURBULENZ-REPORT")
     print("=" * 60)
-    print(f"\n  Dateien gesamt:     {len(analyses)}")
-    print(f"  🔴 Kritisch (>50%): {len(deep)}")
-    print(f"  🟡 Mittel (20-50%): {len(light)}")
-    print(f"  ⬛ Stabil (<20%):   {len(skipped)} (übersprungen)")
-    print(f"  Findings:           {total_findings}")
-    print(f"  Redundanzen:        {len(redundancies)}")
+    print(f"\n  Dateien gesamt:       {len(analyses)}")
+    print(f"  🔴 Kritisch (>50%):   {len(deep)}")
+    print(f"  🟡 Mittel (20-50%):   {len(light)}")
+    print(f"  ⬛ Stabil (<20%):     {len(skipped)} (übersprungen)")
+    print(f"  ⬜ Zu klein (<3 Chunks): {len(stable)} (kein valider Score)")
+    print(f"  Findings:             {total_findings}")
+    print(f"  Redundanzen:          {len(redundancies)}")
 
     if deep:
         print("\n── 🔴 Kritische Dateien ──────────────────────────────")
@@ -58,19 +64,20 @@ def build_report(
             print(f"  ≈ \"{r.name_b}\" ({Path(r.file_b).name})")
             print(f"  Ähnlichkeit: {r.similarity:.0%}")
 
-    if skipped:
-        print(f"\n── ⬛ {len(skipped)} stabile Dateien übersprungen ──")
-        for a in skipped[:5]:
-            print(f"  {a.path} ({a.turbulence_score:.0%})")
-        if len(skipped) > 5:
-            print(f"  ... und {len(skipped) - 5} weitere")
+    if stable_total:
+        print(f"\n── ⬛/⬜ {len(stable_total)} stabile/kleine Dateien übersprungen ──")
+        for a in stable_total[:5]:
+            label = "(zu klein)" if a.tier == "stable" else f"({a.turbulence_score:.0%})"
+            print(f"  {a.path} {label}")
+        if len(stable_total) > 5:
+            print(f"  ... und {len(stable_total) - 5} weitere")
 
     return {
         "summary": {
             "total_files": len(analyses),
             "critical": len(deep),
             "medium": len(light),
-            "stable": len(skipped),
+            "stable": len(stable_total),
             "findings": total_findings,
             "redundancies": len(redundancies),
         },
