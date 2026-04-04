@@ -17,5 +17,5 @@ fi
 "$PYTHON" checker.py --no-limit --max-chars 190000 --cache-by-model
 
 # Stufe 3: Turbulenz-Analyse (vermischte Verantwortlichkeiten / Hot-Zones)
-# Heuristik-Modus (kein Ollama nötig). Für LLM-Modus: --llm anhängen.
+# Heuristik-Modus (kein Ollama nötig). Für LLM-Modus: --llm anhängen. -second-opinion MODEL
 "$PYTHON" checker.py --mode turbulence --llm

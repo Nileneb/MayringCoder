@@ -1,0 +1,234 @@
+{
+  "summary": {
+    "total_files": 313,
+    "critical": 7,
+    "medium": 49,
+    "stable": 257,
+    "findings": 1,
+    "redundancies": 3359
+  },
+  "critical_files": [
+    {
+      "path": "app/Providers/AppServiceProvider.php",
+      "turbulence": 0.583,
+      "hot_zones": [
+        {
+          "start_line": 15,
+          "end_line": 42,
+          "peak_score": 0.6666666666666666
+        }
+      ],
+      "findings": [
+        {
+          "zone": {
+            "start_line": 15,
+            "end_line": 42,
+            "peak_score": 0.6666666666666666
+          },
+          "problem": "Verantwortlichkeiten für die Registrierung und Bootstrapping von Diensten sind vermischt.",
+          "refactoring": "Die Registrierung von Diensten sollte in einem separaten Service gehostet werden, während das Bootstrapping von Anwendungslogik in der AppServiceProvider bleiben kann.",
+          "severity": "medium",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "path": "app/Filament/Resources/UserResource/Pages/CreateUser.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Widgets/CreditOverviewWidget.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Mail/ContactConfirmationMail.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/widgets/components/chart.js",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/code-editor.js",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/widgets/components/chart.js",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    }
+  ],
+  "redundancies": [
+    {
+      "name_a": "SendAgentMessage",
+      "file_a": "/tmp/turb_qz4dob06/app/Actions/SendAgentMessage.php:1",
+      "name_b": "SendAgentMessage",
+      "file_b": "/tmp/turb_qz4dob06/app/Jobs/ProcessPhaseAgentJob.php:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "SendAgentMessage",
+      "file_a": "/tmp/turb_qz4dob06/app/Actions/SendAgentMessage.php:1",
+      "name_b": "SendAgentMessage",
+      "file_b": "/tmp/turb_qz4dob06/tests/Feature/Actions/SendAgentMessageTest.php:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "send_agent_message",
+      "file_a": "/tmp/turb_qz4dob06/app/Actions/SendAgentMessage.php:28",
+      "name_b": "send_agent_message",
+      "file_b": "/tmp/turb_qz4dob06/app/Jobs/ProcessPhaseAgentJob.php:42",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "send_agent_message",
+      "file_a": "/tmp/turb_qz4dob06/app/Actions/SendAgentMessage.php:28",
+      "name_b": "send_agent_message",
+      "file_b": "/tmp/turb_qz4dob06/tests/Feature/Actions/SendAgentMessageTest.php:25",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "edit_user",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/UserResource/Pages/EditUser.php:1",
+      "name_b": "edit_user",
+      "file_b": "/tmp/turb_qz4dob06/app/Filament/Resources/UserResource.php:89",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "ListUsers",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/UserResource/Pages/ListUsers.php:1",
+      "name_b": "ListUsers",
+      "file_b": "/tmp/turb_qz4dob06/app/Filament/Resources/UserResource.php:74",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/app/Http/Controllers/PaperRagController.php:56",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/app/Models/ChatMessage.php:57",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/database/migrations/2026_04_02_180100_add_workspace_scope_to_projekte_and_chat_messages.php:90",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/filament/app.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/filament/echo.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/filament/filament/app.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/filament/filament/echo.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/filament/forms/components/code-editor.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/filament/support/support.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/forms/components/code-editor.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/public/js/support/support.js:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/resources/views/livewire/chat/big-research-chat.blade.php:1",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/resources/views/livewire/recherche/phase-p1.blade.php:300",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "chat_nachricht_speichern",
+      "file_a": "/tmp/turb_qz4dob06/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:29",
+      "name_b": "chat_nachricht_speichern",
+      "file_b": "/tmp/turb_qz4dob06/resources/views/livewire/recherche/phase-p3.blade.php:390",
+      "similarity": 1.0,
+      "verdict": ""
+    }
+  ]
+}
