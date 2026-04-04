@@ -18,11 +18,13 @@ def generate_report(
     run_id: str | None = None,
     commit: str | None = None,
     embedding_prefilter_meta: dict | None = None,
+    max_chars_per_file: int | None = None,
 ) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
     report_path = REPORTS_DIR / f"repo-check-{timestamp}.md"
     meta_path = REPORTS_DIR / f"repo-check-{timestamp}_meta.json"
+    _max_chars = max_chars_per_file if max_chars_per_file is not None else get_max_chars_per_file()
 
     files_total = (
         len(diff.get("changed", []))
@@ -129,7 +131,7 @@ def generate_report(
         if r.get("category"):
             lines.append(f"*Kategorie: {r['category']}*")
         if r.get("truncated"):
-            lines.append(f"*⚠ Inhalt gekürzt auf {get_max_chars_per_file()} Zeichen*")
+            lines.append(f"*⚠ Inhalt gekürzt auf {_max_chars} Zeichen*")
         lines.append("")
 
         if r.get("file_summary"):
