@@ -485,14 +485,19 @@ def second_opinion_validate(
         file_entry = file_map.get(fn, {})
         code_snippet = file_entry.get("content", "")[:500]
 
+        def _str(val, default: str = "") -> str:
+            if isinstance(val, list):
+                return " ".join(str(v) for v in val)
+            return str(val) if val is not None else default
+
         prompt = (
             _SECOND_OPINION_PROMPT
-            .replace("{type}", finding.get("type", "unknown"))
-            .replace("{severity}", finding.get("severity", "info"))
-            .replace("{filename}", fn)
-            .replace("{line_hint}", str(finding.get("line_hint", "")))
-            .replace("{evidence_excerpt}", finding.get("evidence_excerpt", "")[:300])
-            .replace("{fix_suggestion}", finding.get("fix_suggestion", "")[:200])
+            .replace("{type}", _str(finding.get("type"), "unknown"))
+            .replace("{severity}", _str(finding.get("severity"), "info"))
+            .replace("{filename}", _str(fn))
+            .replace("{line_hint}", _str(finding.get("line_hint")))
+            .replace("{evidence_excerpt}", _str(finding.get("evidence_excerpt"))[:300])
+            .replace("{fix_suggestion}", _str(finding.get("fix_suggestion"))[:200])
             .replace("{code_snippet}", code_snippet)
         )
 
