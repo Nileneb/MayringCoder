@@ -2,7 +2,7 @@
 set -e
 
 PYTHON=".venv/bin/python"
-COMMON="--no-limit --max-chars 9000 --cache-by-model"
+COMMON="--no-limit --max-chars 190000 --cache-by-model"
 
 MODELS=(
     "llama3.1:8b"
@@ -27,4 +27,8 @@ for model in "${MODELS[@]}"; do
 done
 
 echo ""
-echo "Alle Modelle abgeschlossen."
+echo "--- Stufe 3: Turbulenz-Analyse ---"
+"$PYTHON" turbulence_run.py --llm
+
+echo ""
+echo "Alle Modelle und Turbulenz-Analyse abgeschlossen."

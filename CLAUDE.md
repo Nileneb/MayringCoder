@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Wichtig: Projektkontext
+
+Immer ausschließlich in dem Verzeichnis arbeiten, in dem diese Claude-Code-Instanz geöffnet wurde. Auch wenn ein GitHub Issue auf ein anderes Repository verweist: keine Dateien außerhalb des aktuellen Arbeitsverzeichnisses anlegen oder ändern. Stattdessen den Nutzer darauf hinweisen, dass er Claude Code im jeweiligen anderen Projektverzeichnis öffnen soll.
+
 ## Commands
 
 **Setup:**

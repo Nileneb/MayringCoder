@@ -15,16 +15,16 @@ EXPLAINER_PROMPT = PROMPTS_DIR / "explainer.md"
 OVERVIEW_PROMPT = PROMPTS_DIR / "overview.md"
 
 # Token / budget limits
-MAX_CHARS_PER_FILE = 3000
-MAX_FILES_PER_RUN = 20          # 0 = kein Limit
+MAX_CHARS_PER_FILE = 20000
+MAX_FILES_PER_RUN = 0          # 0 = kein Limit
 MAX_FINDINGS_PER_FILE = 10
 
 # GPU batching — pause every BATCH_SIZE files to cool down
-BATCH_SIZE = 25
-BATCH_DELAY_SECONDS = 5
+BATCH_SIZE = 15
+BATCH_DELAY_SECONDS = 10
 
 # Project context budget (Phase 1: overview cache → prompt prefix)
-MAX_CONTEXT_CHARS = 2000  # ~500 tokens
+MAX_CONTEXT_CHARS = 6000  # ~500 tokens
 
 # RAG context (Phase 2: ChromaDB similarity search)
 RAG_TOP_K = 5                          # Number of similar context entries to inject
