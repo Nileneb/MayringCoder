@@ -1,0 +1,45 @@
+{
+  "repo": "https://github.com/Nileneb/app.linn.games",
+  "timestamp": "2026-04-04_1723",
+  "model": "mistral:7b-instruct",
+  "run_id": "mistral:7b-instruct",
+  "diff_stats": {
+    "changed": 0,
+    "added": 0,
+    "removed": 2,
+    "unchanged": 141
+  },
+  "selected_files": [
+    "deploy.sh",
+    "package.json",
+    "app/Actions/SendAgentMessage.php",
+    "app/Http/Controllers/PaperRagController.php",
+    "app/Jobs/DownloadPaperJob.php",
+    "app/Jobs/IngestPaperJob.php",
+    "app/Livewire/Concerns/HasCrudEntity.php",
+    "app/Services/AgentDailyLimitExceededException.php",
+    "app/Services/CreditService.php",
+    "app/Services/EmbeddingService.php",
+    "app/Services/PdfParserService.php",
+    "app/Services/UnpaywallService.php",
+    "tests/Feature/IngestPaperJobTest.php",
+    "tests/Feature/Controllers/PaperRagControllerTest.php",
+    "tests/Feature/Recherche/AgentActionButtonTest.php",
+    "tests/Feature/Services/CreditServiceTest.php",
+    "tests/Feature/Services/EmbeddingServiceTest.php",
+    "tests/Feature/Services/PdfParserServiceTest.php",
+    "tests/Feature/Services/UnpaywallServiceTest.php"
+  ],
+  "skipped_files": [],
+  "truncation_flags": [],
+  "parse_errors": [
+    "app/Jobs/DownloadPaperJob.php",
+    "app/Jobs/IngestPaperJob.php",
+    "app/Services/EmbeddingService.php",
+    "app/Services/PdfParserService.php",
+    "tests/Feature/IngestPaperJobTest.php",
+    "tests/Feature/Services/UnpaywallServiceTest.php"
+  ],
+  "run_time_s": 830.34,
+  "embedding_prefilter": null
+}

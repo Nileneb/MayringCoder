@@ -1,0 +1,21 @@
+{
+  "repo": "https://github.com/Nileneb/app.linn.games",
+  "timestamp": "2026-04-04_1616",
+  "model": "llama3.1:8b",
+  "run_id": "llama3.1:8b",
+  "diff_stats": {
+    "changed": 1,
+    "added": 4,
+    "removed": 0,
+    "unchanged": 132
+  },
+  "selected_files": [
+    "app/Http/Controllers/PaperRagController.php",
+    "storage/app/private/.gitignore",
+    "tests/Feature/Controllers/PaperRagControllerTest.php"
+  ],
+  "skipped_files": [],
+  "truncation_flags": [],
+  "parse_errors": [],
+  "run_time_s": 35.39
+}
