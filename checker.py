@@ -339,7 +339,6 @@ def main() -> None:
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
     if args.mode == "turbulence":
-        from src.model_selector import resolve_model
         # Priority: --model CLI flag → TURB_MODEL env → interactive (if --llm) → fallback
         turb_model = resolve_model(
             ollama_url,
