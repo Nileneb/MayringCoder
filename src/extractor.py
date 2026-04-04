@@ -13,12 +13,13 @@ import json
 import re
 from pathlib import Path
 
-from src.analyzer import _load_prompt
-
+# Load the extraction prompt from file; fall back to an inline default so the
+# module works without the prompts directory (e.g. in isolated unit tests).
+_EXTRACT_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extract_findings.md"
 try:
-    _EXTRACT_PROMPT = _load_prompt(Path(__file__).parent.parent / "prompts" / "extract_findings.md")
+    EXTRACT_PROMPT: str = _EXTRACT_PROMPT_PATH.read_text(encoding="utf-8")
 except Exception:
-    _EXTRACT_PROMPT = """Du erhältst eine rohe LLM-Antwort (Freitext oder teilweise formatiert).
+    EXTRACT_PROMPT = """Du erhältst eine rohe LLM-Antwort (Freitext oder teilweise formatiert).
 
 Extrahiere daraus ALLE Findings (= kodierte Erkenntnisse), die alle 5 Pflichtfelder haben:
   1. datei:      Welche Datei ist betroffen? (Dateiname oder "gesamte Datei")
@@ -45,6 +46,9 @@ Antworte NUR mit diesem JSON-Format, keine Prosa:
   ]
 }
 """
+
+# Backward-compat alias — callers that imported the private name still work.
+_EXTRACT_PROMPT = EXTRACT_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -131,41 +135,23 @@ def extract_python_signatures(content: str) -> dict:
 # Stage 2: Freetext → Structured findings extraction
 # ---------------------------------------------------------------------------
 
-def extract_freetext_findings(
-    raw_response: str,
-    ollama_url: str,
-    model: str,
-    filename: str,
-    category: str,
-) -> list[dict]:
-    """Stage-2 extraction: extract structured findings from unstructured LLM output.
+def parse_freetext_findings(raw_response: str, filename: str) -> list[dict]:
+    """Stage-2 fast path: extract findings from unstructured LLM output via regex.
 
-    Strategy (fastest first):
-    1. Regex extraction — no network call, covers list/bullet-formatted output.
-    2. LLM extraction — only if regex yields nothing; costs one more API call.
-
-    Falls back to an empty list if both strategies fail or Ollama is unreachable.
+    No network calls. Covers list/bullet-formatted output.
+    Returns an empty list when no smell keywords are found — the caller should
+    then decide whether to make a second LLM call (see analyzer.py Stage-2 block).
     """
-    # Fast path: regex-based extraction (no second LLM call)
-    quick = _regex_extract_findings(raw_response, filename)
-    if quick:
-        return quick
+    return _regex_extract_findings(raw_response, filename)
 
-    # Slow path: second LLM call only when regex found nothing
-    prompt = (
-        _EXTRACT_PROMPT
-        + "\n\n## Rohe LLM-Antwort\n\n"
-        + raw_response.strip()
-    )
 
-    try:
-        from src.analyzer import _ollama_generate
+def parse_llm_extraction(raw: str, filename: str) -> list[dict]:
+    """Parse the JSON response from an LLM extraction call (extract_findings.md).
 
-        raw = _ollama_generate(prompt, ollama_url, model, f"[EXTRACT] {filename}")
-    except Exception:
-        return []
-
-    # Try JSON fences first, then raw JSON, then fall back
+    No network calls. Expects the raw string output of an Ollama generate call
+    that was prompted with EXTRACT_PROMPT. Returns structured findings or [].
+    """
+    # Try JSON fences first, then bare JSON object
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if not m:
         m = re.search(r"(\{.*\})", raw, re.DOTALL)
@@ -176,26 +162,43 @@ def extract_freetext_findings(
     except (json.JSONDecodeError, ValueError):
         return []
 
-    findings_raw: list[dict] = parsed if isinstance(parsed, list) else parsed.get("findings", [])
+    findings_raw: list[dict] = (
+        parsed if isinstance(parsed, list) else parsed.get("findings", [])
+    )
 
     mandatory_keys = {"datei", "typ", "begründung", "empfehlung"}
     result: list[dict] = []
-
     for f in findings_raw:
-        # All mandatory fields must be non-empty strings
-        if not all(str(v).strip() for k, v in f.items() if k in mandatory_keys):
+        # All mandatory keys must be present AND contain non-empty strings.
+        if not mandatory_keys.issubset(f.keys()):
+            continue
+        if not all(str(f[k]).strip() for k in mandatory_keys):
             continue
         result.append({
-            "type":            f.get("typ", "freitext"),
-            "line_hint":       f.get("zeile", ""),
+            "type":             f.get("typ", "freitext"),
+            "line_hint":        f.get("zeile", ""),
             "evidence_excerpt": f.get("begründung", "")[:200],
-            "fix_suggestion":  f.get("empfehlung", ""),
-            "confidence":      "low",
-            "severity":        "info",
-            "source":          "freetext_extraction",
+            "fix_suggestion":   f.get("empfehlung", ""),
+            "confidence":       "low",
+            "severity":         "info",
+            "source":           "freetext_extraction",
         })
-
     return result
+
+
+def extract_freetext_findings(
+    raw_response: str,
+    ollama_url: str,
+    model: str,
+    filename: str,
+    category: str,
+) -> list[dict]:
+    """Deprecated: regex-only extraction (LLM fallback moved to analyzer.py).
+
+    Kept for backward compatibility. Only the fast regex path runs here;
+    the LLM fallback is now orchestrated by analyzer.analyze_file().
+    """
+    return parse_freetext_findings(raw_response, filename)
 
 
 # ---------------------------------------------------------------------------

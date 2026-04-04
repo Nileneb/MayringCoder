@@ -210,12 +210,26 @@ def analyze_file(
 
     if parsed is None:
         # Stage 2: Try to extract structured findings from unstructured output.
+        # Fast path — pure regex, no network call.
         try:
-            from src.extractor import extract_freetext_findings
+            from src.extractor import parse_freetext_findings, parse_llm_extraction, EXTRACT_PROMPT
 
-            extracted = extract_freetext_findings(
-                raw_response, ollama_url, model, filename, category
-            )
+            extracted = parse_freetext_findings(raw_response, filename)
+
+            # Slow path — second LLM call only when regex found nothing.
+            if not extracted:
+                extraction_prompt = (
+                    EXTRACT_PROMPT
+                    + "\n\n## Rohe LLM-Antwort\n\n"
+                    + raw_response.strip()
+                )
+                try:
+                    raw_extraction = _ollama_generate(
+                        extraction_prompt, ollama_url, model, f"[EXTRACT] {filename}"
+                    )
+                    extracted = parse_llm_extraction(raw_extraction, filename)
+                except Exception:
+                    extracted = []
         except Exception:
             extracted = []
 
