@@ -38,7 +38,7 @@ done
 
 echo ""
 echo "--- Stufe 3: Turbulenz-Analyse (einmalig, Heuristik) ---"
-"$PYTHON" checker.py --mode turbulence
+"$PYTHON" checker.py --mode turbulence --llm
 
 echo ""
 echo "========================================"
