@@ -3,15 +3,7 @@
 import json
 from datetime import datetime
 
-from src.config import MAX_CHARS_PER_FILE, REPORTS_DIR
-
-_ACTIVE_MAX_CHARS_PER_FILE = MAX_CHARS_PER_FILE
-
-
-def set_max_chars_per_file(limit: int) -> None:
-    """Override truncation label limit shown in reports at runtime."""
-    global _ACTIVE_MAX_CHARS_PER_FILE
-    _ACTIVE_MAX_CHARS_PER_FILE = max(1, int(limit))
+from src.config import REPORTS_DIR, get_max_chars_per_file
 
 _SEV_EMOJI = {"critical": "🔴", "warning": "🟡", "info": "🟢"}
 
@@ -116,7 +108,7 @@ def generate_report(
         if r.get("category"):
             lines.append(f"*Kategorie: {r['category']}*")
         if r.get("truncated"):
-            lines.append(f"*⚠ Inhalt gekürzt auf {_ACTIVE_MAX_CHARS_PER_FILE} Zeichen*")
+            lines.append(f"*⚠ Inhalt gekürzt auf {get_max_chars_per_file()} Zeichen*")
         lines.append("")
 
         if r.get("file_summary"):

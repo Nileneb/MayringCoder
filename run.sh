@@ -11,7 +11,11 @@ if [ -z "${OLLAMA_MODEL:-}" ]; then
 fi
 
 # Stufe 1: Alle Dateien kartieren (was macht jede Datei?)
-"$PYTHON" checker.py --mode overview --no-limit --max-chars 9000 --cache-by-model
+"$PYTHON" checker.py --mode overview --no-limit --max-chars 190000 --cache-by-model
 
 # Stufe 2: Fehlersuche über alle/ausgewählte Dateien
-"$PYTHON" checker.py --no-limit --max-chars 9000 --cache-by-model
+"$PYTHON" checker.py --no-limit --max-chars 190000 --cache-by-model
+
+# Stufe 3: Turbulenz-Analyse (vermischte Verantwortlichkeiten / Hot-Zones)
+# Heuristik-Modus (kein Ollama nötig). Für LLM-Modus: --llm anhängen.
+"$PYTHON" turbulence_run.py --llm

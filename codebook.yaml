@@ -46,7 +46,27 @@ exclude_patterns:
   - "*/.generated/*"
   - "*/auto-generated/*"
 
-  # 5. Binärdateien & Medien
+  # 5. Dokumentation & Markdown — kein Code, keine Analyse nötig
+  - "README*"
+  - "readme*"
+  - "CHANGELOG*"
+  - "changelog*"
+  - "CONTRIBUTING*"
+  - "contributing*"
+  - "LICENSE*"
+  - "license*"
+  - "NOTICE*"
+  - "AUTHORS*"
+  - "SECURITY*"
+  - "CODE_OF_CONDUCT*"
+  - "*.md"
+  - "*.rst"
+  - "*.txt"
+  - "*/docs/*"
+  - "*/doc/*"
+  - "*/.github/*"
+
+  # 6. Binärdateien & Medien
   - "*.png"
   - "*.jpg"
   - "*.jpeg"
@@ -105,6 +125,21 @@ exclude_patterns:
   - "*/docs/api/*"
   - "*/.docusaurus/*"
   - "*/_site/*"
+
+  # 9. Laravel: generierte / boilerplate Dateien — Parse-Fehler ohne Mehrwert
+  # Blade-Templates sind HTML+PHP-Mix, kein reiner Code
+  - "*.blade.php"
+  - "*/resources/views/*"
+  # Migrationen: SQL-Boilerplate, Schema-Definitionen ohne Logik
+  - "*/database/migrations/*"
+  # Factories & Seeders: Test-Fixtures, kein Produktionscode
+  - "*/database/factories/*"
+  - "*/database/seeders/*"
+  # Konfigurationsdateien: meist nur Arrays/Konstanten
+  - "config/*.php"
+  - "*.env"
+  - ".env*"
+  - "*.env.example"
 
 # ---------------------------------------------------------------------------
 # Kategorien — Mayring Stufe 1: Strukturierung

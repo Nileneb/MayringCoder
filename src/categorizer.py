@@ -79,14 +79,19 @@ def _matches_patterns(filename: str, patterns: list[str]) -> bool:
                 return True
         else:
             # Convert glob wildcards to regex
-            # "**" matches any path segment, "*" matches within a segment
-            regex = re.escape(pat).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+            # "**" matches any number of path segments (including zero)
+            # "*" matches any non-slash characters (zero or more)
+            regex = re.escape(pat).replace(r"\*\*", "SPLIT_MARKER")
+            regex = regex.replace(r"\*", "[^/]*").replace("SPLIT_MARKER", ".*?")
             # Allow */dir/* to also match at root level (dir/*)
             if regex.startswith("[^/]*/"):
                 regex = "(?:[^/]*/)?" + regex[len("[^/]*/"):]
             # Trailing /* should match any depth inside a directory
             if regex.endswith("/[^/]*"):
-                regex = regex[: -len("[^/]*")] + ".*"
+                regex = regex[: -len("/[^/]*")] + ".*"
+            # **/foo/** — allow the leading .*? to also match empty (root level)
+            if regex.startswith(".*?/"):
+                regex = "(?:.*?/)?" + regex[len(".*?/"):]
             if re.search(regex + r"$", filename, re.IGNORECASE):
                 return True
     return False

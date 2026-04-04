@@ -6,19 +6,10 @@ snapshots(id, repo, commit, created_at, raw_source_ref)
 file_versions(id, snapshot_id FK, filename, hash, size)
 """
 
-import re
 import sqlite3
 from datetime import datetime
-from urllib.parse import urlparse
 
-from src.config import CACHE_DIR, MAX_FILES_PER_RUN, RISK_CATEGORIES
-
-
-def _repo_slug(repo_url: str) -> str:
-    parsed = urlparse(repo_url)
-    slug = parsed.path.strip("/").replace("/", "-").lower()
-    slug = re.sub(r"[^a-z0-9\-]", "", slug)
-    return slug or "repo"
+from src.config import CACHE_DIR, MAX_FILES_PER_RUN, RISK_CATEGORIES, repo_slug as _repo_slug
 
 
 def reset_repo(repo_url: str, run_key: str | None = None) -> str | None:

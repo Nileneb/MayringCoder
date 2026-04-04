@@ -1,33 +1,28 @@
 """LLM analysis via Ollama — Mayring Stufen 2 + 3.
 
 Stufe 2 (Reduktion): LLM analysiert jede geänderte Datei, gibt strukturiertes JSON zurück.
-Stufe 3 (Explikation): Findings mit confidence=low werden als needs_explikation=True markiert
-                       (kein automatischer 2. LLM-Call — manueller Re-Run mit explainer.md).
+Stufe 3 (Explikation): Findings mit confidence=low werden als needs_explikation=True markiert.
 """
 
 import json
 import re
 import time
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
 from src.config import (
     BATCH_DELAY_SECONDS,
     BATCH_SIZE,
-    MAX_CHARS_PER_FILE,
     MAX_FINDINGS_PER_FILE,
     OLLAMA_TIMEOUT,
+    get_max_chars_per_file,
 )
 
-_ACTIVE_MAX_CHARS_PER_FILE = MAX_CHARS_PER_FILE
-
-
-def set_max_chars_per_file(limit: int) -> None:
-    """Override per-file truncation limit at runtime."""
-    global _ACTIVE_MAX_CHARS_PER_FILE
-    _ACTIVE_MAX_CHARS_PER_FILE = max(1, int(limit))
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _ensure_str(value: object) -> str:
     """Coerce an LLM-returned value to a plain string."""
@@ -47,12 +42,17 @@ def _load_prompt(path: Path | str) -> str:
 
 
 def _truncate(content: str) -> tuple[str, bool]:
-    if len(content) > _ACTIVE_MAX_CHARS_PER_FILE:
-        trimmed = content[:_ACTIVE_MAX_CHARS_PER_FILE]
+    limit = get_max_chars_per_file()
+    if len(content) > limit:
+        trimmed = content[:limit]
         suffix = f"\n\n[... gekürzt, Original {len(content)} Zeichen]"
         return trimmed + suffix, True
     return content, False
 
+
+# ---------------------------------------------------------------------------
+# Stage 2: Structured JSON extraction from LLM response
+# ---------------------------------------------------------------------------
 
 def _parse_llm_json(raw: str) -> dict | None:
     """Extract a JSON object from the LLM response; handles markdown code fences."""
@@ -76,7 +76,7 @@ def _freetext_fallback(raw: str) -> dict:
         "file_summary": "",
         "potential_smells": [
             {
-                "type": "freetext",
+                "type": "freitext",
                 "severity": "info",
                 "confidence": "low",
                 "line_hint": "",
@@ -104,6 +104,52 @@ def _freetext_fallback_sozial(raw: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Ollama core
+# ---------------------------------------------------------------------------
+
+def _ollama_generate(prompt: str, ollama_url: str, model: str, label: str) -> str:
+    """Send a prompt to Ollama and collect the streamed response.
+
+    Uses stream=True so httpx's read_timeout fires if the model stops producing
+    tokens for OLLAMA_TIMEOUT seconds — prevents the 19-minute hangs that occur
+    with stream=False (server holds connection open until generation is complete).
+    """
+    for attempt in range(_MAX_RETRIES):
+        try:
+            chunks: list[str] = []
+            with httpx.stream(
+                "POST",
+                f"{ollama_url}/api/generate",
+                json={"model": model, "prompt": prompt, "stream": True},
+                timeout=OLLAMA_TIMEOUT,
+            ) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    chunks.append(data.get("response", ""))
+                    if data.get("done"):
+                        break
+            return "".join(chunks)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            if attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
+                print(f"    ⟳ Retry {attempt + 1}/{_MAX_RETRIES} für {label} (in {delay}s) …", flush=True)
+                time.sleep(delay)
+            else:
+                raise
+    raise RuntimeError("unreachable")
+
+
+# ---------------------------------------------------------------------------
+# Analyze
+# ---------------------------------------------------------------------------
+
 def analyze_file(
     file: dict,
     prompt_template: str,
@@ -111,6 +157,23 @@ def analyze_file(
     model: str,
     project_context: str | None = None,
 ) -> dict:
+    """Analyze one file. Uses a two-stage output strategy:
+
+    Stage 1: Primary LLM call — accepts any output format.
+    Stage 2: If Stage 1 returns no valid JSON → Stage-2 extractor parses the
+             freetext response for structured findings (requires mandatory fields).
+
+    Args:
+        file:             File dict with at least 'filename', 'content', 'category'.
+        prompt_template:  The main analysis prompt (file_inspector.md or similar).
+        ollama_url:       Ollama base URL.
+        model:            Model name.
+        project_context:  Optional project-wide context injected before the file block.
+
+    Returns:
+        Dict with 'filename', 'category', 'truncated', 'file_summary',
+        'potential_smells' / 'codierungen', '_parse_error'.
+    """
     filename = file["filename"]
     category = file.get("category", "uncategorized")
     content, truncated = _truncate(file["content"])
@@ -126,26 +189,7 @@ def analyze_file(
     prompt = "\n".join(parts)
 
     try:
-        raw_response = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                resp = httpx.post(
-                    f"{ollama_url}/api/generate",
-                    json={"model": model, "prompt": prompt, "stream": False},
-                    timeout=OLLAMA_TIMEOUT,
-                )
-                resp.raise_for_status()
-                raw_response = resp.json()["response"]
-                break
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
-                    print(f"    ⟳ Retry {attempt + 1}/{_MAX_RETRIES} für {filename} (in {delay}s) …", flush=True)
-                    time.sleep(delay)
-                else:
-                    raise
-        if raw_response is None:
-            return {"filename": filename, "error": "Kein Response nach Retries."}
+        raw_response = _ollama_generate(prompt, ollama_url, model, filename)
     except httpx.ConnectError:
         return {
             "filename": filename,
@@ -165,9 +209,34 @@ def analyze_file(
     is_sozial = parsed is not None and "codierungen" in parsed
 
     if parsed is None:
+        # Stage 2: Try to extract structured findings from unstructured output.
+        try:
+            from src.extractor import extract_freetext_findings
+
+            extracted = extract_freetext_findings(
+                raw_response, ollama_url, model, filename, category
+            )
+        except Exception:
+            extracted = []
+
+        if extracted:
+            result: dict = {
+                "filename": filename,
+                "category": category,
+                "truncated": truncated,
+                "file_summary": "",
+                "_parse_error": True,
+                "_stage2_extracted": True,
+                "potential_smells": extracted,
+            }
+            for smell in result["potential_smells"]:
+                if smell.get("confidence", "high").lower() == "low":
+                    smell["needs_explikation"] = True
+            return result
+        # No structured findings extracted — fall back to raw dump.
         parsed = _freetext_fallback_sozial(raw_response) if is_sozial else _freetext_fallback(raw_response)
 
-    result: dict = {
+    result = {
         "filename": filename,
         "category": category,
         "truncated": truncated,
@@ -178,7 +247,6 @@ def analyze_file(
     if is_sozial:
         codierungen = parsed.get("codierungen", [])[:MAX_FINDINGS_PER_FILE]
         for c in codierungen:
-            # Sanitize null values from LLM output.
             for key in ("evidence_excerpt", "reasoning", "type", "kategorie"):
                 if c.get(key) is None:
                     c[key] = ""
@@ -190,7 +258,6 @@ def analyze_file(
     else:
         smells = parsed.get("potential_smells", [])[:MAX_FINDINGS_PER_FILE]
         for smell in smells:
-            # Sanitize null values from LLM output.
             for key in ("evidence_excerpt", "reasoning", "type", "severity"):
                 if smell.get(key) is None:
                     smell[key] = ""
@@ -208,8 +275,9 @@ def analyze_files(
     ollama_url: str,
     model: str,
     project_context: str | None = None,
-    context_fn: "Callable[[dict], str | None] | None" = None,
+    context_fn: Callable[[dict], str | None] | None = None,
 ) -> list[dict]:
+    """Analyze multiple files, optionally enriching each with per-file context."""
     prompt_template = _load_prompt(prompt_path)
     file_map = {f["filename"]: f for f in files}
     results = []
@@ -217,7 +285,6 @@ def analyze_files(
     for i, fn in enumerate(filenames_to_check, 1):
         print(f"  [{i}/{total}] {fn} ...", flush=True)
         file = file_map[fn]
-        # Per-file RAG context takes priority, then global fallback
         ctx = None
         if context_fn is not None:
             ctx = context_fn(file)
@@ -253,26 +320,7 @@ def overview_file(
     )
 
     try:
-        raw_response = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                resp = httpx.post(
-                    f"{ollama_url}/api/generate",
-                    json={"model": model, "prompt": prompt, "stream": False},
-                    timeout=OLLAMA_TIMEOUT,
-                )
-                resp.raise_for_status()
-                raw_response = resp.json()["response"]
-                break
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
-                    print(f"    ⟳ Retry {attempt + 1}/{_MAX_RETRIES} für {filename} (in {delay}s) …", flush=True)
-                    time.sleep(delay)
-                else:
-                    raise
-        if raw_response is None:
-            return {"filename": filename, "error": "Kein Response nach Retries."}
+        raw_response = _ollama_generate(prompt, ollama_url, model, filename)
     except httpx.ConnectError:
         return {"filename": filename, "error": f"Ollama nicht erreichbar unter {ollama_url}"}
     except httpx.TimeoutException:
@@ -284,12 +332,23 @@ def overview_file(
     summary = parsed.get("file_summary", raw_response.strip()) if parsed else raw_response.strip()
     summary = _ensure_str(summary)
 
-    return {
+    result = {
         "filename": filename,
         "category": category,
         "truncated": truncated,
         "file_summary": summary,
     }
+
+    # Enrich with signature extraction for Phase 3 (redundancy check).
+    try:
+        from src.extractor import extract_python_signatures
+
+        if filename.endswith(".py"):
+            result["_signatures"] = extract_python_signatures(content)
+    except Exception:
+        pass
+
+    return result
 
 
 def overview_files(

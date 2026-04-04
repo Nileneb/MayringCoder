@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from src.aggregator import aggregate_findings
-from src.analyzer import analyze_files, overview_files, set_max_chars_per_file as set_analyzer_max_chars
+from src.aggregator import aggregate_findings, aggregate_with_redundancy
+from src.analyzer import analyze_files, overview_files
 from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
 from src.categorizer import (
     categorize_files,
@@ -21,7 +21,7 @@ from src.categorizer import (
     load_exclude_patterns,
     load_mayringignore,
 )
-from src.config import CACHE_DIR, CODEBOOK_PATH, DEFAULT_PROMPT, EMBEDDING_MODEL, MAX_FILES_PER_RUN, OVERVIEW_PROMPT
+from src.config import CACHE_DIR, CODEBOOK_PATH, DEFAULT_PROMPT, EMBEDDING_MODEL, MAX_FILES_PER_RUN, OVERVIEW_PROMPT, PROMPTS_DIR, set_max_chars_per_file
 from src.context import (
     index_overview_to_vectordb,
     load_overview_context,
@@ -33,7 +33,7 @@ from src.exporter import export_results
 from src.fetcher import fetch_repo
 from src.history import cleanup_runs, compare_runs, generate_run_id, list_runs, save_run
 from src.model_selector import resolve_model
-from src.report import generate_report, generate_overview_report, set_max_chars_per_file as set_report_max_chars
+from src.report import generate_report, generate_overview_report
 from src.splitter import split_into_files
 
 
@@ -61,6 +61,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cleanup", type=int, metavar="N", help="Nur die N neuesten Runs behalten, Rest löschen")
     p.add_argument("--resolve-model-only", action="store_true",
                    help="Gibt nur den aufgelösten Modellnamen aus und beendet (für Shell-Skripting)")
+    p.add_argument("--min-confidence", choices=["high", "medium", "low"], default="low",
+                   help="Minimale Confidence-Schwelle für Findings (Standard: low). "
+                        "'high' zeigt nur Findings mit confidence=high (reduziert Falsch-Positive). "
+                        "'medium' zeigt high+medium.")
+    p.add_argument("--adversarial", action="store_true",
+                   help="Jedes Finding wird durch einen zweiten LLM-Call (Advocatus Diaboli) "
+                        "geprüft. ABGELEHNT-Findings werden verworfen. "
+                        "Erhöht Token-Kosten, reduziert Falsch-Positive drastisch.")
+    p.add_argument("--adversarial-cost-report", action="store_true",
+                   help="Zeigt nach der Analyse: wie viele Findings BESTÄTIGT vs. ABGELEHNT wurden.")
     return p.parse_args()
 
 
@@ -68,6 +78,21 @@ def _repo_slug_for_debug(repo_url: str) -> str:
     parsed = urlparse(repo_url)
     slug = parsed.path.strip("/").replace("/", "-").lower()
     return re.sub(r"[^a-z0-9\-]", "", slug) or "repo"
+
+
+def _is_test_file(filename: str) -> bool:
+    """Return True if *filename* looks like a test file (heuristic)."""
+    import re as _re
+    patterns = [
+        _re.compile(r"(?:^|/)(?:test[s]?[_\-].*|tests?|spec|__tests?__)", _re.IGNORECASE),
+        _re.compile(r"_test\.(?:py|php|js|ts|go|java)$", _re.IGNORECASE),
+        _re.compile(r"(?:^|/)(?:test)\.\w+$", _re.IGNORECASE),
+    ]
+    return any(p.search(filename) for p in patterns)
+
+
+def _load_prompt(path: Path | str) -> str:
+    return Path(path).read_text(encoding="utf-8")
 
 
 def main() -> None:
@@ -97,8 +122,7 @@ def main() -> None:
         # Keep one control variable: context budget follows per-file budget (2/3 ratio).
         max_chars_per_file = args.max_chars
         max_context_chars = max(500, (max_chars_per_file * 2) // 3)
-        set_analyzer_max_chars(max_chars_per_file)
-        set_report_max_chars(max_chars_per_file)
+        set_max_chars_per_file(max_chars_per_file)
         set_max_context_chars(max_context_chars)
         print(
             f"Limits aktiv: Datei={max_chars_per_file} Zeichen, "
@@ -346,12 +370,42 @@ def main() -> None:
             if project_context:
                 print("  Projektkontext aus Overview-Cache geladen (Phase 1 Fallback)")
 
-        print(f"\nAnalysiere {len(filenames_to_check)} Dateien mit {model} ...")
-        results = analyze_files(
-            files, filenames_to_check, prompt_path, ollama_url, model,
-            project_context=project_context,
-            context_fn=rag_context_fn,
-        )
+        # ── P6: Separate test-prompt routing ─────────────────────────────────
+        # Split files into test vs non-test. Test files get test_inspector.md.
+        test_prompt_path = PROMPTS_DIR / "test_inspector.md"
+        use_test_prompt = test_prompt_path.exists()
+
+        test_files, non_test_files = [], []
+        for fn in filenames_to_check:
+            if _is_test_file(fn):
+                test_files.append(fn)
+            else:
+                non_test_files.append(fn)
+
+        if test_files and use_test_prompt:
+            print(f"  → {len(test_files)} Test-Datei(en) werden mit test_inspector.md analysiert")
+
+        results: list[dict] = []
+
+        # ── Main analysis (non-test files) ───────────────────────────────────
+        if non_test_files:
+            print(f"\nAnalysiere {len(non_test_files)} Nicht-Test-Dateien mit {model} ...")
+            batch_results = analyze_files(
+                files, non_test_files, prompt_path, ollama_url, model,
+                project_context=project_context,
+                context_fn=rag_context_fn,
+            )
+            results.extend(batch_results)
+
+        # ── Test analysis (test_inspector.md) ───────────────────────────────
+        if test_files and use_test_prompt:
+            print(f"\nAnalysiere {len(test_files)} Test-Dateien mit {model} (test_inspector.md) ...")
+            batch_results = analyze_files(
+                files, test_files, test_prompt_path, ollama_url, model,
+                project_context=None,
+                context_fn=None,
+            )
+            results.extend(batch_results)
 
         # Mark successfully analyzed files so they leave the backlog queue
         if conn is not None and diff.get("snapshot_id") is not None:
@@ -362,13 +416,64 @@ def main() -> None:
         if conn:
             conn.close()
 
-        # 6. Aggregate (Mayring Stufe 4: Zusammenführung)
-        aggregation = aggregate_findings(results)
+        # ── P5: Adversarial validation (Advocatus Diaboli) ───────────────────
+        adversarial_stats: dict | None = None
+        if args.adversarial:
+            print(f"\nAdvocatus Diaboli: prüfe {len(results)} Findings ...", flush=True)
+            from src.extractor import validate_findings
+            all_findings: list[dict] = []
+            for r in results:
+                if "error" in r:
+                    continue
+                for smell in r.get("potential_smells", []):
+                    all_findings.append({**smell, "_filename": r["filename"]})
+            if all_findings:
+                validated, adversarial_stats = validate_findings(
+                    all_findings, results, ollama_url, model,
+                    min_confidence=args.min_confidence,
+                )
+                n_total = len(all_findings)
+                n_rejected = adversarial_stats["rejected"]
+                print(
+                    f"  Adversarial: {adversarial_stats['validated']}/{n_total} BESTÄTIGT, "
+                    f"{n_rejected} ABGELEHNT, "
+                    f"{adversarial_stats.get('below_confidence', 0)} unter Confidence-Schwelle"
+                )
+                # Remove ABGELEHNT findings from results
+                rejected_filenames: set[str] = {f["_filename"] for f in validated}
+                for r in results:
+                    if r["filename"] not in rejected_filenames:
+                        r["potential_smells"] = [
+                            s for s in r.get("potential_smells", [])
+                            if s.get("_adversarial_verdict") != "ABGELEHNT"
+                        ]
 
-        # 7. Report
+        # ── 6. Aggregate (Mayring Stufe 4: Zusammenführung) ─────────────────
+        min_conf = args.min_confidence
+        if args.adversarial:
+            aggregation = aggregate_findings(
+                results,
+                min_confidence=min_conf,
+                adversarial_stats=adversarial_stats,
+            )
+        else:
+            aggregation = aggregate_findings(results, min_confidence=min_conf)
+
+        # ── 7. Report ───────────────────────────────────────────────────────
         elapsed = time.perf_counter() - start
         report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed, run_id=cache_run_key)
+        n_filtered = aggregation.get("_below_confidence_filtered", 0)
         print(f"\nReport: {report_path}")
+        if n_filtered > 0:
+            print(f"  → {n_filtered} Findings unter Confidence-Schwelle '{min_conf}' herausgefiltert")
+        if args.adversarial_cost_report or args.adversarial:
+            stats = aggregation.get("adversarial_stats", {})
+            if stats:
+                print(
+                    f"  Adversarial: {stats.get('validated', 0)} BESTÄTIGT, "
+                    f"{stats.get('rejected', 0)} ABGELEHNT, "
+                    f"{stats.get('errors', 0)} Fehler"
+                )
         if args.export:
             ep = export_results(results, args.export, codebook_path.name, "analyze")
             print(f"Export: {ep}")

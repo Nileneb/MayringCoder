@@ -1,26 +1,51 @@
 """Run-History — persist each analysis run as a JSON snapshot for comparison."""
 
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import CACHE_DIR
+from src.config import CACHE_DIR, repo_slug as _repo_slug
 
 
 def _runs_dir(repo_url: str) -> Path:
     """Return ``cache/{repo_slug}/runs/`` directory for the given repo."""
-    from urllib.parse import urlparse
-
-    parsed = urlparse(repo_url)
-    slug = parsed.path.strip("/").replace("/", "-").lower()
-    slug = re.sub(r"[^a-z0-9\-]", "", slug) or "repo"
-    return CACHE_DIR / slug / "runs"
+    return CACHE_DIR / _repo_slug(repo_url) / "runs"
 
 
 def generate_run_id() -> str:
     """Generate a run-ID like ``20260402-143012``."""
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def _build_run_payload(
+    run_id: str,
+    repo_url: str,
+    model: str,
+    mode: str,
+    results: list[dict],
+    diff: dict,
+    timing: float,
+    aggregation: dict | None,
+) -> dict:
+    payload = {
+        "run_id": run_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "repo_url": repo_url,
+        "model": model,
+        "mode": mode,
+        "timing_seconds": round(timing, 2),
+        "files_checked": len(results),
+        "diff_summary": {
+            "changed": len(diff.get("changed", [])),
+            "added": len(diff.get("added", [])),
+            "removed": len(diff.get("removed", [])),
+            "unchanged": len(diff.get("unchanged", [])),
+        },
+        "results": results,
+    }
+    if aggregation is not None:
+        payload["aggregation"] = aggregation
+    return payload
 
 
 def save_run(
@@ -40,32 +65,13 @@ def save_run(
     runs = _runs_dir(repo_url)
     runs.mkdir(parents=True, exist_ok=True)
 
-    # Collision handling
     out = runs / f"{run_id}.json"
     counter = 1
     while out.exists():
         out = runs / f"{run_id}_{counter}.json"
         counter += 1
 
-    payload = {
-        "run_id": out.stem,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "repo_url": repo_url,
-        "model": model,
-        "mode": mode,
-        "timing_seconds": round(timing, 2),
-        "files_checked": len(results),
-        "diff_summary": {
-            "changed": len(diff.get("changed", [])),
-            "added": len(diff.get("added", [])),
-            "removed": len(diff.get("removed", [])),
-            "unchanged": len(diff.get("unchanged", [])),
-        },
-        "results": results,
-    }
-    if aggregation is not None:
-        payload["aggregation"] = aggregation
-
+    payload = _build_run_payload(out.stem, repo_url, model, mode, results, diff, timing, aggregation)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return out
 
