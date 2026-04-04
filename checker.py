@@ -77,6 +77,11 @@ def parse_args() -> argparse.Namespace:
                         "Erhöht Token-Kosten, reduziert Falsch-Positive drastisch.")
     p.add_argument("--adversarial-cost-report", action="store_true",
                    help="Zeigt nach der Analyse: wie viele Findings BESTÄTIGT vs. ABGELEHNT wurden.")
+    p.add_argument("--second-opinion", metavar="MODEL", default=None,
+                   help="Zweites Modell für unabhängige Validierung (z. B. deepseek-coder:6.7b-instruct). "
+                        "Jedes Finding wird mit reduziertem Kontext durch ein anderes Modell geprüft. "
+                        "Verdikt: BESTÄTIGT / ABGELEHNT / PRÄZISIERT. "
+                        "Überschreibt die Umgebungsvariable SECOND_OPINION_MODEL.")
     # Embedding prefilter (Issue #11)
     p.add_argument("--embedding-prefilter", action="store_true",
                    help="Aktiviert den Embedding-Vorfilter: Dateien werden anhand semantischer "
@@ -530,16 +535,51 @@ def main() -> None:
                             if s.get("_adversarial_verdict") != "ABGELEHNT"
                         ]
 
+        # ── P5b: Second-opinion validation (different model) ────────────────
+        second_opinion_model_name = (
+            args.second_opinion
+            or os.getenv("SECOND_OPINION_MODEL")
+        )
+        second_opinion_stats: dict | None = None
+        if second_opinion_model_name:
+            from src.extractor import second_opinion_validate
+            all_findings_so: list[dict] = []
+            for r in results:
+                if "error" in r:
+                    continue
+                for smell in r.get("potential_smells", []):
+                    all_findings_so.append({**smell, "_filename": r["filename"]})
+            if all_findings_so:
+                print(
+                    f"\nSecond Opinion ({second_opinion_model_name}):"
+                    f" prüfe {len(all_findings_so)} Findings ...",
+                    flush=True,
+                )
+                validated_so, second_opinion_stats = second_opinion_validate(
+                    all_findings_so, results, ollama_url, second_opinion_model_name
+                )
+                print(
+                    f"  Second Opinion: "
+                    f"{second_opinion_stats['confirmed']} BESTÄTIGT, "
+                    f"{second_opinion_stats['rejected']} ABGELEHNT, "
+                    f"{second_opinion_stats['refined']} PRÄZISIERT, "
+                    f"{second_opinion_stats['errors']} Fehler"
+                )
+                # Remove ABGELEHNT findings from results
+                for r in results:
+                    r["potential_smells"] = [
+                        s for s in r.get("potential_smells", [])
+                        if s.get("_second_opinion_verdict") != "ABGELEHNT"
+                    ]
+
         # ── 6. Aggregate (Mayring Stufe 4: Zusammenführung) ─────────────────
         min_conf = args.min_confidence
-        if args.adversarial:
-            aggregation = aggregate_findings(
-                results,
-                min_confidence=min_conf,
-                adversarial_stats=adversarial_stats,
-            )
-        else:
-            aggregation = aggregate_findings(results, min_confidence=min_conf)
+        aggregation = aggregate_findings(
+            results,
+            min_confidence=min_conf,
+            adversarial_stats=adversarial_stats if args.adversarial else None,
+            second_opinion_stats=second_opinion_stats,
+        )
 
         # ── 7. Report ───────────────────────────────────────────────────────
         elapsed = time.perf_counter() - start
@@ -560,6 +600,13 @@ def main() -> None:
                     f"{stats.get('rejected', 0)} ABGELEHNT, "
                     f"{stats.get('errors', 0)} Fehler"
                 )
+        if second_opinion_stats:
+            print(
+                f"  Second Opinion: "
+                f"{second_opinion_stats.get('confirmed', 0)} BESTÄTIGT, "
+                f"{second_opinion_stats.get('rejected', 0)} ABGELEHNT, "
+                f"{second_opinion_stats.get('refined', 0)} PRÄZISIERT"
+            )
         if args.export:
             ep = export_results(results, args.export, codebook_path.name, "analyze")
             print(f"Export: {ep}")

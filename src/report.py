@@ -83,6 +83,21 @@ def generate_report(
             + f" · Query: _{ep['query']}_"
             + f" · {ep['files_before']} → {ep['files_after']} Dateien"
         )
+    adv_stats = aggregation.get("adversarial_stats", {})
+    if adv_stats:
+        lines.append(
+            f"- **Adversarial:** {adv_stats.get('validated', 0)} BESTÄTIGT"
+            f" · {adv_stats.get('rejected', 0)} ABGELEHNT"
+            f" · {adv_stats.get('errors', 0)} Fehler"
+        )
+    so_stats = aggregation.get("second_opinion_stats", {})
+    if so_stats:
+        lines.append(
+            f"- **Second Opinion:** {so_stats.get('confirmed', 0)} BESTÄTIGT"
+            f" · {so_stats.get('rejected', 0)} ABGELEHNT"
+            f" · {so_stats.get('refined', 0)} PRÄZISIERT"
+            f" · {so_stats.get('errors', 0)} Fehler"
+        )
     lines.append("")
 
     # --- Category Digest ---

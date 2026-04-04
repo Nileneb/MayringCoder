@@ -431,6 +431,121 @@ def validate_findings(
     return validated, stats
 
 
+# ---------------------------------------------------------------------------
+# Second-opinion validation — different model reviews primary findings
+# ---------------------------------------------------------------------------
+
+_SECOND_OPINION_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "second_opinion.md"
+try:
+    _SECOND_OPINION_PROMPT: str = _SECOND_OPINION_PROMPT_PATH.read_text(encoding="utf-8")
+except Exception:
+    _SECOND_OPINION_PROMPT = ""
+
+
+def second_opinion_validate(
+    findings: list[dict],
+    files: list[dict],
+    ollama_url: str,
+    second_opinion_model: str,
+) -> tuple[list[dict], dict]:
+    """Validate findings using a second, independent LLM model.
+
+    Sends each finding to *second_opinion_model* together with the relevant
+    code snippet. The model returns one of three verdicts:
+
+      - BESTÄTIGT  → finding is correct, keep as-is
+      - ABGELEHNT  → false positive, drop from results
+      - PRÄZISIERT → true core but severity/description adjusted
+
+    Args:
+        findings:             Flat list of findings (each has ``_filename``).
+        files:                File dicts (needed to look up content).
+        ollama_url:           Ollama base URL.
+        second_opinion_model: Model name for the second opinion.
+
+    Returns:
+        (validated_findings, stats_dict) where stats_dict contains:
+          - confirmed: count of BESTÄTIGT findings kept
+          - rejected:  count of ABGELEHNT findings dropped
+          - refined:   count of PRÄZISIERT findings kept (with adjusted severity)
+          - errors:    count of LLM call failures (kept in output, not counted as confirmed)
+    """
+    from src.analyzer import _ollama_generate
+
+    if not _SECOND_OPINION_PROMPT:
+        # Prompt file missing — pass all findings through unchanged
+        return findings, {"confirmed": len(findings), "rejected": 0, "refined": 0, "errors": 0}
+
+    file_map = {f["filename"]: f for f in files}
+    validated: list[dict] = []
+    stats = {"confirmed": 0, "rejected": 0, "refined": 0, "errors": 0}
+
+    for finding in findings:
+        fn = finding.get("_filename", "")
+        file_entry = file_map.get(fn, {})
+        code_snippet = file_entry.get("content", "")[:500]
+
+        prompt = (
+            _SECOND_OPINION_PROMPT
+            .replace("{type}", finding.get("type", "unknown"))
+            .replace("{severity}", finding.get("severity", "info"))
+            .replace("{filename}", fn)
+            .replace("{line_hint}", str(finding.get("line_hint", "")))
+            .replace("{evidence_excerpt}", finding.get("evidence_excerpt", "")[:300])
+            .replace("{fix_suggestion}", finding.get("fix_suggestion", "")[:200])
+            .replace("{code_snippet}", code_snippet)
+        )
+
+        try:
+            raw = _ollama_generate(
+                prompt, ollama_url, second_opinion_model, f"[2ND] {fn}"
+            )
+        except Exception:
+            stats["errors"] += 1
+            finding["_second_opinion_verdict"] = "ERROR"
+            validated.append(finding)
+            continue
+
+        # Parse JSON response
+        verdict = "BESTÄTIGT"
+        reasoning = ""
+        adjusted_severity: str | None = None
+        additional_note: str | None = None
+
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if not m:
+            m = re.search(r"(\{[^{}]*\})", raw, re.DOTALL)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                verdict = data.get("verdict", "BESTÄTIGT").strip().upper()
+                reasoning = data.get("reasoning", "")
+                adjusted_severity = data.get("adjusted_severity")
+                additional_note = data.get("additional_note")
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        finding["_second_opinion_verdict"] = verdict
+        if reasoning:
+            finding["_second_opinion_reasoning"] = reasoning
+        if additional_note:
+            finding["_second_opinion_note"] = additional_note
+
+        if verdict == "ABGELEHNT":
+            stats["rejected"] += 1
+        elif verdict == "PRÄZISIERT":
+            stats["refined"] += 1
+            if adjusted_severity in ("critical", "warning", "info"):
+                finding["severity"] = adjusted_severity
+            validated.append(finding)
+        else:
+            # BESTÄTIGT or unrecognised → keep
+            stats["confirmed"] += 1
+            validated.append(finding)
+
+    return validated, stats
+
+
 def filter_by_confidence(
     findings: list[dict],
     min_confidence: str = "low",

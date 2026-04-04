@@ -27,6 +27,7 @@ def aggregate_findings(
     results: list[dict],
     min_confidence: str = "low",
     adversarial_stats: dict | None = None,
+    second_opinion_stats: dict | None = None,
 ) -> dict:
     """Aggregate findings from all analyzed files.
 
@@ -125,6 +126,7 @@ def aggregate_findings(
         "stage2_extracted_count": stage2_count,
         "redundancy_candidates": [],
         "adversarial_stats": adversarial_stats or {},
+        "second_opinion_stats": second_opinion_stats or {},
         "_below_confidence_filtered": below_confidence_count,
     }
 
@@ -135,6 +137,7 @@ def aggregate_with_redundancy(
     threshold: float = 0.80,
     min_confidence: str = "low",
     adversarial_stats: dict | None = None,
+    second_opinion_stats: dict | None = None,
 ) -> dict:
     """Like aggregate_findings, but also runs the name-redundancy check.
 
@@ -143,7 +146,9 @@ def aggregate_with_redundancy(
     ``redundancy_candidates`` and added to the findings list for ranking.
     """
     agg = aggregate_findings(
-        results, min_confidence=min_confidence, adversarial_stats=adversarial_stats
+        results, min_confidence=min_confidence,
+        adversarial_stats=adversarial_stats,
+        second_opinion_stats=second_opinion_stats,
     )
 
     try:
