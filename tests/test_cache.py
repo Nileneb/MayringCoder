@@ -344,6 +344,43 @@ class TestFindChangedFiles:
         assert isinstance(result["snapshot_id"], int)
         conn.close()
 
+    def test_run_key_isolation(self, tmp_path):
+        """Analyzing with run_key A must not block run_key B from analyzing the same files."""
+        conn = self._conn(tmp_path)
+        files = [make_filespec("a.py", "aaa"), make_filespec("b.py", "bbb")]
+
+        # Run with llama-run: find + mark all files as analyzed
+        result_llama = find_changed_files(
+            conn, "https://github.com/test/repo.git", files, run_key="llama-run"
+        )
+        mark_files_analyzed(conn, result_llama["snapshot_id"], ["a.py", "b.py"], "llama-run")
+
+        # Run with qwen-run on the same files: should still need to analyze everything
+        result_qwen = find_changed_files(
+            conn, "https://github.com/test/repo.git", files, run_key="qwen-run"
+        )
+        assert set(result_qwen["selected"]) == {"a.py", "b.py"}, (
+            "qwen-run should see both files as unanalyzed, "
+            "not be blocked by llama-run's analyzed_at stamps"
+        )
+        conn.close()
+
+    def test_default_run_key_isolation(self, tmp_path):
+        """Files analyzed under 'default' must not block a named run_key."""
+        conn = self._conn(tmp_path)
+        files = [make_filespec("x.py", "xxx")]
+
+        # Default run: analyze x.py
+        result_default = find_changed_files(conn, "https://github.com/test/repo.git", files)
+        mark_files_analyzed(conn, result_default["snapshot_id"], ["x.py"])
+
+        # Named run: should still see x.py as unanalyzed
+        result_named = find_changed_files(
+            conn, "https://github.com/test/repo.git", files, run_key="my-run"
+        )
+        assert "x.py" in result_named["selected"]
+        conn.close()
+
 
 # ---------------------------------------------------------------------------
 # reset_repo

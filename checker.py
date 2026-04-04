@@ -71,6 +71,20 @@ def parse_args() -> argparse.Namespace:
                         "Erhöht Token-Kosten, reduziert Falsch-Positive drastisch.")
     p.add_argument("--adversarial-cost-report", action="store_true",
                    help="Zeigt nach der Analyse: wie viele Findings BESTÄTIGT vs. ABGELEHNT wurden.")
+    # Embedding prefilter (Issue #11)
+    p.add_argument("--embedding-prefilter", action="store_true",
+                   help="Aktiviert den Embedding-Vorfilter: Dateien werden anhand semantischer "
+                        "Ähnlichkeit zur Forschungsfrage vorselektiert. "
+                        "Reduziert LLM-Aufrufe bei großen Korpora.")
+    p.add_argument("--embedding-model", default=None, metavar="MODEL",
+                   help=f"Ollama-Embedding-Modell für den Vorfilter (Standard: {EMBEDDING_MODEL})")
+    p.add_argument("--embedding-top-k", type=int, default=20, metavar="N",
+                   help="Maximale Anzahl Dateien nach Embedding-Vorfilter (Standard: 20, 0 = kein Limit)")
+    p.add_argument("--embedding-threshold", type=float, default=None, metavar="F",
+                   help="Minimale Kosinus-Ähnlichkeit für Embedding-Vorfilter (z. B. 0.3)")
+    p.add_argument("--embedding-query", default=None, metavar="TEXT",
+                   help="Forschungsfrage / Suchbegriffe für den Embedding-Vorfilter. "
+                        "Standard: wird aus Prompt-Name und Codebook abgeleitet.")
     return p.parse_args()
 
 
@@ -256,6 +270,61 @@ def main() -> None:
         max_files = args.budget
     else:
         max_files = MAX_FILES_PER_RUN
+
+    # 3b. Embedding prefilter (Issue #11) — optional, applied before cache diff
+    embedding_prefilter_meta: dict | None = None
+    if args.embedding_prefilter:
+        from src.embedder import filter_by_embedding
+
+        embed_model = args.embedding_model or EMBEDDING_MODEL
+
+        # Derive a default query from the prompt name and codebook name
+        if args.embedding_query:
+            embed_query = args.embedding_query
+        else:
+            prompt_label = prompt_path.stem.replace("_", " ")
+            cb_label = codebook_path.stem.replace("_", " ")
+            embed_query = f"{prompt_label} {cb_label} code quality analysis"
+
+        print(
+            f"\nEmbedding-Vorfilter aktiv"
+            f" (Modell: {embed_model}, Top-K: {args.embedding_top_k}"
+            + (f", Threshold: {args.embedding_threshold}" if args.embedding_threshold is not None else "")
+            + f")"
+        )
+        print(f"  Query: {embed_query!r}")
+
+        selected_by_embed, filtered_out_by_embed = filter_by_embedding(
+            files=files,
+            query=embed_query,
+            ollama_url=ollama_url,
+            top_k=args.embedding_top_k,
+            threshold=args.embedding_threshold,
+            embedding_model=embed_model,
+            repo_url=repo_url,
+        )
+
+        n_before = len(files)
+        files = [f for f in files if f["filename"] in set(selected_by_embed)]
+        categories = {fn: cat for fn, cat in categories.items() if fn in set(selected_by_embed)}
+        print(
+            f"  → {len(files)} Dateien nach Embedding-Vorfilter"
+            f" ({n_before - len(files)} herausgefiltert)"
+        )
+
+        embedding_prefilter_meta = {
+            "model": embed_model,
+            "top_k": args.embedding_top_k,
+            "threshold": args.embedding_threshold,
+            "query": embed_query,
+            "files_before": n_before,
+            "files_after": len(files),
+            "filtered_out": filtered_out_by_embed,
+        }
+
+        if not files:
+            print("Embedding-Vorfilter hat alle Dateien herausgefiltert. Abbruch.")
+            sys.exit(0)
 
     # 4. Diff
     if args.full:
@@ -461,7 +530,11 @@ def main() -> None:
 
         # ── 7. Report ───────────────────────────────────────────────────────
         elapsed = time.perf_counter() - start
-        report_path = generate_report(repo_url, model, results, aggregation, diff, elapsed, run_id=cache_run_key)
+        report_path = generate_report(
+            repo_url, model, results, aggregation, diff, elapsed,
+            run_id=cache_run_key,
+            embedding_prefilter_meta=embedding_prefilter_meta,
+        )
         n_filtered = aggregation.get("_below_confidence_filtered", 0)
         print(f"\nReport: {report_path}")
         if n_filtered > 0:

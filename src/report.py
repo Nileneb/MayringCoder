@@ -17,6 +17,7 @@ def generate_report(
     timing: float,
     run_id: str | None = None,
     commit: str | None = None,
+    embedding_prefilter_meta: dict | None = None,
 ) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -44,6 +45,17 @@ def generate_report(
         f"files_skipped: {len(diff.get('skipped', []))}",
         f"findings_count: {findings_count}",
         f"run_time_s: {timing:.1f}",
+    ]
+    if embedding_prefilter_meta:
+        ep = embedding_prefilter_meta
+        lines.append(
+            f"embedding_prefilter: model={ep['model']},"
+            f" top_k={ep['top_k']},"
+            f" threshold={ep['threshold']},"
+            f" files_before={ep['files_before']},"
+            f" files_after={ep['files_after']}"
+        )
+    lines += [
         "---",
         "",
         f"# RepoChecker Report — {timestamp}",
@@ -59,8 +71,17 @@ def generate_report(
         f" · 🟡 {bysev.get('warning', 0)}"
         f" · 🟢 {bysev.get('info', 0)})",
         f"- **Laufzeit:** {timing:.1f}s",
-        "",
     ]
+    if embedding_prefilter_meta:
+        ep = embedding_prefilter_meta
+        lines.append(
+            f"- **Embedding-Vorfilter:** {ep['model']}"
+            f" · Top-{ep['top_k']}"
+            + (f" · Threshold {ep['threshold']}" if ep['threshold'] is not None else "")
+            + f" · Query: _{ep['query']}_"
+            + f" · {ep['files_before']} → {ep['files_after']} Dateien"
+        )
+    lines.append("")
 
     # --- Category Digest ---
     lines += ["## Category Digest", ""]
@@ -225,6 +246,7 @@ def generate_report(
         "truncation_flags": [r["filename"] for r in results if r.get("truncated")],
         "parse_errors": aggregation.get("parse_errors", []),
         "run_time_s": round(timing, 2),
+        "embedding_prefilter": embedding_prefilter_meta,
     }
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
