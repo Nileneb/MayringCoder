@@ -48,6 +48,9 @@ def generate_report(
         f"findings_count: {findings_count}",
         f"run_time_s: {timing:.1f}",
     ]
+    _so_model = aggregation.get("second_opinion_stats", {}).get("model")
+    if _so_model:
+        lines.append(f"second_opinion_model: {_so_model}")
     if embedding_prefilter_meta:
         ep = embedding_prefilter_meta
         lines.append(
@@ -92,8 +95,9 @@ def generate_report(
         )
     so_stats = aggregation.get("second_opinion_stats", {})
     if so_stats:
+        so_model_label = f" (`{so_stats['model']}`)" if so_stats.get("model") else ""
         lines.append(
-            f"- **Second Opinion:** {so_stats.get('confirmed', 0)} BESTÄTIGT"
+            f"- **Second Opinion{so_model_label}:** {so_stats.get('confirmed', 0)} BESTÄTIGT"
             f" · {so_stats.get('rejected', 0)} ABGELEHNT"
             f" · {so_stats.get('refined', 0)} PRÄZISIERT"
             f" · {so_stats.get('errors', 0)} Fehler"

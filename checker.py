@@ -563,6 +563,7 @@ def main() -> None:
                 validated_so, second_opinion_stats = second_opinion_validate(
                     all_findings_so, results, ollama_url, second_opinion_model_name
                 )
+                second_opinion_stats["model"] = second_opinion_model_name
                 print(
                     f"  Second Opinion: "
                     f"{second_opinion_stats['confirmed']} BESTÄTIGT, "
