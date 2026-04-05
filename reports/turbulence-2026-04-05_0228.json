@@ -1,0 +1,240 @@
+{
+  "summary": {
+    "total_files": 324,
+    "critical": 8,
+    "medium": 66,
+    "stable": 250,
+    "findings": 1,
+    "redundancies": 2134
+  },
+  "critical_files": [
+    {
+      "path": "tests/Feature/Controllers/PaperRagControllerTest.php",
+      "turbulence": 0.519,
+      "hot_zones": [
+        {
+          "start_line": 74,
+          "end_line": 86,
+          "peak_score": 0.6666666666666666
+        }
+      ],
+      "findings": [
+        {
+          "zone": {
+            "start_line": 74,
+            "end_line": 86,
+            "peak_score": 0.6666666666666666
+          },
+          "problem": "Die Funktionalität zur Überprüfung des Embedding-Services ist in der PaperRagControllerTest vermischt, da die Testfunktion die HTTP-Anfrage direkt im Testcode implementiert.",
+          "refactoring": "Es wäre sinnvoll, die Funktionalität zur Überprüfung des Embedding-Services in eine separate Klasse zu verschieben und diese über die Laravel Dependency Injection zu nutzen. Dadurch wird die Testbarkeit erhöht und das Codeverständnis verbessert.",
+          "severity": "medium",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "path": "app/Actions/Fortify/ResetUserPassword.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Controllers/DsgvoController.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Mail/ContactInquiryMail.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/factories/WorkspaceUserFactory.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2025_09_02_075243_add_two_factor_columns_to_users_table.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/dashboard.blade.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/TwoFactorChallengeTest.php",
+      "turbulence": 0.5,
+      "hot_zones": [],
+      "findings": []
+    }
+  ],
+  "redundancies": [
+    {
+      "name_a": "keine Funktion",
+      "file_a": "/tmp/turb_oa5ylq57/app/Filament/Pages/LangdockAgentsPage.php:74",
+      "name_b": "keine Funktion",
+      "file_b": "/tmp/turb_oa5ylq57/app/Providers/URLServiceProvider.php:16",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "embedding_generieren",
+      "file_a": "/tmp/turb_oa5ylq57/app/Http/Controllers/PaperRagController.php:56",
+      "name_b": "embedding_generieren",
+      "file_b": "/tmp/turb_oa5ylq57/tests/Feature/Services/EmbeddingServiceTest.php:13",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "paper_embedding_speichern",
+      "file_a": "/tmp/turb_oa5ylq57/app/Jobs/IngestPaperJob.php:45",
+      "name_b": "paper_embedding_speichern",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/PaperEmbedding.php:16",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "paper_embedding_speichern",
+      "file_a": "/tmp/turb_oa5ylq57/app/Jobs/IngestPaperJob.php:45",
+      "name_b": "paper_embedding_speichern",
+      "file_b": "/tmp/turb_oa5ylq57/tests/Feature/IngestPaperJobTest.php:112",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "send_agent_message",
+      "file_a": "/tmp/turb_oa5ylq57/app/Jobs/ProcessPhaseAgentJob.php:42",
+      "name_b": "send_agent_message",
+      "file_b": "/tmp/turb_oa5ylq57/tests/Feature/Actions/SendAgentMessageTest.php:14",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "p4_suchstring_speichern",
+      "file_a": "/tmp/turb_oa5ylq57/app/Livewire/Forms/Recherche/SuchstringForm.php:1",
+      "name_b": "p4_suchstring_speichern",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P4Suchstring.php:16",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "p4_suchstring_speichern",
+      "file_a": "/tmp/turb_oa5ylq57/app/Livewire/Forms/Recherche/SuchstringForm.php:1",
+      "name_b": "p4_suchstring_speichern",
+      "file_b": "/tmp/turb_oa5ylq57/database/seeders/RechercheDemoSeeder.php:177",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "suchstring_speichern",
+      "file_a": "/tmp/turb_oa5ylq57/app/Livewire/Forms/Recherche/SuchstringForm.php:31",
+      "name_b": "suchstring_speichern",
+      "file_b": "/tmp/turb_oa5ylq57/tests/Feature/Recherche/PhaseP4Test.php:14",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "workspace_erstellen",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Concerns/HasWorkspaces.php:69",
+      "name_b": "workspace_erstellen",
+      "file_b": "/tmp/turb_oa5ylq57/database/factories/WorkspaceFactory.php:13",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "p1_kriterium_speichern",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Kriterium.php:16",
+      "name_b": "p1_kriterium_speichern",
+      "file_b": "/tmp/turb_oa5ylq57/resources/views/livewire/recherche/phase-p1.blade.php:186",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Warnsignal.php:28",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P2Cluster.php:29",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P2MappingSuchstringKomponente.php:30",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P2ReviewTypEntscheidung.php:27",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P2Trefferliste.php:31",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P3Datenbankmatrix.php:31",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P3GeografischerFilter.php:30",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P5PrismaZahlen.php:31",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P5ToolEntscheidung.php:27",
+      "similarity": 1.0,
+      "verdict": ""
+    },
+    {
+      "name_a": "belongs_to_projekt",
+      "file_a": "/tmp/turb_oa5ylq57/app/Models/Recherche/P1Strukturmodellwahl.php:27",
+      "name_b": "belongs_to_projekt",
+      "file_b": "/tmp/turb_oa5ylq57/app/Models/Recherche/P7GradeEinschaetzung.php:31",
+      "similarity": 1.0,
+      "verdict": ""
+    }
+  ]
+}
