@@ -15,8 +15,8 @@ COMMON="--no-limit --max-chars 190000"
 
 # ── Primäre Analysemodelle ────────────────────────────────────────────────────
 MODELS=(
-    "llama3.1:8b"
-    "codellama:latest"
+    
+    "llama3.2"
     "qwen2.5-coder:7b"
     "mistral:7b-instruct"
     "deepseek-coder:6.7b-instruct"
@@ -27,9 +27,11 @@ MODELS=(
 # "" = kein Second-Opinion-Lauf (nur Primärmodell)
 # Jeder Eintrag wird mit jedem Primärmodell kombiniert (Kreuzprodukt).
 SECOND_OPINION_MODELS=(
-    ""
+    "llama3.1:8b"
     "deepseek-coder:6.7b-instruct"
     "qwen2.5-coder:7b"
+    "codellama:latest"
+    "mistral:7b-instruct"
 )
 
 # ── Hilfsfunktion: Modellname → sicherer Slug ─────────────────────────────────
