@@ -23,7 +23,7 @@ from src.categorizer import (
     load_exclude_patterns,
     load_mayringignore,
 )
-from src.config import CACHE_DIR, CODEBOOK_PATH, DEFAULT_PROMPT, EMBEDDING_MODEL, MAX_FILES_PER_RUN, OVERVIEW_PROMPT, PROMPTS_DIR, set_max_chars_per_file
+from src.config import CACHE_DIR, CODEBOOK_PATH, DEFAULT_PROMPT, EMBEDDING_MODEL, MAX_FILES_PER_RUN, OVERVIEW_PROMPT, PROMPTS_DIR, set_batch_delay, set_batch_size, set_max_chars_per_file
 from src.context import (
     index_overview_to_vectordb,
     load_overview_context,
@@ -58,6 +58,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
     p.add_argument("--max-chars", type=int, metavar="N", help="Zeichenlimit pro Datei überschreiben (Kontextlimit wird automatisch angepasst)")
     p.add_argument("--budget", type=int, metavar="N", help="Datei-Limit pro Lauf überschreiben (Standard: 20)")
+    p.add_argument("--batch-size", type=int, metavar="N",
+                   help="GPU-Pause alle N Dateien (0 = keine Pause, Standard: BATCH_SIZE aus config.py)")
+    p.add_argument("--batch-delay", type=float, metavar="S",
+                   help="Pausendauer in Sekunden (Standard: BATCH_DELAY_SECONDS aus config.py)")
     p.add_argument("--run-id", help="Logischer Run-Key für Cache + Report (ermöglicht Modell-/Run-Vergleiche)")
     p.add_argument("--cache-by-model", action="store_true", help="Modellnamen als Cache-Key verwenden (wenn kein --run-id gesetzt ist)")
     p.add_argument("--codebook", help="Pfad zu einem alternativen Codebook (YAML)")
@@ -153,6 +157,11 @@ def main() -> None:
             f"Limits aktiv: Datei={max_chars_per_file} Zeichen, "
             f"Kontext={max_context_chars} Zeichen"
         )
+
+    if args.batch_size is not None:
+        set_batch_size(args.batch_size)
+    if args.batch_delay is not None:
+        set_batch_delay(args.batch_delay)
 
     if not repo_url:
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")

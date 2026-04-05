@@ -55,10 +55,12 @@ def repo_slug(repo_url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Runtime-overridable limit (set via --max-chars; read by analyzer + report)
+# Runtime-overridable limits (set via CLI flags; read by analyzer)
 # ---------------------------------------------------------------------------
 
 _active_max_chars_per_file: int = MAX_CHARS_PER_FILE
+_active_batch_size: int = BATCH_SIZE
+_active_batch_delay: float = BATCH_DELAY_SECONDS
 
 
 def set_max_chars_per_file(limit: int) -> None:
@@ -70,3 +72,23 @@ def set_max_chars_per_file(limit: int) -> None:
 def get_max_chars_per_file() -> int:
     """Return the active per-file char limit (default: MAX_CHARS_PER_FILE)."""
     return _active_max_chars_per_file
+
+
+def set_batch_size(n: int) -> None:
+    """Override GPU batch size at runtime (0 = no pause)."""
+    global _active_batch_size
+    _active_batch_size = max(0, int(n))
+
+
+def get_batch_size() -> int:
+    return _active_batch_size
+
+
+def set_batch_delay(seconds: float) -> None:
+    """Override GPU batch delay at runtime."""
+    global _active_batch_delay
+    _active_batch_delay = max(0.0, float(seconds))
+
+
+def get_batch_delay() -> float:
+    return _active_batch_delay

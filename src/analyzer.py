@@ -13,10 +13,10 @@ from typing import Callable
 import httpx
 
 from src.config import (
-    BATCH_DELAY_SECONDS,
-    BATCH_SIZE,
     MAX_FINDINGS_PER_FILE,
     OLLAMA_TIMEOUT,
+    get_batch_delay,
+    get_batch_size,
     get_max_chars_per_file,
 )
 
@@ -305,9 +305,11 @@ def analyze_files(
         if ctx is None:
             ctx = project_context
         results.append(analyze_file(file, prompt_template, ollama_url, model, ctx))
-        if BATCH_SIZE > 0 and i % BATCH_SIZE == 0 and i < total:
-            print(f"  ⏸ GPU-Pause ({BATCH_DELAY_SECONDS}s nach {i} Dateien) ...", flush=True)
-            time.sleep(BATCH_DELAY_SECONDS)
+        _bs = get_batch_size()
+        if _bs > 0 and i % _bs == 0 and i < total:
+            _bd = get_batch_delay()
+            print(f"  ⏸ GPU-Pause ({_bd}s nach {i} Dateien) ...", flush=True)
+            time.sleep(_bd)
     return results
 
 
@@ -379,7 +381,9 @@ def overview_files(
     for i, fn in enumerate(filenames, 1):
         print(f"  [{i}/{total}] {fn} ...", flush=True)
         results.append(overview_file(file_map[fn], prompt_template, ollama_url, model))
-        if BATCH_SIZE > 0 and i % BATCH_SIZE == 0 and i < total:
-            print(f"  ⏸ GPU-Pause ({BATCH_DELAY_SECONDS}s nach {i} Dateien) ...", flush=True)
-            time.sleep(BATCH_DELAY_SECONDS)
+        _bs = get_batch_size()
+        if _bs > 0 and i % _bs == 0 and i < total:
+            _bd = get_batch_delay()
+            print(f"  ⏸ GPU-Pause ({_bd}s nach {i} Dateien) ...", flush=True)
+            time.sleep(_bd)
     return results
