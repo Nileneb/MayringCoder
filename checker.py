@@ -109,6 +109,11 @@ def parse_args() -> argparse.Namespace:
                    help="Analyze-Modus: Hot-Zone-Kontext aus Turbulence-Cache laden "
                         "und in den Analyse-Prompt injizieren. Dateien mit tier=stable "
                         "werden übersprungen.")
+    # Finding-reactive RAG (Issue #18)
+    p.add_argument("--rag-enrichment", action="store_true",
+                   help="Finding-reaktive RAG-Queries: Jedes Finding bekommt "
+                        "einen semantisch passenden Projektkontext aus der "
+                        "Vektor-DB (benötigt vorherigen --mode overview Lauf).")
     return p.parse_args()
 
 
@@ -600,6 +605,25 @@ def main() -> None:
             print(f"  → {len(analyzed_ok)} analysiert, {max(0, remaining)} verbleiben in Queue")
         if conn:
             conn.close()
+
+        # ── Finding-reactive RAG enrichment (Issue #18) ────────────────────
+        if args.rag_enrichment:
+            from src.context import enrich_findings_with_rag, _chroma_dir
+            if _chroma_dir(repo_url).exists():
+                n_findings = sum(
+                    len(r.get("potential_smells", []) + r.get("codierungen", []))
+                    for r in results if "error" not in r
+                )
+                print(f"\nRAG-Enrichment: bereichere {n_findings} Findings ...", flush=True)
+                results = enrich_findings_with_rag(results, repo_url, ollama_url)
+                n_enriched = sum(
+                    1 for r in results if "error" not in r
+                    for s in (r.get("potential_smells", []) + r.get("codierungen", []))
+                    if s.get("_rag_context")
+                )
+                print(f"  → {n_enriched}/{n_findings} Findings mit RAG-Kontext angereichert")
+            else:
+                print("  RAG-Enrichment: Vektor-DB nicht gefunden (--mode overview zuerst ausführen)")
 
         # ── P5: Adversarial validation (Advocatus Diaboli) ───────────────────
         adversarial_stats: dict | None = None

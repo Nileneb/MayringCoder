@@ -527,3 +527,136 @@ def query_similar_context(
     if len(context) > _ACTIVE_MAX_CONTEXT_CHARS:
         context = context[:_ACTIVE_MAX_CONTEXT_CHARS - 3] + "..."
     return context
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Finding-reactive RAG queries (Issue #18)
+# ---------------------------------------------------------------------------
+
+# Regex to extract function/method names from evidence excerpts.
+_FN_EXTRACT_RE = re.compile(
+    r"(?:def|function|public\s+function|private\s+function|"
+    r"protected\s+function|func)\s+(\w+)",
+    re.IGNORECASE,
+)
+
+# Type → query template. {fn_name}, {category}, {filename} are substituted.
+_RAG_QUERY_TEMPLATES: dict[str, str] = {
+    "redundanz": "Funktion {fn_name} ähnliche Implementierung",
+    "sicherheit": "Auth Validation User-Input {category}",
+    "zombie_code": "Aufruf {fn_name} Referenz",
+    "inkonsistenz": "[{category}] Fehlerbehandlung Muster",
+    "fehlerbehandlung": "Exception Try-Catch {category} Pattern",
+    "overengineering": "[{category}] Abstraktion Vereinfachung",
+    "unklar": "[{category}] {filename} Kontext Abhängigkeit",
+}
+
+
+def _build_rag_query(
+    finding: dict, filename: str = "", category: str = ""
+) -> str:
+    """Map a finding to a semantically tailored RAG query string.
+
+    Uses the finding type to select a query template, then substitutes
+    a function name extracted from the evidence (if present).
+    """
+    ftype = (finding.get("type") or "").lower().strip()
+    evidence = finding.get("evidence_excerpt") or ""
+
+    # Try to extract a function name from the evidence excerpt.
+    m = _FN_EXTRACT_RE.search(evidence)
+    fn_name = m.group(1) if m else ""
+
+    # Fallback: use the filename stem as pseudo function name.
+    if not fn_name and filename:
+        fn_name = filename.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+
+    template = _RAG_QUERY_TEMPLATES.get(ftype, "[{category}] {filename}")
+    query = template.format(
+        fn_name=fn_name,
+        category=category or "uncategorized",
+        filename=filename or "unknown",
+    )
+    return query.strip()
+
+
+def enrich_findings_with_rag(
+    results: list[dict],
+    repo_url: str,
+    ollama_url: str,
+    top_k: int | None = None,
+) -> list[dict]:
+    """Enrich each finding with a finding-reactive RAG context (Issue #18).
+
+    For every finding in *results*, builds a semantically tailored query,
+    embeds it, queries ChromaDB, and stores the results as ``_rag_context``
+    and ``_rag_query`` in the finding dict.
+
+    Returns the (mutated) results list. If ChromaDB is unavailable or the
+    vector DB does not exist, results are returned unchanged.
+    """
+    if not _HAS_CHROMADB:
+        return results
+
+    chroma_path = _chroma_dir(repo_url)
+    if not chroma_path.exists():
+        return results
+
+    try:
+        client = chromadb.PersistentClient(path=str(chroma_path))
+        collection = client.get_collection("overview")
+    except Exception:
+        return results
+
+    if collection.count() == 0:
+        return results
+
+    k = top_k or RAG_TOP_K
+
+    # Collect all findings with their metadata.
+    finding_refs: list[tuple[dict, str, str]] = []  # (finding_dict, filename, category)
+    for r in results:
+        if "error" in r:
+            continue
+        fn = r.get("filename", "")
+        cat = r.get("category", "uncategorized")
+        for smell in r.get("potential_smells", []):
+            finding_refs.append((smell, fn, cat))
+        for cod in r.get("codierungen", []):
+            finding_refs.append((cod, fn, cat))
+
+    if not finding_refs:
+        return results
+
+    # Build queries and batch-embed.
+    queries: list[str] = []
+    for finding, fn, cat in finding_refs:
+        q = _build_rag_query(finding, fn, cat)
+        queries.append(q)
+
+    embeddings = _embed_texts(queries, ollama_url)
+
+    # Query ChromaDB per finding and store context.
+    n_results = min(k, collection.count())
+    for i, (finding, fn, cat) in enumerate(finding_refs):
+        finding["_rag_query"] = queries[i]
+        try:
+            results_db = collection.query(
+                query_embeddings=[embeddings[i]],
+                n_results=n_results,
+            )
+            docs = results_db.get("documents", [[]])[0]
+            if docs:
+                ctx_lines = ["## Projektkontext (ähnliche Dateien)", ""]
+                for doc in docs:
+                    ctx_lines.append(f"- {doc}")
+                context = "\n".join(ctx_lines)
+                if len(context) > _ACTIVE_MAX_CONTEXT_CHARS:
+                    context = context[:_ACTIVE_MAX_CONTEXT_CHARS - 3] + "..."
+                finding["_rag_context"] = context
+            else:
+                finding["_rag_context"] = ""
+        except Exception:
+            finding["_rag_context"] = ""
+
+    return results

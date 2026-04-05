@@ -400,6 +400,10 @@ def validate_findings(
             .replace("{evidence}", evidence)
             .replace("{suggestion}", suggestion)
         )
+        # Inject finding-reactive RAG context (Issue #18)
+        rag_ctx = f.get("_rag_context", "")
+        if rag_ctx:
+            prompt += f"\n\nPROJEKTKONTEXT:\n{rag_ctx}"
         if is_test:
             prompt += (
                 "\n\nWICHTIG FÜR TESTS: "
@@ -499,6 +503,12 @@ def second_opinion_validate(
             .replace("{evidence_excerpt}", _str(finding.get("evidence_excerpt"))[:300])
             .replace("{fix_suggestion}", _str(finding.get("fix_suggestion"))[:200])
             .replace("{code_snippet}", code_snippet)
+        )
+        # Inject finding-reactive RAG context (Issue #18)
+        rag_ctx = finding.get("_rag_context", "")
+        prompt = prompt.replace(
+            "{rag_context}",
+            rag_ctx if rag_ctx else "(kein zusätzlicher Projektkontext verfügbar)",
         )
 
         try:

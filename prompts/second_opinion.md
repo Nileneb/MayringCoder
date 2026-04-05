@@ -22,6 +22,10 @@ Deine Aufgabe: Prüfe **kritisch**, ob dieses Finding korrekt ist.
 {code_snippet}
 ```
 
+## Projektkontext (ähnliche Dateien)
+
+{rag_context}
+
 ## Bewertungskriterien
 
 - **BESTÄTIGT** → Das Finding ist korrekt. Der Code hat tatsächlich das beschriebene Problem. Die Empfehlung würde es beheben.
