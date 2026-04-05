@@ -331,7 +331,8 @@ def find_redundancies(all_chunks: list[Chunk]) -> list[Redundancy]:
     """Vergleicht funktionale Namen über alle Dateien hinweg."""
     named = [
         c for c in all_chunks
-        if not c.functional_name.startswith("block_")
+        if c.functional_name
+        and not c.functional_name.startswith("block_")
         and not c.functional_name.startswith("fehler_")
         and c.functional_name not in ("unbekannt", "nicht_erkannt")
     ]

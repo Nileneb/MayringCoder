@@ -264,6 +264,27 @@ class TestFindRedundancies:
         pairs = [(r.file_a, r.file_b) for r in result]
         assert len(pairs) == len(set(pairs))
 
+    def test_skips_empty_functional_name(self):
+        """Chunks with empty functional_name must not create false redundancies (Issue #19)."""
+        chunks = [
+            _make_chunk(file="a.py", functional_name=""),
+            _make_chunk(file="b.py", functional_name=""),
+        ]
+        assert find_redundancies(chunks) == []
+
+    def test_skips_empty_names_but_finds_real_redundancy(self):
+        """Empty names are ignored; real named chunks still produce valid redundancies."""
+        chunks = [
+            _make_chunk(file="a.py", functional_name=""),
+            _make_chunk(file="b.py", functional_name=""),
+            _make_chunk(file="c.py", functional_name="save_user"),
+            _make_chunk(file="d.py", functional_name="save_user"),
+        ]
+        result = find_redundancies(chunks)
+        assert len(result) == 1
+        assert result[0].name_a == "save_user"
+        assert result[0].name_b == "save_user"
+
 
 # ---------------------------------------------------------------------------
 # turbulence_report integration: build_report output shape

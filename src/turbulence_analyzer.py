@@ -90,8 +90,8 @@ def analyze_repo(
 
         for chunk in chunks:
             if ov_entry and ov_entry.get("category"):
+                categorize_chunk_heuristic(chunk)
                 chunk.category = ov_entry["category"]
-                chunk.functional_name = chunk.functional_name or ""
                 _overview_hits += 1
             elif use_llm:
                 categorize_chunk_llm(chunk, model=model)

@@ -7,7 +7,6 @@ Enthält:
 Kein SQLite. Keine LLM-Aufrufe. Kein Chunking.
 """
 
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -100,7 +99,16 @@ def build_report(
             }
             for a in analyses
         ],
-        "redundancies": [asdict(r) for r in redundancies[:20]],
+        "redundancies": [
+            {
+                "name_a": r.name_a,
+                "file_a": r.file_a,
+                "name_b": r.name_b,
+                "file_b": r.file_b,
+                "similarity": r.similarity,
+            }
+            for r in redundancies[:20]
+        ],
     }
 
 
