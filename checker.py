@@ -209,7 +209,12 @@ def main() -> None:
     repo_url = args.repo or os.getenv("GITHUB_REPO", "")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     _env_model = (os.getenv("OLLAMA_MODEL") or "").strip() or None
-    model = resolve_model(ollama_url, args.model, _env_model)
+    _needs_llm = (
+        args.mode in ("analyze", "overview")
+        or (args.mode == "turbulence" and args.llm)
+        or args.resolve_model_only
+    )
+    model = resolve_model(ollama_url, args.model, _env_model) if _needs_llm else (args.model or _env_model or "")
 
     # Shell-helper: print model name and exit (used by run.sh to avoid double-prompting).
     if args.resolve_model_only:

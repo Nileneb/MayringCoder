@@ -55,7 +55,7 @@ echo ""
 echo "========================================"
 echo "  Stufe 2: Turbulenz-Analyse (einmalig)"
 echo "========================================"
-"$PYTHON" checker.py --mode turbulence --use-overview-cache
+"$PYTHON" checker.py --mode turbulence --use-overview-cache --model "$FIRST_MODEL"
 
 # ── Stufe 3: Analyse — jedes Modell mit Zeit-Budget ──────────────────────────
 echo ""
