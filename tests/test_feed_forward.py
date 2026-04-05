@@ -210,16 +210,82 @@ class TestAnalyzeFilesHotZoneMap:
         }
 
         with patch("src.analyzer._ollama_generate", side_effect=mock_generate):
-            results = analyze_files(
+            results, budget_hit = analyze_files(
                 files, ["a.php", "b.php"], prompt_file, "http://localhost", "m",
                 hot_zone_context_map=hz_map,
             )
 
         assert len(results) == 2
+        assert budget_hit is False
         # a.php should have hot-zone context
         assert "Hot-Zone A" in captured_contexts[0]
         # b.php should NOT have hot-zone context
         assert "Hot-Zone" not in captured_contexts[1]
+
+
+class TestTimeBudget:
+    def _make_prompt(self, tmp_path):
+        p = tmp_path / "prompt.md"
+        p.write_text("Analyze.", encoding="utf-8")
+        return p
+
+    def _files(self, n=5):
+        return [{"filename": f"f{i}.py", "content": f"x = {i}", "category": "domain"}
+                for i in range(n)]
+
+    def test_no_budget_returns_all_files(self, tmp_path):
+        from src.analyzer import analyze_files
+        files = self._files(3)
+        with patch("src.analyzer._ollama_generate",
+                   return_value='{"potential_smells": []}'):
+            results, hit = analyze_files(
+                files, [f["filename"] for f in files],
+                self._make_prompt(tmp_path), "http://localhost", "m",
+            )
+        assert len(results) == 3
+        assert hit is False
+
+    def test_expired_budget_stops_after_first_file(self, tmp_path):
+        """Budget of 0 seconds expires immediately — only first file is processed."""
+        from src.analyzer import analyze_files
+        files = self._files(5)
+        with patch("src.analyzer._ollama_generate",
+                   return_value='{"potential_smells": []}'):
+            results, hit = analyze_files(
+                files, [f["filename"] for f in files],
+                self._make_prompt(tmp_path), "http://localhost", "m",
+                time_budget=0,
+            )
+        assert len(results) == 1
+        assert hit is True
+
+    def test_sufficient_budget_processes_all(self, tmp_path):
+        """Large budget → all files processed, budget_hit=False."""
+        from src.analyzer import analyze_files
+        files = self._files(3)
+        with patch("src.analyzer._ollama_generate",
+                   return_value='{"potential_smells": []}'):
+            results, hit = analyze_files(
+                files, [f["filename"] for f in files],
+                self._make_prompt(tmp_path), "http://localhost", "m",
+                time_budget=9999,
+            )
+        assert len(results) == 3
+        assert hit is False
+
+    def test_overview_files_budget(self, tmp_path):
+        """overview_files also respects time_budget."""
+        from src.analyzer import overview_files
+        files = self._files(5)
+        with patch("src.analyzer._ollama_generate",
+                   return_value='{"file_summary": "ok"}'):
+            results, hit = overview_files(
+                files, [f["filename"] for f in files],
+                self._make_prompt(tmp_path), "http://localhost", "m",
+                time_budget=0,
+            )
+        assert len(results) == 1
+        assert hit is True
 
 
 # ---------------------------------------------------------------------------

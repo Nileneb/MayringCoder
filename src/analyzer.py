@@ -4,9 +4,11 @@ Stufe 2 (Reduktion): LLM analysiert jede geänderte Datei, gibt strukturiertes J
 Stufe 3 (Explikation): Findings mit confidence=low werden als needs_explikation=True markiert.
 """
 
+import hashlib
 import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -19,6 +21,53 @@ from src.config import (
     get_batch_size,
     get_max_chars_per_file,
 )
+
+# ---------------------------------------------------------------------------
+# Training-Data Logger (opt-in via configure_training_log())
+# ---------------------------------------------------------------------------
+
+_training_log_path: Path | None = None
+_training_run_id: str = "default"
+
+
+def configure_training_log(path: Path | str, run_id: str = "default") -> None:
+    """Enable training-data logging. Call once from checker.py when --log-training-data is set.
+
+    Each LLM call in analyze_file() and overview_file() will append a JSONL
+    entry to *path*. The file is created if it does not exist.
+    """
+    global _training_log_path, _training_run_id
+    _training_log_path = Path(path)
+    _training_run_id = run_id
+    _training_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _log_training_entry(
+    model: str,
+    label: str,
+    prompt: str,
+    raw_response: str,
+    parsed_ok: bool,
+    findings_count: int,
+    call_type: str = "analyze",
+) -> None:
+    """Append one JSONL entry to the training log. No-op if logging is disabled."""
+    if _training_log_path is None:
+        return
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_id": _training_run_id,
+        "model": model,
+        "label": label,
+        "call_type": call_type,          # "analyze" | "overview" | "extract" | "adversarial" | "second_opinion"
+        "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest()[:16],
+        "prompt": prompt,
+        "raw_response": raw_response,
+        "parsed_ok": parsed_ok,
+        "findings_count": findings_count,
+    }
+    with _training_log_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -232,12 +281,16 @@ def analyze_file(
                         extraction_prompt, ollama_url, model, f"[EXTRACT] {filename}"
                     )
                     extracted = parse_llm_extraction(raw_extraction, filename)
+                    _log_training_entry(model, filename, extraction_prompt, raw_extraction,
+                                        bool(extracted), len(extracted), call_type="extract")
                 except Exception:
                     extracted = []
         except Exception:
             extracted = []
 
         if extracted:
+            _log_training_entry(model, filename, prompt, raw_response,
+                                False, len(extracted), call_type="analyze")
             result: dict = {
                 "filename": filename,
                 "category": category,
@@ -253,6 +306,12 @@ def analyze_file(
             return result
         # No structured findings extracted — fall back to raw dump.
         parsed = _freetext_fallback_sozial(raw_response) if is_sozial else _freetext_fallback(raw_response)
+
+    # Log the primary analyze call
+    findings_in_parsed = len(parsed.get("potential_smells") or parsed.get("codierungen") or [])
+    _log_training_entry(model, filename, prompt, raw_response,
+                        not parsed.get("_parse_error", False), findings_in_parsed,
+                        call_type="analyze")
 
     result = {
         "filename": filename,
@@ -295,12 +354,25 @@ def analyze_files(
     project_context: str | None = None,
     context_fn: Callable[[dict], str | None] | None = None,
     hot_zone_context_map: dict[str, str] | None = None,
-) -> list[dict]:
-    """Analyze multiple files, optionally enriching each with per-file context."""
+    time_budget: float | None = None,
+) -> tuple[list[dict], bool]:
+    """Analyze multiple files, optionally enriching each with per-file context.
+
+    Args:
+        time_budget: Optional wall-clock budget in seconds. When set, the loop
+                     stops gracefully after the current file once the budget is
+                     exceeded.  The second return value indicates whether the
+                     budget was hit (True) or all files were processed (False).
+
+    Returns:
+        (results, time_budget_hit)
+    """
     prompt_template = _load_prompt(prompt_path)
     file_map = {f["filename"]: f for f in files}
     results = []
     total = len(filenames_to_check)
+    time_budget_hit = False
+    _start = time.perf_counter()
     for i, fn in enumerate(filenames_to_check, 1):
         print(f"  [{i}/{total}] {fn} ...", flush=True)
         file = file_map[fn]
@@ -316,7 +388,14 @@ def analyze_files(
             _bd = get_batch_delay()
             print(f"  ⏸ GPU-Pause ({_bd}s nach {i} Dateien) ...", flush=True)
             time.sleep(_bd)
-    return results
+        if time_budget is not None and (time.perf_counter() - _start) >= time_budget:
+            print(
+                f"  ⏱ Zeit-Budget ({time_budget:.0f}s) erreicht — stoppe nach {i}/{total} Dateien.",
+                flush=True,
+            )
+            time_budget_hit = True
+            break
+    return results, time_budget_hit
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +433,9 @@ def overview_file(
     summary = parsed.get("file_summary", raw_response.strip()) if parsed else raw_response.strip()
     summary = _ensure_str(summary)
 
+    _log_training_entry(model, filename, prompt, raw_response,
+                        parsed is not None, 0, call_type="overview")
+
     result = {
         "filename": filename,
         "category": category,
@@ -385,11 +467,19 @@ def overview_files(
     prompt_path: Path | str,
     ollama_url: str,
     model: str,
-) -> list[dict]:
+    time_budget: float | None = None,
+) -> tuple[list[dict], bool]:
+    """Summarize multiple files.
+
+    Returns:
+        (results, time_budget_hit)
+    """
     prompt_template = _load_prompt(prompt_path)
     file_map = {f["filename"]: f for f in files}
     results = []
     total = len(filenames)
+    time_budget_hit = False
+    _start = time.perf_counter()
     for i, fn in enumerate(filenames, 1):
         print(f"  [{i}/{total}] {fn} ...", flush=True)
         results.append(overview_file(file_map[fn], prompt_template, ollama_url, model))
@@ -398,4 +488,11 @@ def overview_files(
             _bd = get_batch_delay()
             print(f"  ⏸ GPU-Pause ({_bd}s nach {i} Dateien) ...", flush=True)
             time.sleep(_bd)
-    return results
+        if time_budget is not None and (time.perf_counter() - _start) >= time_budget:
+            print(
+                f"  ⏱ Zeit-Budget ({time_budget:.0f}s) erreicht — stoppe nach {i}/{total} Dateien.",
+                flush=True,
+            )
+            time_budget_hit = True
+            break
+    return results, time_budget_hit

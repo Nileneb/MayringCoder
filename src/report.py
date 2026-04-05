@@ -20,6 +20,7 @@ def generate_report(
     embedding_prefilter_meta: dict | None = None,
     max_chars_per_file: int | None = None,
     full_scan: bool = False,
+    time_budget_hit: bool = False,
 ) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -51,6 +52,8 @@ def generate_report(
     ]
     if full_scan:
         lines.append("full_scan: true")
+    if time_budget_hit:
+        lines.append("time_budget_hit: true")
     _so_model = aggregation.get("second_opinion_stats", {}).get("model")
     if _so_model:
         lines.append(f"second_opinion_model: {_so_model}")
@@ -82,6 +85,8 @@ def generate_report(
     ]
     if full_scan:
         lines.append("- **Modus:** Full Scan (kein Cache, kein Limit)")
+    if time_budget_hit:
+        lines.append("- **⏱ Zeit-Budget erreicht** — Lauf wurde vorzeitig gestoppt")
     if embedding_prefilter_meta:
         ep = embedding_prefilter_meta
         lines.append(
@@ -273,6 +278,7 @@ def generate_report(
         "parse_errors": aggregation.get("parse_errors", []),
         "run_time_s": round(timing, 2),
         "full_scan": full_scan,
+        "time_budget_hit": time_budget_hit,
         "embedding_prefilter": embedding_prefilter_meta,
     }
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")

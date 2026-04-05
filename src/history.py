@@ -26,6 +26,7 @@ def _build_run_payload(
     diff: dict,
     timing: float,
     aggregation: dict | None,
+    extra: dict | None = None,
 ) -> dict:
     payload = {
         "run_id": run_id,
@@ -45,6 +46,8 @@ def _build_run_payload(
     }
     if aggregation is not None:
         payload["aggregation"] = aggregation
+    if extra:
+        payload.update(extra)
     return payload
 
 
@@ -57,6 +60,7 @@ def save_run(
     diff: dict,
     timing: float,
     aggregation: dict | None = None,
+    extra: dict | None = None,
 ) -> Path:
     """Persist a single run as ``{runs_dir}/{run_id}.json``.
 
@@ -71,7 +75,7 @@ def save_run(
         out = runs / f"{run_id}_{counter}.json"
         counter += 1
 
-    payload = _build_run_payload(out.stem, repo_url, model, mode, results, diff, timing, aggregation)
+    payload = _build_run_payload(out.stem, repo_url, model, mode, results, diff, timing, aggregation, extra)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return out
 

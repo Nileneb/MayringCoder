@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 import tempfile
 
 from src.aggregator import aggregate_findings
-from src.analyzer import analyze_files, overview_files
+from src.analyzer import analyze_files, configure_training_log, overview_files
 from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
 from src.categorizer import (
     categorize_files,
@@ -60,6 +60,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-limit", action="store_true", help="Kein Datei-Limit pro Lauf (alle Dateien verarbeiten)")
     p.add_argument("--max-chars", type=int, metavar="N", help="Zeichenlimit pro Datei überschreiben (Kontextlimit wird automatisch angepasst)")
     p.add_argument("--budget", type=int, metavar="N", help="Datei-Limit pro Lauf überschreiben (Standard: 20)")
+    p.add_argument("--log-training-data", action="store_true",
+                   help="Jeden LLM-Call (Prompt + Antwort) in ein JSONL-Logfile schreiben. "
+                        "Speicherort: cache/<slug>_training_log.jsonl. "
+                        "Basis für Fine-Tuning-Datensätze.")
+    p.add_argument("--time-budget", type=float, metavar="SECONDS",
+                   help="Maximale Laufzeit in Sekunden. Nach Ablauf wird graceful gestoppt "
+                        "und ein Report mit den bisherigen Ergebnissen geschrieben. "
+                        "Ideal für Benchmark-Läufe mit vergleichbarem Zeitfenster pro Modell.")
     p.add_argument("--batch-size", type=int, metavar="N",
                    help="GPU-Pause alle N Dateien (0 = keine Pause, Standard: BATCH_SIZE aus config.py)")
     p.add_argument("--batch-delay", type=float, metavar="S",
@@ -212,6 +220,13 @@ def main() -> None:
     prompt_path = Path(args.prompt) if args.prompt else DEFAULT_PROMPT
     codebook_path = Path(args.codebook) if args.codebook else CODEBOOK_PATH
     cache_run_key = args.run_id or (model if args.cache_by_model else "default")
+
+    # Training-data logger (opt-in)
+    if args.log_training_data:
+        from src.config import CACHE_DIR, repo_slug as _rslug
+        _log_path = CACHE_DIR / f"{_rslug(os.getenv('GITHUB_REPO', 'unknown'))}_training_log.jsonl"
+        configure_training_log(_log_path, run_id=cache_run_key)
+        print(f"Training-Log: {_log_path}")
 
     if args.max_chars is not None:
         if args.max_chars < 500:
@@ -505,7 +520,10 @@ def main() -> None:
     if args.mode == "overview":
         overview_prompt = OVERVIEW_PROMPT
         print(f"\nErstelle Übersicht für {len(filenames_to_check)} Dateien mit {model} ...")
-        results = overview_files(files, filenames_to_check, overview_prompt, ollama_url, model)
+        results, _time_budget_hit = overview_files(
+            files, filenames_to_check, overview_prompt, ollama_url, model,
+            time_budget=args.time_budget,
+        )
 
         # Save overview context for later analyze runs
         ctx_path = save_overview_context(results, repo_url)
@@ -587,25 +605,29 @@ def main() -> None:
         results: list[dict] = []
 
         # ── Main analysis (non-test files) ───────────────────────────────────
+        _time_budget_hit = False
         if non_test_files:
             print(f"\nAnalysiere {len(non_test_files)} Nicht-Test-Dateien mit {model} ...")
-            batch_results = analyze_files(
+            batch_results, _time_budget_hit = analyze_files(
                 files, non_test_files, prompt_path, ollama_url, model,
                 project_context=project_context,
                 context_fn=rag_context_fn,
                 hot_zone_context_map=hot_zone_context_map,
+                time_budget=args.time_budget,
             )
             results.extend(batch_results)
 
         # ── Test analysis (test_inspector.md) ───────────────────────────────
-        if test_files and use_test_prompt:
+        if test_files and use_test_prompt and not _time_budget_hit:
             print(f"\nAnalysiere {len(test_files)} Test-Dateien mit {model} (test_inspector.md) ...")
-            batch_results = analyze_files(
+            batch_results, _tbh = analyze_files(
                 files, test_files, test_prompt_path, ollama_url, model,
                 project_context=None,
                 context_fn=None,
+                time_budget=args.time_budget,
             )
             results.extend(batch_results)
+            _time_budget_hit = _time_budget_hit or _tbh
 
         # Mark successfully analyzed files so they leave the backlog queue
         if conn is not None and diff.get("snapshot_id") is not None:
@@ -721,6 +743,7 @@ def main() -> None:
             run_id=cache_run_key,
             embedding_prefilter_meta=embedding_prefilter_meta,
             full_scan=args.full,
+            time_budget_hit=_time_budget_hit,
         )
         n_filtered = aggregation.get("_below_confidence_filtered", 0)
         print(f"\nReport: {report_path}")
@@ -747,7 +770,8 @@ def main() -> None:
 
         # Save run history
         rid = args.run_id or generate_run_id()
-        run_path = save_run(rid, repo_url, model, "analyze", results, diff, elapsed, aggregation)
+        run_path = save_run(rid, repo_url, model, "analyze", results, diff, elapsed, aggregation,
+                            extra={"time_budget_hit": _time_budget_hit})
         print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
 
