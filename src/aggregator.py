@@ -8,7 +8,6 @@ Produces:
 - needs_explikation (findings marked for manual re-run)
 - parse_errors (files where JSON parsing failed)
 - stage2_extracted_count (findings recovered via Stage-2 extraction from freetext)
-- redundancy_candidates (potential redundancies found via name similarity)
 - adversarial_stats (Advocatus Diaboli: validated/rejected/error counts)
 - _below_confidence_filtered (count of findings dropped by min_confidence threshold)
 """
@@ -124,44 +123,7 @@ def aggregate_findings(
         "needs_explikation": needs_explikation,
         "parse_errors": parse_errors,
         "stage2_extracted_count": stage2_count,
-        "redundancy_candidates": [],
         "adversarial_stats": adversarial_stats or {},
         "second_opinion_stats": second_opinion_stats or {},
         "_below_confidence_filtered": below_confidence_count,
     }
-
-
-def aggregate_with_redundancy(
-    results: list[dict],
-    overview_results: list[dict],
-    threshold: float = 0.80,
-    min_confidence: str = "low",
-    adversarial_stats: dict | None = None,
-    second_opinion_stats: dict | None = None,
-) -> dict:
-    """Like aggregate_findings, but also runs the name-redundancy check.
-
-    Requires overview_results with _signatures (from overview_files + extract_python_signatures).
-    Redundancy candidates are appended to the aggregation dict under
-    ``redundancy_candidates`` and added to the findings list for ranking.
-    """
-    agg = aggregate_findings(
-        results, min_confidence=min_confidence,
-        adversarial_stats=adversarial_stats,
-        second_opinion_stats=second_opinion_stats,
-    )
-
-    try:
-        from src.extractor import check_redundancy_by_names
-
-        candidates = check_redundancy_by_names(overview_results, threshold=threshold)
-    except Exception:
-        candidates = []
-
-    agg["redundancy_candidates"] = candidates
-
-    for candidate in candidates:
-        candidate["_filename"] = "cross-file"
-    agg["total_findings"] = len(agg.get("top_findings", [])) + len(candidates)
-
-    return agg

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 import tempfile
 
-from src.aggregator import aggregate_findings, aggregate_with_redundancy
+from src.aggregator import aggregate_findings
 from src.analyzer import analyze_files, overview_files
 from src.cache import find_changed_files, init_db, mark_files_analyzed, reset_repo
 from src.categorizer import (
