@@ -22,6 +22,14 @@ Deine Aufgabe: Prüfe **kritisch**, ob dieses Finding korrekt ist.
 {code_snippet}
 ```
 
+## Gezielte Prueffrage
+
+Beantworte zunaechst diese spezifische Frage:
+
+> {targeted_question}
+
+Beruecksichtige diese Frage bei deiner Bewertung.
+
 ## Projektkontext (ähnliche Dateien)
 
 {rag_context}

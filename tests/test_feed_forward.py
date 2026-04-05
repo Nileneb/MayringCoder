@@ -18,12 +18,11 @@ class TestLoadTurbulenceCache:
         cache_dir.mkdir()
 
         report = {
-            "summary": {"total_files": 3, "deep": 1, "light": 1, "stable": 1},
+            "summary": {"total_files": 3, "critical": 1, "medium": 1, "stable": 1},
             "critical_files": [
                 {
                     "path": "app/Services/PaymentService.php",
-                    "tier": "deep",
-                    "turbulence_score": 0.75,
+                    "turbulence": 0.75,
                     "hot_zones": [
                         {
                             "start_line": 45,
@@ -35,18 +34,40 @@ class TestLoadTurbulenceCache:
                             ],
                         }
                     ],
+                    "findings": [],
+                },
+            ],
+            "all_files": [
+                {
+                    "path": "app/Services/PaymentService.php",
+                    "tier": "deep",
+                    "turbulence": 0.75,
+                    "hot_zones": [
+                        {
+                            "start_line": 45,
+                            "end_line": 90,
+                            "peak_score": 0.85,
+                            "categories": ["Sicherheit", "Daten"],
+                            "affected_functions": [
+                                {"name": "processPayment", "inputs": ["$amount"], "outputs": ["bool"], "calls": ["Stripe::charge"]},
+                            ],
+                        }
+                    ],
+                    "findings": [],
                 },
                 {
                     "path": "app/Http/Controllers/UserController.php",
                     "tier": "light",
-                    "turbulence_score": 0.35,
+                    "turbulence": 0.35,
                     "hot_zones": [],
+                    "findings": [],
                 },
                 {
                     "path": "app/Models/User.php",
                     "tier": "stable",
-                    "turbulence_score": 0.0,
+                    "turbulence": 0.0,
                     "hot_zones": [],
+                    "findings": [],
                 },
             ],
             "redundancies": [],
@@ -242,3 +263,63 @@ class TestTurbulenceOverviewCache:
 
         report = analyze_repo(str(tmp_path), use_llm=False, overview_cache=None)
         assert "critical_files" in report
+
+
+# ---------------------------------------------------------------------------
+# build_report — all_files output (Issue #17 Gap)
+# ---------------------------------------------------------------------------
+
+class TestBuildReportAllFiles:
+    def test_all_files_contains_every_tier(self):
+        from src.turbulence_calculator import FileAnalysis
+        from src.turbulence_report import build_report
+
+        analyses = [
+            FileAnalysis(path="deep.php", total_lines=100,
+                         turbulence_score=0.75, tier="deep"),
+            FileAnalysis(path="light.php", total_lines=50,
+                         turbulence_score=0.35, tier="light"),
+            FileAnalysis(path="skip.php", total_lines=30,
+                         turbulence_score=0.1, tier="skip"),
+            FileAnalysis(path="stable.php", total_lines=10,
+                         turbulence_score=0.0, tier="stable"),
+        ]
+        report = build_report(analyses, [])
+
+        assert "all_files" in report
+        assert len(report["all_files"]) == 4
+
+        tiers = {f["path"]: f["tier"] for f in report["all_files"]}
+        assert tiers["deep.php"] == "deep"
+        assert tiers["light.php"] == "light"
+        assert tiers["skip.php"] == "skip"
+        assert tiers["stable.php"] == "stable"
+
+    def test_critical_files_still_only_deep(self):
+        from src.turbulence_calculator import FileAnalysis
+        from src.turbulence_report import build_report
+
+        analyses = [
+            FileAnalysis(path="deep.php", total_lines=100,
+                         turbulence_score=0.75, tier="deep"),
+            FileAnalysis(path="light.php", total_lines=50,
+                         turbulence_score=0.35, tier="light"),
+        ]
+        report = build_report(analyses, [])
+
+        assert len(report["critical_files"]) == 1
+        assert report["critical_files"][0]["path"] == "deep.php"
+
+    def test_all_files_entries_have_tier_field(self):
+        from src.turbulence_calculator import FileAnalysis
+        from src.turbulence_report import build_report
+
+        analyses = [
+            FileAnalysis(path="a.php", total_lines=10,
+                         turbulence_score=0.0, tier="stable"),
+        ]
+        report = build_report(analyses, [])
+
+        for entry in report["all_files"]:
+            assert "tier" in entry
+            assert "turbulence" in entry

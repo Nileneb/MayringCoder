@@ -90,6 +90,16 @@ def build_report(
             }
             for a in deep
         ],
+        "all_files": [
+            {
+                "path": a.path,
+                "tier": a.tier,
+                "turbulence": a.turbulence_score,
+                "hot_zones": a.hot_zones,
+                "findings": a.findings,
+            }
+            for a in analyses
+        ],
         "redundancies": [asdict(r) for r in redundancies[:20]],
     }
 

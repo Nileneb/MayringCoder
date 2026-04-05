@@ -159,7 +159,7 @@ def _load_turbulence_cache(repo_url: str) -> tuple[dict[str, str] | None, dict[s
     hot_zone_map: dict[str, str] = {}
     tier_map: dict[str, str] = {}
 
-    for cf in report.get("critical_files", []):
+    for cf in report.get("all_files", report.get("critical_files", [])):
         path = cf.get("path", "")
         tier = cf.get("tier", "")
         tier_map[path] = tier

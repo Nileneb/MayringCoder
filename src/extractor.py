@@ -446,6 +446,58 @@ except Exception:
     _SECOND_OPINION_PROMPT = ""
 
 
+# ---------------------------------------------------------------------------
+# Targeted question generation for second-opinion validation (Issue #15)
+# ---------------------------------------------------------------------------
+
+_QUESTION_TEMPLATES: dict[str, str] = {
+    "redundanz": (
+        "Existiert die beschriebene Funktionalitaet ({evidence_short}) tatsaechlich "
+        "an anderer Stelle im Projekt mit gleicher oder sehr aehnlicher Logik?"
+    ),
+    "sicherheit": (
+        "Ist der beschriebene Input ({evidence_short}) tatsaechlich unsanitisiert "
+        "und von aussen erreichbar, oder wird er bereits durch Framework/Middleware validiert?"
+    ),
+    "zombie_code": (
+        "Wird die beschriebene Funktion/der Code ({evidence_short}) wirklich nirgendwo "
+        "im Projekt aufgerufen oder referenziert?"
+    ),
+    "dead_code": (
+        "Ist dieser Code ({evidence_short}) tatsaechlich unerreichbar, oder gibt es "
+        "Ausfuehrungspfade (Exceptions, Bedingungen), die ihn doch erreichen?"
+    ),
+    "inkonsistenz": (
+        "Weicht dieses Pattern ({evidence_short}) wirklich vom etablierten "
+        "Projekt-Standard ab, oder ist es eine bewusste Designentscheidung?"
+    ),
+    "fehlerbehandlung": (
+        "Fehlt hier tatsaechlich eine Fehlerbehandlung, oder wird der Fehler "
+        "bereits auf einer uebergeordneten Ebene (Middleware, Framework) abgefangen?"
+    ),
+    "overengineering": (
+        "Ist die beschriebene Abstraktion ({evidence_short}) wirklich ueberfluessig, "
+        "oder dient sie einem erkennbaren Erweiterungszweck?"
+    ),
+}
+
+_FALLBACK_QUESTION = (
+    "Ist dieses Finding ({evidence_short}) korrekt und actionable, "
+    "oder handelt es sich um ein Framework-Pattern bzw. eine bewusste Designentscheidung?"
+)
+
+
+def _build_second_opinion_question(finding: dict) -> str:
+    """Generate a targeted yes/no question for second-opinion validation."""
+    ftype = (finding.get("type") or "").lower().strip()
+    evidence = (finding.get("evidence_excerpt") or "")[:80]
+    if not evidence:
+        evidence = (finding.get("fix_suggestion") or "")[:80]
+
+    template = _QUESTION_TEMPLATES.get(ftype, _FALLBACK_QUESTION)
+    return template.format(evidence_short=evidence or "siehe Code")
+
+
 def second_opinion_validate(
     findings: list[dict],
     files: list[dict],
@@ -510,6 +562,9 @@ def second_opinion_validate(
             "{rag_context}",
             rag_ctx if rag_ctx else "(kein zusätzlicher Projektkontext verfügbar)",
         )
+        # Inject targeted question (Issue #15)
+        targeted_q = _build_second_opinion_question(finding)
+        prompt = prompt.replace("{targeted_question}", targeted_q)
 
         try:
             raw = _ollama_generate(

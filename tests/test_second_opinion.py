@@ -254,3 +254,69 @@ class TestReportSecondOpinionStats:
         )
         content = (tmp_path / path.split("/")[-1]).read_text(encoding="utf-8")
         assert "Second Opinion" not in content
+
+
+# ---------------------------------------------------------------------------
+# Targeted question generation (Issue #15)
+# ---------------------------------------------------------------------------
+
+class TestBuildSecondOpinionQuestion:
+
+    def test_redundanz_returns_targeted_question(self):
+        from src.extractor import _build_second_opinion_question
+        q = _build_second_opinion_question({"type": "redundanz", "evidence_excerpt": "getUserData()"})
+        assert "getUserData()" in q
+        assert "aehnlicher" in q.lower() or "gleicher" in q.lower()
+
+    def test_sicherheit_mentions_sanitization(self):
+        from src.extractor import _build_second_opinion_question
+        q = _build_second_opinion_question({"type": "sicherheit", "evidence_excerpt": "$_POST['name']"})
+        assert "unsanitisiert" in q.lower() or "validiert" in q.lower()
+
+    def test_zombie_code_mentions_reference(self):
+        from src.extractor import _build_second_opinion_question
+        q = _build_second_opinion_question({"type": "zombie_code", "evidence_excerpt": "oldMethod()"})
+        assert "aufgerufen" in q.lower() or "referenziert" in q.lower()
+
+    def test_unknown_type_uses_fallback(self):
+        from src.extractor import _build_second_opinion_question
+        q = _build_second_opinion_question({"type": "neuartig", "evidence_excerpt": "some code"})
+        assert "some code" in q
+        assert len(q) > 20
+
+    def test_empty_evidence_uses_fix_suggestion(self):
+        from src.extractor import _build_second_opinion_question
+        q = _build_second_opinion_question({
+            "type": "redundanz",
+            "evidence_excerpt": "",
+            "fix_suggestion": "Zusammenfuehren"
+        })
+        assert "Zusammenfuehren" in q or "siehe Code" in q
+
+    def test_completely_empty_finding_still_returns_question(self):
+        from src.extractor import _build_second_opinion_question
+        q = _build_second_opinion_question({})
+        assert isinstance(q, str)
+        assert len(q) > 10
+
+    def test_all_known_types_produce_questions(self):
+        from src.extractor import _build_second_opinion_question, _QUESTION_TEMPLATES
+        for ftype in _QUESTION_TEMPLATES:
+            q = _build_second_opinion_question({"type": ftype, "evidence_excerpt": "test"})
+            assert len(q) > 20, f"Typ '{ftype}' liefert zu kurze Frage"
+
+    def test_question_injected_into_prompt(self):
+        """Verify targeted question appears in the prompt sent to second-opinion model."""
+        captured_prompts = []
+
+        def mock_generate(prompt, url, model, label):
+            captured_prompts.append(prompt)
+            return _raw_json("BESTÄTIGT")
+
+        findings = [_finding(type="zombie_code", evidence_excerpt="deadFunc()")]
+        with patch("src.analyzer._ollama_generate", side_effect=mock_generate):
+            second_opinion_validate(findings, [_file()], "http://localhost:11434", "model")
+
+        assert len(captured_prompts) == 1
+        assert "deadFunc()" in captured_prompts[0]
+        assert "aufgerufen" in captured_prompts[0].lower() or "referenziert" in captured_prompts[0].lower()
