@@ -50,12 +50,13 @@ if [ -n "${SECOND_OPINION_MODEL:-}" ]; then
     echo "Second Opinion: ${SECOND_OPINION_MODEL}"
 fi
 
-# Stufe 1: Alle Dateien kartieren (was macht jede Datei?)
+# Stufe 1: Strukturiertes Overview (Funktionen + I/O pro Datei)
 "$PYTHON" checker.py --mode overview --no-limit --max-chars 190000 --cache-by-model
 
-# Stufe 2: Fehlersuche über alle/ausgewählte Dateien
-# shellcheck disable=SC2086
-"$PYTHON" checker.py --no-limit --max-chars 190000 --cache-by-model ${_SO_FLAG}
+# Stufe 2: Turbulenz-Analyse mit Overview-Daten (Hot-Zones + betroffene Funktionen)
+"$PYTHON" checker.py --mode turbulence --llm --use-overview-cache
 
-# Stufe 3: Turbulenz-Analyse (vermischte Verantwortlichkeiten / Hot-Zones)
-"$PYTHON" checker.py --mode turbulence --llm
+# Stufe 3: Gezielte Fehleranalyse (Hot-Zones + I/O als Kontext, Second Opinion hier)
+# shellcheck disable=SC2086
+"$PYTHON" checker.py --no-limit --max-chars 190000 --cache-by-model \
+    --use-turbulence-cache ${_SO_FLAG}

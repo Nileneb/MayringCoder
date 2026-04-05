@@ -241,3 +241,80 @@ class TestSaveOverviewContextSignatures:
         assert loaded[0]["key_responsibilities"] == ["doX()", "doY()"]
         assert loaded[0]["dependencies"] == ["lib.py"]
         assert loaded[0]["purpose_keywords"] == ["X", "Y"]
+
+
+# ---------------------------------------------------------------------------
+# save_overview_context — functions + external_deps (Issue #17)
+# ---------------------------------------------------------------------------
+
+class TestSaveOverviewContextFeedForward:
+    def test_preserves_functions_field(self, mock_cache):
+        from src.context import save_overview_context
+
+        results = [
+            {
+                "filename": "a.php",
+                "category": "domain",
+                "file_summary": "Summary",
+                "functions": [
+                    {"name": "store", "inputs": ["Request"], "outputs": ["JsonResponse"], "calls": ["DB::insert"]}
+                ],
+            },
+        ]
+        path = save_overview_context(results, mock_cache["repo_url"])
+        loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+        assert "functions" in loaded[0]
+        assert loaded[0]["functions"][0]["name"] == "store"
+        assert loaded[0]["functions"][0]["calls"] == ["DB::insert"]
+
+    def test_preserves_external_deps_field(self, mock_cache):
+        from src.context import save_overview_context
+
+        results = [
+            {
+                "filename": "b.php",
+                "category": "api",
+                "file_summary": "Summary",
+                "external_deps": ["Auth", "DB", "Mail"],
+            },
+        ]
+        path = save_overview_context(results, mock_cache["repo_url"])
+        loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+        assert loaded[0]["external_deps"] == ["Auth", "DB", "Mail"]
+
+    def test_omits_missing_functions_field(self, mock_cache):
+        from src.context import save_overview_context
+
+        results = [
+            {"filename": "c.php", "category": "config", "file_summary": "Just config"},
+        ]
+        path = save_overview_context(results, mock_cache["repo_url"])
+        loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+        assert "functions" not in loaded[0]
+
+
+# ---------------------------------------------------------------------------
+# load_overview_cache_raw (Issue #17)
+# ---------------------------------------------------------------------------
+
+class TestLoadOverviewCacheRaw:
+    def test_returns_dict_keyed_by_filename(self, mock_cache):
+        from src.context import load_overview_cache_raw
+
+        result = load_overview_cache_raw(mock_cache["repo_url"])
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "src/UserService.php" in result
+        assert "app/Models/User.php" in result
+
+    def test_entries_contain_category(self, mock_cache):
+        from src.context import load_overview_cache_raw
+
+        result = load_overview_cache_raw(mock_cache["repo_url"])
+        assert result["src/UserService.php"]["category"] == "domain"
+
+    def test_nonexistent_repo_returns_none(self, mock_cache):
+        from src.context import load_overview_cache_raw
+
+        result = load_overview_cache_raw("https://nonexistent.com/no/repo.git")
+        assert result is None

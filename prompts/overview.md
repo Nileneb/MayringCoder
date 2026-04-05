@@ -11,6 +11,8 @@ Gib ein strukturiertes JSON zurück mit:
 3. **`key_responsibilities`** (Liste, maximal 5): Die wichtigsten Zuständigkeiten / public Methoden
 4. **`dependencies`** (Liste, maximal 8): Klassen / Module, die diese Datei importiert / referenziert
 5. **`purpose_keywords`** (Liste, maximal 5): Die 3–5 wichtigsten Funktionsschlüsselwörter (z.B. "User-Authentifizierung", "Stripe-Zahlung", "Email-Versand")
+6. **`functions`** (Liste, maximal 10): Die wichtigsten Funktionen/Methoden mit I/O-Signatur
+7. **`external_deps`** (Liste, maximal 8): Externe Systeme / Fassaden, die diese Datei nutzt (z.B. "Auth", "DB", "Mail", "Cache", "Queue")
 
 ## Regeln
 
@@ -42,7 +44,12 @@ Gib ein strukturiertes JSON zurück mit:
     "Ressourcen-Verwaltung",
     "CRUD-Operationen",
     "Authentifizierung"
-  ]
+  ],
+  "functions": [
+    {"name": "store", "inputs": ["Request $request"], "outputs": ["JsonResponse"], "calls": ["User::create", "Auth::check"]},
+    {"name": "destroy", "inputs": ["int $id"], "outputs": ["void"], "calls": ["User::findOrFail", "DB::transaction"]}
+  ],
+  "external_deps": ["Auth", "DB", "Mail"]
 }
 ```
 

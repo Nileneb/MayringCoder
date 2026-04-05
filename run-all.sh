@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# run-all.sh — Alle Modell-Kombinationen durchlaufen + Turbulenz-Analyse
+# run-all.sh — Alle Modell-Kombinationen durchlaufen (Feed-Forward-Pipeline)
+#
+# Pipeline pro Modell-Kombination:
+#   Stufe 1: Overview (Funktionen + I/O pro Datei)
+#   Stufe 2: Turbulenz-Analyse (einmalig, mit Overview-Cache)
+#   Stufe 3: Gezielte Fehleranalyse (Hot-Zones + I/O als Kontext)
 #
 # Jede Kombination aus Primär- und Second-Opinion-Modell bekommt eine eigene
 # --run-id (cache-isoliert), sodass Ergebnisse danach verglichen werden können:
@@ -15,7 +20,6 @@ COMMON="--no-limit --max-chars 190000"
 
 # ── Primäre Analysemodelle ────────────────────────────────────────────────────
 MODELS=(
-    
     "llama3.2"
     "qwen2.5-coder:7b"
     "mistral:7b-instruct"
@@ -34,10 +38,38 @@ SECOND_OPINION_MODELS=(
     "mistral:7b-instruct"
 )
 
+# ── Modell für die einmalige Turbulenz-Analyse ─────────────────────────────────
+TURB_MODEL="${TURB_MODEL:-${MODELS[0]}}"
+
 # ── Hilfsfunktion: Modellname → sicherer Slug ─────────────────────────────────
 slugify() { echo "${1//[:.\/]/-}"; }
 
-# ── Kombinationen durchlaufen ─────────────────────────────────────────────────
+# ── Stufe 1: Overview pro Primärmodell ──────────────────────────────────────────
+echo ""
+echo "========================================"
+echo "  Stufe 1: Overview (pro Primärmodell)"
+echo "========================================"
+for model in "${MODELS[@]}"; do
+    primary_slug=$(slugify "$model")
+    echo ""
+    echo "--- Overview: $model ---"
+    # shellcheck disable=SC2086
+    "$PYTHON" checker.py --mode overview $COMMON --model "$model" --cache-by-model
+done
+
+# ── Stufe 2: Turbulenz-Analyse (einmalig, mit Overview-Cache) ──────────────────
+echo ""
+echo "========================================"
+echo "  Stufe 2: Turbulenz-Analyse (einmalig)"
+echo "  Modell: $TURB_MODEL"
+echo "========================================"
+"$PYTHON" checker.py --mode turbulence --llm --use-overview-cache
+
+# ── Stufe 3: Gezielte Fehleranalyse (pro Modell-Kombination) ──────────────────
+echo ""
+echo "========================================"
+echo "  Stufe 3: Fehleranalyse (alle Kombinationen)"
+echo "========================================"
 for model in "${MODELS[@]}"; do
     primary_slug=$(slugify "$model")
 
@@ -68,18 +100,12 @@ for model in "${MODELS[@]}"; do
         echo "  run-id:         $run_id"
         echo "========================================"
 
-        echo "--- Stufe 1: Overview ($model) ---"
-        "$PYTHON" checker.py --mode overview $COMMON --model "$model" --run-id "$run_id"
-
-        echo "--- Stufe 2: Fehlersuche ($combo_label) ---"
+        echo "--- Fehleranalyse: $combo_label ---"
         # shellcheck disable=SC2086
-        "$PYTHON" checker.py $COMMON --model "$model" --run-id "$run_id" $so_flag
+        "$PYTHON" checker.py $COMMON --model "$model" --run-id "$run_id" \
+            --cache-by-model --use-turbulence-cache $so_flag
     done
 done
-
-echo ""
-echo "--- Stufe 3: Turbulenz-Analyse (einmalig, Heuristik) ---"
-"$PYTHON" checker.py --mode turbulence --llm
 
 echo ""
 echo "========================================"

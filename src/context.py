@@ -62,7 +62,8 @@ def save_overview_context(results: list[dict], repo_url: str) -> str:
             "file_summary": r.get("file_summary", ""),
         }
         # Phase 1 enrichment fields (from overview.md)
-        for field in ("file_type", "key_responsibilities", "dependencies", "purpose_keywords"):
+        for field in ("file_type", "key_responsibilities", "dependencies", "purpose_keywords",
+                       "functions", "external_deps"):
             if field in r:
                 entry[field] = r[field]
         # Signature extraction (for redundancy checking)
@@ -72,6 +73,26 @@ def save_overview_context(results: list[dict], repo_url: str) -> str:
     path = _overview_path(repo_url)
     path.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
     return str(path)
+
+
+def load_overview_cache_raw(repo_url: str) -> dict[str, dict] | None:
+    """Load overview JSON as {filename: entry_dict} map.
+
+    Used by the turbulence stage to reuse categories and function I/O
+    from the overview stage (feed-forward pipeline, Issue #17).
+
+    Returns None if no overview cache exists.
+    """
+    path = _overview_path(repo_url)
+    if not path.exists():
+        return None
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not entries:
+        return None
+    return {e["filename"]: e for e in entries if "filename" in e}
 
 
 def load_overview_context(repo_url: str) -> str | None:

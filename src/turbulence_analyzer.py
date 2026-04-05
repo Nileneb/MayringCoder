@@ -30,13 +30,21 @@ from src.turbulence_calculator import (
 from src.turbulence_report import build_report
 
 
-def analyze_repo(repo_path: str, use_llm: bool = False, model: str | None = None) -> dict:
+def analyze_repo(
+    repo_path: str,
+    use_llm: bool = False,
+    model: str | None = None,
+    overview_cache: dict | None = None,
+) -> dict:
     """Analysiert ein ganzes Repository auf Turbulenz.
 
     Args:
-        repo_path: Pfad zum (temporären) Repository-Verzeichnis.
-        use_llm:   True = LLM-Kategorisierung (Ollama), False = Heuristik (schnell).
-        model:     Ollama-Modellname für LLM-Modus. Wenn None, wird TURB_MODEL / Fallback verwendet.
+        repo_path:      Pfad zum (temporären) Repository-Verzeichnis.
+        use_llm:        True = LLM-Kategorisierung (Ollama), False = Heuristik (schnell).
+        model:          Ollama-Modellname für LLM-Modus.
+        overview_cache: {filename: entry_dict} aus Overview-Stage (Issue #17).
+                        Wenn vorhanden, wird die Kategorie aus dem Cache übernommen
+                        statt per LLM/Heuristik neu zu kategorisieren.
 
     Returns:
         Report-Dict mit summary, critical_files, redundancies.
@@ -62,9 +70,12 @@ def analyze_repo(repo_path: str, use_llm: bool = False, model: str | None = None
 
     print(f"\n📁 {len(filtered)} Dateien gefunden in {repo_path}")
     print(f"🤖 Modus: {'LLM' if use_llm else 'Heuristik'}")
+    if overview_cache:
+        print(f"📋 Overview-Cache: {len(overview_cache)} Einträge geladen")
     print("=" * 60)
 
     categorize_fn = categorize_chunk_llm if use_llm else categorize_chunk_heuristic
+    _overview_hits = 0
     all_analyses: list[FileAnalysis] = []
     all_chunks = []
 
@@ -74,8 +85,15 @@ def analyze_repo(repo_path: str, use_llm: bool = False, model: str | None = None
         if not chunks:
             continue
 
+        # Feed-forward: use overview cache category when available (Issue #17)
+        ov_entry = overview_cache.get(rel_path) if overview_cache else None
+
         for chunk in chunks:
-            if use_llm:
+            if ov_entry and ov_entry.get("category"):
+                chunk.category = ov_entry["category"]
+                chunk.functional_name = chunk.functional_name or ""
+                _overview_hits += 1
+            elif use_llm:
                 categorize_chunk_llm(chunk, model=model)
             else:
                 categorize_chunk_heuristic(chunk)
@@ -106,6 +124,12 @@ def analyze_repo(repo_path: str, use_llm: bool = False, model: str | None = None
             tier=tier,
         )
 
+        # Enrich hot zones with function I/O from overview cache (Issue #17)
+        if ov_entry and hot_zones:
+            ov_functions = ov_entry.get("functions", [])
+            for zone in hot_zones:
+                zone["affected_functions"] = ov_functions
+
         if tier == "deep" and hot_zones:
             for zone in hot_zones[:3]:
                 finding = deep_analyze_hotzone(
@@ -125,6 +149,10 @@ def analyze_repo(repo_path: str, use_llm: bool = False, model: str | None = None
         all_analyses.append(analysis)
 
     redundancies = find_redundancies(all_chunks)
+
+    if overview_cache and _overview_hits:
+        print(f"\n  📋 Overview-Cache: {_overview_hits} Chunks aus Cache kategorisiert")
+
     return build_report(all_analyses, redundancies)
 
 

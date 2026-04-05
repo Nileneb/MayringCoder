@@ -27,6 +27,7 @@ from src.config import CACHE_DIR, CODEBOOK_PATH, DEFAULT_PROMPT, EMBEDDING_MODEL
 from src.context import (
     index_overview_to_vectordb,
     load_overview_context,
+    load_overview_cache_raw,
     query_similar_context,
     save_overview_context,
     set_max_context_chars,
@@ -100,6 +101,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--embedding-query", default=None, metavar="TEXT",
                    help="Forschungsfrage / Suchbegriffe für den Embedding-Vorfilter. "
                         "Standard: wird aus Prompt-Name und Codebook abgeleitet.")
+    # Feed-forward pipeline (Issue #17)
+    p.add_argument("--use-overview-cache", action="store_true",
+                   help="Turbulence-Modus: Kategorien aus Overview-Cache übernehmen "
+                        "statt per LLM/Heuristik neu zu kategorisieren.")
+    p.add_argument("--use-turbulence-cache", action="store_true",
+                   help="Analyze-Modus: Hot-Zone-Kontext aus Turbulence-Cache laden "
+                        "und in den Analyse-Prompt injizieren. Dateien mit tier=stable "
+                        "werden übersprungen.")
     return p.parse_args()
 
 
@@ -122,6 +131,61 @@ def _is_test_file(filename: str) -> bool:
 
 def _load_prompt(path: Path | str) -> str:
     return Path(path).read_text(encoding="utf-8")
+
+
+def _load_turbulence_cache(repo_url: str) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    """Load turbulence cache and build hot-zone context map + tier map.
+
+    Returns:
+        (hot_zone_context_map, tier_map) — both None if cache doesn't exist.
+        hot_zone_context_map: {filename: context_string} for prompt injection.
+        tier_map: {filename: tier} for filtering stable files.
+    """
+    from src.config import CACHE_DIR, repo_slug as _repo_slug
+    cache_path = CACHE_DIR / f"{_repo_slug(repo_url)}_turbulence.json"
+    if not cache_path.exists():
+        return None, None
+    try:
+        import json as _json
+        report = _json.loads(cache_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None, None
+
+    hot_zone_map: dict[str, str] = {}
+    tier_map: dict[str, str] = {}
+
+    for cf in report.get("critical_files", []):
+        path = cf.get("path", "")
+        tier = cf.get("tier", "")
+        tier_map[path] = tier
+
+        zones = cf.get("hot_zones", [])
+        if not zones:
+            continue
+
+        lines = ["## Hot-Zone-Kontext (aus Turbulenz-Analyse)"]
+        for zone in zones:
+            start = zone.get("start_line", "?")
+            end = zone.get("end_line", "?")
+            cats = zone.get("categories", [])
+            peak = zone.get("peak_score", 0)
+            cats_str = " × ".join(cats) if isinstance(cats, list) else str(cats)
+            lines.append(
+                f"ACHTUNG: Hot-Zone bei Zeile {start}-{end} "
+                f"({cats_str}, Peak-Score: {peak:.0%})"
+            )
+            # Include affected functions from overview if available
+            affected = zone.get("affected_functions", [])
+            for fn_info in affected[:5]:
+                if isinstance(fn_info, dict):
+                    name = fn_info.get("name", "")
+                    inputs = ", ".join(fn_info.get("inputs", []))
+                    calls = ", ".join(fn_info.get("calls", []))
+                    lines.append(f"  Betroffene Funktion: {name}({inputs}) → calls: {calls}")
+
+        hot_zone_map[path] = "\n".join(lines)
+
+    return hot_zone_map, tier_map
 
 
 def main() -> None:
@@ -360,6 +424,7 @@ def main() -> None:
         sys.exit(0)
 
     # 5. Diff
+    if args.full:
         filenames_to_check = [f["filename"] for f in files]
         diff: dict = {
             "changed": [], "added": filenames_to_check, "removed": [],
@@ -471,6 +536,24 @@ def main() -> None:
             if project_context:
                 print("  Projektkontext aus Overview-Cache geladen (Phase 1 Fallback)")
 
+        # ── Feed-forward: load turbulence cache for hot-zone context (Issue #17) ──
+        hot_zone_context_map: dict[str, str] | None = None
+        if args.use_turbulence_cache:
+            hot_zone_context_map, _turb_tiers = _load_turbulence_cache(repo_url)
+            if hot_zone_context_map is not None:
+                n_hz = sum(1 for v in hot_zone_context_map.values() if v)
+                print(f"  Hot-Zone-Kontext geladen: {n_hz} Dateien mit Hot-Zones")
+                # Tier-based filtering: skip stable files
+                if _turb_tiers:
+                    stable_files = {fn for fn, tier in _turb_tiers.items() if tier == "stable"}
+                    before = len(filenames_to_check)
+                    filenames_to_check = [fn for fn in filenames_to_check if fn not in stable_files]
+                    skipped = before - len(filenames_to_check)
+                    if skipped:
+                        print(f"  → {skipped} stabile Dateien übersprungen (tier=stable)")
+            else:
+                print("  Turbulence-Cache nicht gefunden — kein Hot-Zone-Kontext")
+
         # ── P6: Separate test-prompt routing ─────────────────────────────────
         # Split files into test vs non-test. Test files get test_inspector.md.
         test_prompt_path = PROMPTS_DIR / "test_inspector.md"
@@ -495,6 +578,7 @@ def main() -> None:
                 files, non_test_files, prompt_path, ollama_url, model,
                 project_context=project_context,
                 context_fn=rag_context_fn,
+                hot_zone_context_map=hot_zone_context_map,
             )
             results.extend(batch_results)
 
@@ -634,20 +718,31 @@ def main() -> None:
 
 
 def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> None:
-    """Turbulenz-Analyse (Stufe 3): Hot-Zone-Erkennung über alle Repo-Dateien."""
+    """Turbulenz-Analyse (Stufe 2 in Feed-Forward): Hot-Zone-Erkennung über alle Repo-Dateien."""
     import json
     from datetime import datetime
-    from src.config import REPORTS_DIR
+    from src.config import CACHE_DIR, REPORTS_DIR, repo_slug as _repo_slug
     from src.turbulence_analyzer import analyze_repo
     from src.turbulence_report import build_markdown
 
     print(f"\n{'='*60}")
-    print("  Stufe 3: Turbulenz-Analyse")
+    print("  Stufe 2: Turbulenz-Analyse")
     print(f"  Repo:    {repo_url}")
     print(f"  Modus:   {'LLM (' + turb_model + ')' if args.llm else 'Heuristik (schnell)'}")
+    if args.use_overview_cache:
+        print("  Overview-Cache: aktiv")
     print(f"{'='*60}")
 
     start = time.perf_counter()
+
+    # Feed-forward: load overview cache if requested (Issue #17)
+    overview_cache = None
+    if args.use_overview_cache:
+        overview_cache = load_overview_cache_raw(repo_url)
+        if overview_cache:
+            print(f"  Overview-Cache geladen: {len(overview_cache)} Dateien")
+        else:
+            print("  Overview-Cache nicht gefunden — Fallback auf Standard-Kategorisierung")
 
     print(f"\nRepository laden: {repo_url} ...")
     _, _, content = fetch_repo(repo_url, os.getenv("GITHUB_TOKEN") or None)
@@ -675,15 +770,28 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
     with tempfile.TemporaryDirectory(prefix="turb_") as tmpdir:
         written = _write_files(files, tmpdir)
         print(f"{written} Dateien ins Arbeitsverzeichnis geschrieben\n")
-        report = analyze_repo(tmpdir, use_llm=args.llm, model=turb_model if args.llm else None)
+        report = analyze_repo(
+            tmpdir,
+            use_llm=args.llm,
+            model=turb_model if args.llm else None,
+            overview_cache=overview_cache,
+        )
 
     elapsed = time.perf_counter() - start
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M")
 
     json_path = REPORTS_DIR / f"turbulence-{ts}.json"
     json_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+
+    # Stable cache path for feed-forward pipeline (Issue #17)
+    cache_path = CACHE_DIR / f"{_repo_slug(repo_url)}_turbulence.json"
+    cache_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False, default=str),
         encoding="utf-8",
     )
@@ -696,6 +804,7 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
 
     print(f"\nReport (JSON): {json_path}")
     print(f"Report (MD):   {md_path}")
+    print(f"Cache:         {cache_path}")
     print(f"Fertig in {elapsed:.0f}s")
 
 

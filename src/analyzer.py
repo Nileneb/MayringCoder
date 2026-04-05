@@ -156,6 +156,7 @@ def analyze_file(
     ollama_url: str,
     model: str,
     project_context: str | None = None,
+    hot_zone_context: str | None = None,
 ) -> dict:
     """Analyze one file. Uses a two-stage output strategy:
 
@@ -169,6 +170,7 @@ def analyze_file(
         ollama_url:       Ollama base URL.
         model:            Model name.
         project_context:  Optional project-wide context injected before the file block.
+        hot_zone_context: Optional turbulence hot-zone info injected before file (Issue #17).
 
     Returns:
         Dict with 'filename', 'category', 'truncated', 'file_summary',
@@ -181,6 +183,8 @@ def analyze_file(
     parts = [prompt_template]
     if project_context:
         parts.append(f"\n{project_context}\n")
+    if hot_zone_context:
+        parts.append(f"\n{hot_zone_context}\n")
     parts.append(
         f"\nDatei: {filename}\n"
         f"Kategorie: {category}\n"
@@ -290,6 +294,7 @@ def analyze_files(
     model: str,
     project_context: str | None = None,
     context_fn: Callable[[dict], str | None] | None = None,
+    hot_zone_context_map: dict[str, str] | None = None,
 ) -> list[dict]:
     """Analyze multiple files, optionally enriching each with per-file context."""
     prompt_template = _load_prompt(prompt_path)
@@ -304,7 +309,8 @@ def analyze_files(
             ctx = context_fn(file)
         if ctx is None:
             ctx = project_context
-        results.append(analyze_file(file, prompt_template, ollama_url, model, ctx))
+        hz_ctx = hot_zone_context_map.get(fn) if hot_zone_context_map else None
+        results.append(analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx))
         _bs = get_batch_size()
         if _bs > 0 and i % _bs == 0 and i < total:
             _bd = get_batch_delay()
@@ -354,6 +360,12 @@ def overview_file(
         "truncated": truncated,
         "file_summary": summary,
     }
+
+    # Structured I/O fields for feed-forward pipeline (Issue #17)
+    if parsed:
+        for field in ("functions", "external_deps"):
+            if field in parsed:
+                result[field] = parsed[field]
 
     # Enrich with signature extraction for Phase 3 (redundancy check).
     try:
