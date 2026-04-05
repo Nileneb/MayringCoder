@@ -20,8 +20,6 @@ from pathlib import Path
 import httpx
 
 from src.config import (
-    BATCH_DELAY_SECONDS,
-    BATCH_SIZE,
     CACHE_DIR,
     EMBEDDING_MODEL,
     MAX_CONTEXT_CHARS,
@@ -390,15 +388,6 @@ def _embed_texts(texts: list[str], ollama_url: str) -> list[list[float]]:
                 processed += 1
 
         processed += len(batch_idx) if batch_results is not None else 0
-
-        # GPU pause — same cadence as analyzer batch processing.
-        items_done = min(batch_start + _EMBED_BATCH_SIZE, total_uncached)
-        if BATCH_SIZE > 0 and items_done % BATCH_SIZE == 0 and items_done < total_uncached:
-            print(
-                f"  ⏸ Embedding-Pause ({BATCH_DELAY_SECONDS}s nach {items_done} Docs) …",
-                flush=True,
-            )
-            time.sleep(BATCH_DELAY_SECONDS)
 
     return result  # type: ignore[return-value]
 
