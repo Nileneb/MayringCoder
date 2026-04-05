@@ -44,7 +44,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="RepoChecker — lokale Code-Analyse mit Ollama")
     p.add_argument("--repo", help="GitHub-Repo URL (überschreibt .env)")
     p.add_argument("--model", help="Ollama-Modell (überschreibt .env)")
-    p.add_argument("--full", action="store_true", help="Cache ignorieren, alle Dateien analysieren")
+    p.add_argument("--full", action="store_true",
+                   help="Full-Scan: Cache ignorieren, kein Datei-Limit (impliziert --no-limit)")
     p.add_argument("--dry-run", action="store_true", help="Nur Diff + Selektion zeigen, keine Analyse")
     p.add_argument("--show-selection", action="store_true", help="Zeigt ausgewählte Dateien inkl. Kategorie")
     p.add_argument("--prompt", help="Pfad zu einem alternativen Prompt")
@@ -318,6 +319,11 @@ def main() -> None:
     if cache_run_key != "default":
         print(f"Cache-Run-Key aktiv: {cache_run_key}")
 
+    if args.full:
+        print(f"\n{'='*60}")
+        print("  FULL SCAN — Cache wird ignoriert, kein Datei-Limit")
+        print(f"{'='*60}\n")
+
     # 1. Fetch
     print(f"Repository laden: {repo_url} ...")
     summary, tree, content = fetch_repo(repo_url, token)
@@ -353,7 +359,8 @@ def main() -> None:
     categories = {f["filename"]: f["category"] for f in files}
 
     # Determine effective file limit
-    if args.no_limit:
+    # --full implies --no-limit (bypass budget cap)
+    if args.full or args.no_limit:
         max_files = 0
     elif args.budget is not None:
         max_files = args.budget
@@ -417,6 +424,8 @@ def main() -> None:
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
     if args.mode == "turbulence":
+        if args.full:
+            print("--full: Turbulenz-Analyse scannt standardmäßig alle Dateien.")
         # Priority: --model CLI flag → TURB_MODEL env → interactive (if --llm) → fallback
         turb_model = resolve_model(
             ollama_url,
@@ -438,7 +447,8 @@ def main() -> None:
             "snapshot_id": None,
         }
         conn = None
-        print(f"--full: {len(filenames_to_check)} Dateien werden analysiert")
+        mode_label = "overview" if args.mode == "overview" else "analyze"
+        print(f"--full ({mode_label}): {len(filenames_to_check)} Dateien werden analysiert")
     elif args.mode == "overview":
         # Overview processes ALL files, no cache interaction
         filenames_to_check = [f["filename"] for f in files]
@@ -511,7 +521,7 @@ def main() -> None:
 
         # 7. Overview Report (kein Aggregate nötig)
         elapsed = time.perf_counter() - start
-        report_path = generate_overview_report(repo_url, model, results, diff, elapsed, run_id=cache_run_key)
+        report_path = generate_overview_report(repo_url, model, results, diff, elapsed, run_id=cache_run_key, full_scan=args.full)
         print(f"\nReport: {report_path}")
         if args.export:
             ep = export_results(results, args.export, codebook_path.name, "overview")
@@ -710,6 +720,7 @@ def main() -> None:
             repo_url, model, results, aggregation, diff, elapsed,
             run_id=cache_run_key,
             embedding_prefilter_meta=embedding_prefilter_meta,
+            full_scan=args.full,
         )
         n_filtered = aggregation.get("_below_confidence_filtered", 0)
         print(f"\nReport: {report_path}")
@@ -801,6 +812,7 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
             overview_cache=overview_cache,
         )
 
+    report["full_scan"] = args.full
     elapsed = time.perf_counter() - start
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -822,7 +834,7 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
 
     md_path = REPORTS_DIR / f"turbulence-{ts}.md"
     md_path.write_text(
-        build_markdown(report, repo_url, turb_model, elapsed),
+        build_markdown(report, repo_url, turb_model, elapsed, full_scan=args.full),
         encoding="utf-8",
     )
 

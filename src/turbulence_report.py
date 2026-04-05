@@ -112,7 +112,8 @@ def build_report(
     }
 
 
-def build_markdown(report: dict, repo_url: str, model: str, elapsed: float) -> str:
+def build_markdown(report: dict, repo_url: str, model: str, elapsed: float,
+                   full_scan: bool = False) -> str:
     """Rendert einen Turbulenz-Report-Dict als Markdown-String."""
     s = report["summary"]
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -125,6 +126,10 @@ def build_markdown(report: dict, repo_url: str, model: str, elapsed: float) -> s
         f"mode: turbulence",
         f"files_total: {s.get('total_files', 0)}",
         f"run_time_s: {elapsed:.1f}",
+    ]
+    if full_scan:
+        lines.append("full_scan: true")
+    lines += [
         "---",
         "",
         f"# Turbulenz-Analyse — {ts}",
@@ -139,6 +144,7 @@ def build_markdown(report: dict, repo_url: str, model: str, elapsed: float) -> s
         f"| ⬛ Stabil (<20%) | {s.get('stable', 0)} |",
         f"| Findings | {s.get('findings', 0)} |",
         f"| Redundanzen | {s.get('redundancies', 0)} |",
+        f"| Modus | {'Full Scan' if full_scan else 'Standard'} |",
         "",
     ]
 

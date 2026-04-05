@@ -19,6 +19,7 @@ def generate_report(
     commit: str | None = None,
     embedding_prefilter_meta: dict | None = None,
     max_chars_per_file: int | None = None,
+    full_scan: bool = False,
 ) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -48,6 +49,8 @@ def generate_report(
         f"findings_count: {findings_count}",
         f"run_time_s: {timing:.1f}",
     ]
+    if full_scan:
+        lines.append("full_scan: true")
     _so_model = aggregation.get("second_opinion_stats", {}).get("model")
     if _so_model:
         lines.append(f"second_opinion_model: {_so_model}")
@@ -77,6 +80,8 @@ def generate_report(
         f" · 🟢 {bysev.get('info', 0)})",
         f"- **Laufzeit:** {timing:.1f}s",
     ]
+    if full_scan:
+        lines.append("- **Modus:** Full Scan (kein Cache, kein Limit)")
     if embedding_prefilter_meta:
         ep = embedding_prefilter_meta
         lines.append(
@@ -267,6 +272,7 @@ def generate_report(
         "truncation_flags": [r["filename"] for r in results if r.get("truncated")],
         "parse_errors": aggregation.get("parse_errors", []),
         "run_time_s": round(timing, 2),
+        "full_scan": full_scan,
         "embedding_prefilter": embedding_prefilter_meta,
     }
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -281,6 +287,7 @@ def generate_overview_report(
     diff: dict,
     timing: float,
     run_id: str | None = None,
+    full_scan: bool = False,
 ) -> str:
     """Generate a lightweight overview-only report (no findings / aggregation)."""
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -300,6 +307,10 @@ def generate_overview_report(
         f"files_total: {files_total}",
         f"errors: {len(errors)}",
         f"run_time_s: {timing:.1f}",
+    ]
+    if full_scan:
+        lines.append("full_scan: true")
+    lines += [
         "---",
         "",
         f"# Funktions-Übersicht — {timestamp}",
@@ -308,8 +319,10 @@ def generate_overview_report(
         f"- **Dateien:** {files_total}",
         f"- **Fehler:** {len(errors)}",
         f"- **Laufzeit:** {timing:.1f}s",
-        "",
     ]
+    if full_scan:
+        lines.append("- **Modus:** Full Scan")
+    lines.append("")
 
     # Group by category
     cat_groups: dict[str, list[dict]] = {}

@@ -360,3 +360,70 @@ class TestGenerateOverviewReport:
         )
         content = Path(path).read_text(encoding="utf-8")
         assert "overview-run" in content
+
+
+# ---------------------------------------------------------------------------
+# full_scan metadata (Issue #20)
+# ---------------------------------------------------------------------------
+
+class TestFullScanMetadata:
+    def test_full_scan_in_analyze_report(self, tmp_path):
+        from src import report as mod
+        mod.REPORTS_DIR = tmp_path
+        path = generate_report(
+            repo_url="https://github.com/test/repo",
+            model="m",
+            results=[_minimal_result()],
+            aggregation=_minimal_aggregation(),
+            diff=_minimal_diff(),
+            timing=1.0,
+            full_scan=True,
+        )
+        content = Path(path).read_text(encoding="utf-8")
+        assert "full_scan: true" in content
+        assert "Full Scan" in content
+
+    def test_full_scan_in_meta_json(self, tmp_path):
+        from src import report as mod
+        mod.REPORTS_DIR = tmp_path
+        generate_report(
+            repo_url="https://github.com/test/repo",
+            model="m",
+            results=[],
+            aggregation=_minimal_aggregation(),
+            diff=_minimal_diff(added=[], selected=[]),
+            timing=1.0,
+            full_scan=True,
+        )
+        meta_files = list(tmp_path.glob("*_meta.json"))
+        meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+        assert meta["full_scan"] is True
+
+    def test_full_scan_absent_by_default(self, tmp_path):
+        from src import report as mod
+        mod.REPORTS_DIR = tmp_path
+        path = generate_report(
+            repo_url="https://github.com/test/repo",
+            model="m",
+            results=[_minimal_result()],
+            aggregation=_minimal_aggregation(),
+            diff=_minimal_diff(),
+            timing=1.0,
+        )
+        content = Path(path).read_text(encoding="utf-8")
+        assert "full_scan" not in content
+
+    def test_full_scan_in_overview_report(self, tmp_path):
+        from src import report as mod
+        mod.REPORTS_DIR = tmp_path
+        path = generate_overview_report(
+            repo_url="https://github.com/test/repo",
+            model="m",
+            results=[],
+            diff=_minimal_diff(added=[], selected=[]),
+            timing=1.0,
+            full_scan=True,
+        )
+        content = Path(path).read_text(encoding="utf-8")
+        assert "full_scan: true" in content
+        assert "Full Scan" in content
