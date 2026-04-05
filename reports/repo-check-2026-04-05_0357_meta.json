@@ -1,0 +1,20 @@
+{
+  "repo": "https://github.com/Nileneb/app.linn.games",
+  "timestamp": "2026-04-05_0357",
+  "model": "mistral:7b-instruct",
+  "run_id": "mistral:7b-instruct",
+  "diff_stats": {
+    "changed": 0,
+    "added": 1,
+    "removed": 1,
+    "unchanged": 157
+  },
+  "selected_files": [
+    "storage/app/public/.gitignore"
+  ],
+  "skipped_files": [],
+  "truncation_flags": [],
+  "parse_errors": [],
+  "run_time_s": 9.91,
+  "embedding_prefilter": null
+}

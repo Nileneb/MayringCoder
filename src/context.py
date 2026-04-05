@@ -5,10 +5,14 @@ Phase 1: Saves overview results to JSON in the cache dir.
 Phase 2: Indexes overview entries into a local ChromaDB collection.
          Uses Ollama embeddings (nomic-embed-text) for similarity search.
          Falls back to Phase 1 if ChromaDB is unavailable.
+Phase 3: Finding-reactive RAG queries (Issue #18).
+         After primary analysis, each finding gets a semantically tailored
+         RAG query. Context is stored in finding dict for validation steps.
 """
 
 import hashlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -474,6 +478,7 @@ def query_similar_context(
     repo_url: str,
     ollama_url: str,
     top_k: int | None = None,
+    query_type: str | None = None,
 ) -> str | None:
     """Find the most relevant overview entries for a given file via similarity search.
 
