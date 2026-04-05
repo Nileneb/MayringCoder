@@ -318,3 +318,147 @@ class TestLoadOverviewCacheRaw:
 
         result = load_overview_cache_raw("https://nonexistent.com/no/repo.git")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# index_overview_to_vectordb — Funktions-Signaturen-Dokumente (Issue #21)
+# ---------------------------------------------------------------------------
+
+class TestIndexOverviewFunctionDocs:
+    """index_overview_to_vectordb() erzeugt pro Datei mit functions[] ein zweites Dokument."""
+
+    REPO_URL = "https://example.com/example/repo.git"
+
+    @pytest.fixture
+    def setup_index(self, tmp_path, monkeypatch):
+        """CACHE_DIR patchen, Overview-JSON schreiben, ChromaDB + embed mocken."""
+        import src.context as ctx_mod
+        from unittest.mock import MagicMock, patch as _patch
+
+        if not ctx_mod._HAS_CHROMADB:
+            pytest.skip("chromadb not installed")
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        monkeypatch.setattr(ctx_mod, "CACHE_DIR", cache_dir)
+
+        entries = [
+            {
+                "filename": "app/Services/UserService.php",
+                "category": "domain",
+                "file_summary": "Manages user accounts.",
+                "functions": [
+                    {"name": "save_user", "inputs": ["$request"], "outputs": ["User"], "calls": ["DB::insert", "Auth::check"]},
+                    {"name": "delete_user", "inputs": ["$id"], "outputs": ["bool"], "calls": ["DB::delete"]},
+                ],
+                "external_deps": ["Auth", "DB"],
+            },
+            {
+                "filename": "config/app.php",
+                "category": "config",
+                "file_summary": "Application config.",
+                # no functions field
+            },
+        ]
+        (cache_dir / "example-repo_overview.json").write_text(
+            json.dumps(entries, ensure_ascii=False), encoding="utf-8"
+        )
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client = MagicMock()
+        mock_client.get_collection.side_effect = Exception("no collection")
+        mock_client.create_collection.return_value = mock_collection
+
+        def fake_embed(texts, ollama_url):
+            return [[0.0] * 4 for _ in texts]
+
+        with _patch.object(ctx_mod, "_embed_texts", fake_embed), \
+             _patch("src.context.chromadb.PersistentClient", return_value=mock_client):
+            yield {"entries": entries, "collection": mock_collection}
+
+    def test_total_document_count(self, setup_index):
+        from src.context import index_overview_to_vectordb
+        total = index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+        # 2 entries: UserService (summary + functions) + config (summary only) → 3
+        assert total == 3
+
+    def test_function_doc_contains_function_names(self, setup_index):
+        from src.context import index_overview_to_vectordb
+        index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+        docs = setup_index["collection"].add.call_args.kwargs["documents"]
+        fn_docs = [d for d in docs if "functions:" in d]
+        assert len(fn_docs) == 1
+        assert "save_user" in fn_docs[0]
+        assert "delete_user" in fn_docs[0]
+
+    def test_function_doc_contains_calls(self, setup_index):
+        from src.context import index_overview_to_vectordb
+        index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+        docs = setup_index["collection"].add.call_args.kwargs["documents"]
+        fn_docs = [d for d in docs if "functions:" in d]
+        assert "DB::insert" in fn_docs[0]
+
+    def test_function_doc_contains_external_deps(self, setup_index):
+        from src.context import index_overview_to_vectordb
+        index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+        docs = setup_index["collection"].add.call_args.kwargs["documents"]
+        fn_docs = [d for d in docs if "functions:" in d]
+        assert "Auth" in fn_docs[0]
+        assert "DB" in fn_docs[0]
+
+    def test_no_function_doc_for_entry_without_functions(self, setup_index):
+        from src.context import index_overview_to_vectordb
+        index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+        ids = setup_index["collection"].add.call_args.kwargs["ids"]
+        assert "config/app.php::functions" not in ids
+        assert "config/app.php::summary" in ids
+
+    def test_function_doc_metadata_has_doc_type(self, setup_index):
+        from src.context import index_overview_to_vectordb
+        index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+        kwargs = setup_index["collection"].add.call_args.kwargs
+        ids = kwargs["ids"]
+        metadatas = kwargs["metadatas"]
+        fn_idx = ids.index("app/Services/UserService.php::functions")
+        assert metadatas[fn_idx]["doc_type"] == "functions"
+        sum_idx = ids.index("app/Services/UserService.php::summary")
+        assert metadatas[sum_idx]["doc_type"] == "summary"
+
+    def test_staleness_check_uses_expected_count(self, tmp_path, monkeypatch):
+        import src.context as ctx_mod
+        from unittest.mock import MagicMock, patch as _patch
+
+        if not ctx_mod._HAS_CHROMADB:
+            pytest.skip("chromadb not installed")
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        monkeypatch.setattr(ctx_mod, "CACHE_DIR", cache_dir)
+
+        entries = [
+            {"filename": "a.php", "category": "domain", "file_summary": "A",
+             "functions": [{"name": "foo", "inputs": [], "outputs": [], "calls": []}]},
+            {"filename": "b.php", "category": "config", "file_summary": "B"},
+        ]
+        (cache_dir / "example-repo_overview.json").write_text(
+            json.dumps(entries, ensure_ascii=False), encoding="utf-8"
+        )
+
+        # expected_count = 2 summaries + 1 function doc (only a.php) = 3
+        mock_existing = MagicMock()
+        mock_existing.count.return_value = 3
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_existing
+
+        def fake_embed(texts, ollama_url):
+            return [[0.0] * 4 for _ in texts]
+
+        with _patch.object(ctx_mod, "_embed_texts", fake_embed), \
+             _patch("src.context.chromadb.PersistentClient", return_value=mock_client):
+            from src.context import index_overview_to_vectordb
+            result = index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
+
+        # Staleness matched → skip, return expected_count
+        assert result == 3
+        mock_existing.add.assert_not_called()

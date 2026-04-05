@@ -404,10 +404,13 @@ def _embed_texts(texts: list[str], ollama_url: str) -> list[list[float]]:
 
 
 def index_overview_to_vectordb(repo_url: str, ollama_url: str, force: bool = False) -> int:
-    """Index overview JSON entries into ChromaDB. Returns number of entries indexed.
+    """Index overview JSON entries into ChromaDB. Returns number of documents indexed.
 
-    Skips re-indexing if the collection already has the same number of entries
-    (embeddings use a fixed model and don't depend on the analysis model).
+    Indexes two document types per file:
+    - Summary document: prose summary (always, Typ 1)
+    - Functions document: function signatures + external_deps (if functions[] non-empty, Typ 2)
+
+    Skips re-indexing if the collection already has the expected number of documents.
     Pass force=True to re-index regardless.
     """
     if not _HAS_CHROMADB:
@@ -426,13 +429,17 @@ def index_overview_to_vectordb(repo_url: str, ollama_url: str, force: bool = Fal
 
     client = chromadb.PersistentClient(path=str(chroma_path))
 
-    # Staleness check: skip if collection already has the right number of entries.
+    # Expected document count: 1 summary + 1 functions doc per file with functions[].
+    n_fn_docs = sum(1 for e in entries if e.get("functions"))
+    expected_count = len(entries) + n_fn_docs
+
+    # Staleness check: skip if collection already has the right number of documents.
     if not force:
         try:
             existing = client.get_collection("overview")
-            if existing.count() == len(entries):
-                print(f"  Vektor-DB bereits aktuell ({len(entries)} Einträge) — übersprungen.", flush=True)
-                return len(entries)
+            if existing.count() == expected_count:
+                print(f"  Vektor-DB bereits aktuell ({expected_count} Dokumente) — übersprungen.", flush=True)
+                return expected_count
         except Exception:
             pass  # Collection doesn't exist yet — proceed with indexing.
 
@@ -444,22 +451,43 @@ def index_overview_to_vectordb(repo_url: str, ollama_url: str, force: bool = Fal
     collection = client.create_collection("overview")
 
     # Build documents + metadata
-    # Truncate summaries — embedding models work best with short texts and
+    # Truncate to _MAX_EMBED_CHARS — embedding models work best with short texts and
     # very long inputs can cause Ollama 500 errors (GPU OOM / context overflow).
     _MAX_EMBED_CHARS = 500
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict] = []
-    for i, e in enumerate(entries):
+    for e in entries:
         fn = e["filename"]
         cat = e.get("category", "uncategorized")
+
+        # Typ 1: Prosa-Summary (wie bisher)
         summary = (e.get("file_summary") or "").replace("\n", " ").strip()
         if len(summary) > _MAX_EMBED_CHARS:
             summary = summary[:_MAX_EMBED_CHARS - 3] + "..."
         doc = f"[{cat}] {fn}: {summary}"
-        ids.append(str(i))
+        ids.append(f"{fn}::summary")
         documents.append(doc)
-        metadatas.append({"filename": fn, "category": cat})
+        metadatas.append({"filename": fn, "category": cat, "doc_type": "summary"})
+
+        # Typ 2: Funktions-Signaturen-Dokument (Issue #21)
+        functions = e.get("functions") or []
+        if functions:
+            fn_parts = []
+            for f in functions[:10]:
+                name = f.get("name", "")
+                inputs = ", ".join(f.get("inputs", []))
+                outputs = " → " + ", ".join(f.get("outputs", [])) if f.get("outputs") else ""
+                calls = ", ".join(f.get("calls", []))
+                part = f"{name}({inputs}){outputs}" + (f" [calls: {calls}]" if calls else "")
+                fn_parts.append(part)
+            ext_deps = e.get("external_deps") or []
+            ext_str = f" | deps: {', '.join(ext_deps[:8])}" if ext_deps else ""
+            fn_doc = f"[{cat}] {fn} functions: " + " | ".join(fn_parts) + ext_str
+            fn_doc = fn_doc[:_MAX_EMBED_CHARS]
+            ids.append(f"{fn}::functions")
+            documents.append(fn_doc)
+            metadatas.append({"filename": fn, "category": cat, "doc_type": "functions"})
 
     # Get embeddings from Ollama
     embeddings = _embed_texts(documents, ollama_url)
