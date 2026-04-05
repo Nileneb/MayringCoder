@@ -184,6 +184,65 @@ categories:
       - "*usecase*.py"
       - "*business*.py"
 
+  - name: infrastructure
+    description: Background-Jobs, Queue-Worker, Cron-Commands, Console-Commands
+    patterns:
+      - "*/Jobs/*"
+      - "*/jobs/*"
+      - "*/Commands/*"
+      - "*/commands/*"
+      - "*/Console/*"
+      - "*Job.php"
+      - "*Command.php"
+      - "*job*.py"
+      - "*worker*.py"
+      - "*task*.py"
+      - "*queue*.py"
+
+  - name: auth
+    description: Authentifizierung, Autorisierung, Policies, Guards
+    patterns:
+      - "*/Policies/*"
+      - "*/policies/*"
+      - "*/Guards/*"
+      - "*/guards/*"
+      - "*Policy.php"
+      - "*Guard.php"
+      - "*auth*.py"
+      - "*permission*.py"
+      - "*authorization*.py"
+
+  - name: middleware
+    description: HTTP-Middleware, Request/Response-Pipeline, Token-Prüfung
+    patterns:
+      - "*/Middleware/*"
+      - "*/middleware/*"
+      - "*Middleware.php"
+      - "*middleware*.py"
+      - "*interceptor*.py"
+
+  - name: providers
+    description: Service Provider, Dependency Injection, Boot-Logik
+    patterns:
+      - "*/Providers/*"
+      - "*/providers/*"
+      - "*Provider.php"
+      - "*ServiceProvider.php"
+      - "*provider*.py"
+
+  - name: listeners
+    description: Event Listener, Subscriber, Webhooks, Observer
+    patterns:
+      - "*/Listeners/*"
+      - "*/listeners/*"
+      - "*/Observers/*"
+      - "*/observers/*"
+      - "*Listener.php"
+      - "*Observer.php"
+      - "*listener*.py"
+      - "*subscriber*.py"
+      - "*event_handler*.py"
+
   - name: ui
     description: Frontend, Templates, UI-Komponenten, Views
     patterns:

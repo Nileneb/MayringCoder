@@ -328,7 +328,14 @@ def calculate_turbulence(chunks: list[Chunk], window: int = 5) -> tuple[float, l
 # ── Schritt 4: Redundanz-Erkennung ─────────────────────────────
 
 def find_redundancies(all_chunks: list[Chunk]) -> list[Redundancy]:
-    """Vergleicht funktionale Namen über alle Dateien hinweg."""
+    """Vergleicht funktionale Namen und Code-Inhalt über alle Dateien hinweg.
+
+    Score-Berechnung (zweistufig):
+    1. Name-Ähnlichkeit (SequenceMatcher) als Vorfilter — nur Paare >= SIMILARITY_THRESHOLD
+    2. Finaler Score = 35% Name-Ähnlichkeit + 65% Code-Ähnlichkeit (erste 600 Zeichen)
+
+    Damit sind Werte wie 0.42 / 0.78 möglich statt immer 1.0 bei identischen Namen.
+    """
     named = [
         c for c in all_chunks
         if c.functional_name
@@ -353,20 +360,30 @@ def find_redundancies(all_chunks: list[Chunk]) -> list[Redundancy]:
                 continue
             seen_pairs.add(pair_key)
 
-            sim = SequenceMatcher(
+            name_sim = SequenceMatcher(
                 None,
                 a.functional_name.lower(),
                 b.functional_name.lower(),
             ).ratio()
 
-            if sim >= SIMILARITY_THRESHOLD:
-                redundancies.append(Redundancy(
-                    name_a=a.functional_name,
-                    file_a=f"{a.file}:{a.start_line}",
-                    name_b=b.functional_name,
-                    file_b=f"{b.file}:{b.start_line}",
-                    similarity=round(sim, 2),
-                ))
+            if name_sim < SIMILARITY_THRESHOLD:
+                continue
+
+            code_sim = SequenceMatcher(
+                None,
+                a.code[:600].lower(),
+                b.code[:600].lower(),
+            ).ratio()
+
+            sim = round(0.35 * name_sim + 0.65 * code_sim, 2)
+
+            redundancies.append(Redundancy(
+                name_a=a.functional_name,
+                file_a=f"{a.file}:{a.start_line}",
+                name_b=b.functional_name,
+                file_b=f"{b.file}:{b.start_line}",
+                similarity=sim,
+            ))
 
     redundancies.sort(key=lambda r: -r.similarity)
     return redundancies

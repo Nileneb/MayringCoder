@@ -180,6 +180,44 @@ class TestCategorizeFiles:
         assert [f["filename"] for f in result] == ["b.txt", "a.txt", "c.txt"]
 
 
+class TestNewLaravelCategories:
+    """Verify that the new categories in codebook.yaml catch Laravel-typical files."""
+
+    def _categorize(self, filename: str) -> str:
+        result = categorize_files([make_file(filename)])
+        return result[0]["category"]
+
+    def test_job_categorized_as_infrastructure(self):
+        assert self._categorize("app/Jobs/DownloadPaperJob.php") == "infrastructure"
+
+    def test_console_command_categorized_as_infrastructure(self):
+        assert self._categorize("app/Console/Commands/IngestCommand.php") == "infrastructure"
+
+    def test_policy_categorized_as_auth(self):
+        assert self._categorize("app/Policies/WorkspacePolicy.php") == "auth"
+
+    def test_guard_categorized_as_auth(self):
+        assert self._categorize("app/Guards/SessionGuard.php") == "auth"
+
+    def test_middleware_categorized_as_middleware(self):
+        assert self._categorize("app/Http/Middleware/VerifyMcpToken.php") == "middleware"
+
+    def test_service_provider_categorized_as_providers(self):
+        assert self._categorize("app/Providers/AppServiceProvider.php") == "providers"
+
+    def test_fortify_provider_categorized_as_providers(self):
+        assert self._categorize("app/Providers/FortifyServiceProvider.php") == "providers"
+
+    def test_listener_categorized_as_listeners(self):
+        assert self._categorize("app/Listeners/SetUpNewUser.php") == "listeners"
+
+    def test_observer_categorized_as_listeners(self):
+        assert self._categorize("app/Observers/UserObserver.php") == "listeners"
+
+    def test_unknown_file_still_uncategorized(self):
+        assert self._categorize("app/Helpers/SomeHelper.php") == "utils"
+
+
 class TestLoadCodebook:
     def test_load_codebook_returns_empty_for_nonexistent(self, tmp_path):
         result = load_codebook(tmp_path / "nonexistent.yaml")

@@ -205,7 +205,31 @@ class TestFindRedundancies:
         ]
         result = find_redundancies(chunks)
         assert len(result) == 1
-        assert result[0].similarity == 1.0
+        # Score = 35% name_sim + 65% code_sim — nicht mehr immer 1.0
+        assert 0.0 < result[0].similarity <= 1.0
+
+    def test_identical_code_gives_high_score(self):
+        """Gleicher Name + gleicher Code → Score nahe 1.0."""
+        code = "def save_user(user):\n    db.insert(user)\n    return user"
+        chunks = [
+            _make_chunk(file="a.py", functional_name="save_user", code=code),
+            _make_chunk(file="b.py", functional_name="save_user", code=code),
+        ]
+        result = find_redundancies(chunks)
+        assert len(result) == 1
+        assert result[0].similarity >= 0.90
+
+    def test_same_name_different_code_gives_lower_score(self):
+        """Gleicher Name, völlig anderer Code → Score deutlich unter 1.0."""
+        chunks = [
+            _make_chunk(file="a.py", functional_name="process",
+                        code="def process():\n    return sum(range(100))"),
+            _make_chunk(file="b.py", functional_name="process",
+                        code="def process():\n    return '<html><body></body></html>'"),
+        ]
+        result = find_redundancies(chunks)
+        assert len(result) == 1
+        assert result[0].similarity < 0.90
 
     def test_does_not_flag_dissimilar_names(self):
         chunks = [
