@@ -1,0 +1,2533 @@
+{
+  "summary": {
+    "total_files": 337,
+    "critical": 0,
+    "medium": 12,
+    "stable": 325,
+    "findings": 0,
+    "redundancies": 2011
+  },
+  "critical_files": [],
+  "all_files": [
+    {
+      "path": "public/js/filament/support/support.js",
+      "tier": "light",
+      "turbulence": 0.458,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/support/support.js",
+      "tier": "light",
+      "turbulence": 0.458,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/LangdockAgentService.php",
+      "tier": "light",
+      "turbulence": 0.315,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/LangdockAgentServiceTest.php",
+      "tier": "light",
+      "turbulence": 0.312,
+      "hot_zones": [
+        {
+          "start_line": 46,
+          "end_line": 57,
+          "peak_score": 0.6666666666666666
+        }
+      ],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_03_200000_add_workspace_level_rls.php",
+      "tier": "light",
+      "turbulence": 0.304,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_03_100000_add_rls_agent_scope.php",
+      "tier": "light",
+      "turbulence": 0.271,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/projekt-liste.blade.php",
+      "tier": "light",
+      "turbulence": 0.262,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/factories/UserFactory.php",
+      "tier": "light",
+      "turbulence": 0.25,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/dashboard.blade.php",
+      "tier": "light",
+      "turbulence": 0.236,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100011_create_prisma_function.php",
+      "tier": "light",
+      "turbulence": 0.233,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/settings/profile.blade.php",
+      "tier": "light",
+      "turbulence": 0.218,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/auth.php",
+      "tier": "light",
+      "turbulence": 0.201,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/database.php",
+      "tier": "skip",
+      "turbulence": 0.173,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/settings/two-factor/recovery-codes.blade.php",
+      "tier": "skip",
+      "turbulence": 0.171,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_04_100000_extend_rls_agent_coverage.php",
+      "tier": "skip",
+      "turbulence": 0.17,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/factories/WorkspaceUserFactory.php",
+      "tier": "skip",
+      "turbulence": 0.167,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/seeders/DatabaseSeeder.php",
+      "tier": "skip",
+      "turbulence": 0.167,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/widgets/components/chart.js",
+      "tier": "skip",
+      "turbulence": 0.167,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/widgets/components/chart.js",
+      "tier": "skip",
+      "turbulence": 0.167,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Pages/LangdockAgentsPage.php",
+      "tier": "skip",
+      "turbulence": 0.155,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/rich-editor.js",
+      "tier": "skip",
+      "turbulence": 0.153,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/seeders/RechercheDemoSeeder.php",
+      "tier": "skip",
+      "turbulence": 0.152,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/file-upload.js",
+      "tier": "skip",
+      "turbulence": 0.146,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/chat/big-research-chat.blade.php",
+      "tier": "skip",
+      "turbulence": 0.146,
+      "hot_zones": [
+        {
+          "start_line": 14,
+          "end_line": 25,
+          "peak_score": 0.6666666666666666
+        }
+      ],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/rich-editor.js",
+      "tier": "skip",
+      "turbulence": 0.142,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/settings/delete-user-form.blade.php",
+      "tier": "skip",
+      "turbulence": 0.134,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/settings/password.blade.php",
+      "tier": "skip",
+      "turbulence": 0.134,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/agent-action-button.blade.php",
+      "tier": "skip",
+      "turbulence": 0.125,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/LangdockContextInjector.php",
+      "tier": "skip",
+      "turbulence": 0.117,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/LangdockContextInjectorTest.php",
+      "tier": "skip",
+      "turbulence": 0.117,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_000001_create_permission_tables.php",
+      "tier": "skip",
+      "turbulence": 0.111,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p3.blade.php",
+      "tier": "skip",
+      "turbulence": 0.105,
+      "hot_zones": [
+        {
+          "start_line": 31,
+          "end_line": 59,
+          "peak_score": 0.6666666666666666
+        }
+      ],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/file-upload.js",
+      "tier": "skip",
+      "turbulence": 0.101,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p5.blade.php",
+      "tier": "skip",
+      "turbulence": 0.098,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/markdown-editor.js",
+      "tier": "skip",
+      "turbulence": 0.097,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/markdown-editor.js",
+      "tier": "skip",
+      "turbulence": 0.097,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "routes/web.php",
+      "tier": "skip",
+      "turbulence": 0.097,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/research-input.blade.php",
+      "tier": "skip",
+      "turbulence": 0.094,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/fortify.php",
+      "tier": "skip",
+      "turbulence": 0.093,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/projekt-detail.blade.php",
+      "tier": "skip",
+      "turbulence": 0.08,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/mayring-codierung.blade.php",
+      "tier": "skip",
+      "turbulence": 0.067,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p8.blade.php",
+      "tier": "skip",
+      "turbulence": 0.055,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/settings/two-factor.blade.php",
+      "tier": "skip",
+      "turbulence": 0.053,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100004_create_p3_tables.php",
+      "tier": "skip",
+      "turbulence": 0.052,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100009_create_p8_tables.php",
+      "tier": "skip",
+      "turbulence": 0.052,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p1.blade.php",
+      "tier": "skip",
+      "turbulence": 0.048,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_02_180100_add_workspace_scope_to_projekte_and_chat_messages.php",
+      "tier": "skip",
+      "turbulence": 0.045,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p7.blade.php",
+      "tier": "skip",
+      "turbulence": 0.038,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/welcome.blade.php",
+      "tier": "skip",
+      "turbulence": 0.034,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p6.blade.php",
+      "tier": "skip",
+      "turbulence": 0.023,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/recherche/phase-p2.blade.php",
+      "tier": "skip",
+      "turbulence": 0.017,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Actions/Fortify/CreateNewUser.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Actions/Fortify/PasswordValidationRules.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Actions/Fortify/ResetUserPassword.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Actions/SendAgentMessage.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/ContactResource/Pages/ListContacts.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/ContactResource/Pages/ViewContact.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/ContactResource.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/UserResource/Pages/CreateUser.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/UserResource/Pages/EditUser.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/UserResource/Pages/ListUsers.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/UserResource.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/WorkspaceResource/Pages/ListWorkspaces.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/WorkspaceResource/Pages/ViewWorkspace.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Resources/WorkspaceResource.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Filament/Widgets/CreditOverviewWidget.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Controllers/ContactController.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Controllers/Controller.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Controllers/DsgvoController.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Controllers/PaperRagController.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Middleware/TrackPageView.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Http/Middleware/VerifyMcpToken.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Jobs/DownloadPaperJob.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Jobs/IngestPaperJob.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Jobs/ProcessChatMessageJob.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Jobs/ProcessMayringBatchJob.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Jobs/ProcessMayringChunkJob.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Jobs/ProcessPhaseAgentJob.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Listeners/SetUpNewUser.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Livewire/Actions/Logout.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Livewire/Concerns/HasCrudEntity.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Livewire/Forms/Concerns/HasModelMapping.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Livewire/Forms/Recherche/AnpassungsprotokollForm.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Livewire/Forms/Recherche/SuchstringForm.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Livewire/Forms/Recherche/ThesaurusMappingForm.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Mail/ContactConfirmationMail.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Mail/ContactInquiryMail.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/ChatMessage.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/ChunkCodierung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Concerns/HasWorkspaces.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Consent.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Contact.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/CreditTransaction.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/PageView.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/PhaseAgentResult.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P1Komponente.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P1Kriterium.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P1Strukturmodellwahl.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P1Warnsignal.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P2Cluster.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P2MappingSuchstringKomponente.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P2ReviewTypEntscheidung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P2Trefferliste.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P3Datenbankmatrix.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P3Disziplin.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P3GeografischerFilter.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P3GraueLiteratur.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P4Anpassungsprotokoll.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P4Suchstring.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P4ThesaurusMapping.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P5PrismaZahlen.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P5ScreeningEntscheidung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P5ScreeningKriterium.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P5ToolEntscheidung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P5Treffer.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P6Luckenanalyse.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P6Qualitaetsbewertung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P7Datenextraktion.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P7GradeEinschaetzung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P7MusterKonsistenz.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P7SyntheseMethode.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P8Limitation.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P8Reproduzierbarkeitspruefung.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P8Suchprotokoll.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/P8UpdatePlan.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/Paper.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/PaperEmbedding.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/Phase.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Recherche/Projekt.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/User.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/Workspace.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Models/WorkspaceUser.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Observers/P5TrefferObserver.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Policies/ProjektPolicy.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Policies/WorkspacePolicy.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/AppServiceProvider.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/AuthServiceProvider.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/Filament/AdminPanelProvider.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/FortifyServiceProvider.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/RateLimitingServiceProvider.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/URLServiceProvider.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/UserEventServiceProvider.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Providers/VoltServiceProvider.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/AgentDailyLimitExceededException.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/CreditService.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/EmbeddingService.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/InsufficientCreditsException.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/LangdockAgentException.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/PdfParserService.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/RetrieverService.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "app/Services/UnpaywallService.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "bootstrap/app.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "bootstrap/providers.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/app.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/cache.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/cookie-consent.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/filesystems.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/logging.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/mail.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/queue.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/services.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "config/session.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/factories/Recherche/ProjektFactory.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/factories/WorkspaceFactory.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/0001_01_01_000000_create_users_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/0001_01_01_000001_create_cache_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/0001_01_01_000002_create_jobs_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2025_09_02_075243_add_two_factor_columns_to_users_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_30_100000_create_contacts_table.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_30_100001_create_page_views_table.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_000002_add_details_to_page_views_table.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_000003_create_consents_table.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100000_create_recherche_extensions_and_enums.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100001_create_projekte_and_phasen_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100002_create_p1_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100003_create_p2_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100005_create_p4_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100006_create_p5_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100007_create_p6_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100008_create_p7_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_100010_create_recherche_indices.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_200000_create_chat_messages_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_03_31_200002_create_paper_embeddings_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_01_090000_create_activity_log_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_01_100000_add_status_to_users_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_02_170000_create_papers_table_and_gate_indexes.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_02_180000_create_workspaces_and_workspace_users_tables.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_02_180200_create_workspace_composite_indexes.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_02_180300_add_projekt_id_to_p8_suchprotokoll.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_02_190000_add_composite_index_to_chat_messages.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_03_200000_add_credits_to_workspaces.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_03_200001_create_credit_transactions_table.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_04_110000_create_phase_agent_results_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_04_200000_change_contacts_pk_to_uuid.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/2026_04_05_100000_create_chunk_codierungen_table.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/migrations/support/PgsqlEnumHelpers.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "database/seeders/RoleSeeder.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/index.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/actions/actions.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/actions/actions.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/app.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/echo.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/filament/app.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/filament/echo.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/checkbox-list.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/code-editor.js",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/color-picker.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/date-time-picker.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/key-value.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/select.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/slider.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/tags-input.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/forms/components/textarea.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/notifications/notifications.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/schemas/components/actions.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/schemas/components/tabs.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/schemas/components/wizard.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/schemas/schemas.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/tables/components/columns/checkbox.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/tables/components/columns/select.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/tables/components/columns/text-input.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/tables/components/columns/toggle.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/tables/tables.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/filament/widgets/components/stats-overview/stat/chart.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/checkbox-list.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/code-editor.js",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/color-picker.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/date-time-picker.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/key-value.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/select.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/slider.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/tags-input.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/forms/components/textarea.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/notifications/notifications.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/schemas/components/actions.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/schemas/components/tabs.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/schemas/components/wizard.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/schemas/schemas.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/tables/components/columns/checkbox.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/tables/components/columns/select.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/tables/components/columns/text-input.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/tables/components/columns/toggle.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/tables/tables.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "public/js/widgets/components/stats-overview/stat/chart.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/js/welcome.js",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/action-message.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/agent-suggestion.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/app-logo-icon.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/app-logo.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/auth-header.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/auth-session-status.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/crud/actions.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/crud/field.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/crud/form.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/crud/section.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/app/header.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/app/sidebar.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/app.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/auth/card.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/auth/simple.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/auth/split.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/layouts/auth.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/placeholder-pattern.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/components/settings/layout.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/emails/contact-confirmation.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/emails/contact-inquiry.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/filament/pages/langdock-agents.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/layouts/legal.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/legal/agb.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/legal/dsgvo.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/legal/impressum.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/confirm-password.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/forgot-password.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/login.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/register.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/reset-password.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/two-factor-challenge.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/auth/verify-email.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/credits/workspace-balance.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/livewire/settings/appearance.blade.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/partials/head.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/partials/settings-heading.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/recherche/index.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/recherche/mayring.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "resources/views/recherche/show.blade.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "routes/api.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "routes/console.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Actions/SendAgentMessageTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/AuthenticationTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/EmailVerificationTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/PasswordConfirmationTest.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/PasswordResetTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/RegistrationTest.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Auth/TwoFactorChallengeTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Chat/BigResearchChatTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Chat/ChatMessageTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Console/DeployCommandsTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/ContactTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Controllers/PaperRagControllerTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/DashboardTest.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/ExampleTest.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/IngestPaperJobTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Jobs/DownloadPaperJobTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Jobs/ProcessPhaseAgentJobTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/LegalPagesTest.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Listeners/SetUpNewUserTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/PaperRagTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/ProjektPolicyTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/AgentActionButtonTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/MayringCodierungTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP1Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP2Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP3Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP4Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP5Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP6Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP7Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/PhaseP8Test.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Recherche/ProjektDetailTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/RechercheTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/CreditServiceTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/EmbeddingServiceTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/PdfParserServiceTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/RetrieverServiceTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Services/UnpaywallServiceTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Settings/AppearanceTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Settings/PasswordUpdateTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Settings/ProfileUpdateTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Settings/TwoFactor/PageAccessTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/Settings/TwoFactor/StateManagementTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/UserRolesTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Feature/WelcomeTest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Pest.php",
+      "tier": "skip",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/TestCase.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "tests/Unit/ExampleTest.php",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    },
+    {
+      "path": "vite.config.js",
+      "tier": "stable",
+      "turbulence": 0.0,
+      "hot_zones": [],
+      "findings": []
+    }
+  ],
+  "redundancies": [
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Jobs/DownloadPaperJob.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Jobs/IngestPaperJob.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Jobs/ProcessChatMessageJob.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Jobs/ProcessMayringBatchJob.php:15",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Jobs/ProcessMayringChunkJob.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Jobs/ProcessPhaseAgentJob.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Listeners/SetUpNewUser.php:1",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Mail/ContactConfirmationMail.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Mail/ContactInquiryMail.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "__construct",
+      "file_a": "/tmp/turb_ckbpirj5/app/Actions/SendAgentMessage.php:16",
+      "name_b": "__construct",
+      "file_b": "/tmp/turb_ckbpirj5/app/Services/RetrieverService.php:15",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "form",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/ContactResource.php:16",
+      "name_b": "form",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/UserResource.php:16",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "form",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/ContactResource.php:16",
+      "name_b": "form",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/WorkspaceResource.php:29",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "table",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/ContactResource.php:31",
+      "name_b": "table",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/UserResource.php:46",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "table",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/ContactResource.php:31",
+      "name_b": "table",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:14",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "getPages",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/ContactResource.php:46",
+      "name_b": "getPages",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/UserResource.php:90",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "getPages",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/ContactResource.php:46",
+      "name_b": "getPages",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/WorkspaceResource.php:103",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "form",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/UserResource.php:16",
+      "name_b": "form",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/WorkspaceResource.php:29",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "table",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/UserResource.php:46",
+      "name_b": "table",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/WorkspaceResource/RelationManagers/CreditTransactionsRelationManager.php:14",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "getPages",
+      "file_a": "/tmp/turb_ckbpirj5/app/Filament/Resources/UserResource.php:90",
+      "name_b": "getPages",
+      "file_b": "/tmp/turb_ckbpirj5/app/Filament/Resources/WorkspaceResource.php:103",
+      "similarity": 1.0
+    },
+    {
+      "name_a": "handle",
+      "file_a": "/tmp/turb_ckbpirj5/app/Http/Middleware/TrackPageView.php:16",
+      "name_b": "handle",
+      "file_b": "/tmp/turb_ckbpirj5/app/Http/Middleware/VerifyMcpToken.php:1",
+      "similarity": 1.0
+    }
+  ],
+  "full_scan": true
+}
