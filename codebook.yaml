@@ -290,6 +290,96 @@ categories:
       - "conftest.py"
       - "*/fixtures/*"
 
+  - name: integration
+    description: Externe API-Aufrufe, SDK-Wrapper, Third-Party-Services
+    patterns:
+      - "*/Integrations/*"
+      - "*/integration/*"
+      - "*/integrations/*"
+      - "*Client.php"
+      - "*client*.py"
+      - "*integration*.py"
+      - "*connector*.py"
+      - "*/adapters/*"
+      - "*/adaptor/*"
+
+  - name: caching
+    description: Cache-Logik, Invalidierung, TTL-Management, Redis/Memcached
+    patterns:
+      - "*/Cache/*"
+      - "*/cache/*"
+      - "*Cache.php"
+      - "*cache*.py"
+      - "*redis*.py"
+      - "*memcache*.py"
+
+  - name: logging
+    description: Log-Statements, Monitoring, Metrics, Tracing, Alerting
+    patterns:
+      - "*/Logging/*"
+      - "*/logging/*"
+      - "*Logger.php"
+      - "*logger*.py"
+      - "*logging*.py"
+      - "*monitoring*.py"
+      - "*tracing*.py"
+
+  - name: validation
+    description: Input-Validierung, Form Requests, Sanitization, Schemas
+    patterns:
+      - "*/Requests/*"
+      - "*/requests/*"
+      - "*/validators/*"
+      - "*/validation/*"
+      - "*Request.php"
+      - "*validator*.py"
+      - "*validation*.py"
+
+  - name: serialization
+    description: JSON/XML-Transformation, DTOs, Resources, Presenter, Transformer
+    patterns:
+      - "*/Resources/*"
+      - "*/Transformers/*"
+      - "*/Presenters/*"
+      - "*/serializers/*"
+      - "*Resource.php"
+      - "*transformer*.py"
+      - "*serializer*.py"
+      - "*dto*.py"
+
+  - name: error_handling
+    description: Exception-Handler, Fallback-Logik, Retry-Mechanismen
+    patterns:
+      - "*/Exceptions/*"
+      - "*/exceptions/*"
+      - "*Exception.php"
+      - "*exception*.py"
+      - "*error_handler*.py"
+      - "*fallback*.py"
+      - "*retry*.py"
+
+  - name: security
+    description: Encryption, Hashing, CSRF, Rate-Limiting, Sanitization
+    patterns:
+      - "*/Security/*"
+      - "*/security/*"
+      - "*encrypt*.py"
+      - "*decrypt*.py"
+      - "*hash*.py"
+      - "*csrf*.py"
+      - "*ratelimit*.py"
+      - "*sanitize*.py"
+
+  - name: scheduling
+    description: Cron-Jobs, Task-Scheduling, zeitgesteuerte Abläufe
+    patterns:
+      - "*/Console/Commands/*"
+      - "*/Schedule/*"
+      - "*/schedule/*"
+      - "*schedule*.py"
+      - "*cron*.py"
+      - "*scheduled_task*.py"
+
   - name: temp_dummy
     description: Temporärer Code, Dummy-Implementierungen, Placeholder
     patterns:

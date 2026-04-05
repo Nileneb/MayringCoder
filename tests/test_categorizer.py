@@ -218,6 +218,41 @@ class TestNewLaravelCategories:
         assert self._categorize("app/Helpers/SomeHelper.php") == "utils"
 
 
+class TestNewIssue26Categories:
+    """Verify the 8 new categories from Issue #26 catch typical files."""
+
+    def _categorize(self, filename: str) -> str:
+        result = categorize_files([make_file(filename)])
+        return result[0]["category"]
+
+    def test_integration_client(self):
+        assert self._categorize("app/Http/Clients/StripeClient.php") == "integration"
+
+    def test_integration_directory(self):
+        assert self._categorize("app/Integrations/SlackWebhook.php") == "integration"
+
+    def test_caching_class(self):
+        assert self._categorize("app/Cache/UserCache.php") == "caching"
+
+    def test_logging_class(self):
+        assert self._categorize("app/Logging/RequestLogger.php") == "logging"
+
+    def test_validation_request(self):
+        assert self._categorize("app/Http/Requests/StorePostRequest.php") == "validation"
+
+    def test_serialization_resource(self):
+        assert self._categorize("app/Http/Resources/UserResource.php") == "serialization"
+
+    def test_error_handling_exception(self):
+        assert self._categorize("app/Exceptions/PaymentException.php") == "error_handling"
+
+    def test_security_directory(self):
+        assert self._categorize("app/Security/EncryptionService.php") == "security"
+
+    def test_scheduling_directory(self):
+        assert self._categorize("app/Schedule/WeeklyReportTask.php") == "scheduling"
+
+
 class TestLoadCodebook:
     def test_load_codebook_returns_empty_for_nonexistent(self, tmp_path):
         result = load_codebook(tmp_path / "nonexistent.yaml")

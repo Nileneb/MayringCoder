@@ -40,18 +40,37 @@ Beruecksichtige diese Frage bei deiner Bewertung.
 - **ABGELEHNT** → Das Finding ist ein Fehlalarm. Der Code ist bereits korrekt, es ist eine Framework-Konvention, eine bewusste Designentscheidung, oder das Problem existiert schlicht nicht.
 - **PRÄZISIERT** → Das Finding hat einen wahren Kern, aber Schweregrad oder Beschreibung stimmen nicht ganz. Du korrigierst es.
 
+## Confidence-Definitionen
+
+- `"high"`: Deine Bewertung ist eindeutig, kein Zweifel an Bestätigung oder Ablehnung.
+- `"medium"`: Wahrscheinlich korrekt, aber der Kontext könnte die Einschätzung ändern.
+- `"low"`: Unsicher — mehr Kontext wäre nötig für eine sichere Aussage.
+
+## Negativ-Beispiele (So NICHT)
+
+❌ **FALSCH** — Prosa vor dem JSON:
+> "Nach meiner Prüfung des Codes bin ich der Meinung, dass ... { ... }"
+
+❌ **FALSCH** — Reasoning ohne konkreten Code-Bezug:
+> `"reasoning": "Das Finding scheint korrekt zu sein."` → Zu vage, kein Beweis.
+
+✅ **RICHTIG** — konkreter Befund:
+> `"verdict": "ABGELEHNT"`, `"reasoning": "Die Methode wird in UserController.php Zeile 42 aufgerufen — kein Zombie-Code."
+
 ## Antwort
 
-Antworte NUR mit diesem JSON-Objekt, keine Prosa:
+Antworte AUSSCHLIESSLICH mit dem JSON zwischen den Markern:
 
-```json
+---BEGIN_JSON---
 {
   "verdict": "BESTÄTIGT",
-  "reasoning": "Kurze Begründung (1-2 Sätze)",
+  "reasoning": "Kurze Begründung (1-2 Sätze, max. 50 Wörter)",
   "adjusted_severity": null,
   "additional_note": null
 }
-```
+---END_JSON---
+
+Alles außerhalb dieser Marker wird ignoriert.
 
 Felder:
 - `verdict`: genau einer von `"BESTÄTIGT"`, `"ABGELEHNT"`, `"PRÄZISIERT"`

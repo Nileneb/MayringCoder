@@ -150,7 +150,7 @@ class TestAnalyzeFileHotZoneContext:
 
         captured_prompt = {}
 
-        def mock_generate(prompt, ollama_url, model, label):
+        def mock_generate(prompt, ollama_url, model, label, *, system_prompt=None):
             captured_prompt["value"] = prompt
             return '{"file_summary": "test", "potential_smells": []}'
 
@@ -171,7 +171,7 @@ class TestAnalyzeFileHotZoneContext:
 
         captured_prompt = {}
 
-        def mock_generate(prompt, ollama_url, model, label):
+        def mock_generate(prompt, ollama_url, model, label, *, system_prompt=None):
             captured_prompt["value"] = prompt
             return '{"file_summary": "test", "potential_smells": []}'
 
@@ -194,7 +194,7 @@ class TestAnalyzeFilesHotZoneMap:
 
         captured_contexts = []
 
-        def mock_generate(prompt, ollama_url, model, label):
+        def mock_generate(prompt, ollama_url, model, label, *, system_prompt=None):
             captured_contexts.append(prompt)
             return '{"file_summary": "test", "potential_smells": []}'
 

@@ -6,7 +6,7 @@ Du bist ein erfahrener Software-Architekt.
 
 Gib ein strukturiertes JSON zurück mit:
 
-1. **`file_summary`** (1–2 Sätze): Was macht diese Datei?
+1. **`file_summary`** (1–2 Sätze, max. 40 Wörter): Was macht diese Datei?
 2. **`file_type`**: Einer von: `model`, `controller`, `service`, `migration`, `test`, `view`, `config`, `utility`, `factory`, `job`, `event`, `middleware`, `seeder`, `command`, `other`
 3. **`key_responsibilities`** (Liste, maximal 5): Die wichtigsten Zuständigkeiten / public Methoden
 4. **`dependencies`** (Liste, maximal 8): Klassen / Module, die diese Datei importiert / referenziert
@@ -24,11 +24,30 @@ Gib ein strukturiertes JSON zurück mit:
 - Für **Models**: welche Relationships sind definiert (belongsTo, hasMany etc.)
 - Für **Config**: welche Einstellungen werden verwaltet
 
-## Ausgabe-Format (strikt JSON, keine Prosa):
+## Token-Limits
 
-```json
+- `file_summary`: maximal 2 Sätze / ~40 Wörter
+- `key_responsibilities`: maximal 5 Einträge, je ~10 Wörter
+- `functions[].calls`: maximal 3 Einträge pro Funktion
+
+## Negativ-Beispiele (So NICHT)
+
+❌ **FALSCH** — Bewertung statt Beschreibung:
+> `"file_summary": "Diese Datei hat zu viele Verantwortlichkeiten und sollte aufgeteilt werden."` → Keine Bewertung, nur Beschreibung.
+
+❌ **FALSCH** — Prosa vor dem JSON:
+> "Hier ist der Steckbrief für die Datei: { ... }"
+
+✅ **RICHTIG** — neutrale Beschreibung:
+> `"file_summary": "Verarbeitet eingehende Stripe-Webhooks und speichert Zahlungsstatus in der Datenbank."
+
+## Ausgabe-Format
+
+Antworte AUSSCHLIESSLICH mit dem JSON zwischen den Markern:
+
+---BEGIN_JSON---
 {
-  "file_summary": "Kurze Beschreibung der Datei-Funktion (max 10 Zeilen)",
+  "file_summary": "Kurze Beschreibung der Datei-Funktion (max 2 Sätze, max. 40 Wörter)",
   "file_type": "controller",
   "key_responsibilities": [
     "index() — listet alle Ressourcen",
@@ -51,6 +70,7 @@ Gib ein strukturiertes JSON zurück mit:
   ],
   "external_deps": ["Auth", "DB", "Mail"]
 }
-```
+---END_JSON---
 
+Alles außerhalb dieser Marker wird ignoriert.
 Falls die Datei leer oder nur aus Imports/Boilerplate besteht, antworte mit einem minimalen Steckbrief und setze `"file_type": "other"` und `"key_responsibilities": []`.

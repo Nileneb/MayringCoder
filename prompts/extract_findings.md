@@ -14,6 +14,17 @@ Extrahiere daraus **alle gültigen Findings** (= kodierte Erkenntnisse), die **a
 | `begründung` | Kurze Erklärung (1–2 Sätze), **WARUM** das ein Problem ist |
 | `empfehlung` | Konkrete Handlungsempfehlung (1 Satz) |
 
+## Typ-Definitionen
+
+- `zombie_code`: Code, der nie ausgeführt wird oder keine Auswirkung hat (tote Branches, unerreichbare Methoden, auskommentierter Code)
+- `redundanz`: Gleiche oder fast gleiche Logik existiert an mehreren Stellen (Duplikation, Copy-Paste-Artefakte)
+- `inkonsistenz`: Widersprüchliche Implementierungen desselben Konzepts (verschiedene Konventionen, widersprüchliche Logik)
+- `fehlerbehandlung`: Fehlende oder fehlerhafte Exception-/Error-Behandlung (verschluckte Exceptions, unspezifische Catches)
+- `overengineering`: Unnötig komplexe Abstraktion für ein einfaches Problem (vorzeitige Optimierung, übermäßige Indirektion)
+- `sicherheit`: Potenzielle Sicherheitslücken (SQL-Injection, fehlende Auth-Checks, hartcodierte Secrets)
+- `unklar`: Nicht eindeutig zuordenbar — nur wenn spezifische Begründung möglich ist
+- `freitext`: Rohausgabe ohne strukturierte Findings → ignorieren, nicht extrahieren
+
 ## Entscheidungsregeln
 
 - ✅ Ein Finding ist gültig, wenn es alle 5 Pflichtfelder hat.
@@ -30,11 +41,11 @@ Extrahiere daraus **alle gültigen Findings** (= kodierte Erkenntnisse), die **a
 - **Zeilenangaben**: Wenn keine Zeilennummer angegeben ist, verwende `""` (leer).
 - **Max 10 Findings**: Wenn mehr als 10 gültige Findings vorhanden sind, nimm die 10 mit der höchsten Priorität (Sicherheit > Fehlerbehandlung > Redundanz > Sonstiges).
 
-## Ausgabeformat
+## Ausgabe-Format
 
-Antworte **ausschließlich** mit diesem JSON (keine Prosa vor oder nach dem JSON-Block):
+Antworte AUSSCHLIESSLICH mit dem JSON zwischen den Markern:
 
-```json
+---BEGIN_JSON---
 {
   "findings": [
     {
@@ -46,10 +57,11 @@ Antworte **ausschließlich** mit diesem JSON (keine Prosa vor oder nach dem JSON
     }
   ]
 }
-```
+---END_JSON---
 
+Alles außerhalb dieser Marker wird ignoriert.
 Wenn keine gültigen Findings vorhanden:
 
-```json
+---BEGIN_JSON---
 {"findings": []}
-```
+---END_JSON---

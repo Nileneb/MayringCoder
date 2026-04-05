@@ -104,14 +104,27 @@ def _truncate(content: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 
 def _parse_llm_json(raw: str) -> dict | None:
-    """Extract a JSON object from the LLM response; handles markdown code fences."""
+    """Extract a JSON object from the LLM response.
+
+    Parsing strategies (in order):
+    1. Explicit delimiters ---BEGIN_JSON--- / ---END_JSON---
+    2. Markdown code fences ```json ... ```
+    3. First {...} block in the text
+    """
     raw = raw.strip()
-    # Try to strip ```json ... ``` fences
+    # Strategy 1: explicit delimiters (new prompts use these)
+    delimited = re.search(r"---BEGIN_JSON---\s*(.*?)\s*---END_JSON---", raw, re.DOTALL)
+    if delimited:
+        try:
+            return json.loads(delimited.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Strategy 2: markdown fences
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if fenced:
         candidate = fenced.group(1)
     else:
-        # Find the first {...} block
+        # Strategy 3: first {...} block
         block = re.search(r"(\{.*\})", raw, re.DOTALL)
         candidate = block.group(1) if block else raw
     try:
@@ -157,20 +170,35 @@ def _freetext_fallback_sozial(raw: str) -> dict:
 # Ollama core
 # ---------------------------------------------------------------------------
 
-def _ollama_generate(prompt: str, ollama_url: str, model: str, label: str) -> str:
+def _ollama_generate(
+    prompt: str,
+    ollama_url: str,
+    model: str,
+    label: str,
+    *,
+    system_prompt: str | None = None,
+) -> str:
     """Send a prompt to Ollama and collect the streamed response.
 
     Uses stream=True so httpx's read_timeout fires if the model stops producing
     tokens for OLLAMA_TIMEOUT seconds — prevents the 19-minute hangs that occur
     with stream=False (server holds connection open until generation is complete).
+
+    Args:
+        system_prompt: Optional system role content (format instructions, guardrails).
+                       Passed as Ollama's ``system`` parameter, which most models treat
+                       with higher authority than the user prompt.
     """
     for attempt in range(_MAX_RETRIES):
         try:
             chunks: list[str] = []
+            json_body: dict = {"model": model, "prompt": prompt, "stream": True}
+            if system_prompt:
+                json_body["system"] = system_prompt
             with httpx.stream(
                 "POST",
                 f"{ollama_url}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": True},
+                json=json_body,
                 timeout=OLLAMA_TIMEOUT,
             ) as resp:
                 resp.raise_for_status()
@@ -229,20 +257,26 @@ def analyze_file(
     category = file.get("category", "uncategorized")
     content, truncated = _truncate(file["content"])
 
-    parts = [prompt_template]
+    # System prompt = the full prompt template (instructions, guardrails, format rules).
+    # User prompt  = file-specific data only (context + file content).
+    # Ollama's /api/generate `system` parameter gives these instructions higher
+    # authority — models are less likely to prepend prose or deviate from the format.
+    user_parts = []
     if project_context:
-        parts.append(f"\n{project_context}\n")
+        user_parts.append(f"{project_context}\n")
     if hot_zone_context:
-        parts.append(f"\n{hot_zone_context}\n")
-    parts.append(
-        f"\nDatei: {filename}\n"
+        user_parts.append(f"{hot_zone_context}\n")
+    user_parts.append(
+        f"Datei: {filename}\n"
         f"Kategorie: {category}\n"
         f"```\n{content}\n```"
     )
-    prompt = "\n".join(parts)
+    prompt = "\n".join(user_parts)
 
     try:
-        raw_response = _ollama_generate(prompt, ollama_url, model, filename)
+        raw_response = _ollama_generate(
+            prompt, ollama_url, model, filename, system_prompt=prompt_template
+        )
     except httpx.ConnectError:
         return {
             "filename": filename,
@@ -413,15 +447,17 @@ def overview_file(
     category = file.get("category", "uncategorized")
     content, truncated = _truncate(file["content"])
 
+    # System = instructions (overview template), User = file content only.
     prompt = (
-        f"{prompt_template}\n\n"
         f"Datei: {filename}\n"
         f"Kategorie: {category}\n"
         f"```\n{content}\n```"
     )
 
     try:
-        raw_response = _ollama_generate(prompt, ollama_url, model, filename)
+        raw_response = _ollama_generate(
+            prompt, ollama_url, model, filename, system_prompt=prompt_template
+        )
     except httpx.ConnectError:
         return {"filename": filename, "error": f"Ollama nicht erreichbar unter {ollama_url}"}
     except httpx.TimeoutException:
