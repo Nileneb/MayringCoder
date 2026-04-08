@@ -1,0 +1,75 @@
+"""GitHub Issues Ingestion — lädt Issues via gh CLI und mappt zu Source-Objekten für ingest()."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+
+from src.memory_schema import Source, source_fingerprint
+
+
+def fetch_issues(
+    repo: str,
+    state: str = "open",
+    limit: int = 100,
+) -> list[dict]:
+    """Lädt Issues via gh CLI.
+
+    Args:
+        repo: Owner/Name, z. B. "Nileneb/MayringCoder"
+        state: "open", "closed" oder "all"
+        limit: Maximale Anzahl Issues
+
+    Returns:
+        Liste von Issue-Dicts oder leere Liste bei Fehler.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--repo", repo,
+                "--state", state,
+                "--limit", str(limit),
+                "--json", "number,title,body,labels,state,url,createdAt",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except Exception:
+        pass
+    return []
+
+
+def issues_to_sources(
+    issues: list[dict],
+    repo: str,
+) -> list[tuple[Source, str]]:
+    """Mappt gh-Issues zu (Source, content)-Tupeln für memory_ingest.ingest().
+
+    Args:
+        issues: Liste von Issue-Dicts aus fetch_issues()
+        repo: Owner/Name, z. B. "Nileneb/MayringCoder"
+
+    Returns:
+        Liste von (Source, content_text) Tupeln.
+    """
+    result: list[tuple[Source, str]] = []
+    for issue in issues:
+        title = issue.get("title") or ""
+        body = issue.get("body") or ""
+        content = f"# {title}\n\n{body}"
+        content_hash = source_fingerprint(content)
+        source = Source(
+            source_id=f"github_issue:{repo}:issue/{issue['number']}:{content_hash[:16]}",
+            source_type="github_issue",
+            repo=repo,
+            path=f"issue/{issue['number']}",
+            content_hash=content_hash,
+            branch=issue.get("state"),
+            commit=str(issue["number"]),
+        )
+        result.append((source, content))
+    return result

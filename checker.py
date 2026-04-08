@@ -128,6 +128,13 @@ def parse_args() -> argparse.Namespace:
                    help="Repo laden und alle Dateien in die Memory-Pipeline ingesten.")
     p.add_argument("--memory-categorize", action="store_true",
                    help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
+    p.add_argument("--ingest-issues", metavar="REPO",
+                   help="GitHub Issues von REPO (owner/name) in Memory laden (benötigt gh CLI). "
+                        "z. B. --ingest-issues Nileneb/MayringCoder")
+    p.add_argument("--issues-state", choices=["open", "closed", "all"], default="open",
+                   help="Welche Issues laden (Standard: open)")
+    p.add_argument("--issues-limit", type=int, default=100, metavar="N",
+                   help="Maximale Anzahl Issues (Standard: 100)")
     return p.parse_args()
 
 
@@ -450,6 +457,11 @@ def main() -> None:
     # 3b. Memory batch ingestion mode
     if args.populate_memory:
         _run_populate_memory(args, repo_url, ollama_url, model)
+        sys.exit(0)
+
+    # 3c. GitHub Issues ingestion mode
+    if args.ingest_issues:
+        _run_ingest_issues(args, ollama_url, model)
         sys.exit(0)
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
@@ -956,6 +968,57 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
 
     print(
         f"\n[populate-memory] Fertig: {total} Dateien total, "
+        f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
+    )
+
+
+def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
+    """GitHub Issues in die Memory-Pipeline ingesten."""
+    from src.ingest_github_issues import fetch_issues, issues_to_sources
+    from src.memory_ingest import get_or_create_chroma_collection, ingest
+    from src.memory_store import init_memory_db
+
+    issues_repo = args.ingest_issues
+    state = getattr(args, "issues_state", "open")
+    limit = getattr(args, "issues_limit", 100)
+
+    print(f"[ingest-issues] Issues laden von {issues_repo!r} (state={state}, limit={limit}) ...")
+    issues = fetch_issues(issues_repo, state=state, limit=limit)
+    if not issues:
+        print("[ingest-issues] Keine Issues gefunden oder gh CLI nicht verfügbar.")
+        return
+
+    print(f"[ingest-issues] {len(issues)} Issues gefunden")
+    sources = issues_to_sources(issues, issues_repo)
+
+    conn = init_memory_db()
+    chroma = get_or_create_chroma_collection()
+    ok_count = 0
+    error_count = 0
+    dedup_count = 0
+
+    try:
+        for source, content in sources:
+            try:
+                result = ingest(
+                    source,
+                    content,
+                    conn,
+                    chroma,
+                    ollama_url,
+                    model,
+                    opts={"categorize": False, "mode": "hybrid", "codebook": "social"},
+                )
+                dedup_count += result.get("deduped", 0)
+                ok_count += 1
+            except Exception as exc:
+                print(f"[ingest-issues] FEHLER bei Issue {source.path!r}: {exc}")
+                error_count += 1
+    finally:
+        conn.close()
+
+    print(
+        f"\n[ingest-issues] Fertig: {len(sources)} Issues total, "
         f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
     )
 
