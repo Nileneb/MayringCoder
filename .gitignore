@@ -4,6 +4,7 @@ cache/
 __pycache__/
 *.pyc
 *.pyo
-CLAUDE.md
+
 /reports
 appLinnGames.txt
+.mcp.json

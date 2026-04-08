@@ -1,0 +1,201 @@
+"""Tests for src/memory_retrieval.py."""
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from src.memory_schema import Chunk, RetrievalRecord
+from src.memory_store import init_memory_db, upsert_source, insert_chunk
+from src.memory_schema import Source
+from src.memory_retrieval import (
+    _scope_filter,
+    _symbolic_score,
+    _tokenize,
+    _recency_score,
+    _source_affinity_score,
+    _rerank,
+    compress_for_prompt,
+)
+
+
+def _make_source(source_id: str, repo: str = "owner/test", source_type: str = "repo_file") -> Source:
+    return Source(
+        source_id=source_id,
+        source_type=source_type,
+        repo=repo,
+        path=source_id.split(":", 2)[-1] if ":" in source_id else source_id,
+        branch="main",
+        commit="abc",
+        content_hash="sha256:x",
+        captured_at="2026-04-08T10:00:00+00:00",
+    )
+
+
+def _make_chunk(
+    source_id: str,
+    ordinal: int = 0,
+    text: str = "def foo(): pass",
+    category_labels: list[str] | None = None,
+    created_at: str | None = None,
+) -> Chunk:
+    text_hash = Chunk.compute_text_hash(text)
+    return Chunk(
+        chunk_id=Chunk.make_id(source_id, ordinal, "function"),
+        source_id=source_id,
+        chunk_level="function",
+        ordinal=ordinal,
+        text=text,
+        text_hash=text_hash,
+        category_labels=category_labels or [],
+        created_at=created_at or datetime.now(timezone.utc).isoformat(),
+    )
+
+
+class TestScopeFilter:
+    def test_filter_by_repo(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src_a = _make_source("repo:owner/a:foo.py", repo="owner/a")
+        src_b = _make_source("repo:owner/b:bar.py", repo="owner/b")
+        upsert_source(conn, src_a)
+        upsert_source(conn, src_b)
+        insert_chunk(conn, _make_chunk(src_a.source_id, 0))
+        insert_chunk(conn, _make_chunk(src_b.source_id, 0))
+
+        ids = _scope_filter(conn, repo="owner/a")
+        assert len(ids) == 1
+
+    def test_filter_by_category(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:owner/t:f.py")
+        upsert_source(conn, src)
+        insert_chunk(conn, _make_chunk(src.source_id, 0, category_labels=["auth", "api"]))
+        insert_chunk(conn, _make_chunk(src.source_id, 1, category_labels=["utility"]))
+
+        ids = _scope_filter(conn, categories=["auth"])
+        assert len(ids) == 1
+
+    def test_no_filter_returns_all_active(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:owner/t:f.py")
+        upsert_source(conn, src)
+        for i in range(3):
+            insert_chunk(conn, _make_chunk(src.source_id, i))
+        ids = _scope_filter(conn)
+        assert len(ids) == 3
+
+    def test_inactive_excluded(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:owner/t:f.py")
+        upsert_source(conn, src)
+        chunk = _make_chunk(src.source_id, 0)
+        insert_chunk(conn, chunk)
+        conn.execute("UPDATE chunks SET is_active = 0 WHERE chunk_id = ?", (chunk.chunk_id,))
+        conn.commit()
+        ids = _scope_filter(conn)
+        assert len(ids) == 0
+
+
+class TestSymbolicScore:
+    def test_perfect_overlap(self) -> None:
+        chunk = _make_chunk("repo:s", text="def authenticate_user(): pass")
+        terms = _tokenize("authenticate user")
+        score = _symbolic_score(chunk, terms)
+        assert score > 0.5
+
+    def test_zero_overlap(self) -> None:
+        chunk = _make_chunk("repo:s", text="import os")
+        terms = _tokenize("authentication login token")
+        score = _symbolic_score(chunk, terms)
+        assert score == 0.0
+
+    def test_empty_query_returns_zero(self) -> None:
+        chunk = _make_chunk("repo:s")
+        assert _symbolic_score(chunk, set()) == 0.0
+
+    def test_path_bonus_applied(self) -> None:
+        chunk = _make_chunk("repo:owner/test:auth/login.py", text="placeholder")
+        terms = _tokenize("auth")
+        score = _symbolic_score(chunk, terms)
+        assert score > 0.0  # path bonus kicks in
+
+
+class TestRecencyScore:
+    def test_fresh_chunk_is_near_one(self) -> None:
+        chunk = _make_chunk("repo:s", created_at=datetime.now(timezone.utc).isoformat())
+        score = _recency_score(chunk)
+        assert score > 0.95
+
+    def test_old_chunk_is_zero(self) -> None:
+        old = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+        chunk = _make_chunk("repo:s", created_at=old)
+        score = _recency_score(chunk)
+        assert score == 0.0
+
+    def test_fifteen_days_old_is_half(self) -> None:
+        mid = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+        chunk = _make_chunk("repo:s", created_at=mid)
+        score = _recency_score(chunk)
+        assert 0.4 < score < 0.6
+
+
+class TestSourceAffinity:
+    def test_matching_source(self) -> None:
+        chunk = _make_chunk("repo:owner/test:src/auth.py")
+        score = _source_affinity_score(chunk, "repo:owner/test:src/auth.py")
+        assert score == 1.0
+
+    def test_non_matching_source(self) -> None:
+        chunk = _make_chunk("repo:owner/test:src/auth.py")
+        score = _source_affinity_score(chunk, "repo:owner/test:src/other.py")
+        assert score == 0.0
+
+    def test_no_affinity(self) -> None:
+        chunk = _make_chunk("repo:s")
+        assert _source_affinity_score(chunk, None) == 0.0
+
+
+class TestCompressForPrompt:
+    def _make_record(self, source_id: str, text: str = "short text", score: float = 0.8) -> RetrievalRecord:
+        return RetrievalRecord(
+            chunk_id=f"chk_{source_id[-4:]}",
+            score_vector=score,
+            score_symbolic=score,
+            score_recency=score,
+            score_source_affinity=0.0,
+            score_final=score,
+            reasons=["test"],
+            source_id=source_id,
+            text=text,
+            summary="",
+            category_labels=["utility"],
+        )
+
+    def test_empty_results_returns_empty_string(self) -> None:
+        assert compress_for_prompt([], 5000) == ""
+
+    def test_output_within_budget(self) -> None:
+        results = [self._make_record(f"repo:s:{i}", "x" * 200) for i in range(5)]
+        output = compress_for_prompt(results, 300)
+        assert len(output) <= 300
+
+    def test_deduplication_by_source(self) -> None:
+        same_source = "repo:owner/test:foo.py"
+        results = [
+            self._make_record(same_source, score=0.9),
+            self._make_record(same_source, score=0.7),
+            self._make_record("repo:owner/test:bar.py", score=0.5),
+        ]
+        output = compress_for_prompt(results, 5000)
+        # Should only appear once per source
+        assert output.count(same_source) == 1
+
+    def test_contains_header(self) -> None:
+        results = [self._make_record("repo:s:foo.py")]
+        output = compress_for_prompt(results, 5000)
+        assert "Memory Context" in output
+
+    def test_prefers_summary_for_long_text(self) -> None:
+        r = self._make_record("repo:s:foo.py", text="x" * 600)
+        r.summary = "short summary"
+        output = compress_for_prompt([r], 5000)
+        assert "short summary" in output
