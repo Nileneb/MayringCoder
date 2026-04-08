@@ -185,12 +185,16 @@ def insert_chunk(conn: sqlite3.Connection, chunk: Chunk) -> None:
     labels_str = ",".join(chunk.category_labels)
     conn.execute(
         """
-        INSERT OR IGNORE INTO chunks
+        INSERT INTO chunks
             (chunk_id, source_id, parent_chunk_id, chunk_level, ordinal,
              start_offset, end_offset, text, text_hash, summary, category_labels,
              category_version, embedding_model, embedding_id, quality_score,
              dedup_key, created_at, superseded_by, is_active)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chunk_id) DO UPDATE SET
+            text=excluded.text, text_hash=excluded.text_hash,
+            summary=excluded.summary, category_labels=excluded.category_labels,
+            is_active=1, superseded_by=NULL, created_at=excluded.created_at
         """,
         (
             chunk.chunk_id, chunk.source_id, chunk.parent_chunk_id,
@@ -204,10 +208,11 @@ def insert_chunk(conn: sqlite3.Connection, chunk: Chunk) -> None:
     conn.commit()
 
 
-def get_chunk(conn: sqlite3.Connection, chunk_id: str) -> Chunk | None:
-    row = conn.execute(
-        "SELECT * FROM chunks WHERE chunk_id = ?", (chunk_id,)
-    ).fetchone()
+def get_chunk(conn: sqlite3.Connection, chunk_id: str, active_only: bool = True) -> Chunk | None:
+    query = "SELECT * FROM chunks WHERE chunk_id = ?"
+    if active_only:
+        query += " AND is_active = 1"
+    row = conn.execute(query, (chunk_id,)).fetchone()
     if row is None:
         return None
     return Chunk.from_dict(dict(row))

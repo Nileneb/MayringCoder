@@ -187,7 +187,7 @@ class TestSupersede:
         insert_chunk(conn, old)
         insert_chunk(conn, new)
         supersede_chunk(conn, old.chunk_id, new.chunk_id)
-        old_result = get_chunk(conn, old.chunk_id)
+        old_result = get_chunk(conn, old.chunk_id, active_only=False)
         assert old_result is not None
         assert old_result.is_active is False
         assert old_result.superseded_by == new.chunk_id

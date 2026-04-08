@@ -1035,11 +1035,19 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
     dedup_count = 0
 
     if do_force:
-        from src.memory_store import deactivate_chunks_by_source
+        from src.memory_store import deactivate_chunks_by_source, get_chunks_by_source
         from src.memory_retrieval import invalidate_query_cache
         print("[ingest-issues] --force-reingest: Bestehende Chunks werden invalidiert ...")
+        old_chunk_ids: list[str] = []
         for source, _ in sources:
+            old_chunks = get_chunks_by_source(conn, source.source_id, active_only=False)
+            old_chunk_ids.extend(c.chunk_id for c in old_chunks)
             deactivate_chunks_by_source(conn, source.source_id)
+        if old_chunk_ids:
+            try:
+                chroma.delete(ids=old_chunk_ids)
+            except Exception:
+                pass
         invalidate_query_cache()
 
     try:

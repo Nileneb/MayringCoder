@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy application code (only what's needed)
 COPY src/ ./src/
-COPY .env.example . 2>/dev/null || true
+COPY .env.example ./
 
 # Create cache directory for SQLite + ChromaDB persistence
 RUN mkdir -p /app/cache
