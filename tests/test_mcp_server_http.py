@@ -17,11 +17,6 @@ def _make_scope(scope_type: str = "http", headers: dict[bytes, bytes] | None = N
     return {"type": scope_type, "headers": list((headers or {}).items())}
 
 
-def _run(coro):
-    """Run an async coroutine synchronously via anyio."""
-    return anyio.from_thread.run_sync(lambda: None) if False else anyio.run(lambda: coro)
-
-
 async def _drive(middleware, scope_type: str, token: bytes | None = None):
     """Drive middleware and return (sent_messages, downstream_mock)."""
     headers: dict[bytes, bytes] = {}
