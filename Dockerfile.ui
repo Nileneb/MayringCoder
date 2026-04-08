@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System dependencies (minimal)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy full repo
+COPY . .
+
+# Create venv and install all dependencies
+RUN python -m venv .venv \
+    && .venv/bin/pip install --upgrade pip \
+    && .venv/bin/pip install -r requirements.txt \
+    && .venv/bin/pip install -r requirements-ui.txt
+
+EXPOSE 7860
+
+# OLLAMA_URL is provided at runtime via env var — no Ollama inside this container.
+# Use --host 0.0.0.0 when binding to all interfaces (e.g. for Docker networking).
+CMD [".venv/bin/python", "-m", "src.web_ui", "--port", "7860"]
