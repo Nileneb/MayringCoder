@@ -166,3 +166,17 @@ Wenn eine Entscheidung nicht explizit festgelegt ist, bevorzuge:
 - hybride Retrieval-Architektur statt nur Vektor-Suche
 - Erweiterung bestehender Module statt kompletter Parallelimplementierung
 - Dokumentiere am Ende einer Todo-Liste kurz und prägnant die umgesetzten Änderungen. Ebenso, wenn   Punkte offen geblieben sind und ncoh weiter bearbeitet werden müssen.
+
+## Compact Instructions
+
+Bei `/compact` folgende Informationen erhalten (werden für Memory-Retrieval nach Kompaktierung benötigt):
+
+- **Architektur:** Zielzustand aus `Target-Architecture.md` + aktive Entscheidungen aus `CLAUDE.md`
+- **Offene Tasks:** Akzeptanzkriterien aus Issue #27 (Nileneb/MayringCoder#27)
+- **Editierte Module (diese Session):** Dateinamen und geänderte Funktionen
+- **Aktive MCP-Tool-Verträge:** `memory.put`, `memory.get`, `memory.search_memory`,
+  `memory.invalidate`, `memory.list_by_source`, `memory.explain`, `memory.reindex`, `memory.feedback`
+- **Chunking-Invariante:** Strukturelles Chunking zuerst, Mayring-Kategorisierung als semantische Schicht danach
+- **Codebook-Auto-Erkennung:** `repo_file`/`note` → `codebook.yaml`; `conversation`/`conversation_summary` → `codebook_sozialforschung.yaml`
+
+Compact-Zusammenfassungen können via `mcp__memory__put` (source_type: conversation_summary) ins Memory gespeichert werden, damit sie bei zukünftigen Sessions per `mcp__memory__search_memory` abrufbar sind.
