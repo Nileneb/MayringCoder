@@ -170,6 +170,7 @@ def search_memory(
     include_text: bool = True,
     source_affinity: str | None = None,
     char_budget: int = 6000,
+    compacted: bool = False,
 ) -> dict:
     """Hybrid 4-stage memory search (scope filter → symbolic → vector → rerank).
 
@@ -182,6 +183,7 @@ def search_memory(
         include_text: Include chunk text in results (default True)
         source_affinity: source_id to boost in affinity scoring
         char_budget: Max chars for prompt_context output
+        compacted: Set True after /compact to boost conversation_summary chunks
 
     Returns:
         {results: list[RetrievalRecord], prompt_context: str}
@@ -201,6 +203,7 @@ def search_memory(
             chroma_collection=_get_chroma(),
             ollama_url=_OLLAMA_URL,
             opts=opts,
+            session_compacted=compacted,
         )
         prompt_context = compress_for_prompt(results, char_budget)
         return {
