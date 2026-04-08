@@ -31,6 +31,12 @@ bash run.sh
 
 # Stage 3: Turbulence analysis (mixed responsibilities / hot zones)
 .venv/bin/python turbulence_run.py [--llm]
+
+# Memory: Ingest GitHub Issues with multi-view chunking
+.venv/bin/python checker.py --ingest-issues <owner/repo> [--multiview] [--gpu-metrics] [--force-reingest]
+
+# Memory: Run retrieval benchmark
+.venv/bin/python src/benchmark_retrieval.py --queries benchmarks/retrieval_queries.yaml [--top-k 5]
 ```
 
 **Tests:**
@@ -79,6 +85,9 @@ Only changed/new files are analyzed (SQLite snapshot diff in `cache/<repo-slug>.
 | `src/cache.py` | SQLite snapshot diff, run-key based caching |
 | `src/history.py` | Run persistence, `compare_runs()`, `cleanup_runs()` |
 | `src/model_selector.py` | Resolves Ollama model (interactive prompt if unset) |
+| `src/memory_ingest.py` | Multi-view chunking: `generate_multiview_chunks()` (fact/impl/decision/entities/full) |
+| `src/benchmark_retrieval.py` | Retrieval benchmark: MRR, Recall@1, Recall@K |
+| `src/gpu_metrics.py` | GPU monitoring via nvidia-smi (VRAM, Util, Watt, Temp) |
 
 ### Shared utilities in `src/config.py`
 

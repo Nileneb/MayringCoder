@@ -1,3 +1,9 @@
+# MCP Memory Server — zwei Profile:
+#   stdio: für Claude Code (lokal, kein Port, stdin/stdout)
+#           docker compose --profile stdio up -d
+#   http:  für Remote-Zugriff / app.linn.games (Port 8000, MCP_AUTH_TOKEN erforderlich)
+#           MCP_AUTH_TOKEN=<secret> docker compose --profile http up -d
+
 services:
   mcp-memory-stdio:
     profiles: ["stdio"]

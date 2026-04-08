@@ -1,8 +1,29 @@
 # MCP Memory Tool Contracts
 
-Local MCP server for Claude Code. Transport: stdio.
+Local MCP server for Claude Code. Transport: stdio (Standard für Claude Code) oder http (Remote/App-Zugriff)
 
 Wire names follow the pattern `mcp__memory__<tool_name>`.
+
+## HTTP-Modus
+
+Für Remote-Zugriff (z. B. von app.linn.games oder unterwegs):
+
+```bash
+# Starten
+MCP_TRANSPORT=http MCP_AUTH_TOKEN=<secret> docker compose --profile http up -d
+```
+
+**Auth-Header:** `X-Auth-Token: <secret>` (kein Bearer — proxy-kompatibel)
+
+**Endpunkt:** `POST http://<host>:8000/mcp`
+
+**Env-Vars:**
+- `MCP_TRANSPORT=http` — aktiviert HTTP-Modus
+- `MCP_AUTH_TOKEN=` — Shared Secret (leer = kein Auth, nur lokal)
+- `MCP_HTTP_PORT=8000` — Port (Standard: 8000)
+- `MCP_HTTP_HOST=0.0.0.0` — Bind-Adresse
+
+---
 
 ## Server Configuration
 
