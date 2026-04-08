@@ -47,6 +47,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
@@ -54,6 +55,43 @@ from mcp.server.fastmcp import FastMCP
 # Load .env from project root
 _ROOT = Path(__file__).parent.parent
 load_dotenv(_ROOT / ".env")
+
+# ---------------------------------------------------------------------------
+# HTTP transport configuration (read before FastMCP is instantiated)
+# ---------------------------------------------------------------------------
+
+_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")   # stdio | http
+_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "")      # empty = no auth (dev mode)
+_HTTP_PORT  = int(os.getenv("MCP_HTTP_PORT", "8000"))
+_HTTP_HOST  = os.getenv("MCP_HTTP_HOST", "0.0.0.0")
+
+
+class _XAuthMiddleware:
+    """Rejects HTTP requests missing a valid X-Auth-Token header.
+    Skips auth if MCP_AUTH_TOKEN is empty (local/dev mode).
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and _AUTH_TOKEN:
+            headers = dict(scope.get("headers", []))
+            token = headers.get(b"x-auth-token", b"").decode()
+            if token != _AUTH_TOKEN:
+                body = b"Unauthorized"
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        [b"content-type", b"text/plain; charset=utf-8"],
+                        [b"content-length", str(len(body)).encode()],
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self._app(scope, receive, send)
+
 
 from src.memory_ingest import get_or_create_chroma_collection, ingest
 from src.memory_retrieval import compress_for_prompt, invalidate_query_cache, search
@@ -71,7 +109,11 @@ from src.memory_store import (
     log_ingestion_event,
 )
 
-mcp = FastMCP("memory")
+mcp = FastMCP(
+    "memory",
+    host=_HTTP_HOST,
+    port=_HTTP_PORT,
+)
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 _MODEL = os.environ.get("OLLAMA_MODEL", "")
@@ -409,4 +451,16 @@ def feedback(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mcp.run()  # stdio transport (default for Claude Code)
+    if _TRANSPORT == "http":
+        import uvicorn
+
+        # FastMCP exposes its internal ASGI app via streamable_http_app()
+        _asgi_app = mcp.streamable_http_app()
+        _wrapped = _XAuthMiddleware(_asgi_app)
+        print(
+            f"[mcp-memory] HTTP mode on {_HTTP_HOST}:{_HTTP_PORT}"
+            f" | auth={'enabled' if _AUTH_TOKEN else 'disabled'}"
+        )
+        uvicorn.run(_wrapped, host=_HTTP_HOST, port=_HTTP_PORT)
+    else:
+        mcp.run()  # stdio transport (default for Claude Code)
