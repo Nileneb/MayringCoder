@@ -123,6 +123,11 @@ def parse_args() -> argparse.Namespace:
                    help="Finding-reaktive RAG-Queries: Jedes Finding bekommt "
                         "einen semantisch passenden Projektkontext aus der "
                         "Vektor-DB (benötigt vorherigen --mode overview Lauf).")
+    # Memory pipeline batch ingestion
+    p.add_argument("--populate-memory", action="store_true",
+                   help="Repo laden und alle Dateien in die Memory-Pipeline ingesten.")
+    p.add_argument("--memory-categorize", action="store_true",
+                   help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
     return p.parse_args()
 
 
@@ -441,6 +446,11 @@ def main() -> None:
         if not files:
             print("Embedding-Vorfilter hat alle Dateien herausgefiltert. Abbruch.")
             sys.exit(0)
+
+    # 3b. Memory batch ingestion mode
+    if args.populate_memory:
+        _run_populate_memory(args, repo_url, ollama_url, model)
+        sys.exit(0)
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
     if args.mode == "turbulence":
@@ -871,6 +881,80 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
     print(f"Report (MD):   {md_path}")
     print(f"Cache:         {cache_path}")
     print(f"Fertig in {elapsed:.0f}s")
+
+
+def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> None:
+    """Batch-ingest all repository files into the memory pipeline."""
+    from src.memory_ingest import get_or_create_chroma_collection, ingest
+    from src.memory_store import init_memory_db
+    from src.memory_schema import Source, source_fingerprint
+
+    import hashlib as _hashlib
+
+    def _content_hash(text: str) -> str:
+        return "sha256:" + _hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    token = os.getenv("GITHUB_TOKEN") or None
+    codebook_path = Path(args.codebook) if getattr(args, "codebook", None) else CODEBOOK_PATH
+
+    print(f"[populate-memory] Repository laden: {repo_url} ...")
+    _summary, _tree, content = fetch_repo(repo_url, token)
+
+    files = split_into_files(content)
+    print(f"[populate-memory] {len(files)} Dateien gefunden")
+
+    codebook = load_codebook(codebook_path)
+    exclude_pats = load_exclude_patterns(codebook_path) + load_mayringignore()
+    files, excluded = filter_excluded_files(files, exclude_pats)
+    print(f"[populate-memory] {len(excluded)} Dateien ausgeschlossen, {len(files)} verbleiben")
+
+    if not files:
+        print("[populate-memory] Keine Dateien nach Filter — Abbruch.")
+        return
+
+    conn = init_memory_db()
+    chroma = get_or_create_chroma_collection()
+
+    total = len(files)
+    ok_count = 0
+    error_count = 0
+    dedup_count = 0
+
+    for f in files:
+        content_hash = _content_hash(f["content"])
+        source = Source(
+            source_id=f"repo:{repo_url}:{f['filename']}",
+            source_type="repo_file",
+            repo=repo_url,
+            path=f["filename"],
+            content_hash=content_hash,
+            branch="",
+            commit="",
+        )
+        try:
+            result = ingest(
+                source,
+                f["content"],
+                conn,
+                chroma,
+                ollama_url,
+                model,
+                opts={
+                    "categorize": args.memory_categorize,
+                    "mode": "hybrid",
+                    "codebook": "auto",
+                },
+            )
+            dedup_count += result.get("deduped", 0)
+            ok_count += 1
+        except Exception as exc:
+            print(f"[populate-memory] FEHLER bei {f['filename']!r}: {exc}")
+            error_count += 1
+
+    print(
+        f"\n[populate-memory] Fertig: {total} Dateien total, "
+        f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
+    )
 
 
 if __name__ == "__main__":
