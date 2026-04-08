@@ -135,6 +135,11 @@ def parse_args() -> argparse.Namespace:
                    help="Welche Issues laden (Standard: open)")
     p.add_argument("--issues-limit", type=int, default=100, metavar="N",
                    help="Maximale Anzahl Issues (Standard: 100)")
+    p.add_argument("--multiview", action="store_true",
+                   help="Multi-view Indexing für Issues: LLM extrahiert Fact/Decision/Entities-Sichten")
+    p.add_argument("--gpu-metrics", action="store_true",
+                   help="GPU-Metriken via nvidia-smi erfassen (VRAM, Auslastung, Watt, Temp). "
+                        "Ergebnis unter cache/gpu_metrics_<ts>.csv.")
     return p.parse_args()
 
 
@@ -900,6 +905,7 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
     from src.memory_ingest import get_or_create_chroma_collection, ingest
     from src.memory_store import init_memory_db
     from src.memory_schema import Source, source_fingerprint
+    from src.gpu_metrics import start_monitoring, stop_monitoring, parse_metrics, format_summary
 
     import hashlib as _hashlib
 
@@ -908,6 +914,16 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
 
     token = os.getenv("GITHUB_TOKEN") or None
     codebook_path = Path(args.codebook) if getattr(args, "codebook", None) else CODEBOOK_PATH
+
+    # GPU-Monitoring starten (optional)
+    _gpu_proc = None
+    _gpu_csv = None
+    if getattr(args, "gpu_metrics", False):
+        from datetime import datetime as _dt
+        _gpu_csv = CACHE_DIR / f"gpu_metrics_{_dt.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        _gpu_proc = start_monitoring(_gpu_csv)
+        if _gpu_proc:
+            print(f"[populate-memory] GPU-Monitoring aktiv → {_gpu_csv}")
 
     print(f"[populate-memory] Repository laden: {repo_url} ...")
     _summary, _tree, _repo_content = fetch_repo(repo_url, token)
@@ -966,6 +982,12 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
     finally:
         conn.close()
 
+    if _gpu_proc:
+        stop_monitoring(_gpu_proc)
+        if _gpu_csv:
+            gpu_summary = parse_metrics(_gpu_csv)
+            print(f"[populate-memory] {format_summary(gpu_summary)}")
+
     print(
         f"\n[populate-memory] Fertig: {total} Dateien total, "
         f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
@@ -977,10 +999,22 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
     from src.ingest_github_issues import fetch_issues, issues_to_sources
     from src.memory_ingest import get_or_create_chroma_collection, ingest
     from src.memory_store import init_memory_db
+    from src.gpu_metrics import start_monitoring, stop_monitoring, parse_metrics, format_summary
 
     issues_repo = args.ingest_issues
     state = getattr(args, "issues_state", "open")
     limit = getattr(args, "issues_limit", 100)
+    do_multiview = getattr(args, "multiview", False)
+
+    # GPU-Monitoring starten (optional)
+    _gpu_proc = None
+    _gpu_csv = None
+    if getattr(args, "gpu_metrics", False):
+        from datetime import datetime as _dt
+        _gpu_csv = CACHE_DIR / f"gpu_metrics_issues_{_dt.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        _gpu_proc = start_monitoring(_gpu_csv)
+        if _gpu_proc:
+            print(f"[ingest-issues] GPU-Monitoring aktiv → {_gpu_csv}")
 
     print(f"[ingest-issues] Issues laden von {issues_repo!r} (state={state}, limit={limit}) ...")
     issues = fetch_issues(issues_repo, state=state, limit=limit)
@@ -1007,7 +1041,7 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
                     chroma,
                     ollama_url,
                     model,
-                    opts={"categorize": False, "mode": "hybrid", "codebook": "social"},
+                    opts={"categorize": False, "mode": "hybrid", "codebook": "social", "multiview": do_multiview},
                 )
                 dedup_count += result.get("deduped", 0)
                 ok_count += 1
@@ -1016,6 +1050,12 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
                 error_count += 1
     finally:
         conn.close()
+
+    if _gpu_proc:
+        stop_monitoring(_gpu_proc)
+        if _gpu_csv:
+            gpu_summary = parse_metrics(_gpu_csv)
+            print(f"[ingest-issues] {format_summary(gpu_summary)}")
 
     print(
         f"\n[ingest-issues] Fertig: {len(sources)} Issues total, "
