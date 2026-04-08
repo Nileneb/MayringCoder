@@ -217,7 +217,7 @@ def _chunk_js(text: str, source_id: str) -> list[Chunk]:
 
 def _chunk_markdown(text: str, source_id: str) -> list[Chunk]:
     """Split Markdown on headings (# / ## / ###)."""
-    heading_re = re.compile(r"^#{1,3}\s+.+$", re.MULTILINE)
+    heading_re = re.compile(r"^#{1,3}\s+[^\n]+", re.MULTILINE)
     matches = list(heading_re.finditer(text))
     if not matches:
         return []
