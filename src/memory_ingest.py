@@ -303,47 +303,120 @@ def structural_chunk(text: str, source_id: str, filename: str) -> list[Chunk]:
 
 
 # ---------------------------------------------------------------------------
-# Task 2.2 — Optional Mayring categorization
+# Task 2.2 — Mayring categorization — Prompt-Template Ansatz
 # ---------------------------------------------------------------------------
 
-_CATEGORIZE_SYSTEM_PROMPT = (
-    "You are a code categorizer. Given a code or text chunk, "
-    "respond with ONLY a comma-separated list of 3-5 short category labels "
-    "(e.g. auth, error_handling, data_access, config, api, validation, test, utility). "
-    "No explanation. No punctuation except commas."
-)
+_PROMPTS_DIR: Path = Path(__file__).parent.parent / "prompts"
+
+_ORIGINAL_MAYRING_CATEGORIES: list[str] = [
+    "Zusammenfassung",
+    "Explikation",
+    "Strukturierung",
+    "Paraphrase",
+    "Reduktion",
+    "Kategoriensystem",
+    "Ankerbeispiel",
+]
+
+_SOURCE_TYPE_TO_CODEBOOK: dict[str, str] = {
+    "repo_file": "code",
+    "note": "code",
+    "conversation": "social",
+    "conversation_summary": "social",
+}
+
+_MODE_TO_TEMPLATE: dict[str, str] = {
+    "deductive": "mayring_deduktiv",
+    "inductive": "mayring_induktiv",
+    "hybrid": "mayring_hybrid",
+}
+
+_CODEBOOK_PATHS: dict[str, Path] = {
+    "code": Path(__file__).parent.parent / "codebook.yaml",
+    "social": Path(__file__).parent.parent / "codebook_sozialforschung.yaml",
+}
+
+
+def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
+    """Return list of category names for the given codebook/source_type.
+
+    codebook: "auto" | "code" | "social" | "original"
+    source_type: used only when codebook="auto"
+    """
+    if codebook == "auto":
+        codebook = _SOURCE_TYPE_TO_CODEBOOK.get(source_type, "original")
+
+    if codebook == "original" or codebook not in _CODEBOOK_PATHS:
+        return list(_ORIGINAL_MAYRING_CATEGORIES)
+
+    yaml_path = _CODEBOOK_PATHS[codebook]
+    if not yaml_path.exists():
+        return list(_ORIGINAL_MAYRING_CATEGORIES)
+
+    try:
+        if _HAS_YAML:
+            import yaml as _yaml_local
+            with yaml_path.open(encoding="utf-8") as f:
+                data = _yaml_local.safe_load(f)
+            return [cat["name"] for cat in data.get("categories", []) if "name" in cat]
+    except Exception:
+        pass
+
+    return list(_ORIGINAL_MAYRING_CATEGORIES)
+
+
+def _load_mayring_template(mode: str) -> str:
+    """Load prompt template for the given mode. Falls back to inline default."""
+    filename = _MODE_TO_TEMPLATE.get(mode, "mayring_hybrid") + ".md"
+    template_path = _PROMPTS_DIR / filename
+    try:
+        return template_path.read_text(encoding="utf-8")
+    except OSError:
+        return (
+            "Categorize this text chunk using these categories if applicable: {{categories}}. "
+            "Respond with ONLY a comma-separated list of labels."
+        )
 
 
 def mayring_categorize(
     chunks: list[Chunk],
     ollama_url: str,
     model: str,
+    mode: str = "hybrid",
+    codebook: str = "auto",
+    source_type: str = "repo_file",
 ) -> list[Chunk]:
-    """Assign Mayring category labels to each chunk via LLM (optional, best-effort)."""
+    """Assign Mayring category labels to each chunk via LLM (optional, best-effort).
+
+    Args:
+        mode: "deductive" (closed category set), "inductive" (free derivation),
+              "hybrid" (anchors + new categories marked with [neu])
+        codebook: "auto" (detect from source_type), "code", "social", "original"
+        source_type: used for auto-detection of codebook
+    """
     if not model or not ollama_url:
         return chunks
 
-    # Import here to avoid circular imports at module level
     try:
         from src.analyzer import _ollama_generate
     except ImportError:
         return chunks
 
+    categories = _resolve_codebook(codebook, source_type)
+    template = _load_mayring_template(mode)
+    system_prompt = template.replace("{{categories}}", ", ".join(categories))
+
     for chunk in chunks:
         try:
-            prompt = f"Chunk text (first 400 chars):\n\n{chunk.text[:400]}"
+            prompt = f"Text chunk (first 400 chars):\n\n{chunk.text[:400]}"
             response = _ollama_generate(
                 prompt=prompt,
                 ollama_url=ollama_url,
                 model=model,
-                label=f"categorize:{chunk.chunk_id[:8]}",
-                system_prompt=_CATEGORIZE_SYSTEM_PROMPT,
+                label=f"mayring:{chunk.chunk_id[:8]}",
+                system_prompt=system_prompt,
             )
-            labels = [
-                lbl.strip().lower()
-                for lbl in response.split(",")
-                if lbl.strip()
-            ]
+            labels = [lbl.strip() for lbl in response.split(",") if lbl.strip()]
             if labels:
                 chunk.category_labels = labels[:5]
         except Exception:
@@ -409,6 +482,8 @@ def ingest(
     opts = opts or {}
     do_categorize: bool = bool(opts.get("categorize", False))
     do_log: bool = bool(opts.get("log", False))
+    mode: str = opts.get("mode", "hybrid")
+    codebook_choice: str = opts.get("codebook", "auto")
 
     # Import here to keep top-level imports clean
     from src.context import _embed_texts
@@ -422,7 +497,11 @@ def ingest(
 
     # Step 3: optional categorization
     if do_categorize and model:
-        chunks = mayring_categorize(chunks, ollama_url, model)
+        chunks = mayring_categorize(
+            chunks, ollama_url, model,
+            mode=mode, codebook=codebook_choice,
+            source_type=source.source_type,
+        )
 
     # Step 4: dedup + embed + store
     new_chunk_ids: list[str] = []

@@ -203,3 +203,109 @@ class TestIngest:
         line = _json.loads(log_path.read_text().strip().splitlines()[-1])
         assert line["event"] == "ingest"
         assert line["source_id"] == source.source_id
+
+
+# ---------------------------------------------------------------------------
+# Tests für mayring_categorize() — neue Signatur
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch as _patch
+
+
+class TestMayringCategorize:
+    """Tests für mayring_categorize() mit mode + codebook + source_type."""
+
+    def _make_chunks(self, n: int = 2) -> list:
+        from src.memory_ingest import _make_file_chunk
+        return [_make_file_chunk(f"def func_{i}(): pass", f"repo:test:f{i}.py", i) for i in range(n)]
+
+    def test_empty_model_returns_chunks_unchanged(self) -> None:
+        from src.memory_ingest import mayring_categorize
+        chunks = self._make_chunks(1)
+        result = mayring_categorize(chunks, "http://localhost:11434", model="")
+        assert result == chunks
+        assert result[0].category_labels == []
+
+    def test_deductive_mode_system_prompt_contains_codebook_categories(self) -> None:
+        from src.memory_ingest import mayring_categorize
+        chunks = self._make_chunks(1)
+        captured: list[str] = []
+
+        def fake_generate(prompt, ollama_url, model, label, *, system_prompt=None):
+            captured.append(system_prompt or "")
+            return "api, error_handling"
+
+        with _patch("src.analyzer._ollama_generate", side_effect=fake_generate):
+            mayring_categorize(
+                chunks, "http://localhost:11434", model="test",
+                mode="deductive", codebook="code", source_type="repo_file",
+            )
+
+        assert len(captured) == 1
+        assert "api" in captured[0]
+        assert "[neu]" not in captured[0]
+
+    def test_inductive_mode_prompt_has_no_category_placeholder(self) -> None:
+        from src.memory_ingest import mayring_categorize
+        chunks = self._make_chunks(1)
+        captured: list[str] = []
+
+        def fake_generate(prompt, ollama_url, model, label, *, system_prompt=None):
+            captured.append(system_prompt or "")
+            return "session-handling, token-check"
+
+        with _patch("src.analyzer._ollama_generate", side_effect=fake_generate):
+            mayring_categorize(
+                chunks, "http://localhost:11434", model="test",
+                mode="inductive", codebook="code", source_type="repo_file",
+            )
+
+        assert "{{categories}}" not in captured[0]
+        assert chunks[0].category_labels == ["session-handling", "token-check"]
+
+    def test_hybrid_mode_preserves_neu_prefix(self) -> None:
+        from src.memory_ingest import mayring_categorize
+        chunks = self._make_chunks(1)
+
+        def fake_generate(prompt, ollama_url, model, label, *, system_prompt=None):
+            return "api, [neu]custom-label"
+
+        with _patch("src.analyzer._ollama_generate", side_effect=fake_generate):
+            mayring_categorize(
+                chunks, "http://localhost:11434", model="test",
+                mode="hybrid", codebook="code", source_type="repo_file",
+            )
+
+        assert "[neu]custom-label" in chunks[0].category_labels
+        assert "api" in chunks[0].category_labels
+
+    def test_auto_codebook_conversation_summary_uses_social(self) -> None:
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("auto", "conversation_summary")
+        assert "argumentation" in cats
+
+    def test_auto_codebook_repo_file_uses_code(self) -> None:
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("auto", "repo_file")
+        assert "api" in cats
+
+    def test_original_codebook_returns_mayring_basiskategorien(self) -> None:
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("original", "repo_file")
+        assert "Zusammenfassung" in cats
+        assert "Explikation" in cats
+
+    def test_ollama_exception_leaves_chunk_unchanged(self) -> None:
+        from src.memory_ingest import mayring_categorize
+        chunks = self._make_chunks(1)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("ollama down")
+
+        with _patch("src.analyzer._ollama_generate", side_effect=boom):
+            result = mayring_categorize(
+                chunks, "http://localhost:11434", model="test",
+                mode="hybrid", codebook="code",
+            )
+
+        assert result[0].category_labels == []
