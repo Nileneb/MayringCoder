@@ -38,7 +38,7 @@ _ROOT = Path(__file__).parent.parent
 load_dotenv(_ROOT / ".env")
 
 from src.memory_ingest import get_or_create_chroma_collection, ingest
-from src.memory_retrieval import compress_for_prompt, search
+from src.memory_retrieval import compress_for_prompt, invalidate_query_cache, search
 from src.memory_schema import Chunk, Source, make_memory_key, source_fingerprint
 from src.memory_store import (
     add_feedback,
@@ -129,6 +129,7 @@ def put(
             model=_MODEL,
             opts=opts,
         )
+        invalidate_query_cache()
         return result
     except Exception as exc:
         return {"error": str(exc)}
@@ -230,6 +231,7 @@ def invalidate(source_id: str) -> dict:
     try:
         count = deactivate_chunks_by_source(_get_conn(), source_id)
         log_ingestion_event(_get_conn(), source_id, "invalidated", {"count": count})
+        invalidate_query_cache()
         return {"source_id": source_id, "deactivated_count": count}
     except Exception as exc:
         return {"error": str(exc)}
@@ -351,6 +353,7 @@ def reindex(source_id: str | None = None) -> dict:
             except Exception:
                 errors += 1
 
+        invalidate_query_cache()
         return {"reindexed_count": reindexed, "errors": errors}
     except Exception as exc:
         return {"error": str(exc)}

@@ -270,3 +270,98 @@ class TestSessionCompacted:
         assert len(r1) == 1 and len(r2) == 1
         # Scores may differ by tiny recency-decay drift between calls; no compaction boost of 0.10
         assert abs(r1[0].score_final - r2[0].score_final) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Query-Cache tests
+# ---------------------------------------------------------------------------
+
+class TestQueryCache:
+    """Tests for the in-process query cache in memory_retrieval."""
+
+    def _make_source_and_chunk(self, tmp_path):
+        from src.memory_store import init_memory_db, upsert_source, insert_chunk
+        from src.memory_schema import Source, Chunk
+        conn = init_memory_db(tmp_path / "memory.db")
+        src = Source(
+            source_id="src::query_cache_test",
+            source_type="repo_file",
+            repo="https://github.com/test/repo",
+            path="src/test.py",
+            content_hash="sha256:abc123",
+        )
+        upsert_source(conn, src)
+        chunk = Chunk(
+            chunk_id=Chunk.make_id(src.source_id, 0, "function"),
+            source_id=src.source_id,
+            chunk_level="function",
+            ordinal=0,
+            text="def hello(): pass",
+            text_hash="sha256:def456",
+            category_labels=["domain"],
+            created_at="2026-04-08T10:00:00+00:00",
+        )
+        insert_chunk(conn, chunk)
+        return conn, chunk
+
+    def test_cache_hit_skips_scope_filter(self, tmp_path) -> None:
+        """Second identical search() call hits cache — _scope_filter not called again."""
+        from unittest.mock import patch
+        from src.memory_retrieval import search, invalidate_query_cache
+
+        invalidate_query_cache()
+        conn, chunk = self._make_source_and_chunk(tmp_path)
+
+        call_count = 0
+        original_scope_filter = __import__("src.memory_retrieval", fromlist=["_scope_filter"])._scope_filter
+
+        def counting_scope_filter(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return original_scope_filter(*args, **kwargs)
+
+        with patch("src.memory_retrieval._scope_filter", side_effect=counting_scope_filter):
+            r1 = search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
+            r2 = search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
+
+        assert len(r1) == 1
+        assert len(r2) == 1
+        assert r1[0].chunk_id == r2[0].chunk_id
+        # _scope_filter called exactly once — second call hit cache
+        assert call_count == 1
+
+    def test_invalidate_clears_cache(self, tmp_path) -> None:
+        """After invalidate_query_cache(), next search() runs fresh (calls _scope_filter)."""
+        from unittest.mock import patch
+        from src.memory_retrieval import search, invalidate_query_cache
+
+        invalidate_query_cache()
+        conn, chunk = self._make_source_and_chunk(tmp_path)
+
+        call_count = 0
+        original = __import__("src.memory_retrieval", fromlist=["_scope_filter"])._scope_filter
+
+        def counting(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return original(*args, **kwargs)
+
+        with patch("src.memory_retrieval._scope_filter", side_effect=counting):
+            search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
+            invalidate_query_cache()
+            search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
+
+        # Two full searches = two _scope_filter calls
+        assert call_count == 2
+
+    def test_different_opts_produce_different_cache_keys(self) -> None:
+        """Different opts → different cache entries, no cross-contamination."""
+        from src.memory_retrieval import _cache_key
+
+        k1 = _cache_key("hello", {"top_k": 5}, False)
+        k2 = _cache_key("hello", {"top_k": 10}, False)
+        k3 = _cache_key("hello", {"top_k": 5}, True)
+
+        assert k1 != k2
+        assert k1 != k3
+        assert k2 != k3

@@ -9,6 +9,8 @@ Stage 5: compress_for_prompt() — format results for Claude
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -16,6 +18,24 @@ from typing import Any
 
 from src.memory_schema import Chunk, RetrievalRecord
 from src.memory_store import get_chunk, kv_get
+
+# ---------------------------------------------------------------------------
+# Query-Cache (in-process, invalidated on any memory mutation)
+# ---------------------------------------------------------------------------
+
+_QUERY_CACHE: dict[str, list[tuple[str, float]]] = {}  # cache_key → [(chunk_id, score)]
+
+
+def _cache_key(query: str, opts: dict, session_compacted: bool) -> str:
+    """Stable hash key for query + retrieval-relevant opts."""
+    relevant = {k: v for k, v in opts.items() if k != "include_text"}
+    payload = _json.dumps({"q": query, "opts": relevant, "sc": session_compacted}, sort_keys=True)
+    return hashlib.md5(payload.encode()).hexdigest()
+
+
+def invalidate_query_cache() -> None:
+    """Clear the entire query cache. Call after any memory mutation (put/invalidate/reindex)."""
+    _QUERY_CACHE.clear()
 
 try:
     from src.context import _embed_texts
@@ -244,6 +264,24 @@ def search(
     categories: list[str] | None = opts.get("categories")
     source_type: str | None = opts.get("source_type")
     affinity_source_id: str | None = opts.get("source_affinity")
+    include_text: bool = bool(opts.get("include_text", True))
+
+    # Query-Cache check — hit: re-hydrate from SQLite and return early
+    _ck = _cache_key(query, opts, session_compacted)
+    if _ck in _QUERY_CACHE:
+        hydrated: list[RetrievalRecord] = []
+        for cid, score_final in _QUERY_CACHE[_ck]:
+            chunk = get_chunk(conn, cid)
+            if chunk:
+                hydrated.append(RetrievalRecord(
+                    chunk_id=chunk.chunk_id,
+                    score_final=score_final,
+                    source_id=chunk.source_id,
+                    text=chunk.text if include_text else "",
+                    summary=chunk.summary,
+                    category_labels=chunk.category_labels,
+                ))
+        return hydrated
 
     # Stage 1: scope filter
     candidate_ids = _scope_filter(conn, repo=repo, categories=categories, source_type=source_type)
@@ -305,11 +343,15 @@ def search(
         source_type_map = {r[0]: r[1] for r in rows}
 
     # Stage 4: re-rank
-    return _rerank(
+    ranked = _rerank(
         candidates, vector_scores, symbolic_scores, top_k, affinity_source_id,
         source_type_map=source_type_map,
         session_compacted=session_compacted,
     )
+
+    # Store in query cache (IDs + score_final only, no full text)
+    _QUERY_CACHE[_ck] = [(r.chunk_id, r.score_final) for r in ranked]
+    return ranked
 
 
 # ---------------------------------------------------------------------------
