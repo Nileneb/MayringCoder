@@ -228,7 +228,7 @@ def main() -> None:
 
     # Training-data logger (opt-in)
     if args.log_training_data:
-        from src.config import CACHE_DIR, repo_slug as _rslug
+        from src.config import repo_slug as _rslug
         _log_path = CACHE_DIR / f"{_rslug(os.getenv('GITHUB_REPO', 'unknown'))}_training_log.jsonl"
         configure_training_log(_log_path, run_id=cache_run_key)
         print(f"Training-Log: {_log_path}")
