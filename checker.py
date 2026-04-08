@@ -898,9 +898,9 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
     codebook_path = Path(args.codebook) if getattr(args, "codebook", None) else CODEBOOK_PATH
 
     print(f"[populate-memory] Repository laden: {repo_url} ...")
-    _summary, _tree, content = fetch_repo(repo_url, token)
+    _summary, _tree, _repo_content = fetch_repo(repo_url, token)
 
-    files = split_into_files(content)
+    files = split_into_files(_repo_content)
     print(f"[populate-memory] {len(files)} Dateien gefunden")
 
     codebook = load_codebook(codebook_path)
@@ -920,36 +920,39 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
     error_count = 0
     dedup_count = 0
 
-    for f in files:
-        content_hash = _content_hash(f["content"])
-        source = Source(
-            source_id=f"repo:{repo_url}:{f['filename']}",
-            source_type="repo_file",
-            repo=repo_url,
-            path=f["filename"],
-            content_hash=content_hash,
-            branch="",
-            commit="",
-        )
-        try:
-            result = ingest(
-                source,
-                f["content"],
-                conn,
-                chroma,
-                ollama_url,
-                model,
-                opts={
-                    "categorize": args.memory_categorize,
-                    "mode": "hybrid",
-                    "codebook": "auto",
-                },
+    try:
+        for f in files:
+            content_hash = _content_hash(f["content"])
+            source = Source(
+                source_id=f"repo:{repo_url}:{f['filename']}",
+                source_type="repo_file",
+                repo=repo_url,
+                path=f["filename"],
+                content_hash=content_hash,
+                branch="",
+                commit="",
             )
-            dedup_count += result.get("deduped", 0)
-            ok_count += 1
-        except Exception as exc:
-            print(f"[populate-memory] FEHLER bei {f['filename']!r}: {exc}")
-            error_count += 1
+            try:
+                result = ingest(
+                    source,
+                    f["content"],
+                    conn,
+                    chroma,
+                    ollama_url,
+                    model,
+                    opts={
+                        "categorize": args.memory_categorize,
+                        "mode": "hybrid",
+                        "codebook": "auto",
+                    },
+                )
+                dedup_count += result.get("deduped", 0)
+                ok_count += 1
+            except Exception as exc:
+                print(f"[populate-memory] FEHLER bei {f['filename']!r}: {exc}")
+                error_count += 1
+    finally:
+        conn.close()
 
     print(
         f"\n[populate-memory] Fertig: {total} Dateien total, "
