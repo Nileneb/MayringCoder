@@ -3,6 +3,8 @@
 Provides persistent, local memory via 8 MCP tools over stdio transport.
 
 Add to Claude Code MCP settings (.claude/settings.json or user settings):
+
+Option 1: Direct Python venv (development):
 {
     "mcpServers": {
         "memory": {
@@ -12,6 +14,22 @@ Add to Claude Code MCP settings (.claude/settings.json or user settings):
         }
     }
 }
+
+Option 2: Docker (production):
+{
+    "mcpServers": {
+        "memory": {
+            "command": "docker",
+            "args": ["run", "-i", "--rm",
+                     "-v", "cache:/app/cache",
+                     "--env-file", "/path/to/.env",
+                     "mayrингcoder-mcp"]
+        }
+    }
+}
+
+Build Docker image: docker build -t mayrингcoder-mcp .
+Or with compose:  docker-compose up -d mcp-memory
 
 Tools exposed (wire name = mcp__memory__<name>):
     put              — ingest content into memory
