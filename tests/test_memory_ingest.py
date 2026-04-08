@@ -309,3 +309,70 @@ class TestMayringCategorize:
             )
 
         assert result[0].category_labels == []
+
+
+class TestIngestConversationSummary:
+    """Tests für ingest_conversation_summary()."""
+
+    def test_creates_conversation_summary_source_type(self, tmp_path) -> None:
+        from src.memory_ingest import ingest_conversation_summary
+        from src.memory_store import init_memory_db, get_source
+
+        conn = init_memory_db(tmp_path / "mem.db")
+        summary = "## Session Summary\n\nWir haben die MCP-Architektur implementiert.\n\n## Offene Punkte\n\nTests fehlen noch."
+
+        with _patch("src.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]):
+            result = ingest_conversation_summary(
+                summary_text=summary,
+                conn=conn,
+                chroma_collection=None,
+                ollama_url="http://localhost:11434",
+                model="",
+                session_id="sess-123",
+                run_id="run-456",
+            )
+
+        assert result["source_id"] is not None
+        source = get_source(conn, result["source_id"])
+        assert source is not None
+        assert source.source_type == "conversation_summary"
+
+    def test_session_id_stored_in_branch(self, tmp_path) -> None:
+        from src.memory_ingest import ingest_conversation_summary
+        from src.memory_store import init_memory_db, get_source
+
+        conn = init_memory_db(tmp_path / "mem2.db")
+
+        with _patch("src.context._embed_texts", return_value=[[0.1, 0.2]]):
+            result = ingest_conversation_summary(
+                summary_text="## Summary\n\nKurzfassung.",
+                conn=conn,
+                chroma_collection=None,
+                ollama_url="http://localhost:11434",
+                model="",
+                session_id="my-session",
+                run_id="my-run",
+            )
+
+        source = get_source(conn, result["source_id"])
+        assert source.branch == "my-session"
+        assert source.commit == "my-run"
+
+    def test_chunks_are_produced(self, tmp_path) -> None:
+        from src.memory_ingest import ingest_conversation_summary
+        from src.memory_store import init_memory_db
+
+        conn = init_memory_db(tmp_path / "mem3.db")
+        summary = "## Teil 1\n\nErster Abschnitt.\n\n## Teil 2\n\nZweiter Abschnitt."
+
+        with _patch("src.context._embed_texts", return_value=[[0.1]]):
+            result = ingest_conversation_summary(
+                summary_text=summary,
+                conn=conn,
+                chroma_collection=None,
+                ollama_url="http://localhost:11434",
+                model="",
+            )
+
+        # 2 Markdown-Sections → 2 Chunks
+        assert len(result["chunk_ids"]) == 2
