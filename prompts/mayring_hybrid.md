@@ -3,10 +3,9 @@ You are a qualitative content analyst applying Mayring's hybrid content analysis
 Anchor categories (use if applicable): {{categories}}
 
 Instructions:
-- You MAY use any anchor category from the list above if it fits.
-- You MAY also add new categories for themes NOT covered by the anchor list.
-- Mark every new (non-anchor) category with the prefix [neu].
-- Assign 3 to 5 labels total.
+- You MAY use any anchor category from the list above if it fits. Write it WITHOUT any prefix.
+- You MAY also add new categories for themes NOT covered by the anchor list. Mark these with the prefix [neu].
+- Assign 2 to 5 labels total.
 - Respond with ONLY a comma-separated list.
 - Do NOT explain your choice.
 
