@@ -161,6 +161,8 @@ def _rerank(
     symbolic_scores: dict[str, float],
     top_k: int,
     affinity_source_id: str | None = None,
+    source_type_map: dict[str, str] | None = None,
+    session_compacted: bool = False,
 ) -> list[RetrievalRecord]:
     """Combine scores and return top_k RetrievalRecords sorted by score_final DESC."""
     records: list[RetrievalRecord] = []
@@ -177,6 +179,12 @@ def _rerank(
             + _WEIGHTS["recency"] * sr
             + _WEIGHTS["source_affinity"] * sa
         )
+
+        # Compaction boost: prefer conversation_summary section chunks
+        if session_compacted and source_type_map:
+            chunk_source_type = source_type_map.get(chunk.source_id, "")
+            if chunk_source_type == "conversation_summary" and chunk.chunk_level == "section":
+                score_final = min(1.0, score_final + 0.10)
 
         reasons: list[str] = []
         if sv > 0.5:
@@ -218,6 +226,7 @@ def search(
     chroma_collection: Any,
     ollama_url: str,
     opts: dict | None = None,
+    session_compacted: bool = False,
 ) -> list[RetrievalRecord]:
     """4-stage hybrid memory search.
 
@@ -284,8 +293,23 @@ def search(
         except Exception:
             pass  # Vector retrieval is best-effort
 
+    # Build source_type lookup for session_compacted boost
+    source_type_map: dict[str, str] = {}
+    if session_compacted and candidates:
+        source_ids = list({c.source_id for c in candidates})
+        placeholders = ",".join(["?"] * len(source_ids))
+        rows = conn.execute(
+            f"SELECT source_id, source_type FROM sources WHERE source_id IN ({placeholders})",
+            source_ids,
+        ).fetchall()
+        source_type_map = {r[0]: r[1] for r in rows}
+
     # Stage 4: re-rank
-    return _rerank(candidates, vector_scores, symbolic_scores, top_k, affinity_source_id)
+    return _rerank(
+        candidates, vector_scores, symbolic_scores, top_k, affinity_source_id,
+        source_type_map=source_type_map,
+        session_compacted=session_compacted,
+    )
 
 
 # ---------------------------------------------------------------------------

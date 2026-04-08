@@ -199,3 +199,74 @@ class TestCompressForPrompt:
         r.summary = "short summary"
         output = compress_for_prompt([r], 5000)
         assert "short summary" in output
+
+
+class TestSessionCompacted:
+    """Tests für session_compacted-Flag in search()."""
+
+    def _make_conv_source(self, tmp_path):
+        from src.memory_store import init_memory_db, upsert_source, insert_chunk
+        conn = init_memory_db(tmp_path / "mc.db")
+        src = Source(
+            source_id="repo:conversation:summary/sess-1",
+            source_type="conversation_summary",
+            repo="conversation",
+            path="summary/sess-1",
+            branch="sess-1",
+            commit="",
+            content_hash="sha256:abc",
+            captured_at="2026-04-08T10:00:00+00:00",
+        )
+        upsert_source(conn, src)
+        text = "## Architektur\n\nWir haben MCP implementiert."
+        text_hash = Chunk.compute_text_hash(text)
+        chunk = Chunk(
+            chunk_id=Chunk.make_id(src.source_id, 0, "section"),
+            source_id=src.source_id,
+            chunk_level="section",
+            ordinal=0,
+            text=text,
+            text_hash=text_hash,
+            category_labels=["architektur"],
+            created_at="2026-04-08T10:00:00+00:00",
+        )
+        insert_chunk(conn, chunk)
+        return conn, chunk
+
+    def test_compacted_boosts_section_chunks_from_conversation(self, tmp_path) -> None:
+        from src.memory_retrieval import search
+
+        conn, chunk = self._make_conv_source(tmp_path)
+
+        results_normal = search(
+            query="MCP Architektur",
+            conn=conn,
+            chroma_collection=None,
+            ollama_url="http://localhost:11434",
+            opts={"top_k": 5},
+            session_compacted=False,
+        )
+        results_compacted = search(
+            query="MCP Architektur",
+            conn=conn,
+            chroma_collection=None,
+            ollama_url="http://localhost:11434",
+            opts={"top_k": 5},
+            session_compacted=True,
+        )
+
+        assert len(results_normal) == 1
+        assert len(results_compacted) == 1
+        assert results_compacted[0].score_final > results_normal[0].score_final
+
+    def test_compacted_false_no_score_boost(self, tmp_path) -> None:
+        from src.memory_retrieval import search
+
+        conn, chunk = self._make_conv_source(tmp_path)
+
+        r1 = search("MCP", conn, None, "http://localhost:11434", opts={"top_k": 5}, session_compacted=False)
+        r2 = search("MCP", conn, None, "http://localhost:11434", opts={"top_k": 5}, session_compacted=False)
+
+        assert len(r1) == 1 and len(r2) == 1
+        # Scores may differ by tiny recency-decay drift between calls; no compaction boost of 0.10
+        assert abs(r1[0].score_final - r2[0].score_final) < 0.01
