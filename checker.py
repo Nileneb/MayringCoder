@@ -136,7 +136,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--issues-limit", type=int, default=100, metavar="N",
                    help="Maximale Anzahl Issues (Standard: 100)")
     p.add_argument("--multiview", action="store_true",
-                   help="Multi-view Indexing für Issues: LLM extrahiert Fact/Decision/Entities-Sichten")
+                   help="Multi-view Indexing für Issues: LLM extrahiert Fact/Impl/Decision/Entities-Sichten")
+    p.add_argument("--force-reingest", action="store_true",
+                   help="Bestehende Chunks invalidieren und neu ingesten (ignoriert Dedup-Schutz)")
     p.add_argument("--gpu-metrics", action="store_true",
                    help="GPU-Metriken via nvidia-smi erfassen (VRAM, Auslastung, Watt, Temp). "
                         "Ergebnis unter cache/gpu_metrics_<ts>.csv.")
@@ -1025,11 +1027,20 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
     print(f"[ingest-issues] {len(issues)} Issues gefunden")
     sources = issues_to_sources(issues, issues_repo)
 
+    do_force = getattr(args, "force_reingest", False)
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()
     ok_count = 0
     error_count = 0
     dedup_count = 0
+
+    if do_force:
+        from src.memory_store import deactivate_chunks_by_source
+        from src.memory_retrieval import invalidate_query_cache
+        print("[ingest-issues] --force-reingest: Bestehende Chunks werden invalidiert ...")
+        for source, _ in sources:
+            deactivate_chunks_by_source(conn, source.source_id)
+        invalidate_query_cache()
 
     try:
         for source, content in sources:

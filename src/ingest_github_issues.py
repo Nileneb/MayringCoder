@@ -37,7 +37,8 @@ def fetch_issues(
             timeout=30,
         )
         if result.returncode == 0:
-            return json.loads(result.stdout)
+            data = json.loads(result.stdout)
+            return data if isinstance(data, list) else []
     except Exception:
         pass
     return []
@@ -58,6 +59,8 @@ def issues_to_sources(
     """
     result: list[tuple[Source, str]] = []
     for issue in issues:
+        if not isinstance(issue, dict) or "number" not in issue:
+            continue
         title = issue.get("title") or ""
         body = issue.get("body") or ""
         content = f"# {title}\n\n{body}"

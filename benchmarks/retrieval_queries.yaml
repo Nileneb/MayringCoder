@@ -1,86 +1,234 @@
-# Benchmark-Queries für app.linn.games Issues
+# Benchmark-Queries für Nileneb/app.linn.games Issues
 # Format:
 #   query: Natürlichsprachige Suchanfrage
 #   relevant_paths: Liste bekannter relevanter Issue-Pfade (für MRR/Recall-Berechnung)
-#   view: Optional — gezielte View-Ebene (fact, decision, entities, full)
+#   view: Optional — gezielte View-Ebene (fact, impl, decision, entities, full)
 #   description: Beschreibung des Benchmark-Fokus
 
 queries:
 
+  # --- Bugs / fact-heavy ---
+
   - id: q01
-    query: "Login schlägt fehl nach Token-Erneuerung"
+    query: "Credit-Limit täglich Agenten-Nutzung Race Condition"
     relevant_paths:
-      - "issue/7"
-      - "issue/23"
+      - "issue/133"
+      - "issue/147"
     view: fact
-    description: "Fehler-Retrieval: Auth-Probleme nach Token-Refresh"
+    description: "Bugs rund um CreditService und AgentDailyLimit"
 
   - id: q02
-    query: "Welche Entscheidung wurde für den Silent Token Refresh getroffen?"
+    query: "AgentResultStorageService readResult deleteResult Datei nicht gefunden"
     relevant_paths:
-      - "issue/7"
-    view: decision
-    description: "Decision-Retrieval: Architekturentscheidung zu Auth-Flow"
+      - "issue/144"
+    view: fact
+    description: "Bug: StorageService findet gespeicherte Dateien nicht"
 
   - id: q03
-    query: "Android Abstürze beim App-Start"
+    query: "GitHub Actions CI-Tests scheitern nach Push"
     relevant_paths:
-      - "issue/12"
-      - "issue/15"
+      - "issue/152"
     view: fact
-    description: "Fehler-Retrieval: Plattformspezifische Crash-Reports"
+    description: "CI-Pipeline Fehler nach Push"
 
   - id: q04
-    query: "Datenbankschema Migration Fehler"
+    query: "TriggersPhaseAgent projekt_id user_id fehlt Context Production"
     relevant_paths:
-      - "issue/19"
-      - "issue/34"
-    view: entities
-    description: "Entitäts-Retrieval: DB-Komponenten und Fehler"
+      - "issue/154"
+    view: fact
+    description: "Bug: Agenten ohne Kontext in Production"
 
   - id: q05
-    query: "Welche Bugs wurden als kritisch eingestuft?"
+    query: "P2 schwarzes 500er Popup Fehler"
     relevant_paths:
-      - "issue/7"
-      - "issue/12"
-      - "issue/19"
+      - "issue/119"
+      - "issue/111"
     view: fact
-    description: "Aggregations-Query: Kritische Fehler über alle Issues"
+    description: "500er Fehler im P2 Review-Flow"
 
   - id: q06
-    query: "Push-Benachrichtigungen kommen nicht an"
+    query: "P3 Agent startet nicht keine Reaktion beim Klick"
     relevant_paths:
-      - "issue/28"
-      - "issue/41"
+      - "issue/117"
+      - "issue/116"
     view: fact
-    description: "Feature-Bereich-Retrieval: Notification-System"
+    description: "P3 Agent reagiert nicht"
 
   - id: q07
-    query: "Entscheidung zur Verwendung von Firebase vs. APNs"
+    query: "MethodNotFoundException recherche agent-action-button"
     relevant_paths:
-      - "issue/28"
-    view: decision
-    description: "Decision-Retrieval: Technologieauswahl Notifications"
+      - "issue/134"
+    view: fact
+    description: "Livewire MethodNotFoundException"
 
   - id: q08
-    query: "AuthService TokenManager LoginActivity"
+    query: "P6 Agent Screening scheitert DB-Zugriff fehlgeschlagen"
     relevant_paths:
-      - "issue/7"
-      - "issue/23"
-    view: entities
-    description: "Entities-Retrieval: Komponentensuche Auth-Stack"
+      - "issue/118"
+    view: fact
+    description: "P6 Agent DB-Fehler"
 
   - id: q09
-    query: "Performance-Probleme beim Laden der Timeline"
+    query: "P4 Agent liefert nur Bestätigungstext statt Suchstrings"
     relevant_paths:
-      - "issue/55"
-      - "issue/67"
+      - "issue/120"
     view: fact
-    description: "Performance-Issue-Retrieval"
+    description: "P4 Agent falsches Ausgabeformat"
 
   - id: q10
-    query: "Offline-Modus Synchronisierungsfehler nach Reconnect"
+    query: "Agenten-UUIDs existieren nicht in Langdock Timeouts"
     relevant_paths:
-      - "issue/79"
+      - "issue/131"
     view: fact
-    description: "Netzwerk-Fehler-Retrieval: Offline-to-Online Transition"
+    description: "Langdock UUID-Mismatch verursacht Timeouts"
+
+  # --- Impl / Komponenten / Codestruktur ---
+
+  - id: q11
+    query: "P5 P7 Agent SQL Schema p5_treffer Datenbankfehler execute_sql"
+    relevant_paths:
+      - "issue/121"
+      - "issue/124"
+    view: impl
+    description: "Agent-Bugs: falsches Schema, execute_sql fehlgeschlagen"
+
+  - id: q12
+    query: "Embedding Pipeline Migration IngestAgentResultJob RetrieverService"
+    relevant_paths:
+      - "issue/157"
+    view: impl
+    description: "Embedding-Pipeline Erweiterung und RAG-Migration"
+
+  - id: q13
+    query: "Streaming Agent Service Livewire SSE Umbau"
+    relevant_paths:
+      - "issue/160"
+    view: impl
+    description: "StreamingAgentService + Livewire SSE Architektur"
+
+  - id: q14
+    query: "SynthesisMarkdownService fehlende Fehlerbehandlung Agent-Daten"
+    relevant_paths:
+      - "issue/146"
+    view: impl
+    description: "Fehlende Fehlerbehandlung im SynthesisMarkdownService"
+
+  - id: q15
+    query: "PhaseChainService Ergebnisse auf 800 Zeichen gekürzt"
+    relevant_paths:
+      - "issue/145"
+    view: impl
+    description: "Kontextabschneidung in PhaseChainService"
+
+  - id: q16
+    query: "Delete-Route User Filament Admin fehlt"
+    relevant_paths:
+      - "issue/114"
+    view: impl
+    description: "Fehlende Admin-Route im Filament-Panel"
+
+  - id: q17
+    query: "Research-Flow Buttons Sidebar Fortschrittsanzeige Deaktivierung"
+    relevant_paths:
+      - "issue/132"
+    view: impl
+    description: "UI-Komponente: Research-Flow Sidebar Buttons"
+
+  - id: q18
+    query: "MD-Storage Session-Cache Chat-Protokolle Redis"
+    relevant_paths:
+      - "issue/158"
+    view: impl
+    description: "Chat-Protokoll-Speicherung und Redis-Cache"
+
+  # --- Decision / Architektur ---
+
+  - id: q19
+    query: "Architektur Umstellung API MCP-Server Markdown RAG"
+    relevant_paths:
+      - "issue/156"
+      - "issue/159"
+    view: decision
+    description: "Architektur-Entscheidung: API → MCP + Langdock-Integration"
+
+  - id: q20
+    query: "MCP-Client ContextProvider Langdock Integration Context-Aufbau"
+    relevant_paths:
+      - "issue/159"
+    view: decision
+    description: "MCP-Client Architektur und Context-Provider Design"
+
+  - id: q21
+    query: "End-to-End Tests Chat Worker RAG validieren"
+    relevant_paths:
+      - "issue/162"
+    view: decision
+    description: "Testabdeckung E2E: Chat + Worker + RAG"
+
+  - id: q22
+    query: "Beta-Bewerbung Registrierung Forschungsfrage Admin-Freischaltung"
+    relevant_paths:
+      - "issue/155"
+    view: decision
+    description: "Feature-Entscheidung: Beta-Registrierungsprozess"
+
+  - id: q23
+    query: "Registrierungs-Einladung 24h gültig automatisches Cleanup"
+    relevant_paths:
+      - "issue/150"
+    view: decision
+    description: "Einladungs-TTL und Cleanup-Strategie"
+
+  # --- Security ---
+
+  - id: q24
+    query: "MCP-Endpoint Sicherheit Token-Validierung Postgres-Zugriff"
+    relevant_paths:
+      - "issue/137"
+      - "issue/161"
+    view: fact
+    description: "Security-Issues: MCP ohne Auth + Postgres-MCP-Absicherung"
+
+  - id: q25
+    query: "SQL-Injection LangdockContextInjector SET LOCAL projekt_id"
+    relevant_paths:
+      - "issue/148"
+    view: fact
+    description: "Security: SQL-Injection-Risiko im ContextInjector"
+
+  # --- Entities / Keyword-Suche ---
+
+  - id: q26
+    query: "AgentActionButtonErrorHandlingTest Fehlermeldung Deutsch"
+    relevant_paths:
+      - "issue/135"
+    view: entities
+    description: "Test-Issue: Fehlermeldungs-Sprache"
+
+  - id: q27
+    query: "CreditServiceTest AgentDailyLimitExceededException"
+    relevant_paths:
+      - "issue/133"
+    view: entities
+    description: "Test-Issue: Credit-Exception wird nicht geworfen"
+
+  - id: q28
+    query: "Cleanup Docs alten Code entfernen ARCHITECTURE.md Monitoring"
+    relevant_paths:
+      - "issue/163"
+    view: entities
+    description: "Wartungs-Task: Code-Cleanup und Doku"
+
+  - id: q29
+    query: "Readme Service-Architektur Phasen-Workflow Credit-System Quality-Gates"
+    relevant_paths:
+      - "issue/149"
+    view: entities
+    description: "Dokumentations-Issue: Readme-Erweiterung"
+
+  - id: q30
+    query: "P7 app.p5_treffer relation does not exist falsches Schema"
+    relevant_paths:
+      - "issue/124"
+    view: entities
+    description: "Entities-Retrieval: DB-Schema-Fehler P7"

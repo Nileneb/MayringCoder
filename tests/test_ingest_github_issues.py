@@ -106,6 +106,43 @@ class TestIssuesToSources:
         sources = issues_to_sources([], "Nileneb/MayringCoder")
         assert sources == []
 
+    def test_non_dict_entries_are_skipped(self):
+        """If issues list contains non-dict entries, they are skipped silently."""
+        issues = ["not a dict", None, 42, {"number": 5, "title": "Valid", "body": "ok", "state": "open"}]
+        sources = issues_to_sources(issues, "Nileneb/MayringCoder")
+        assert len(sources) == 1
+        assert sources[0][0].path == "issue/5"
+
+    def test_missing_number_field_is_skipped(self):
+        """Issues without 'number' field are skipped."""
+        issues = [{"title": "No number", "body": "body", "state": "open"}]
+        sources = issues_to_sources(issues, "Nileneb/MayringCoder")
+        assert sources == []
+
+
+class TestFetchIssuesGuards:
+    def test_non_list_json_response_returns_empty(self):
+        """If gh CLI returns a JSON object instead of array, return empty list."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({"error": "unexpected"})
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = fetch_issues("Nileneb/MayringCoder")
+
+        assert result == []
+
+    def test_json_string_response_returns_empty(self):
+        """If gh CLI returns a JSON string, return empty list."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps("some string")
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = fetch_issues("Nileneb/MayringCoder")
+
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # _run_ingest_issues() in checker.py

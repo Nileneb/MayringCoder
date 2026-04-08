@@ -20,9 +20,10 @@ AuthService, TokenManager, LoginActivity"""
 
 class TestGenerateMultiviewChunks:
 
-    def _mock_ollama_response(self, fact="Fakten.", decision="Entscheidung.", entities="auth, token"):
+    def _mock_ollama_response(self, fact="Fakten.", impl="Module A, Service B.", decision="Entscheidung.", entities="auth, token"):
         return json.dumps({
             "fact_summary": fact,
+            "impl_summary": impl,
             "decision_summary": decision,
             "entities_keywords": entities,
         })
@@ -41,17 +42,18 @@ class TestGenerateMultiviewChunks:
         assert chunks[0].chunk_level == "view_full"
         assert SAMPLE_ISSUE[:50] in chunks[0].text
 
-    def test_successful_call_returns_4_chunks(self):
+    def test_successful_call_returns_5_chunks(self):
         with patch("src.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
         levels = {c.chunk_level for c in chunks}
         assert "view_fact" in levels
+        assert "view_impl" in levels
         assert "view_decision" in levels
         assert "view_entities" in levels
         assert "view_full" in levels
-        assert len(chunks) == 4
+        assert len(chunks) == 5
 
     def test_chunk_ids_are_unique(self):
         with patch("src.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
@@ -97,7 +99,61 @@ class TestGenerateMultiviewChunks:
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
-        assert len(chunks) == 4
+        assert len(chunks) == 5
+
+    def test_llm_returns_list_instead_of_dict(self):
+        """If LLM returns a JSON array instead of object, fall back to view_full only."""
+        with patch("src.analyzer._ollama_generate", return_value='["fact", "decision"]'):
+            chunks = generate_multiview_chunks(
+                "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
+            )
+        assert len(chunks) == 1
+        assert chunks[0].chunk_level == "view_full"
+
+    def test_entities_keywords_as_list_is_joined(self):
+        """LLM returns entities_keywords as a list — must be joined to string."""
+        response = json.dumps({
+            "fact_summary": "Bug gefunden.",
+            "decision_summary": "Ansatz B gewählt.",
+            "entities_keywords": ["AuthService", "TokenManager", "LoginActivity"],
+        })
+        with patch("src.analyzer._ollama_generate", return_value=response):
+            chunks = generate_multiview_chunks(
+                "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
+            )
+        entities_chunk = next((c for c in chunks if c.chunk_level == "view_entities"), None)
+        assert entities_chunk is not None
+        assert "AuthService" in entities_chunk.text
+        assert "TokenManager" in entities_chunk.text
+
+    def test_entities_keywords_as_empty_list_skips_view(self):
+        """Empty list for entities_keywords should skip that view."""
+        response = json.dumps({
+            "fact_summary": "Bug gefunden.",
+            "decision_summary": "Ansatz B gewählt.",
+            "entities_keywords": [],
+        })
+        with patch("src.analyzer._ollama_generate", return_value=response):
+            chunks = generate_multiview_chunks(
+                "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
+            )
+        levels = [c.chunk_level for c in chunks]
+        assert "view_entities" not in levels
+
+    def test_field_value_as_integer_is_coerced(self):
+        """Integer field values must not raise AttributeError."""
+        response = json.dumps({
+            "fact_summary": 42,
+            "decision_summary": "OK.",
+            "entities_keywords": "auth",
+        })
+        with patch("src.analyzer._ollama_generate", return_value=response):
+            chunks = generate_multiview_chunks(
+                "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
+            )
+        fact_chunk = next((c for c in chunks if c.chunk_level == "view_fact"), None)
+        assert fact_chunk is not None
+        assert fact_chunk.text == "42"
 
 
 class TestIngestMultiviewIntegration:

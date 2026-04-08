@@ -17,6 +17,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Allow running as `python src/benchmark_retrieval.py` from project root
+_PROJECT_ROOT = Path(__file__).parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 # ---------------------------------------------------------------------------
 # Metriken-Funktionen (rein, gut testbar)
 # ---------------------------------------------------------------------------
@@ -186,6 +191,7 @@ def run_benchmark(
 
     return {
         "mrr": mrr(all_ranked, all_relevant),
+        "recall_at_1": recall_at_k(all_ranked, all_relevant, k=1),
         "recall_at_k": recall_at_k(all_ranked, all_relevant, k=top_k),
         "k": top_k,
         "results": query_results,
@@ -216,6 +222,7 @@ def print_report(benchmark: dict) -> None:
 
     print(f"\n{'─'*70}")
     print(f"  MRR:          {benchmark['mrr']:.4f}")
+    print(f"  Recall@1:     {benchmark['recall_at_1']:.4f}")
     print(f"  Recall@{k}:     {benchmark['recall_at_k']:.4f}")
     hits = sum(1 for r in results if r["hit"])
     print(f"  Hits:         {hits}/{len(results)}")

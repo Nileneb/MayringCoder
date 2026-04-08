@@ -41,6 +41,16 @@ from src.memory_store import (
 
 MEMORY_CHROMA_DIR: Path = CACHE_DIR / "memory_chroma"
 
+
+def _coerce_str(val: object) -> str:
+    """LLM-JSON-Felder können Liste, int oder None sein — immer zu str normalisieren."""
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val if v)
+    return str(val)
+
+
 # ---------------------------------------------------------------------------
 # Optional JSONL logging (Phase 5 — opt-in)
 # ---------------------------------------------------------------------------
@@ -416,7 +426,9 @@ def mayring_categorize(
                 label=f"mayring:{chunk.chunk_id[:8]}",
                 system_prompt=system_prompt,
             )
-            labels = [lbl.strip() for lbl in response.split(",") if lbl.strip()]
+            parts = re.split(r"[,\n]", response)
+            labels = [re.sub(r"^[-•*]\s*", "", p).strip() for p in parts]
+            labels = [l for l in labels if l and len(l) < 80]
             if labels:
                 chunk.category_labels = labels[:5]
         except Exception:
@@ -578,7 +590,7 @@ def ingest(
 _MULTIVIEW_SYSTEM_PROMPT = """Du bist ein präziser Informationsextrahierer.
 Antworte NUR mit dem angeforderten JSON-Objekt, ohne Erklärungen oder Markdown-Blöcke."""
 
-_MULTIVIEW_PROMPT_TEMPLATE = """Analysiere dieses GitHub Issue und extrahiere drei strukturierte Sichten.
+_MULTIVIEW_PROMPT_TEMPLATE = """Analysiere dieses GitHub Issue und extrahiere vier strukturierte Sichten.
 
 ISSUE-TEXT:
 {content}
@@ -586,8 +598,9 @@ ISSUE-TEXT:
 Antworte mit genau diesem JSON:
 {{
   "fact_summary": "<2-4 Sätze: Wer meldet was, welcher konkrete Fehler/Feature-Request, betroffene Komponente>",
+  "impl_summary": "<2-4 Sätze: Betroffene Module/Dateien/Services, vermutete Ursache, mögliche Fix-Strategien. Leer lassen wenn unklar>",
   "decision_summary": "<2-4 Sätze: Getroffene Entscheidungen, gewählte Ansätze, offene Fragen. Leer lassen wenn keine>",
-  "entities_keywords": "<kommagetrennte Liste: Technologien, Fehlercodes, Komponenten, Schlüsselbegriffe>"
+  "entities_keywords": "<kommagetrennte Liste: Technologien, Fehlercodes, Dateinamen, Komponenten, Schlüsselbegriffe>"
 }}"""
 
 
@@ -597,10 +610,11 @@ def generate_multiview_chunks(
     ollama_url: str,
     model: str,
 ) -> list["Chunk"]:
-    """Generiert 4 semantische View-Chunks für ein GitHub Issue via LLM.
+    """Generiert 5 semantische View-Chunks für ein GitHub Issue via LLM.
 
     Views:
       - view_fact: Fakten-Zusammenfassung (Wer, Was, Welcher Fehler)
+      - view_impl: Betroffene Module, Ursache, Fix-Strategien
       - view_decision: Entscheidungen und offene Fragen
       - view_entities: Keywords und Entitäten
       - view_full: Originaltext als Fallback
@@ -636,16 +650,19 @@ def generate_multiview_chunks(
             if raw.startswith("json"):
                 raw = raw[4:]
         parsed = _json_mod.loads(raw)
+        if not isinstance(parsed, dict):
+            return [view_full]
     except Exception:
         return [view_full]
 
     chunks: list[Chunk] = []
     for ordinal, (level, key) in enumerate([
         ("view_fact", "fact_summary"),
+        ("view_impl", "impl_summary"),
         ("view_decision", "decision_summary"),
         ("view_entities", "entities_keywords"),
     ]):
-        text = (parsed.get(key) or "").strip()
+        text = _coerce_str(parsed.get(key)).strip()
         if not text:
             continue
         chunks.append(Chunk(

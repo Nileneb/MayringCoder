@@ -13,6 +13,15 @@ import json
 import re
 from pathlib import Path
 
+
+def _coerce_str(val: object) -> str:
+    """LLM-JSON-Felder können Liste, int oder None sein — immer zu str normalisieren."""
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val if v)
+    return str(val)
+
 # Load the extraction prompt from file; fall back to an inline default so the
 # module works without the prompts directory (e.g. in isolated unit tests).
 _EXTRACT_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extract_findings.md"
@@ -162,9 +171,12 @@ def parse_llm_extraction(raw: str, filename: str) -> list[dict]:
     except (json.JSONDecodeError, ValueError):
         return []
 
-    findings_raw: list[dict] = (
-        parsed if isinstance(parsed, list) else parsed.get("findings", [])
-    )
+    if isinstance(parsed, list):
+        findings_raw: list[dict] = parsed
+    elif isinstance(parsed, dict):
+        findings_raw = parsed.get("findings", [])
+    else:
+        findings_raw = []
 
     mandatory_keys = {"datei", "typ", "begründung", "empfehlung"}
     result: list[dict] = []
@@ -508,7 +520,7 @@ def second_opinion_validate(
         if m:
             try:
                 data = json.loads(m.group(1))
-                verdict = data.get("verdict", "BESTÄTIGT").strip().upper()
+                verdict = _coerce_str(data.get("verdict", "BESTÄTIGT")).strip().upper() or "BESTÄTIGT"
                 reasoning = data.get("reasoning", "")
                 adjusted_severity = data.get("adjusted_severity")
                 additional_note = data.get("additional_note")

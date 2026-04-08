@@ -116,7 +116,8 @@ def _parse_llm_json(raw: str) -> dict | None:
     delimited = re.search(r"---BEGIN_JSON---\s*(.*?)\s*---END_JSON---", raw, re.DOTALL)
     if delimited:
         try:
-            return json.loads(delimited.group(1))
+            result = json.loads(delimited.group(1))
+            return result if isinstance(result, dict) else None
         except (json.JSONDecodeError, ValueError):
             pass
     # Strategy 2: markdown fences
@@ -128,7 +129,8 @@ def _parse_llm_json(raw: str) -> dict | None:
         block = re.search(r"(\{.*\})", raw, re.DOTALL)
         candidate = block.group(1) if block else raw
     try:
-        return json.loads(candidate)
+        result = json.loads(candidate)
+        return result if isinstance(result, dict) else None
     except (json.JSONDecodeError, ValueError):
         return None
 
@@ -293,7 +295,7 @@ def analyze_file(
     parsed = _parse_llm_json(raw_response)
 
     # Detect social-research mode (codierungen) vs code-review mode (potential_smells)
-    is_sozial = parsed is not None and "codierungen" in parsed
+    is_sozial = isinstance(parsed, dict) and "codierungen" in parsed
 
     if parsed is None:
         # Stage 2: Try to extract structured findings from unstructured output.
@@ -356,8 +358,13 @@ def analyze_file(
     }
 
     if is_sozial:
-        codierungen = parsed.get("codierungen", [])[:MAX_FINDINGS_PER_FILE]
+        codierungen = parsed.get("codierungen", [])
+        if not isinstance(codierungen, list):
+            codierungen = []
+        codierungen = codierungen[:MAX_FINDINGS_PER_FILE]
         for c in codierungen:
+            if not isinstance(c, dict):
+                continue
             for key in ("evidence_excerpt", "reasoning", "type", "kategorie"):
                 if c.get(key) is None:
                     c[key] = ""
