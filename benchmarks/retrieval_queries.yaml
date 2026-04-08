@@ -1,0 +1,86 @@
+# Benchmark-Queries für app.linn.games Issues
+# Format:
+#   query: Natürlichsprachige Suchanfrage
+#   relevant_paths: Liste bekannter relevanter Issue-Pfade (für MRR/Recall-Berechnung)
+#   view: Optional — gezielte View-Ebene (fact, decision, entities, full)
+#   description: Beschreibung des Benchmark-Fokus
+
+queries:
+
+  - id: q01
+    query: "Login schlägt fehl nach Token-Erneuerung"
+    relevant_paths:
+      - "issue/7"
+      - "issue/23"
+    view: fact
+    description: "Fehler-Retrieval: Auth-Probleme nach Token-Refresh"
+
+  - id: q02
+    query: "Welche Entscheidung wurde für den Silent Token Refresh getroffen?"
+    relevant_paths:
+      - "issue/7"
+    view: decision
+    description: "Decision-Retrieval: Architekturentscheidung zu Auth-Flow"
+
+  - id: q03
+    query: "Android Abstürze beim App-Start"
+    relevant_paths:
+      - "issue/12"
+      - "issue/15"
+    view: fact
+    description: "Fehler-Retrieval: Plattformspezifische Crash-Reports"
+
+  - id: q04
+    query: "Datenbankschema Migration Fehler"
+    relevant_paths:
+      - "issue/19"
+      - "issue/34"
+    view: entities
+    description: "Entitäts-Retrieval: DB-Komponenten und Fehler"
+
+  - id: q05
+    query: "Welche Bugs wurden als kritisch eingestuft?"
+    relevant_paths:
+      - "issue/7"
+      - "issue/12"
+      - "issue/19"
+    view: fact
+    description: "Aggregations-Query: Kritische Fehler über alle Issues"
+
+  - id: q06
+    query: "Push-Benachrichtigungen kommen nicht an"
+    relevant_paths:
+      - "issue/28"
+      - "issue/41"
+    view: fact
+    description: "Feature-Bereich-Retrieval: Notification-System"
+
+  - id: q07
+    query: "Entscheidung zur Verwendung von Firebase vs. APNs"
+    relevant_paths:
+      - "issue/28"
+    view: decision
+    description: "Decision-Retrieval: Technologieauswahl Notifications"
+
+  - id: q08
+    query: "AuthService TokenManager LoginActivity"
+    relevant_paths:
+      - "issue/7"
+      - "issue/23"
+    view: entities
+    description: "Entities-Retrieval: Komponentensuche Auth-Stack"
+
+  - id: q09
+    query: "Performance-Probleme beim Laden der Timeline"
+    relevant_paths:
+      - "issue/55"
+      - "issue/67"
+    view: fact
+    description: "Performance-Issue-Retrieval"
+
+  - id: q10
+    query: "Offline-Modus Synchronisierungsfehler nach Reconnect"
+    relevant_paths:
+      - "issue/79"
+    view: fact
+    description: "Netzwerk-Fehler-Retrieval: Offline-to-Online Transition"
