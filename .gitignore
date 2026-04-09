@@ -4,7 +4,7 @@ cache/
 __pycache__/
 *.pyc
 *.pyo
-
+=4.0
 /reports
 appLinnGames.txt
 .mcp.json
