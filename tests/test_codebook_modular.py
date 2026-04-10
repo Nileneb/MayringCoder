@@ -1,7 +1,7 @@
 """Tests for modular codebook loading and profile auto-detection."""
 
 import pytest
-from src.categorizer import load_codebook_modular, detect_profile
+from src.categorizer import load_codebook_modular, detect_profile, detect_profile_from_tree
 
 
 class TestLoadCodebookModular:
@@ -68,3 +68,50 @@ class TestDetectProfile:
     def test_blade_triggers_laravel(self):
         files = [{"filename": "resources/views/app.blade.php"}]
         assert detect_profile(files) == "laravel"
+
+
+class TestDetectProfileFromTree:
+    """Auto-detection from gitingest directory tree strings."""
+
+    def test_laravel_tree(self):
+        tree = "Directory structure:\n└── repo/\n    ├── artisan\n    ├── composer.json\n    ├── app/\n    │   └── Http/\n"
+        assert detect_profile_from_tree(tree) == "laravel"
+
+    def test_laravel_blade(self):
+        tree = "└── repo/\n    └── views/\n        └── app.blade.php\n"
+        assert detect_profile_from_tree(tree) == "laravel"
+
+    def test_laravel_livewire(self):
+        tree = "└── repo/\n    ├── artisan\n    ├── composer.json\n    └── app/\n        └── Livewire/\n"
+        assert detect_profile_from_tree(tree) == "laravel"
+
+    def test_python_tree(self):
+        tree = "└── repo/\n    ├── setup.py\n    └── src/\n        └── main.py\n"
+        assert detect_profile_from_tree(tree) == "python"
+
+    def test_python_pyproject(self):
+        tree = "└── repo/\n    ├── pyproject.toml\n    └── app.py\n"
+        assert detect_profile_from_tree(tree) == "python"
+
+    def test_generic_fallback(self):
+        tree = "└── repo/\n    ├── index.html\n    └── style.css\n"
+        assert detect_profile_from_tree(tree) == "generic"
+
+    def test_empty_tree(self):
+        assert detect_profile_from_tree("") == "generic"
+
+    def test_real_app_linn_games_snippet(self):
+        tree = """Directory structure:
+└── nileneb-app.linn.games/
+    ├── artisan
+    ├── composer.json
+    ├── app/
+    │   ├── Http/
+    │   │   └── Controllers/
+    │   │       └── ChatStreamController.php
+    │   ├── Filament/
+    │   │   └── Resources/
+    │   └── Livewire/
+    │       └── Chat/
+"""
+        assert detect_profile_from_tree(tree) == "laravel"

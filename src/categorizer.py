@@ -141,6 +141,90 @@ def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dic
     return all_exclude_patterns, all_categories
 
 
+def parse_tree(tree: str) -> list[str]:
+    """Parse a gitingest directory tree string into a flat list of file paths.
+
+    Input example:
+        Directory structure:
+        └── repo-name/
+            ├── artisan
+            ├── app/
+            │   └── Http/
+            │       └── Controller.php
+
+    Returns: ["artisan", "app/Http/Controller.php"]
+    """
+    paths: list[str] = []
+    prefix_stack: list[str] = []
+
+    for line in tree.splitlines():
+        # Skip header / empty lines
+        stripped = line.strip()
+        if not stripped or stripped.startswith("Directory"):
+            continue
+
+        # Remove tree drawing chars: └── ├── │   ─
+        cleaned = re.sub(r"[│├└─┌┐┘┤┬┴┼]", "", line)
+        cleaned = cleaned.replace("  ", "\t")  # normalize indent
+
+        # Extract the name (last non-whitespace segment)
+        name = cleaned.strip()
+        if not name:
+            continue
+
+        # Calculate depth by leading whitespace in original cleaned line
+        indent = len(cleaned) - len(cleaned.lstrip())
+
+        # Trim prefix stack to current depth
+        depth = indent // 1  # rough approximation
+        while len(prefix_stack) > depth:
+            prefix_stack.pop()
+
+        if name.endswith("/"):
+            # Directory — push to stack
+            prefix_stack.append(name)
+        else:
+            # File — build full path
+            path = "/".join(prefix_stack) + name
+            # Clean up double slashes and leading slashes
+            path = re.sub(r"/+", "/", path).strip("/")
+            if path:
+                paths.append(path)
+
+    return paths
+
+
+def detect_profile_from_tree(tree: str) -> str:
+    """Auto-detect codebook profile from a gitingest directory tree string.
+
+    Faster than detect_profile(files) — no need to parse file contents,
+    works directly on the tree string with simple keyword checks.
+    """
+    # Flatten tree chars to make substring matching reliable
+    # (tree has line breaks between directory levels)
+    flat = re.sub(r"[│├└─┌┐┘┤┬┴┼\s]+", " ", tree).lower()
+
+    # Laravel markers
+    has_artisan = "artisan" in flat
+    has_laravel_dirs = any(marker in flat for marker in (
+        "app/ http/", "app/ livewire/", "app/ filament/",
+        "app/http/", "app/livewire/", "app/filament/",
+    ))
+    has_blade = ".blade.php" in flat
+    has_composer = "composer.json" in flat
+
+    if (has_artisan and has_composer) or has_blade or (has_artisan and has_laravel_dirs):
+        return "laravel"
+
+    # Python markers
+    has_py = ".py" in flat
+    has_py_marker = "setup.py" in flat or "pyproject.toml" in flat
+    if has_py and has_py_marker:
+        return "python"
+
+    return "generic"
+
+
 def detect_profile(files: list[dict]) -> str:
     """Auto-detect codebook profile from file list.
 

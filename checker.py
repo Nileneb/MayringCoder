@@ -946,8 +946,23 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
     files = split_into_files(_repo_content)
     print(f"[populate-memory] {len(files)} Dateien gefunden")
 
-    codebook = load_codebook(codebook_path)
-    exclude_pats = load_exclude_patterns(codebook_path) + load_mayringignore()
+    # Auto-detect profile from gitingest tree if no explicit profile set
+    _profile = getattr(args, "codebook_profile", None)
+    if not _profile and _tree:
+        from src.categorizer import detect_profile_from_tree
+        _profile = detect_profile_from_tree(_tree)
+        print(f"[populate-memory] Profil auto-detected: {_profile}")
+
+    # Use modular codebook if profile available, else fallback
+    if _profile:
+        from src.categorizer import load_codebook_modular
+        exclude_pats, codebook = load_codebook_modular(_profile)
+        exclude_pats = list(exclude_pats) + load_mayringignore()
+        print(f"[populate-memory] Codebook-Profil: {_profile} ({len(codebook)} Kategorien, {len(exclude_pats)} Excludes)")
+    else:
+        codebook = load_codebook(codebook_path)
+        exclude_pats = load_exclude_patterns(codebook_path) + load_mayringignore()
+
     files, excluded = filter_excluded_files(files, exclude_pats)
     print(f"[populate-memory] {len(excluded)} Dateien ausgeschlossen, {len(files)} verbleiben")
 
