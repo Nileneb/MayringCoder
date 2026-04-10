@@ -313,6 +313,134 @@ def structural_chunk(text: str, source_id: str, filename: str) -> list[Chunk]:
 
 
 # ---------------------------------------------------------------------------
+# Image ingestion — Vision captioning via Ollama multimodal
+# ---------------------------------------------------------------------------
+
+_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"})
+
+
+def _is_image_file(filename: str) -> bool:
+    return Path(filename).suffix.lower() in _IMAGE_EXTENSIONS
+
+
+def ingest_image(
+    source: "Source",
+    image_path: "Path",
+    conn: Any,
+    chroma_collection: Any,
+    ollama_url: str,
+    model: str,
+    vision_model: str = "qwen2.5vl:3b",
+) -> dict:
+    """Ingest a single image file via vision captioning.
+
+    SVGs are ingested as raw text. Raster images are captioned via the Ollama
+    multimodal model (vision_model) and stored as text chunks with embeddings.
+
+    Returns:
+        {source_id, chunk_ids, indexed, deduped, superseded}
+    """
+    from src.vision_captioner import caption_image, get_image_metadata
+    from src.context import _embed_texts
+
+    # Step 1: persist source + log start
+    upsert_source(conn, source)
+    log_ingestion_event(conn, source.source_id, "ingest_start", {"path": source.path})
+
+    # Step 2: gather metadata
+    metadata = get_image_metadata(image_path) or {}
+
+    # Step 3: caption / read content
+    caption = caption_image(image_path, ollama_url, vision_model)
+    if not caption.strip():
+        # Fallback: describe what we know from metadata
+        fmt = metadata.get("format", "")
+        w = metadata.get("width", 0)
+        h = metadata.get("height", 0)
+        size = metadata.get("file_size", 0)
+        caption = (
+            f"Image file: {image_path.name}"
+            + (f" ({fmt}, {w}x{h} px, {size} bytes)" if fmt else f" ({size} bytes)")
+        )
+
+    # Step 4: determine category label
+    is_svg = Path(source.path).suffix.lower() == ".svg"
+    category_labels = ["diagram"] if is_svg else ["image"]
+
+    # Step 5: create single image_caption chunk
+    text_hash = Chunk.compute_text_hash(caption)
+    chunk = Chunk(
+        chunk_id=Chunk.make_id(source.source_id, 0, "image_caption"),
+        source_id=source.source_id,
+        chunk_level="image_caption",
+        ordinal=0,
+        start_offset=0,
+        end_offset=len(caption),
+        text=caption,
+        text_hash=text_hash,
+        dedup_key=text_hash,
+        category_labels=category_labels,
+        created_at=_now_iso(),
+    )
+
+    # Step 6: dedup check
+    canonical, is_dup = resolve_dedup(conn, chunk)
+    new_chunk_ids: list[str] = []
+    deduped_count = 0
+    indexed = False
+
+    if is_dup:
+        deduped_count += 1
+    else:
+        # insert into SQLite
+        insert_chunk(conn, chunk)
+
+        # embed
+        try:
+            emb = _embed_texts([chunk.text[:500]], ollama_url)[0]
+        except Exception:
+            emb = None
+
+        # upsert to ChromaDB
+        if chroma_collection is not None and emb is not None:
+            try:
+                chroma_collection.upsert(
+                    ids=[chunk.chunk_id],
+                    documents=[chunk.text[:500]],
+                    embeddings=[emb],
+                    metadatas=[{
+                        "source_id": chunk.source_id,
+                        "chunk_level": chunk.chunk_level,
+                        "category_labels": ",".join(chunk.category_labels),
+                        "is_active": 1,
+                    }],
+                )
+                indexed = True
+            except Exception:
+                pass
+
+        # KV cache
+        kv_put(chunk.chunk_id, chunk.to_dict())
+        new_chunk_ids.append(chunk.chunk_id)
+
+    # Step 7: log completion
+    log_ingestion_event(
+        conn,
+        source.source_id,
+        "ingest_done",
+        {"chunks": len(new_chunk_ids), "deduped": deduped_count},
+    )
+
+    return {
+        "source_id": source.source_id,
+        "chunk_ids": new_chunk_ids,
+        "indexed": indexed,
+        "deduped": deduped_count,
+        "superseded": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Task 2.2 — Mayring categorization — Prompt-Template Ansatz
 # ---------------------------------------------------------------------------
 
