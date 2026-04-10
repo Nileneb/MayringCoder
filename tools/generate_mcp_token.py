@@ -39,9 +39,9 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --workspace myrepo --secret s3cr3t
-  %(prog)s --workspace ws_prod --scope admin --secret s3cr3t --expiry 7d
-  %(prog)s --workspace dev --secret s3cr3t --expiry 1h
+  %(prog)s --workspace myrepo --secret "$MCP_AUTH_SECRET"
+  %(prog)s --workspace ws_prod --scope admin --secret "$MCP_AUTH_SECRET" --expiry 7d
+  %(prog)s --workspace dev --secret "$MCP_AUTH_SECRET" --expiry 1h
 """,
     )
     p.add_argument("--workspace", required=True, help="workspace_id embedded in the token")
