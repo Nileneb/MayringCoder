@@ -9,6 +9,7 @@ excludes:
   - binaries
   - ide
   - ci_cache
+  - game_engine
 categories:
   # Struktur-basiert (sprachunabhängig)
   - entrypoint

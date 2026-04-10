@@ -1,0 +1,20 @@
+name: game_engine
+description: Game-Engine generierte Dateien (Unity, Unreal, Godot)
+patterns:
+  - "ProjectSettings/*"
+  - "ProjectSettings/**/*"
+  - "*/ProjectSettings/*"
+  - "*.asset"
+  - "*.prefab"
+  - "*.unity"
+  - "*.mat"
+  - "*.shadergraph"
+  - "*.exr"
+  - "*.meta"
+  - "Library/*"
+  - "Library/**/*"
+  - "Temp/*"
+  - "Logs/*"
+  - "UserSettings/*"
+  - "Packages/manifest.json"
+  - "Packages/packages-lock.json"
