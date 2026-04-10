@@ -61,6 +61,16 @@ def init_memory_db(db_path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_workspace_id(conn: sqlite3.Connection) -> None:
+    """Add workspace_id column if missing (migration for existing DBs)."""
+    for table in ("sources", "chunks"):
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "workspace_id" not in cols:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"
+            )
+
+
 def _init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sources (
@@ -127,6 +137,18 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_ingestion_log_source_id
             ON ingestion_log(source_id);
     """)
+
+    # Migration: add workspace_id column if not present (existing DBs)
+    _migrate_workspace_id(conn)
+
+    # Indexes for workspace_id filtering
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_workspace_id ON chunks(workspace_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sources_workspace_id ON sources(workspace_id)"
+    )
+
     conn.commit()
 
 
