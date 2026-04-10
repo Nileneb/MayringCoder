@@ -60,15 +60,18 @@ load_dotenv(_ROOT / ".env")
 # HTTP transport configuration (read before FastMCP is instantiated)
 # ---------------------------------------------------------------------------
 
-_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")   # stdio | http
-_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "")      # empty = no auth (dev mode)
-_HTTP_PORT  = int(os.getenv("MCP_HTTP_PORT", "8000"))
-_HTTP_HOST  = os.getenv("MCP_HTTP_HOST", "0.0.0.0")
+_TRANSPORT    = os.getenv("MCP_TRANSPORT", "stdio")
+_AUTH_ENABLED = os.getenv("MCP_AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+_AUTH_SECRET  = os.getenv("MCP_AUTH_SECRET", "")
+_AUTH_TOKEN   = os.getenv("MCP_AUTH_TOKEN", "")  # legacy backward compat
+_HTTP_PORT    = int(os.getenv("MCP_HTTP_PORT", "8000"))
+_HTTP_HOST    = os.getenv("MCP_HTTP_HOST", "0.0.0.0")
 
 
 class _XAuthMiddleware:
     """Rejects HTTP requests missing a valid X-Auth-Token header.
     Skips auth if MCP_AUTH_TOKEN is empty (local/dev mode).
+    Kept for backward compatibility — new code should use _JWTAuthMiddleware.
     """
 
     def __init__(self, app: Any) -> None:
@@ -91,6 +94,89 @@ class _XAuthMiddleware:
                 await send({"type": "http.response.body", "body": body})
                 return
         await self._app(scope, receive, send)
+
+
+class _JWTAuthMiddleware:
+    """JWT authentication middleware for MCP HTTP transport.
+
+    Supports three modes:
+    - JWT (MCP_AUTH_ENABLED=true + MCP_AUTH_SECRET set): validates HS256 JWT,
+      extracts workspace_id from payload.
+    - Legacy static (MCP_AUTH_ENABLED=true + MCP_AUTH_TOKEN set): compares
+      X-Auth-Token header value, sets workspace_id="default".
+    - Disabled (MCP_AUTH_ENABLED=false, default): passes all requests through
+      with workspace_id="default".
+
+    Token can be passed as:
+      X-Auth-Token: <token>
+      Authorization: Bearer <token>
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        if not _AUTH_ENABLED:
+            scope["workspace_id"] = "default"
+            await self._app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+
+        # Extract token: X-Auth-Token first, then Authorization: Bearer
+        token: str = ""
+        raw = headers.get(b"x-auth-token", b"").decode().strip()
+        if raw:
+            token = raw
+        else:
+            auth_header = headers.get(b"authorization", b"").decode().strip()
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:].strip()
+
+        if not token:
+            await self._send_401(send, "Missing authentication token")
+            return
+
+        if _AUTH_SECRET:
+            # JWT validation (lazy import to avoid ImportError when not used)
+            import jwt  # type: ignore[import]
+            try:
+                payload = jwt.decode(token, _AUTH_SECRET, algorithms=["HS256"])
+                scope["workspace_id"] = payload.get("workspace_id", "default")
+            except jwt.ExpiredSignatureError:
+                await self._send_401(send, "Token expired")
+                return
+            except jwt.InvalidTokenError:
+                await self._send_401(send, "Invalid token")
+                return
+        elif _AUTH_TOKEN:
+            # Legacy static token comparison
+            if token != _AUTH_TOKEN:
+                await self._send_401(send, "Unauthorized")
+                return
+            scope["workspace_id"] = "default"
+        else:
+            await self._send_401(send, "No auth secret configured")
+            return
+
+        await self._app(scope, receive, send)
+
+    @staticmethod
+    async def _send_401(send: Any, message: str) -> None:
+        body = message.encode()
+        await send({
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                [b"content-type", b"text/plain; charset=utf-8"],
+                [b"content-length", str(len(body)).encode()],
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 from src.memory_ingest import get_or_create_chroma_collection, ingest
@@ -456,10 +542,14 @@ if __name__ == "__main__":
 
         # FastMCP exposes its internal ASGI app via streamable_http_app()
         _asgi_app = mcp.streamable_http_app()
-        _wrapped = _XAuthMiddleware(_asgi_app)
+        _wrapped = _JWTAuthMiddleware(_asgi_app)
+        if _AUTH_ENABLED:
+            _auth_mode = "JWT" if _AUTH_SECRET else "static"
+        else:
+            _auth_mode = "disabled"
         print(
             f"[mcp-memory] HTTP mode on {_HTTP_HOST}:{_HTTP_PORT}"
-            f" | auth={'enabled' if _AUTH_TOKEN else 'disabled'}"
+            f" | auth={_auth_mode}"
         )
         uvicorn.run(_wrapped, host=_HTTP_HOST, port=_HTTP_PORT)
     else:
