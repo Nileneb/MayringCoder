@@ -435,3 +435,110 @@ class TestConversationTab:
         with patch("src.web_ui._MEMORY_READY", True):
             result = _do_ingest_conversation("", "sess-1", "", "model", True)
         assert "error" in result.lower() or "Kein" in result
+
+
+# ---------------------------------------------------------------------------
+# Test H: E2E Analysis Flow — ingest → search → feedback roundtrip
+# ---------------------------------------------------------------------------
+
+class TestE2EAnalysisFlow:
+    """End-to-end: ingest → search → feedback roundtrip."""
+
+    def test_ingest_then_search_returns_results(self):
+        """Ingest text, then search for it — full roundtrip."""
+        import src.web_ui as web_ui
+        fake_conn = MagicMock(spec=sqlite3.Connection)
+        ingest_result = {"source_id": "repo:test:e2e.py", "chunk_ids": ["chk_e2e001"], "indexed": True, "deduped": 0, "superseded": 0}
+        from src.memory_schema import RetrievalRecord
+        search_result = RetrievalRecord(chunk_id="chk_e2e001", score_final=0.85, score_symbolic=0.6, source_id="repo:test:e2e.py", text="def authenticate(user): pass", category_labels=["auth"], reasons=["token_overlap", "embedding_similarity"])
+
+        with (
+            patch.object(web_ui, "_MEMORY_READY", True),
+            patch("src.web_ui._get_conn", return_value=fake_conn),
+            patch("src.web_ui._get_chroma", return_value=None),
+            patch("src.web_ui.ingest", return_value=ingest_result),
+            patch("src.web_ui.Source") as MockSource,
+            patch("src.web_ui.hashlib") as mock_hashlib,
+            patch("src.web_ui.search", return_value=[search_result]),
+        ):
+            mock_hash = MagicMock()
+            mock_hash.hexdigest.return_value = "b" * 64
+            mock_hashlib.sha256.return_value = mock_hash
+            MockSource.return_value = MagicMock()
+            MockSource.make_id.return_value = "repo:test:e2e.py"
+
+            raw = web_ui._do_ingest(text_input="def authenticate(user): pass", file_upload=None, source_path="e2e.py", repo="test", categorize=False, mode="hybrid", codebook="auto", model="", ollama_available=False)
+            result = json.loads(raw)
+            assert result["source_id"] == "repo:test:e2e.py"
+
+            status, rows = web_ui._do_search("authenticate", 5, False)
+            assert len(rows) == 1
+            assert "auth" in str(rows[0])
+
+    def test_feedback_after_search(self):
+        import src.web_ui as web_ui
+        fake_conn = MagicMock(spec=sqlite3.Connection)
+        with (
+            patch.object(web_ui, "_MEMORY_READY", True),
+            patch("src.web_ui._get_conn", return_value=fake_conn),
+            patch("src.web_ui.add_feedback") as mock_fb,
+        ):
+            result = web_ui._do_feedback("chk_e2e001", "positive", "relevant")
+        mock_fb.assert_called_once_with(fake_conn, "chk_e2e001", "positive", {"label": "relevant"})
+        assert "gespeichert" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test I: E2E Conversation Flow — conversation summary ingestion + search
+# ---------------------------------------------------------------------------
+
+class TestE2EConversationFlow:
+    """End-to-end: conversation summary ingestion + search."""
+
+    def test_conversation_ingest_then_search(self):
+        import src.web_ui as web_ui
+        fake_conn = MagicMock(spec=sqlite3.Connection)
+        conv_result = {"source_id": "conv:sess-e2e", "chunk_ids": ["chk_conv_001"], "indexed": True, "deduped": 0, "superseded": 0}
+        from src.memory_schema import RetrievalRecord
+        search_hit = RetrievalRecord(chunk_id="chk_conv_001", score_final=0.72, source_id="conv:sess-e2e", text="Wir haben HTTP-Transport implementiert.", category_labels=["Zusammenfassung"], reasons=["token_overlap"])
+
+        with (
+            patch.object(web_ui, "_MEMORY_READY", True),
+            patch("src.web_ui._get_conn", return_value=fake_conn),
+            patch("src.web_ui._get_chroma", return_value=None),
+            patch("src.web_ui.ingest_conversation_summary", return_value=conv_result),
+            patch("src.web_ui.search", return_value=[search_hit]),
+        ):
+            raw = web_ui._do_ingest_conversation(summary_text="## Summary\nWir haben HTTP-Transport implementiert.", session_id="sess-e2e", run_id="run-001", model="", ollama_available=False)
+            assert "conv:sess-e2e" in raw
+
+            status, rows = web_ui._do_search("HTTP Transport", 5, False)
+            assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test J: E2E Error Cases — error handling
+# ---------------------------------------------------------------------------
+
+class TestE2EErrorCases:
+    """E2E error handling."""
+
+    def test_ingest_with_no_content_and_no_file(self):
+        import src.web_ui as web_ui
+        with patch.object(web_ui, "_MEMORY_READY", True):
+            raw = web_ui._do_ingest("", None, "", "", False, "hybrid", "auto", "", False)
+        result = json.loads(raw)
+        assert "error" in result
+
+    def test_search_with_memory_not_loaded(self):
+        import src.web_ui as web_ui
+        with patch.object(web_ui, "_MEMORY_READY", False):
+            status, rows = web_ui._do_search("test", 5, True)
+        assert rows == []
+        assert "memory" in status.lower() or "nicht" in status.lower()
+
+    def test_feedback_on_empty_chunk_id(self):
+        import src.web_ui as web_ui
+        with patch.object(web_ui, "_MEMORY_READY", True):
+            result = web_ui._do_feedback("", "positive", "")
+        assert "chunk" in result.lower() or "id" in result.lower()
