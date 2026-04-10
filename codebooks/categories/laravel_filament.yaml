@@ -1,0 +1,9 @@
+name: laravel_filament
+description: Filament Admin-Panel, Resources, Widgets, Pages
+risk_level: low
+languages: [php]
+patterns:
+  - "*/Filament/*"
+  - "*/filament/*"
+  - "*Resource.php"
+  - "*Widget.php"

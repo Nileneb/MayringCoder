@@ -1,0 +1,13 @@
+name: serialization
+description: JSON/XML-Transformation, DTOs, Resources, Presenter, Transformer
+risk_level: low
+languages: [php, python, js]
+patterns:
+  - "*/Resources/*"
+  - "*/Transformers/*"
+  - "*/Presenters/*"
+  - "*/serializers/*"
+  - "*Resource.php"
+  - "*transformer*.py"
+  - "*serializer*.py"
+  - "*dto*.py"

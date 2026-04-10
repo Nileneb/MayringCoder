@@ -1,0 +1,10 @@
+name: limitation
+description: Einschränkungen, Schwächen, offene Fragen, Unsicherheiten
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

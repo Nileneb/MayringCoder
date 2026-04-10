@@ -1,0 +1,10 @@
+name: providers
+description: Service Provider, Dependency Injection, Boot-Logik
+risk_level: medium
+languages: [php, python]
+patterns:
+  - "*/Providers/*"
+  - "*/providers/*"
+  - "*Provider.php"
+  - "*ServiceProvider.php"
+  - "*provider*.py"

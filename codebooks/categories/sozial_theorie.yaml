@@ -1,0 +1,10 @@
+name: theorie
+description: Theoretische Rahmung, Konzepte, Definitionen, Modelle
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

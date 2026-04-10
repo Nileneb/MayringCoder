@@ -1,0 +1,9 @@
+name: laravel_livewire
+description: Livewire-Komponenten, Traits, Echtzeit-UI
+risk_level: medium
+languages: [php]
+patterns:
+  - "*/Livewire/*"
+  - "*/livewire/*"
+  - "*Livewire*.php"
+  - "*/Concerns/*"

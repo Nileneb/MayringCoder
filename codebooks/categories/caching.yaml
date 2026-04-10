@@ -1,0 +1,11 @@
+name: caching
+description: Cache-Logik, Invalidierung, TTL-Management, Redis/Memcached
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Cache/*"
+  - "*/cache/*"
+  - "*Cache.php"
+  - "*cache*.py"
+  - "*redis*.py"
+  - "*memcache*.py"

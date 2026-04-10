@@ -1,0 +1,14 @@
+name: integration
+description: Externe API-Aufrufe, SDK-Wrapper, Third-Party-Services
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Integrations/*"
+  - "*/integration/*"
+  - "*/integrations/*"
+  - "*Client.php"
+  - "*client*.py"
+  - "*integration*.py"
+  - "*connector*.py"
+  - "*/adapters/*"
+  - "*/adaptor/*"

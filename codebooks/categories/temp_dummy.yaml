@@ -1,0 +1,14 @@
+name: temp_dummy
+description: Temporärer Code, Dummy-Implementierungen, Placeholder
+risk_level: low
+languages: [php, python, js]
+patterns:
+  - "*tmp*"
+  - "*temp*"
+  - "*dummy*"
+  - "*placeholder*"
+  - "*scaffold*"
+  - "*stub*"
+  - "*.bak"
+  - "*_old.*"
+  - "*_backup.*"

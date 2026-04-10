@@ -1,0 +1,12 @@
+name: ide
+description: IDE-Konfiguration und Editor-Temp-Dateien
+patterns:
+  - "*/.idea/*"
+  - "*/.vscode/*"
+  - "*/.vs/*"
+  - "*/.eclipse/*"
+  - "*.swp"
+  - "*.swo"
+  - "*~"
+  - ".DS_Store"
+  - "Thumbs.db"

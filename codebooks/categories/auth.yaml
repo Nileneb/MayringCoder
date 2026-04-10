@@ -1,0 +1,14 @@
+name: auth
+description: Authentifizierung, Autorisierung, Policies, Guards
+risk_level: high
+languages: [php, python, js]
+patterns:
+  - "*/Policies/*"
+  - "*/policies/*"
+  - "*/Guards/*"
+  - "*/guards/*"
+  - "*Policy.php"
+  - "*Guard.php"
+  - "*auth*.py"
+  - "*permission*.py"
+  - "*authorization*.py"

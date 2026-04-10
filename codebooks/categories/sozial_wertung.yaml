@@ -1,0 +1,10 @@
+name: wertung
+description: Bewertungen, Empfehlungen, normative Aussagen, Implikationen
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

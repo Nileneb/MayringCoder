@@ -1,0 +1,15 @@
+name: api
+description: API-Endpunkte, Routes, Controller, REST/GraphQL/gRPC-Handler
+risk_level: high
+languages: [php, python]
+patterns:
+  - "*/api/*"
+  - "*/routes/*"
+  - "*/controllers/*"
+  - "*/endpoints/*"
+  - "*route*.py"
+  - "*controller*.py"
+  - "*endpoint*.py"
+  - "*handler*.py"
+  - "*/graphql/*"
+  - "*/grpc/*"

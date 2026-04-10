@@ -1,0 +1,13 @@
+name: security
+description: Encryption, Hashing, CSRF, Rate-Limiting, Sanitization
+risk_level: high
+languages: [php, python, js]
+patterns:
+  - "*/Security/*"
+  - "*/security/*"
+  - "*encrypt*.py"
+  - "*decrypt*.py"
+  - "*hash*.py"
+  - "*csrf*.py"
+  - "*ratelimit*.py"
+  - "*sanitize*.py"

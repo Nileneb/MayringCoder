@@ -1,0 +1,10 @@
+name: dependencies
+description: Abhängigkeits-Verzeichnisse und Caches
+patterns:
+  - "*/node_modules/*"
+  - "*/vendor/*"
+  - "*/.venv/*"
+  - "*/venv/*"
+  - "*/__pycache__/*"
+  - "*/.tox/*"
+  - "*/site-packages/*"

@@ -1,0 +1,10 @@
+name: methodik
+description: Beschreibung von Forschungsdesign, Methoden, Stichproben, Vorgehen
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

@@ -1,0 +1,15 @@
+name: ci_cache
+description: CI/CD-Caches, Test-Coverage, temporäre Verzeichnisse
+patterns:
+  - "*/.cache/*"
+  - "*/.tmp/*"
+  - "*/.temp/*"
+  - "*/tmp/*"
+  - "*/coverage/*"
+  - "*/.nyc_output/*"
+  - "*/.pytest_cache/*"
+  - "*/.phpunit.cache/*"
+  - "*/docs/_build/*"
+  - "*/docs/api/*"
+  - "*/.docusaurus/*"
+  - "*/_site/*"

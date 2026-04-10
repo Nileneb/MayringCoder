@@ -1,0 +1,21 @@
+name: docs
+description: Dokumentation, Markdown, Changelogs
+patterns:
+  - "README*"
+  - "readme*"
+  - "CHANGELOG*"
+  - "changelog*"
+  - "CONTRIBUTING*"
+  - "contributing*"
+  - "LICENSE*"
+  - "license*"
+  - "NOTICE*"
+  - "AUTHORS*"
+  - "SECURITY*"
+  - "CODE_OF_CONDUCT*"
+  - "*.md"
+  - "*.rst"
+  - "*.txt"
+  - "*/docs/*"
+  - "*/doc/*"
+  - "*/.github/*"

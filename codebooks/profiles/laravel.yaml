@@ -1,0 +1,36 @@
+name: laravel
+description: Laravel/PHP-Projekte
+excludes:
+  - build_artifacts
+  - package_managers
+  - dependencies
+  - generated
+  - docs
+  - binaries
+  - ide
+  - ci_cache
+  - laravel
+categories:
+  - api
+  - data_access
+  - domain
+  - infrastructure
+  - auth
+  - middleware
+  - providers
+  - listeners
+  - frontend
+  - config
+  - utils
+  - testing
+  - integration
+  - caching
+  - logging
+  - validation
+  - serialization
+  - error_handling
+  - security
+  - scheduling
+  - laravel_livewire
+  - laravel_filament
+  - temp_dummy

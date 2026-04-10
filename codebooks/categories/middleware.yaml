@@ -1,0 +1,10 @@
+name: middleware
+description: HTTP-Middleware, Request/Response-Pipeline, Token-Prüfung
+risk_level: high
+languages: [php, python, js]
+patterns:
+  - "*/Middleware/*"
+  - "*/middleware/*"
+  - "*Middleware.php"
+  - "*middleware*.py"
+  - "*interceptor*.py"

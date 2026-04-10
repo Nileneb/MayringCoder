@@ -1,0 +1,11 @@
+name: tests
+description: Unit-Tests, Integrationstests, Fixtures
+risk_level: low
+languages: [php, python, js]
+patterns:
+  - "test_*.py"
+  - "*_test.py"
+  - "*/tests/*"
+  - "*/test/*"
+  - "conftest.py"
+  - "*/fixtures/*"

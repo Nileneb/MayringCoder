@@ -1,0 +1,16 @@
+name: infrastructure
+description: Background-Jobs, Queue-Worker, Cron-Commands, Console-Commands
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Jobs/*"
+  - "*/jobs/*"
+  - "*/Commands/*"
+  - "*/commands/*"
+  - "*/Console/*"
+  - "*Job.php"
+  - "*Command.php"
+  - "*job*.py"
+  - "*worker*.py"
+  - "*task*.py"
+  - "*queue*.py"

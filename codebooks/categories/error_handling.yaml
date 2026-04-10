@@ -1,0 +1,12 @@
+name: error_handling
+description: Exception-Handler, Fallback-Logik, Retry-Mechanismen
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Exceptions/*"
+  - "*/exceptions/*"
+  - "*Exception.php"
+  - "*exception*.py"
+  - "*error_handler*.py"
+  - "*fallback*.py"
+  - "*retry*.py"

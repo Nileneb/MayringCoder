@@ -1,0 +1,26 @@
+name: generic
+description: Allgemeines Profil für beliebige Repositories
+excludes:
+  - build_artifacts
+  - package_managers
+  - dependencies
+  - generated
+  - docs
+  - binaries
+  - ide
+  - ci_cache
+categories:
+  - api
+  - data_access
+  - domain
+  - infrastructure
+  - auth
+  - middleware
+  - frontend
+  - config
+  - utils
+  - testing
+  - integration
+  - error_handling
+  - security
+  - temp_dummy

@@ -1,0 +1,6 @@
+name: unklar
+description: Mehrdeutige oder nicht zuordenbare Textstellen
+risk_level: medium
+languages: [text]
+patterns:
+  - "*"

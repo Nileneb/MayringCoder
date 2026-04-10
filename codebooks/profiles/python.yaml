@@ -1,0 +1,28 @@
+name: python
+description: Python-Projekte
+excludes:
+  - build_artifacts
+  - package_managers
+  - dependencies
+  - generated
+  - docs
+  - binaries
+  - ide
+  - ci_cache
+categories:
+  - api
+  - data_access
+  - domain
+  - infrastructure
+  - auth
+  - middleware
+  - config
+  - utils
+  - testing
+  - integration
+  - caching
+  - logging
+  - error_handling
+  - security
+  - scheduling
+  - temp_dummy

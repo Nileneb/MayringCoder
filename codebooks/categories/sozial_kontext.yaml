@@ -1,0 +1,10 @@
+name: kontext
+description: Hintergrundinformationen, Forschungsstand, Literaturverweise
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

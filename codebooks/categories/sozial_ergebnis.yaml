@@ -1,0 +1,10 @@
+name: ergebnis
+description: Befunde, Resultate, Daten, Kennzahlen, empirische Aussagen
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

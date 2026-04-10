@@ -1,0 +1,12 @@
+name: logging
+description: Log-Statements, Monitoring, Metrics, Tracing, Alerting
+risk_level: low
+languages: [php, python, js]
+patterns:
+  - "*/Logging/*"
+  - "*/logging/*"
+  - "*Logger.php"
+  - "*logger*.py"
+  - "*logging*.py"
+  - "*monitoring*.py"
+  - "*tracing*.py"

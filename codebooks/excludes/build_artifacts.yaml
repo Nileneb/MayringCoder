@@ -1,0 +1,12 @@
+name: build_artifacts
+description: Kompilierte Dateien, Build-Output, Minified Assets
+patterns:
+  - "*/dist/*"
+  - "*/build/*"
+  - "*/out/*"
+  - "*/output/*"
+  - "*.min.js"
+  - "*.min.css"
+  - "*.bundle.js"
+  - "*.chunk.js"
+  - "*.map"

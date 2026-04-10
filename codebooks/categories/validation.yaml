@@ -1,0 +1,12 @@
+name: validation
+description: Input-Validierung, Form Requests, Sanitization, Schemas
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Requests/*"
+  - "*/requests/*"
+  - "*/validators/*"
+  - "*/validation/*"
+  - "*Request.php"
+  - "*validator*.py"
+  - "*validation*.py"

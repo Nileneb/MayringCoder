@@ -1,0 +1,12 @@
+name: domain
+description: Business-Logik, Domain-Services, Use Cases
+risk_level: high
+languages: [php, python, js]
+patterns:
+  - "*/services/*"
+  - "*/domain/*"
+  - "*/usecases/*"
+  - "*/use_cases/*"
+  - "*service*.py"
+  - "*usecase*.py"
+  - "*business*.py"

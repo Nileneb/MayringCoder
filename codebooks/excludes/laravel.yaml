@@ -1,0 +1,12 @@
+name: laravel
+description: Laravel-spezifische Boilerplate und generierte Dateien
+patterns:
+  - "*.blade.php"
+  - "*/resources/views/*"
+  - "*/database/migrations/*"
+  - "*/database/factories/*"
+  - "*/database/seeders/*"
+  - "config/*.php"
+  - "*.env"
+  - ".env*"
+  - "*.env.example"

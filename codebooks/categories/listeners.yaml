@@ -1,0 +1,14 @@
+name: listeners
+description: Event Listener, Subscriber, Webhooks, Observer
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Listeners/*"
+  - "*/listeners/*"
+  - "*/Observers/*"
+  - "*/observers/*"
+  - "*Listener.php"
+  - "*Observer.php"
+  - "*listener*.py"
+  - "*subscriber*.py"
+  - "*event_handler*.py"

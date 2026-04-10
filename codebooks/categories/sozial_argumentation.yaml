@@ -1,0 +1,10 @@
+name: argumentation
+description: Argumentationslinien, Thesen, Begründungen, Schlussfolgerungen
+risk_level: medium
+languages: [text]
+patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.pdf"
+  - "*.docx"
+  - "*.tex"

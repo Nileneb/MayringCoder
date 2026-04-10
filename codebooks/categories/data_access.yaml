@@ -1,0 +1,15 @@
+name: data_access
+description: Datenbankzugriff, ORM-Modelle, Migrations, Repositories
+risk_level: high
+languages: [php, python, js]
+patterns:
+  - "*/models/*"
+  - "*/db/*"
+  - "*/database/*"
+  - "*/migrations/*"
+  - "*/repositories/*"
+  - "*model*.py"
+  - "*schema*.py"
+  - "*migration*.py"
+  - "*repository*.py"
+  - "*dao*.py"

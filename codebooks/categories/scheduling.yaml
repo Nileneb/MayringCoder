@@ -1,0 +1,11 @@
+name: scheduling
+description: Cron-Jobs, Task-Scheduling, zeitgesteuerte Abläufe
+risk_level: medium
+languages: [php, python, js]
+patterns:
+  - "*/Console/Commands/*"
+  - "*/Schedule/*"
+  - "*/schedule/*"
+  - "*schedule*.py"
+  - "*cron*.py"
+  - "*scheduled_task*.py"

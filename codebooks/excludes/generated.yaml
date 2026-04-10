@@ -1,0 +1,12 @@
+name: generated
+description: Framework-generierte Assets und statische Builds
+patterns:
+  - "public/js/*"
+  - "public/css/*"
+  - "public/fonts/*"
+  - "public/build/*"
+  - "public/hot"
+  - "*/storage/framework/*"
+  - "*/@generated*"
+  - "*/.generated/*"
+  - "*/auto-generated/*"

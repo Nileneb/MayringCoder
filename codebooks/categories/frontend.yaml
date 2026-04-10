@@ -1,0 +1,15 @@
+name: ui
+description: Frontend, Templates, UI-Komponenten, Views
+risk_level: low
+languages: [js]
+patterns:
+  - "*.html"
+  - "*.jsx"
+  - "*.tsx"
+  - "*.vue"
+  - "*.svelte"
+  - "*/templates/*"
+  - "*/components/*"
+  - "*/pages/*"
+  - "*/views/*"
+  - "*view*.py"

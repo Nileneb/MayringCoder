@@ -1,0 +1,11 @@
+name: utils
+description: Hilfsfunktionen, Utilities, Helpers, Mixins
+risk_level: low
+languages: [php, python, js]
+patterns:
+  - "*util*.py"
+  - "*helper*.py"
+  - "*mixin*.py"
+  - "*common*.py"
+  - "*/utils/*"
+  - "*/helpers/*"

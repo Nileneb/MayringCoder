@@ -1,0 +1,13 @@
+name: package_managers
+description: Lock-Files und Paketmanager-Artefakte
+patterns:
+  - "*.lock"
+  - "package-lock.json"
+  - "yarn.lock"
+  - "pnpm-lock.yaml"
+  - "composer.lock"
+  - "Gemfile.lock"
+  - "poetry.lock"
+  - "Pipfile.lock"
+  - "go.sum"
+  - "Cargo.lock"
