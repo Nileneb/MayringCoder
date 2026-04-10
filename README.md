@@ -360,15 +360,27 @@ MayringCoder/
 
 ## Empfohlene Modelle
 
-| Modell | Qualität | Geschwindigkeit | Hinweis |
-|---|---|---|---|
-| `llama3.1:8b` | gut | schnell | Standard, gute Balance |
-| `qwen2.5-coder:7b` | sehr gut | schnell | speziell für Code |
-| `deepseek-coder-v2:16b` | exzellent | langsam | für kritische Reviews |
+| Modell | VRAM | Code-Review | Sozialforschung | Turbulenz | Vision | Hinweis |
+|---|---|---|---|---|---|---|
+| `llama3.1:8b` | ~5 GB | gut | gut | gut | — | Solide Allround-Wahl |
+| `qwen2.5-coder:7b` | ~5 GB | sehr gut | — | gut | — | Spezialisiert auf Code |
+| `qwen3.5:9b` | ~7 GB | exzellent | exzellent | gut | — | Bestes Allround-Modell |
+| `deepseek-coder-v2:16b` | ~10 GB | exzellent | — | sehr gut | — | Für kritische Reviews, langsamer |
+| `mistral:7b-instruct` | ~5 GB | gut | gut | empfohlen | — | Standard für Turbulenz (`TURB_MODEL`) |
+| `qwen2.5vl:3b` | ~3 GB | — | — | — | empfohlen | Multimodal: Bilder → Text-Captions |
+
+**VRAM-Hinweise:**
+- Modelle teilen sich den VRAM mit Embedding (`nomic-embed-text`, ~270 MB)
+- Bei gleichzeitigem Vision-Captioning: +3 GB für `qwen2.5vl:3b`
+- 8 GB VRAM reicht für die meisten 7B-Modelle + Embedding
+- 16 GB empfohlen für 16B-Modelle oder parallele Nutzung
 
 ```bash
 ollama pull llama3.1:8b
 ollama pull qwen2.5-coder:7b
+ollama pull qwen3.5:9b
+ollama pull qwen2.5vl:3b          # für Bild-Captioning
+ollama pull nomic-embed-text       # für RAG/Embedding
 ```
 
 ---
