@@ -45,7 +45,7 @@ def _ollama_generate(
     ollama_url: str,
     model: str,
     system_prompt: str = "",
-    timeout: float = 180.0,
+    timeout: float = 300.0,
 ) -> str:
     """Single Ollama generate call."""
     payload = {
@@ -94,6 +94,18 @@ def _parse_review(raw: str) -> dict | None:
     return None
 
 
+def _warmup_model(ollama_url: str, model: str) -> bool:
+    """Send a trivial prompt to ensure the model is loaded in VRAM."""
+    print(f"[warmup] Lade {model} in VRAM...", end=" ", flush=True)
+    try:
+        resp = _ollama_generate("Say OK.", ollama_url, model, timeout=300.0)
+        print(f"OK ({len(resp)} chars)")
+        return True
+    except Exception as exc:
+        print(f"FEHLER: {exc}")
+        return False
+
+
 def annotate_batch(
     input_path: Path,
     output_path: Path,
@@ -104,6 +116,10 @@ def annotate_batch(
     resume: bool,
 ) -> dict:
     """Annotate training samples with LLM review."""
+    # Warmup: ensure model is hot in VRAM before starting
+    if not _warmup_model(ollama_url, model):
+        print("[WARNUNG] Model warmup fehlgeschlagen, versuche trotzdem...")
+
     lines = input_path.read_text().splitlines()
     total = len(lines)
 
