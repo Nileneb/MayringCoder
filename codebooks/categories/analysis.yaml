@@ -1,0 +1,15 @@
+name: analysis
+description: LLM-Analyse, Extraktoren, Aggregatoren, Report-Generierung
+risk_level: high
+languages: [python]
+patterns:
+  - "*analyzer*.py"
+  - "*extractor*.py"
+  - "*aggregator*.py"
+  - "*report*.py"
+  - "*benchmark*.py"
+  - "*exporter*.py"
+  - "*label*.py"
+  - "*turbulence*.py"
+  - "*context*.py"
+  - "*history*.py"

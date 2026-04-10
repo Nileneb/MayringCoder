@@ -1,0 +1,9 @@
+name: fetcher
+description: Datenquellen-Anbindung, Repo-Fetch, GitHub-API, Gitingest
+risk_level: medium
+languages: [python]
+patterns:
+  - "*fetcher*.py"
+  - "*github*.py"
+  - "*splitter*.py"
+  - "*categorizer*.py"

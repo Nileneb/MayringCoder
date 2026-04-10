@@ -1,0 +1,12 @@
+name: pipeline
+description: Pipeline-Orchestrierung, Entrypoints, CLI-Steuerung, Run-Scripts
+risk_level: high
+languages: [python]
+patterns:
+  - "checker.py"
+  - "*/checker.py"
+  - "run.sh"
+  - "run-all.sh"
+  - "benchmark.sh"
+  - "*_run.py"
+  - "turbulence_run.py"

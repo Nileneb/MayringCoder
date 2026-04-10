@@ -1,0 +1,14 @@
+name: memory
+description: Memory-Pipeline, Ingestion, Retrieval, MCP-Server, Chunking
+risk_level: high
+languages: [python]
+patterns:
+  - "*memory*.py"
+  - "*mcp_server*.py"
+  - "*ingest*.py"
+  - "*retrieval*.py"
+  - "*chunker*.py"
+  - "*embedder*.py"
+  - "*store*.py"
+  - "*schema*.py"
+  - "*vision_captioner*.py"

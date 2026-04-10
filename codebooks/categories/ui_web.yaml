@@ -1,0 +1,12 @@
+name: ui_web
+description: Web-UI, Gradio, Frontend-Oberflächen
+risk_level: low
+languages: [python]
+patterns:
+  - "*web_ui*.py"
+  - "*gradio*.py"
+  - "*ui*.py"
+  - "*.html"
+  - "*.css"
+  - "*.jsx"
+  - "*.tsx"

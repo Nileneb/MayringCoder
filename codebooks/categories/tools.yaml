@@ -1,0 +1,13 @@
+name: tools
+description: CLI-Hilfswerkzeuge, Skripte, Utilities außerhalb der Kern-Pipeline
+risk_level: low
+languages: [python, shell]
+patterns:
+  - "tools/*.py"
+  - "tools/**/*.py"
+  - "scripts/*.py"
+  - "scripts/*.sh"
+  - "*.sh"
+  - "export_training_data.py"
+  - "*gpu_metrics*.py"
+  - "*ollama_status*.py"

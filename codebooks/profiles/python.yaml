@@ -10,6 +10,13 @@ excludes:
   - ide
   - ci_cache
 categories:
+  - pipeline
+  - analysis
+  - memory
+  - fetcher
+  - data_model
+  - prompts
+  - tools
   - api
   - data_access
   - domain
@@ -25,4 +32,5 @@ categories:
   - error_handling
   - security
   - scheduling
+  - ui_web
   - temp_dummy

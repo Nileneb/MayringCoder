@@ -1,0 +1,9 @@
+name: data_model
+description: Datenmodelle, Schemas, Dataclasses, Konfiguration-Konstanten
+risk_level: medium
+languages: [python]
+patterns:
+  - "*schema*.py"
+  - "*config*.py"
+  - "*model*.py"
+  - "*dataclass*.py"

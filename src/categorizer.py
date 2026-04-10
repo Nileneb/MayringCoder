@@ -216,9 +216,9 @@ def detect_profile_from_tree(tree: str) -> str:
     if (has_artisan and has_composer) or has_blade or (has_artisan and has_laravel_dirs):
         return "laravel"
 
-    # Python markers
+    # Python markers (setup.py/pyproject.toml OR requirements.txt + .py files)
     has_py = ".py" in flat
-    has_py_marker = "setup.py" in flat or "pyproject.toml" in flat
+    has_py_marker = "setup.py" in flat or "pyproject.toml" in flat or "requirements.txt" in flat
     if has_py and has_py_marker:
         return "python"
 

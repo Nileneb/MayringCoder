@@ -1,0 +1,11 @@
+name: prompts
+description: LLM-Prompt-Templates, Codebooks, Konfigurationen für Analyse-Modi
+risk_level: medium
+languages: [markdown, yaml]
+patterns:
+  - "prompts/*.md"
+  - "prompts/**/*.md"
+  - "codebook*.yaml"
+  - "codebooks/**/*.yaml"
+  - "AgentTemplates/*.json"
+  - "AgentTemplates/**/*"
