@@ -9,14 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir fastapi uvicorn
+    pip install --no-cache-dir fastapi uvicorn gradio
 
 # Copy application code (only what's needed)
 COPY src/ ./src/
+COPY prompts/ ./prompts/
+COPY codebook.yaml codebook_sozialforschung.yaml ./
+COPY checker.py run.sh ./
 COPY .env.example ./
 
-# Create cache directory for SQLite + ChromaDB persistence
-RUN mkdir -p /app/cache
+# Create directories for persistence
+RUN mkdir -p /app/cache /app/reports
 
 # Transport mode: stdio (default) or http
 ENV MCP_TRANSPORT=stdio
