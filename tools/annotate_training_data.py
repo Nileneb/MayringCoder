@@ -28,33 +28,16 @@ from pathlib import Path
 
 import httpx
 
-_REVIEW_SYSTEM = """Du bist ein erfahrener Code-Reviewer. Du bewertest die Qualität von automatisch generierten Code-Analyse-Findings.
+_REVIEW_SYSTEM = """You are a code review quality assessor. Rate automated findings as true or false positives.
+Reply ONLY with JSON: {"overall_quality":"good|partial|bad","true_positives":N,"false_positives":N,"total_findings":N,"precision":0.0,"reasoning":"1 sentence"}"""
 
-Für jedes Finding bewerte:
-1. Ist es ein ECHTES Problem? (true_positive)
-2. Ist es ein Fehlalarm? (false_positive)
-3. Wie nützlich ist der Fix-Vorschlag? (useful_fix)
+_REVIEW_PROMPT = """Rate this automated code analysis. How many findings are real vs false positives?
 
-Antworte NUR mit JSON:
-{
-  "overall_quality": "good|partial|bad",
-  "true_positives": <Anzahl echte Findings>,
-  "false_positives": <Anzahl Fehlalarme>,
-  "total_findings": <Gesamtzahl>,
-  "precision": <true_positives / total_findings, 0.0-1.0>,
-  "reasoning": "<1-2 Sätze Begründung>"
-}"""
-
-_REVIEW_PROMPT = """Bewerte diese automatisch generierte Code-Analyse:
-
-## Analysierter Code (gekürzt):
+CODE (truncated):
 {code}
 
-## LLM-Ausgabe:
-{response}
-
-## Frage:
-Wie viele der gemeldeten Findings sind echte Probleme vs. Fehlalarme?"""
+LLM OUTPUT:
+{response}"""
 
 
 def _ollama_generate(
@@ -62,7 +45,7 @@ def _ollama_generate(
     ollama_url: str,
     model: str,
     system_prompt: str = "",
-    timeout: float = 120.0,
+    timeout: float = 180.0,
 ) -> str:
     """Single Ollama generate call."""
     payload = {
@@ -81,18 +64,33 @@ def _ollama_generate(
 
 
 def _parse_review(raw: str) -> dict | None:
-    """Parse JSON from LLM review response."""
+    """Parse JSON from LLM review response — tolerates markdown fences and surrounding text."""
+    import re
     raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    # Strip markdown fences
+    if "```" in raw:
+        parts = raw.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                raw = part
+                break
+    # Try direct parse
     try:
         d = json.loads(raw)
         if isinstance(d, dict) and "overall_quality" in d:
             return d
     except (json.JSONDecodeError, ValueError):
         pass
+    # Fallback: find first JSON object in text
+    m = re.search(r'\{[^{}]*"overall_quality"[^{}]*\}', raw)
+    if m:
+        try:
+            return json.loads(m.group())
+        except (json.JSONDecodeError, ValueError):
+            pass
     return None
 
 
@@ -141,8 +139,8 @@ def annotate_batch(
                 stats["skipped"] += 1
                 continue
 
-            code = sample.get("prompt", "")[:2000]
-            response = sample.get("raw_response", "")[:2000]
+            code = sample.get("prompt", "")[:1200]
+            response = sample.get("raw_response", "")[:1200]
 
             if not code or not response:
                 stats["skipped"] += 1
