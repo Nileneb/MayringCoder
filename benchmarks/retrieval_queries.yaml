@@ -240,7 +240,7 @@ queries:
     relevant_paths:
       - "issue/133"
       - "issue/147"
-      - "app/Services/CreditService.php"
+      - "CreditService.php"
     description: "Cross-Repo: CreditService Bug-Issues + Source-Code"
 
   - id: q32
@@ -248,14 +248,14 @@ queries:
     relevant_paths:
       - "issue/156"
       - "issue/159"
-      - "app/Services/LangdockAgentService.php"
+      - "LangdockAgentService.php"
     description: "Cross-Repo: Langdock Service — Architektur-Issues + Implementation"
 
   - id: q33
     query: "RetrieverService searchPapers Embedding pgvector Cosine"
     relevant_paths:
       - "issue/157"
-      - "app/Services/RetrieverService.php"
+      - "RetrieverService.php"
     description: "Cross-Repo: Retriever-Erweiterung — Issue-Plan + bestehender Code"
 
   - id: q34
@@ -263,14 +263,14 @@ queries:
     relevant_paths:
       - "issue/144"
       - "issue/158"
-      - "app/Services/AgentResultStorageService.php"
+      - "AgentResultStorageService.php"
     description: "Cross-Repo: Storage-Bugs + Session-Cache-Plan + Implementation"
 
   - id: q35
     query: "TriggersPhaseAgent Context projekt_id workspace_id auth"
     relevant_paths:
       - "issue/154"
-      - "app/Traits/TriggersPhaseAgent.php"
+      - "TriggersPhaseAgent.php"
     description: "Cross-Repo: Context-Bug + Trait-Code"
 
   # --- Session-Summaries: Architekturwissen ---
@@ -278,29 +278,29 @@ queries:
   - id: q36
     query: "HTTP Transport MCP X-Auth-Token Reverse Proxy Middleware"
     relevant_paths:
-      - "summary/2026-04-09-http-budget.md"
+      - "session-http-budget"
     description: "Session-Recall: HTTP-Transport Implementierung"
 
   - id: q37
     query: "Multi-View Indexing 5 Views fact impl decision entities"
     relevant_paths:
-      - "summary/2026-04-09"
+      - "session-memory-pipeline"
     description: "Session-Recall: Multi-View Chunking Design"
 
   - id: q38
     query: "smart_split AST Priorität Security Keywords Chunking"
     relevant_paths:
-      - "summary/2026-04-10-7issues-batch.md"
+      - "session-7issues-batch"
     description: "Session-Recall: Smart-Split Implementierung"
 
   - id: q39
     query: "JWT workspace_id Chroma Collection Isolation PyJWT"
     relevant_paths:
-      - "summary/2026-04-10-7issues-batch.md"
+      - "session-7issues-batch"
     description: "Session-Recall: JWT Workspace-Isolation"
 
   - id: q40
     query: "Qwen2.5-VL Vision Captioning Bilder SVG base64 Ollama"
     relevant_paths:
-      - "summary/2026-04-10-7issues-batch.md"
+      - "session-7issues-batch"
     description: "Session-Recall: Vision-RAG Entscheidung Qwen statt BLIP"
