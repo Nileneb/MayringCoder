@@ -4,3 +4,4 @@ python-dotenv
 pyyaml
 chromadb
 mcp
+Pillow
