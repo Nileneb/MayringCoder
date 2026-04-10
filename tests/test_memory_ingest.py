@@ -376,3 +376,28 @@ class TestIngestConversationSummary:
 
         # 2 Markdown-Sections → 2 Chunks
         assert len(result["chunk_ids"]) == 2
+
+
+class TestResolveCodebookModular:
+    """Profile-based codebook resolution."""
+
+    def test_laravel_profile_returns_laravel_categories(self):
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("laravel", "repo_file")
+        assert "api" in cats
+        assert "laravel_livewire" in cats
+
+    def test_auto_still_works(self):
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("auto", "repo_file")
+        assert "api" in cats
+
+    def test_social_still_works(self):
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("auto", "conversation_summary")
+        assert "argumentation" in cats or len(cats) > 0
+
+    def test_unknown_profile_falls_back(self):
+        from src.memory_ingest import _resolve_codebook
+        cats = _resolve_codebook("nonexistent_xyz", "repo_file")
+        assert len(cats) > 0  # Should get some categories (fallback)

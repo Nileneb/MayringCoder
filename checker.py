@@ -75,6 +75,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--run-id", help="Logischer Run-Key für Cache + Report (ermöglicht Modell-/Run-Vergleiche)")
     p.add_argument("--cache-by-model", action="store_true", help="Modellnamen als Cache-Key verwenden (wenn kein --run-id gesetzt ist)")
     p.add_argument("--codebook", help="Pfad zu einem alternativen Codebook (YAML)")
+    p.add_argument("--codebook-profile", metavar="PROFILE",
+                   help="Codebook-Profil aus codebooks/profiles/ laden (z.B. laravel, python). "
+                        "Überschreibt --codebook wenn gesetzt. Auto-Detection wenn nicht angegeben.")
     p.add_argument("--export", metavar="DATEI", help="Ergebnisse exportieren (.csv oder .json)")
     p.add_argument("--history", action="store_true", help="Vergangene Runs anzeigen")
     p.add_argument("--compare", nargs=2, metavar="RUN_ID", help="Zwei Runs vergleichen (alt neu)")
@@ -245,6 +248,13 @@ def main() -> None:
     codebook_path = Path(args.codebook) if args.codebook else CODEBOOK_PATH
     cache_run_key = args.run_id or (model if args.cache_by_model else "default")
 
+    # --codebook-profile: profile-based modular codebook (overrides --codebook)
+    _modular_codebook: list[dict] | None = None
+    _modular_exclude_pats: list[str] | None = None
+    if getattr(args, "codebook_profile", None):
+        from src.categorizer import load_codebook_modular
+        _modular_exclude_pats, _modular_codebook = load_codebook_modular(args.codebook_profile)
+
     # Training-data logger (opt-in)
     if args.log_training_data:
         from src.config import repo_slug as _rslug
@@ -382,7 +392,10 @@ def main() -> None:
         sys.exit(0)
 
     # 2b. Exclude-Patterns anwenden (vor Kategorisierung)
-    exclude_pats = load_exclude_patterns(codebook_path) + load_mayringignore()
+    if _modular_exclude_pats is not None:
+        exclude_pats = _modular_exclude_pats + load_mayringignore()
+    else:
+        exclude_pats = load_exclude_patterns(codebook_path) + load_mayringignore()
     files, excluded = filter_excluded_files(files, exclude_pats)
     if excluded:
         print(f"  ✗ {len(excluded)} Dateien ausgeschlossen (exclude patterns)")
@@ -393,7 +406,7 @@ def main() -> None:
         sys.exit(0)
 
     # 3. Categorize (Mayring Stufe 1: Strukturierung)
-    codebook = load_codebook(codebook_path)
+    codebook = _modular_codebook if _modular_codebook is not None else load_codebook(codebook_path)
     files = categorize_files(files, codebook)
     categories = {f["filename"]: f["category"] for f in files}
 
@@ -973,7 +986,7 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
                     opts={
                         "categorize": args.memory_categorize,
                         "mode": "hybrid",
-                        "codebook": "auto",
+                        "codebook": getattr(args, "codebook_profile", None) or "auto",
                     },
                 )
                 dedup_count += result.get("deduped", 0)

@@ -478,11 +478,33 @@ _CODEBOOK_PATHS: dict[str, Path] = {
 def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     """Return list of category names for the given codebook/source_type.
 
-    codebook: "auto" | "code" | "social" | "original"
+    codebook: "auto" | "code" | "social" | "original" | <profile-name>
     source_type: used only when codebook="auto"
+
+    Profile names (e.g. "laravel", "python", "generic") are resolved via
+    load_codebook_modular() from codebooks/profiles/<profile>.yaml.
+    Reserved names ("auto", "code", "social", "original") take priority.
     """
+    _RESERVED = {"auto", "code", "social", "original"}
+
     if codebook == "auto":
         codebook = _SOURCE_TYPE_TO_CODEBOOK.get(source_type, "original")
+
+    # Profile-based resolution: try modular codebook for non-reserved names
+    # that are not in _CODEBOOK_PATHS (e.g. "laravel", "python", "generic").
+    if codebook not in _RESERVED and codebook not in _CODEBOOK_PATHS:
+        try:
+            from src.categorizer import load_codebook_modular
+            _profile_path = Path(__file__).parent.parent / "codebooks" / "profiles" / f"{codebook}.yaml"
+            if _profile_path.exists():
+                _exclude_pats, _cats = load_codebook_modular(codebook)
+                names = [cat["name"] for cat in _cats if "name" in cat]
+                if names:
+                    return names
+        except Exception:
+            pass
+        # Unknown profile — fall through to original categories fallback below
+        return list(_ORIGINAL_MAYRING_CATEGORIES)
 
     if codebook == "original" or codebook not in _CODEBOOK_PATHS:
         return list(_ORIGINAL_MAYRING_CATEGORIES)
