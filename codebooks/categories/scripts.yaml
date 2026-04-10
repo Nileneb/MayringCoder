@@ -1,0 +1,12 @@
+name: scripts
+description: Hilfs-Skripte, Build-Tools, Maintenance, Migrations-Runner
+risk_level: low
+languages: [any]
+patterns:
+  - "scripts/*"
+  - "scripts/**/*"
+  - "*/scripts/*"
+  - "bin/*"
+  - "*/bin/*"
+  - "tools/*"
+  - "tools/**/*"

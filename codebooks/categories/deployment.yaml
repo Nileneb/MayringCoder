@@ -1,0 +1,20 @@
+name: deployment
+description: Deployment-Skripte, Docker, CI/CD, Systemd-Services
+risk_level: medium
+languages: [any]
+patterns:
+  - "deploy/*"
+  - "deploy/**/*"
+  - "*/deploy/*"
+  - "Dockerfile"
+  - "Dockerfile.*"
+  - "docker-compose*.yml"
+  - "docker-compose*.yaml"
+  - "*.service"
+  - "*.timer"
+  - ".dockerignore"
+  - "Procfile"
+  - "Makefile"
+  - "*/nginx/*"
+  - "*/docker/*"
+  - "*/docker/**/*"

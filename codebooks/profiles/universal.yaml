@@ -1,0 +1,37 @@
+name: universal
+description: Sprachunabhängiges Profil — kategorisiert nach Verzeichnisstruktur statt Dateiendung
+excludes:
+  - build_artifacts
+  - package_managers
+  - dependencies
+  - generated
+  - docs
+  - binaries
+  - ide
+  - ci_cache
+categories:
+  # Struktur-basiert (sprachunabhängig)
+  - entrypoint
+  - deployment
+  - scripts
+  - static_assets
+  # Verzeichnis-basiert (funktionieren für jede Sprache)
+  - api
+  - auth
+  - middleware
+  - data_access
+  - domain
+  - infrastructure
+  - frontend
+  - config
+  - utils
+  - testing
+  - integration
+  - caching
+  - logging
+  - validation
+  - serialization
+  - error_handling
+  - security
+  - scheduling
+  - temp_dummy

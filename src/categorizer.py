@@ -222,7 +222,38 @@ def detect_profile_from_tree(tree: str) -> str:
     if has_py and has_py_marker:
         return "python"
 
-    return "generic"
+    return "universal"
+
+
+# ---------------------------------------------------------------------------
+# Language detection via Pygments (no new dependency — already installed)
+# ---------------------------------------------------------------------------
+
+def detect_languages(tree: str) -> dict[str, int]:
+    """Count programming languages in a repo based on file extensions.
+
+    Uses Pygments lexer database (~500 languages). Returns {language: file_count}
+    sorted by count descending.
+    """
+    try:
+        from pygments.lexers import get_lexer_for_filename
+    except ImportError:
+        return {}
+
+    counts: dict[str, int] = {}
+    for line in tree.splitlines():
+        # Extract filename from tree line
+        cleaned = re.sub(r"[│├└─┌┐┘┤┬┴┼]", "", line).strip()
+        if not cleaned or cleaned.endswith("/") or cleaned.startswith("Directory"):
+            continue
+        try:
+            lex = get_lexer_for_filename(cleaned)
+            lang = lex.name
+            counts[lang] = counts.get(lang, 0) + 1
+        except Exception:
+            pass
+
+    return dict(sorted(counts.items(), key=lambda x: -x[1]))
 
 
 def detect_profile(files: list[dict]) -> str:
@@ -231,7 +262,7 @@ def detect_profile(files: list[dict]) -> str:
     Heuristic:
     - If any file matches 'artisan' or '*.blade.php' or 'app/Http/*' → 'laravel'
     - If any file matches '*.py' and ('setup.py' or 'pyproject.toml') → 'python'
-    - Otherwise → 'generic'
+    - Otherwise → 'universal'
     """
     filenames = [f.get("filename", "") for f in files]
 
@@ -250,7 +281,7 @@ def detect_profile(files: list[dict]) -> str:
     if has_py_marker:
         return "python"
 
-    return "generic"
+    return "universal"
 
 
 def categorize_files(

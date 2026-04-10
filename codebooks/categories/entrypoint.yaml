@@ -1,0 +1,15 @@
+name: entrypoint
+description: Haupt-Einstiegspunkte, Server-Start, App-Bootstrap
+risk_level: high
+languages: [any]
+patterns:
+  # Root-level common entrypoints (any language)
+  - "server.*"
+  - "app.*"
+  - "main.*"
+  - "index.*"
+  - "manage.py"
+  - "artisan"
+  - "checker.py"
+  - "*/bootstrap/*"
+  - "*/boot/*"

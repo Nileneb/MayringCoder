@@ -1,0 +1,13 @@
+name: static_assets
+description: Statische Dateien, Public-Verzeichnis, CSS, Client-JS
+risk_level: low
+languages: [any]
+patterns:
+  - "public/*"
+  - "public/**/*"
+  - "static/*"
+  - "static/**/*"
+  - "assets/*"
+  - "assets/**/*"
+  - "*/public/*"
+  - "*/static/*"

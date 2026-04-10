@@ -60,10 +60,10 @@ class TestDetectProfile:
 
     def test_generic_fallback(self):
         files = [{"filename": "index.html"}, {"filename": "style.css"}]
-        assert detect_profile(files) == "generic"
+        assert detect_profile(files) == "universal"
 
     def test_empty_files(self):
-        assert detect_profile([]) == "generic"
+        assert detect_profile([]) == "universal"
 
     def test_blade_triggers_laravel(self):
         files = [{"filename": "resources/views/app.blade.php"}]
@@ -95,10 +95,10 @@ class TestDetectProfileFromTree:
 
     def test_generic_fallback(self):
         tree = "└── repo/\n    ├── index.html\n    └── style.css\n"
-        assert detect_profile_from_tree(tree) == "generic"
+        assert detect_profile_from_tree(tree) == "universal"
 
     def test_empty_tree(self):
-        assert detect_profile_from_tree("") == "generic"
+        assert detect_profile_from_tree("") == "universal"
 
     def test_real_app_linn_games_snippet(self):
         tree = """Directory structure:
