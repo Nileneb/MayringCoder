@@ -91,7 +91,7 @@ echo "========================================"
 echo "  Benchmark abgeschlossen."
 echo ""
 echo "  Auswertung:"
-echo "    $PYTHON benchmark_summary.py"
+echo "    $PYTHON tools/benchmark_summary.py"
 echo ""
 echo "  Runs vergleichen:"
 for m in $MODELS; do
