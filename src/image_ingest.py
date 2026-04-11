@@ -10,8 +10,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
-
 from src.memory_ingest import get_or_create_chroma_collection, ingest_image
 from src.memory_schema import Source
 from src.memory_store import init_memory_db
@@ -55,7 +53,7 @@ def run_image_ingest(
     """Shallow-clone repo, caption all images, ingest into memory.
 
     Returns:
-        {images_found, images_captioned, images_skipped, images_failed, repo_slug}
+        {images_found, images_captioned, images_skipped, images_failed, repo}
     """
     url = repo_url.rstrip("/").removesuffix(".git")
     parts = url.split("github.com/", 1)
@@ -96,6 +94,7 @@ def _ingest_images_from_clone(
         ["git", "clone", "--depth=1", repo_url, str(clone_dir)],
         capture_output=True,
         text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
@@ -109,7 +108,7 @@ def _ingest_images_from_clone(
             "images_captioned": 0,
             "images_skipped": 0,
             "images_failed": 0,
-            "repo_slug": repo_owner_name,
+            "repo": repo_owner_name,
         }
 
     conn = init_memory_db()

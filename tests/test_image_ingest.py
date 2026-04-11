@@ -44,24 +44,21 @@ class TestDiscoverImages:
 
 class TestRunImageIngest:
     def test_clones_repo_and_ingests_images(self, tmp_path):
-        fake_clone_dir = tmp_path / "clone"
-        fake_clone_dir.mkdir()
-        (fake_clone_dir / "docs").mkdir()
-        (fake_clone_dir / "docs" / "erd.png").write_bytes(b"PNG" * 10)
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "erd.png").write_bytes(b"PNG" * 10)
 
         mock_ingest_image = MagicMock(return_value={"chunk_ids": ["c1"], "deduped": 0})
         mock_conn = MagicMock()
         mock_chroma = MagicMock()
 
         with (
-            patch("src.image_ingest.subprocess.run") as mock_run,
-            patch("src.image_ingest.tempfile.mkdtemp", return_value=str(fake_clone_dir.parent)),
+            patch("src.image_ingest.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch("src.image_ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
             patch("src.image_ingest.shutil.rmtree") as mock_rmtree,
             patch("src.image_ingest.ingest_image", mock_ingest_image),
             patch("src.image_ingest.init_memory_db", return_value=mock_conn),
             patch("src.image_ingest.get_or_create_chroma_collection", return_value=mock_chroma),
         ):
-            mock_run.return_value = MagicMock(returncode=0)
             result = run_image_ingest(
                 repo_url="https://github.com/Nileneb/app.linn.games",
                 ollama_url="http://localhost:11434",
@@ -70,8 +67,9 @@ class TestRunImageIngest:
                 max_file_bytes=5 * 1024 * 1024,
             )
 
-        assert result["images_found"] >= 0
-        mock_rmtree.assert_called_once()  # cleanup always runs
+        assert result["images_found"] == 1
+        assert result["images_captioned"] == 1
+        mock_rmtree.assert_called_once()
 
     def test_cleanup_runs_even_on_error(self, tmp_path):
         with (
@@ -88,10 +86,8 @@ class TestRunImageIngest:
         mock_rmtree.assert_called_once_with(str(tmp_path), ignore_errors=True)
 
     def test_returns_correct_counts(self, tmp_path):
-        fake_clone_dir = tmp_path / "clone"
-        fake_clone_dir.mkdir()
-        (fake_clone_dir / "a.png").write_bytes(b"x" * 100)
-        (fake_clone_dir / "b.svg").write_text("<svg/>")
+        (tmp_path / "a.png").write_bytes(b"x" * 100)
+        (tmp_path / "b.svg").write_text("<svg/>")
 
         mock_ingest_image = MagicMock(side_effect=[
             {"chunk_ids": ["c1"], "deduped": 0},   # a.png: ingested
