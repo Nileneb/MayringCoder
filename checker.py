@@ -152,11 +152,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpu-metrics", action="store_true",
                    help="GPU-Metriken via nvidia-smi erfassen (VRAM, Auslastung, Watt, Temp). "
                         "Ergebnis unter cache/gpu_metrics_<ts>.csv.")
-    p.add_argument("--pi", action="store_true",
-                   help="Pi-Agent aktivieren: Kleines Modell nutzt Memory-Tool-Calling um Projektkontext "
-                        "abzufragen, bevor Findings erzeugt werden. Reduziert false positives bei "
-                        "schwachen Modellen (z.B. qwen3.5:2b). Benötigt befüllte Memory-DB "
-                        "(--populate-memory, --ingest-issues oder --ingest-images).")
+    p.add_argument("--no-pi", action="store_true",
+                   help="Pi-Agent deaktivieren (Standard: an). Pi nutzt Memory-Tool-Calling um "
+                        "Projektkontext abzufragen und false positives zu reduzieren. "
+                        "Deaktivieren wenn keine Memory-DB vorhanden oder Ressourcen knapp.")
     p.add_argument("--pi-task", metavar="TASK",
                    help="Freier Auftrag an Pi mit Memory-Zugriff (z.B. 'Entwickle PICO-Suchterms für X'). "
                         "Gibt die Antwort als Freitext aus — kein JSON-Zwang. "
@@ -680,7 +679,7 @@ def main() -> None:
         results: list[dict] = []
 
         # ── Pi-Agent: Memory-DB check ────────────────────────────────────────
-        _use_pi = getattr(args, "pi", False)
+        _use_pi = not getattr(args, "no_pi", False)
         from src.config import repo_slug as _repo_slug_fn
         _pi_repo_slug = _repo_slug_fn(repo_url)
         if _use_pi:

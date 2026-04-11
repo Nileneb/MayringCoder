@@ -11,3 +11,4 @@ python-telegram-bot
 openai-whisper
 fastapi
 uvicorn[standard]
+pymysql
