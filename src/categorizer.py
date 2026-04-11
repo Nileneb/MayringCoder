@@ -98,6 +98,18 @@ def _matches_patterns(filename: str, patterns: list[str]) -> bool:
     return False
 
 
+def _is_safe_codebook_name(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]+", value))
+
+
+def _is_within_dir(path: Path, base_dir: Path) -> bool:
+    try:
+        path.resolve().relative_to(base_dir.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dict]]:
     """Load exclude patterns and categories from a codebook profile.
 
@@ -109,8 +121,12 @@ def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dic
     Fallback: if codebooks/ doesn't exist or the profile is not found,
     delegates to load_codebook() + load_exclude_patterns().
     """
-    profile_path = CODEBOOKS_DIR / "profiles" / f"{profile}.yaml"
-    if not CODEBOOKS_DIR.exists() or not profile_path.exists():
+    if not CODEBOOKS_DIR.exists() or not _is_safe_codebook_name(profile):
+        return load_exclude_patterns(), load_codebook()
+
+    profiles_dir = CODEBOOKS_DIR / "profiles"
+    profile_path = profiles_dir / f"{profile}.yaml"
+    if not profile_path.exists() or not _is_within_dir(profile_path, profiles_dir):
         return load_exclude_patterns(), load_codebook()
 
     profile_data = _load_yaml(profile_path)
@@ -119,16 +135,26 @@ def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dic
 
     # Collect exclude patterns from all referenced exclude submodules
     all_exclude_patterns: list[str] = []
+    excludes_dir = CODEBOOKS_DIR / "excludes"
     for name in profile_data.get("excludes", []):
-        exclude_file = CODEBOOKS_DIR / "excludes" / f"{name}.yaml"
+        if not isinstance(name, str) or not _is_safe_codebook_name(name):
+            continue
+        exclude_file = excludes_dir / f"{name}.yaml"
+        if not _is_within_dir(exclude_file, excludes_dir):
+            continue
         data = _load_yaml(exclude_file)
         if isinstance(data, dict):
             all_exclude_patterns.extend(data.get("patterns", []))
 
     # Collect categories from all referenced category submodules
     all_categories: list[dict] = []
+    categories_dir = CODEBOOKS_DIR / "categories"
     for name in profile_data.get("categories", []):
-        cat_file = CODEBOOKS_DIR / "categories" / f"{name}.yaml"
+        if not isinstance(name, str) or not _is_safe_codebook_name(name):
+            continue
+        cat_file = categories_dir / f"{name}.yaml"
+        if not _is_within_dir(cat_file, categories_dir):
+            continue
         data = _load_yaml(cat_file)
         if isinstance(data, dict):
             cat = {
