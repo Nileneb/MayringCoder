@@ -6,3 +6,4 @@ chromadb
 mcp
 Pillow
 PyJWT
+anthropic

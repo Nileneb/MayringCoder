@@ -396,6 +396,8 @@ def analyze_files(
     context_fn: Callable[[dict], str | None] | None = None,
     hot_zone_context_map: dict[str, str] | None = None,
     time_budget: float | None = None,
+    use_pi: bool = False,
+    pi_repo_slug: str | None = None,
 ) -> tuple[list[dict], bool]:
     """Analyze multiple files, optionally enriching each with per-file context.
 
@@ -423,7 +425,12 @@ def analyze_files(
         if ctx is None:
             ctx = project_context
         hz_ctx = hot_zone_context_map.get(fn) if hot_zone_context_map else None
-        results.append(analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx))
+        if use_pi:
+            from src.pi_agent import analyze_with_memory
+            result = analyze_with_memory(file, ollama_url, model, pi_repo_slug)
+        else:
+            result = analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx)
+        results.append(result)
         _bs = get_batch_size()
         if _bs > 0 and i % _bs == 0 and i < total:
             _bd = get_batch_delay()

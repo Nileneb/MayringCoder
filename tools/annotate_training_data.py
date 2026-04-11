@@ -155,10 +155,10 @@ def annotate_batch(
                 stats["skipped"] += 1
                 continue
 
-            code = sample.get("prompt", "")[:1200]
-            response = sample.get("raw_response", "")[:1200]
+            code = sample.get("prompt", "")[:600]
+            response = sample.get("raw_response", "")[:800]
 
-            if not code or not response:
+            if not code or not response or len(response.strip()) < 20:
                 stats["skipped"] += 1
                 continue
 

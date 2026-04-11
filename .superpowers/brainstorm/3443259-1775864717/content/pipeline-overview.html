@@ -1,0 +1,60 @@
+<h2>Visual Qwen Pipeline — Ideen-Überblick</h2>
+<p class="subtitle">Wo könnte Vision in MayringCoder reinpassen? 3 Richtungen zur Auswahl.</p>
+
+<div class="section">
+  <h3>Aktueller Stand (Text-only)</h3>
+  <div style="background:#1a1a2e;border-radius:8px;padding:16px;font-family:monospace;font-size:13px;color:#e0e0e0;line-height:1.8;">
+    <span style="color:#7ecfff">GitHub Repo</span>
+    → <span style="color:#a8d8a8">gitingest</span>
+    → <span style="color:#f0e68c">Splitter / Categorizer</span>
+    → <span style="color:#ff9999">LLM (Qwen Text)</span>
+    → <span style="color:#d4a4eb">JSON Findings</span>
+    → <span style="color:#7ecfff">Report.md</span>
+    <br/>
+    <span style="color:#888;font-size:11px">vision_captioner.py existiert bereits, ist aber noch nicht in die Pipeline integriert</span>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Wähle die Richtung, die dich interessiert:</h3>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Repo-Bilder analysieren</h3>
+      <p>qwen2.5vl:3b captioniert PNG/SVG/JPG-Dateien im Repo (ERDs, Architecture-Diagramme, Screenshots). Caption fließt als Kontext in die normale Text-Analyse ein. Vision als <strong>Pre-Processing Schritt</strong>.</p>
+      <div class="pros-cons" style="margin-top:8px">
+        <div class="pros"><h4>Pro</h4><ul><li>vision_captioner.py fast fertig</li><li>Minimal-Eingriff in Pipeline</li><li>Liefert echten Mehrwert bei Bild-reichen Repos</li></ul></div>
+        <div class="cons"><h4>Con</h4><ul><li>Braucht qwen2.5vl:3b zusätzlich zu laufen</li><li>VRAM-Konkurrenz mit Hauptmodell</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Screenshot → Code Review</h3>
+      <p>User schickt Screenshots von UI, Fehlermeldungen oder Logs. Fine-tuned Pi + mmproj.gguf analysiert direkt: "Was stimmt hier nicht?" — multimodales Code-Review ohne Repo-Zugriff.</p>
+      <div class="pros-cons" style="margin-top:8px">
+        <div class="pros"><h4>Pro</h4><ul><li>mmproj.gguf bereits generiert</li><li>Einzigartiger Use-Case</li><li>Kein Repo-Fetch nötig</li></ul></div>
+        <div class="cons"><h4>Con</h4><ul><li>Qwen3-2B-Base ist kein Vision-Modell — mmproj evtl. nutzlos</li><li>Braucht llama-mtmd-cli statt Ollama</li><li>Unclear ob das fine-tuned model vision kann</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Visuelles Pipeline-Dashboard</h3>
+      <p>web_ui.py (existiert bereits!) um eine Live-Visualisierung erweitern: Repo-Graph, Findings-Heatmap, Pi-Agent Tool-Call-Trace, Memory-Stats. Kein neues Vision-Modell — visuelle <strong>Ausgabe</strong> statt visueller Eingabe.</p>
+      <div class="pros-cons" style="margin-top:8px">
+        <div class="pros"><h4>Pro</h4><ul><li>web_ui.py als Basis vorhanden</li><li>Kein extra GPU-RAM</li><li>Macht Ergebnisse sofort erklärbar</li></ul></div>
+        <div class="cons"><h4>Con</h4><ul><li>Nicht "Vision" im AI-Sinne</li><li>Mehr Frontend-Arbeit</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:24px">Klick eine Option an oder schreib im Terminal was dich interessiert.</p>

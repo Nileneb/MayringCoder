@@ -1,0 +1,85 @@
+<h2>Design: Vision Memory Ingest</h2>
+<p class="subtitle">Repo-Bilder → qwen2.5vl Caption → ChromaDB → Pi search_memory</p>
+
+<div class="section">
+  <h3>Pipeline Flow</h3>
+  <div style="background:#0f0f1a;border-radius:8px;padding:20px;font-family:monospace;font-size:13px;color:#e0e0e0;line-height:2.2;">
+
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <span style="background:#2d4a7a;padding:4px 12px;border-radius:4px;color:#7ecfff;font-weight:bold">checker.py --ingest-images &lt;repo&gt;</span>
+    </div>
+
+    <div style="padding-left:24px;border-left:2px solid #333">
+      <div style="color:#888;margin:4px 0">↓</div>
+      <span style="color:#a8d8a8">git clone --depth=1 → /tmp/mayring-&lt;slug&gt;/</span>
+      <div style="color:#888;margin:4px 0">↓</div>
+      <span style="color:#f0e68c">find *.png *.jpg *.svg *.gif *.webp  (skip &gt;5MB, max 50 Bilder)</span>
+      <div style="color:#888;margin:4px 0">↓  pro Bild:</div>
+      <span style="color:#ff9999">vision_captioner.caption_image(path, model="qwen2.5vl:3b")</span>
+      <div style="color:#888;margin:4px 0">↓</div>
+      <span style="color:#d4a4eb">memory_ingest.ingest(source_type="repo_file", category="visual")</span>
+      <div style="color:#888;margin:4px 0">↓</div>
+      <span style="color:#7ecfff">ChromaDB + SQLite  →  Pi findet Captions via search_memory()</span>
+      <div style="color:#888;margin:4px 0">↓</div>
+      <span style="color:#888">rm -rf /tmp/mayring-&lt;slug&gt;/</span>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Neue / geänderte Dateien</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <tr style="border-bottom:1px solid #333">
+      <th style="text-align:left;padding:8px;color:#7ecfff">Datei</th>
+      <th style="text-align:left;padding:8px;color:#7ecfff">Aktion</th>
+      <th style="text-align:left;padding:8px;color:#7ecfff">Was</th>
+    </tr>
+    <tr style="border-bottom:1px solid #222">
+      <td style="padding:8px;font-family:monospace;color:#a8d8a8">src/image_ingest.py</td>
+      <td style="padding:8px"><span style="background:#1a3a1a;color:#a8d8a8;padding:2px 8px;border-radius:3px">NEU</span></td>
+      <td style="padding:8px">clone, find, caption, ingest — Haupt-Logik</td>
+    </tr>
+    <tr style="border-bottom:1px solid #222">
+      <td style="padding:8px;font-family:monospace;color:#f0e68c">src/vision_captioner.py</td>
+      <td style="padding:8px"><span style="background:#2a2a1a;color:#f0e68c;padding:2px 8px;border-radius:3px">minimal</span></td>
+      <td style="padding:8px">bereits fertig, ggf. Timeout-Parameter ergänzen</td>
+    </tr>
+    <tr style="border-bottom:1px solid #222">
+      <td style="padding:8px;font-family:monospace;color:#f0e68c">checker.py</td>
+      <td style="padding:8px"><span style="background:#2a2a1a;color:#f0e68c;padding:2px 8px;border-radius:3px">+Flag</span></td>
+      <td style="padding:8px"><code>--ingest-images</code> analog zu <code>--ingest-issues</code></td>
+    </tr>
+    <tr>
+      <td style="padding:8px;font-family:monospace;color:#888">src/memory_ingest.py</td>
+      <td style="padding:8px"><span style="background:#1a1a1a;color:#888;padding:2px 8px;border-radius:3px">unverändert</span></td>
+      <td style="padding:8px">source_type="repo_file" bereits unterstützt</td>
+    </tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>Chunk-Format im Memory</h3>
+  <div style="background:#0f0f1a;border-radius:8px;padding:16px;font-family:monospace;font-size:12px;color:#e0e0e0">
+    <span style="color:#888"># was Pi bei search_memory("datenbankstruktur") findet:</span><br/>
+    {<br/>
+    &nbsp;&nbsp;<span style="color:#7ecfff">"source_type"</span>: <span style="color:#a8d8a8">"repo_file"</span>,<br/>
+    &nbsp;&nbsp;<span style="color:#7ecfff">"category"</span>: <span style="color:#a8d8a8">"visual"</span>,<br/>
+    &nbsp;&nbsp;<span style="color:#7ecfff">"filename"</span>: <span style="color:#a8d8a8">"docs/architecture.png"</span>,<br/>
+    &nbsp;&nbsp;<span style="color:#7ecfff">"content"</span>: <span style="color:#a8d8a8">"[Caption] Tasks-Tabelle hat user_id → users.id FK. Projects haben budget_used und budget_total Spalten..."</span>,<br/>
+    &nbsp;&nbsp;<span style="color:#7ecfff">"repo"</span>: <span style="color:#a8d8a8">"nileneb-applinngames"</span><br/>
+    }
+  </div>
+</div>
+
+<div class="section">
+  <h3>Limits & Guards</h3>
+  <ul style="font-size:13px;line-height:2">
+    <li>Max Bildgröße: <strong>5 MB</strong> (skip + warn)</li>
+    <li>Max Bilder pro Run: <strong>50</strong> (konfigurierbar via <code>--max-images N</code>)</li>
+    <li>VISION_MODEL env var: default <code>qwen2.5vl:3b</code></li>
+    <li>Dedup: Hash-Check via memory_store — gleiche Datei wird nicht neu gecaptioned</li>
+    <li>Cleanup: <code>rm -rf /tmp/mayring-slug/</code> nach Ingest immer, auch bei Fehler</li>
+  </ul>
+</div>
+
+<p class="subtitle">Sieht das so aus wie du es dir vorgestellt hast?</p>

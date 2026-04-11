@@ -145,6 +145,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpu-metrics", action="store_true",
                    help="GPU-Metriken via nvidia-smi erfassen (VRAM, Auslastung, Watt, Temp). "
                         "Ergebnis unter cache/gpu_metrics_<ts>.csv.")
+    p.add_argument("--pi", action="store_true",
+                   help="Pi-Agent aktivieren: Kleines Modell nutzt Memory-Tool-Calling um Projektkontext "
+                        "abzufragen, bevor Findings erzeugt werden. Reduziert false positives bei "
+                        "schwachen Modellen (z.B. qwen3.5:2b). Benötigt befüllte Memory-DB "
+                        "(--populate-memory oder --ingest-issues).")
     return p.parse_args()
 
 
@@ -651,6 +656,26 @@ def main() -> None:
 
         results: list[dict] = []
 
+        # ── Pi-Agent: Memory-DB check ────────────────────────────────────────
+        _use_pi = getattr(args, "pi", False)
+        from src.config import repo_slug as _repo_slug_fn
+        _pi_repo_slug = _repo_slug_fn(repo_url)
+        if _use_pi:
+            try:
+                from src.memory_store import init_memory_db as _init_mem_db
+                _mem_conn = _init_mem_db()
+                _chunk_count = _mem_conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                _mem_conn.close()
+                if _chunk_count == 0:
+                    print(
+                        "  Warnung: Pi-Agent aktiv, aber Memory-DB enthält keine Chunks. "
+                        "Starte zuvor --populate-memory oder --ingest-issues."
+                    )
+                else:
+                    print(f"  Pi-Agent aktiv: {_chunk_count} Memory-Chunks verfügbar")
+            except Exception as _pi_check_exc:
+                print(f"  Warnung: Pi-Agent Memory-Check fehlgeschlagen: {_pi_check_exc}")
+
         # ── Main analysis (non-test files) ───────────────────────────────────
         _time_budget_hit = False
         if non_test_files:
@@ -661,6 +686,8 @@ def main() -> None:
                 context_fn=rag_context_fn,
                 hot_zone_context_map=hot_zone_context_map,
                 time_budget=args.time_budget,
+                use_pi=_use_pi,
+                pi_repo_slug=_pi_repo_slug,
             )
             results.extend(batch_results)
 
@@ -672,6 +699,8 @@ def main() -> None:
                 project_context=None,
                 context_fn=None,
                 time_budget=args.time_budget,
+                use_pi=_use_pi,
+                pi_repo_slug=_pi_repo_slug,
             )
             results.extend(batch_results)
             _time_budget_hit = _time_budget_hit or _tbh
