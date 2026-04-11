@@ -29,6 +29,8 @@ def discover_images(
             break
         if not path.is_file():
             continue
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
+            continue
         if path.suffix.lower() not in _IMAGE_EXTENSIONS:
             continue
         try:

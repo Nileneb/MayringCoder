@@ -156,7 +156,7 @@ def parse_args() -> argparse.Namespace:
                    help="Pi-Agent aktivieren: Kleines Modell nutzt Memory-Tool-Calling um Projektkontext "
                         "abzufragen, bevor Findings erzeugt werden. Reduziert false positives bei "
                         "schwachen Modellen (z.B. qwen3.5:2b). Benötigt befüllte Memory-DB "
-                        "(--populate-memory oder --ingest-issues).")
+                        "(--populate-memory, --ingest-issues oder --ingest-images).")
     return p.parse_args()
 
 
@@ -680,7 +680,7 @@ def main() -> None:
                 if _chunk_count == 0:
                     print(
                         "  Warnung: Pi-Agent aktiv, aber Memory-DB enthält keine Chunks. "
-                        "Starte zuvor --populate-memory oder --ingest-issues."
+                        "Starte zuvor --populate-memory, --ingest-issues oder --ingest-images."
                     )
                 else:
                     print(f"  Pi-Agent aktiv: {_chunk_count} Memory-Chunks verfügbar")
