@@ -8,3 +8,5 @@ __pycache__/
 /reports
 appLinnGames.txt
 .mcp.json
+unsloth_compiled_cache/
+.superpowers/brainstorm/*/state/
