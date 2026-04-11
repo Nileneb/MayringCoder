@@ -7,3 +7,4 @@ mcp
 Pillow
 PyJWT
 anthropic
+python-telegram-bot

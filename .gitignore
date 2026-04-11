@@ -12,3 +12,4 @@ unsloth_compiled_cache/
 .superpowers/
 .claude/
 AgentTemplates/
+.env.telegram
