@@ -3,7 +3,7 @@
 > Local, offline-first AI analysis for GitHub repositories and text corpora — powered by [Ollama](https://ollama.com).
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-black.svg)](https://ollama.com)
 [![Tests](https://img.shields.io/badge/tests-601%20passing-brightgreen.svg)]()
 
@@ -476,4 +476,4 @@ pip install -r requirements-dev.txt
 
 ## License
 
-[MIT](LICENSE)
+[GNU Affero General Public License v3.0](LICENSE) — free to use, modify, and distribute. Any derivative work or network service built on this code must be released under the same license. For commercial use without open-sourcing your product, contact the author for a commercial license.
