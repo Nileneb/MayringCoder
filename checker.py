@@ -497,7 +497,7 @@ def main() -> None:
         sys.exit(0)
 
     if args.ingest_images:
-        _run_ingest_images(args, ollama_url)
+        _run_ingest_images(args, ollama_url, model)
         sys.exit(0)
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
@@ -1150,7 +1150,7 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
     )
 
 
-def _run_ingest_images(args, ollama_url: str) -> None:
+def _run_ingest_images(args, ollama_url: str, model: str) -> None:
     """Repo-Bilder captionieren und in Memory ingesten."""
     from src.image_ingest import run_image_ingest
 
@@ -1166,6 +1166,7 @@ def _run_ingest_images(args, ollama_url: str) -> None:
         repo_url=repo_url,
         ollama_url=ollama_url,
         vision_model=vision_model,
+        embed_model=model,
         max_images=max_images,
         force_reingest=do_force,
     )
