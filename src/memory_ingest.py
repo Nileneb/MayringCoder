@@ -493,11 +493,15 @@ def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     # Profile-based resolution: try modular codebook for non-reserved names
     # that are not in _CODEBOOK_PATHS (e.g. "laravel", "python", "generic").
     if codebook not in _RESERVED and codebook not in _CODEBOOK_PATHS:
+        safe_codebook = str(codebook).strip()
+        # Allow only simple profile identifiers; block traversal/absolute-path input.
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_codebook):
+            return list(_ORIGINAL_MAYRING_CATEGORIES)
         try:
             from src.categorizer import load_codebook_modular
-            _profile_path = Path(__file__).parent.parent / "codebooks" / "profiles" / f"{codebook}.yaml"
+            _profile_path = Path(__file__).parent.parent / "codebooks" / "profiles" / f"{safe_codebook}.yaml"
             if _profile_path.exists():
-                _exclude_pats, _cats = load_codebook_modular(codebook)
+                _exclude_pats, _cats = load_codebook_modular(safe_codebook)
                 names = [cat["name"] for cat in _cats if "name" in cat]
                 if names:
                     return names
