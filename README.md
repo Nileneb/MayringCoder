@@ -1,396 +1,479 @@
 # MayringCoder
 
-> Lokale KI-gestützte Analyse für GitHub-Repositories und Textdokumente — vollständig offline, mit Ollama.
+> Local, offline-first AI analysis for GitHub repositories and text corpora — powered by [Ollama](https://ollama.com).
 
-MayringCoder lädt ein beliebiges GitHub-Repository oder Textkorpus, kategorisiert alle Dateien automatisch und analysiert sie mit einem lokalen Sprachmodell. Die Ergebnisse werden als strukturierter Markdown-Report gespeichert.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ollama](https://img.shields.io/badge/LLM-Ollama-black.svg)](https://ollama.com)
+[![Tests](https://img.shields.io/badge/tests-601%20passing-brightgreen.svg)]()
 
-Die Analyse-Pipeline folgt dem **Mayring-Verfahren** aus der qualitativen Inhaltsanalyse:
-Strukturierung → Reduktion → Explikation → Zusammenführung.
+MayringCoder applies **Mayring's qualitative content analysis** methodology to software repositories and text documents. It fetches a repository, categorizes every file, and runs a local LLM analysis — producing a structured Markdown report with findings, severity scores, and fix suggestions.
 
-**Zwei Einsatzbereiche — eine Pipeline:**
+No cloud API keys required. Everything runs locally.
 
-| Modus | Zweck | Codebook | Prompt |
+---
+
+## What it does
+
+Two primary use cases share one pipeline:
+
+| Mode | Purpose | Codebook | Prompt |
 |---|---|---|---|
-| **Code-Review** | Code-Smells, Security, Architektur | `codebook.yaml` | `prompts/file_inspector.md` |
-| **Sozialforschung** | Qualitative Inhaltsanalyse nach Mayring | `codebook_sozialforschung.yaml` | `prompts/mayring_deduktiv.md` oder `prompts/mayring_induktiv.md` |
+| **Code Review** | Code smells, security, architecture | `codebook.yaml` | `prompts/file_inspector.md` |
+| **Social Research** | Qualitative content analysis (Mayring) | `codebook_sozialforschung.yaml` | `prompts/mayring_deduktiv.md` / `mayring_induktiv.md` |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Input
+        A[GitHub Repo / Text Corpus]
+    end
+
+    subgraph Stage1["Stage 1 — Overview (optional)"]
+        B[Fetcher\ngitingest] --> C[Splitter\nfile dicts]
+        C --> D[Categorizer\ncodebook.yaml]
+        D --> E[Overview LLM\nper-file summary]
+        E --> F[(overview_context.json\n+ ChromaDB RAG)]
+    end
+
+    subgraph Stage2["Stage 2 — Analyze"]
+        G[SQLite Diff\ncache/repo.db] --> H{Changed?}
+        H -- yes --> I[LLM Analysis\nOllama stream]
+        I --> J[JSON Parser]
+        J -- fail --> K[Regex Fallback\nextractor.py]
+        K -- fail --> L[2nd LLM Call\nextract_findings.md]
+        J & K & L --> M[Findings]
+        M --> N{--adversarial?}
+        N -- yes --> O[Advocatus Diaboli\nvalidate_findings]
+        N -- no --> P[Aggregator]
+        O --> P
+    end
+
+    subgraph Stage3["Stage 3 — Turbulence"]
+        Q[turbulence_analyzer.py\nheuristic / LLM]
+        Q --> R[(turbulence-ts.json\n+ .md report)]
+    end
+
+    subgraph Memory["MCP Memory Layer"]
+        S[(memory.db\nSQLite)] <--> T[memory_store.py]
+        U[(memory_chroma/\nChromaDB)] <--> V[memory_retrieval.py\n4-stage hybrid search]
+        T & V <--> W[mcp_server.py\nFastMCP stdio]
+        W <--> X[Pi Agent\ntool-calling loop]
+    end
+
+    subgraph Finetuning["Fine-tuning Pipeline (tools/)"]
+        Y[annotate_with_haiku.py] --> Z[prepare_finetuning_data.py]
+        Z --> AA[finetune_qwen.py\nQLoRA / Unsloth]
+        AA --> AB[export_to_ollama.py\nGGUF → ollama create]
+    end
+
+    A --> B
+    A --> G
+    F --> G
+    P --> Report[reports/*.md\n+ run_meta.json]
+    A --> Q
+    I <-.->|search_memory| W
+    X <-.->|--pi-task| W
+```
 
 ---
 
 ## Features
 
-- **Vollständig lokal** — kein Cloud-API-Key nötig, läuft über [Ollama](https://ollama.com)
-- **Snapshot-basiertes Caching** — nur geänderte oder neue Dateien werden analysiert (SQLite)
-- **Automatische Dateikategorisierung** — YAML-Codebook sortiert Dateien in Kategorien
-- **Priorisierung nach Risiko** — sicherheitskritische Kategorien (api, data_access, domain) werden bevorzugt
-- **Mehrere Analyse-Modi** — Code-Review, qualitative Inhaltsanalyse (deduktiv/induktiv), Explikation
-- **Budget-Limit** — maximal 20 Dateien pro Lauf (konfigurierbar via `--budget N`), Rest bleibt in der Queue
-- **Run-History** — jeden Lauf als Snapshot speichern, Runs vergleichen (`--compare`), alte aufräumen (`--cleanup`)
-- **Explikations-Flag** — Findings mit niedriger Konfidenz werden markiert und können per Re-Run vertieft werden
+- **Fully local** — no cloud dependency, runs via Ollama
+- **Incremental analysis** — SQLite snapshot diff; only changed files are re-analyzed
+- **Automatic file categorization** — YAML codebook assigns Mayring categories and risk priority
+- **Two-stage extraction** — JSON parse → regex fallback → second LLM call
+- **Adversarial validation** — `--adversarial` runs a second LLM pass (Advocatus Diaboli) to reject false positives
+- **Overview mode** — per-file summaries cached to JSON + ChromaDB for RAG context
+- **Turbulence analysis** — detects files with mixed responsibilities and hot zones
+- **MCP Memory Layer** — persistent, hybrid-retrieval memory (SQLite + ChromaDB) via FastMCP stdio
+- **Pi Agent** — tool-calling loop with `search_memory` access; supports both file review and free-form tasks
+- **Fine-tuning pipeline** — annotate → QLoRA train → GGUF export → `ollama create`
+- **Vision captioning** — image ingestion via `qwen2.5vl` for multimodal repos
+- **GPU monitoring** — nvidia-smi metrics during long analysis runs
+- **Budget limit** — max 20 files per run (configurable), remaining files auto-queued for next run
 
 ---
 
-## Wie es funktioniert
-
-```
-GitHub Repo / Textkorpus
-    │
-    ▼ 1. Fetch (gitingest)
-Roher Repo-Snapshot
-    │
-    ▼ 2. Split
-Einzelne Datei-Dicts (Pfad, Inhalt, SHA256-Hash, Größe)
-    │
-    ▼ 3. Kategorisierung (Mayring Stufe 1: Strukturierung)
-Dateien mit Kategorie (api / domain / argumentation / methodik / ...)
-    │
-    ▼ 4. Diff (SQLite Cache)
-Nur neue / geänderte Dateien → Analyse-Queue
-    │
-    ▼ 5. LLM-Analyse (Mayring Stufen 2+3: Reduktion + Explikation)
-Strukturiertes JSON pro Datei: Findings/Codierungen, Severity, Konfidenz
-    │
-    ▼ 6. Aggregation (Mayring Stufe 4: Zusammenführung)
-Top-Findings, deduplizierte Handlungsempfehlungen / Kategoriensystem
-    │
-    ▼ 7. Report
-reports/repo-check-YYYY-MM-DD_HHMM.md + run_meta.json
-```
-
----
-
-## Voraussetzungen
+## Requirements
 
 - Python 3.11+
-- [Ollama](https://ollama.com) lokal installiert und gestartet (`ollama serve`)
-- Ein Ollama-Modell geladen, z. B. `ollama pull llama3.1:8b`
-- Optional: GitHub Personal Access Token für private Repos oder höhere Rate Limits
+- [Ollama](https://ollama.com) installed and running (`ollama serve`)
+- At least one model pulled, e.g. `ollama pull qwen2.5-coder:7b`
+- Optional: GitHub Personal Access Token for private repos
 
 ---
 
-## Installation
+## Quick Start
 
 ```bash
 git clone https://github.com/Nileneb/MayringCoder.git
 cd MayringCoder
 
 python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# .env anpassen (siehe Konfiguration)
+# Edit .env with your repo URL and Ollama settings
+```
+
+**Run the full 3-stage pipeline:**
+
+```bash
+bash run.sh
+```
+
+**Or run stages individually:**
+
+```bash
+# Stage 1: Overview map
+.venv/bin/python checker.py --mode overview --no-limit --max-chars 190000
+
+# Stage 2: Incremental analysis (default)
+.venv/bin/python checker.py --repo https://github.com/owner/repo
+
+# Stage 3: Turbulence analysis
+.venv/bin/python turbulence_run.py
 ```
 
 ---
 
-## Konfiguration
+## Configuration
 
-`.env` Datei:
+`.env` file:
 
 ```env
-GITHUB_REPO=https://github.com/dein/repo
+GITHUB_REPO=https://github.com/owner/repo
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b
-GITHUB_TOKEN=                   # optional, für private Repos
+OLLAMA_MODEL=qwen2.5-coder:7b       # prompted at runtime if unset
+GITHUB_TOKEN=                        # optional, for private repos / higher rate limits
+TURB_MODEL=mistral:7b-instruct       # optional, for turbulence LLM mode
+EMBEDDING_MODEL=nomic-embed-text     # used for RAG and MCP memory
 ```
 
 ---
 
-## Nutzung
+## Usage
 
-### Code-Review (Standard)
+### Code Review
 
 ```bash
-# Standard-Analyse (nur geänderte Dateien seit letztem Run)
-python checker.py
+# Analyze a repository (incremental — only changed files)
+.venv/bin/python checker.py --repo https://github.com/owner/repo
 
-# Anderes Repository analysieren
-python checker.py --repo https://github.com/user/repo
+# Force full re-analysis (ignore cache)
+.venv/bin/python checker.py --full
 
-# Anderes Modell verwenden
-python checker.py --model qwen2.5-coder:7b
+# Dry run — show which files would be analyzed
+.venv/bin/python checker.py --dry-run
 
-# Alle Dateien analysieren (Cache ignorieren)
-python checker.py --full
+# Use a different model
+.venv/bin/python checker.py --model qwen3.5:9b
 
-# Vorschau: zeigt nur welche Dateien analysiert würden
-python checker.py --dry-run
+# Adversarial validation (second LLM pass rejects false positives)
+.venv/bin/python checker.py --adversarial
 
-# Ausgewählte Dateien mit Kategorie anzeigen
-python checker.py --show-selection
+# Adjust per-file character budget
+.venv/bin/python checker.py --max-chars 9000
 
-# Alternativen Prompt verwenden
-python checker.py --prompt prompts/smell_inspector.md
+# Adjust file budget per run
+.venv/bin/python checker.py --budget 50 --no-limit
 
-# Anderes Codebook verwenden
-python checker.py --codebook codebook_sozialforschung.yaml
+# Isolated cache namespace per model (for model comparisons)
+.venv/bin/python checker.py --cache-by-model
 
-# Budget-Limit pro Lauf anpassen (Standard: 20)
-python checker.py --budget 50
-
-# Mehr Kontext pro Datei und im Projektkontext
-python checker.py --max-chars 9000
-
-# Modell als Cache-Key verwenden (Modellvergleich ohne Cache-Kollision)
-python checker.py --cache-by-model
-
-# Eigenen Run-Key setzen (voll manuell)
-python checker.py --run-id llama-vs-qwen-20260402
-
-# Raw-Snapshot lokal speichern (Debugging)
-python checker.py --debug
+# Use a specific prompt
+.venv/bin/python checker.py --prompt prompts/smell_inspector.md
 ```
 
-### Run-History & Vergleich
+### Run History & Comparison
 
 ```bash
-# Vergangene Runs anzeigen
-python checker.py --history
+# Show all past runs
+.venv/bin/python checker.py --history
 
-# Zwei Runs vergleichen (welche Findings neu / behoben / geändert)
-python checker.py --compare 20260402-143012 20260402-160045
+# Compare two runs (new / resolved / changed findings)
+.venv/bin/python checker.py --compare 20260402-143012 20260402-160045
 
-# Nur die 10 neuesten Runs behalten, Rest löschen
-python checker.py --cleanup 10
+# Keep only the 10 most recent runs
+.venv/bin/python checker.py --cleanup 10
 ```
 
-### Qualitative Inhaltsanalyse (Sozialforschung)
+### Qualitative Social Research
 
 ```bash
-# Deduktiv — feste Kategorien vorgegeben
-python checker.py --repo https://github.com/user/repo \
+# Deductive — fixed category system
+.venv/bin/python checker.py \
+  --repo https://github.com/owner/repo \
   --codebook codebook_sozialforschung.yaml \
   --prompt prompts/mayring_deduktiv.md
 
-# Induktiv — Kategorien entstehen aus dem Material
-python checker.py --repo https://github.com/user/repo \
+# Inductive — categories emerge from the material
+.venv/bin/python checker.py \
+  --repo https://github.com/owner/repo \
   --codebook codebook_sozialforschung.yaml \
   --prompt prompts/mayring_induktiv.md
 ```
 
-**Was ist der Unterschied?**
-
-- **Deduktiv:** Du gibst ein festes Kategoriensystem vor (z. B. `argumentation`, `methodik`, `ergebnis`, `limitation`). Das LLM ordnet jede Textstelle einer dieser Kategorien zu. Geeignet für: Literatur-Reviews, strukturierte Textanalysen mit klarem Raster.
-
-- **Induktiv:** Das LLM liest den Text und entwickelt die Kategorien selbst aus dem Material. Am Ende liefert es eine `category_summary` mit Definitionen und Häufigkeiten. Geeignet für: explorative Analysen, Interview-Transkripte, offene Codierung.
-
----
-
-## Analyse-Prompts
-
-### Code-Review-Prompts
-
-| Datei | Modus | Ausgabe |
-|---|---|---|
-| `prompts/file_inspector.md` | **Standard** — strukturierte JSON-Analyse | JSON mit `file_summary` + `potential_smells` |
-| `prompts/smell_inspector.md` | Breitere Code-Review-Analyse (5 Fokus-Bereiche) | JSON mit `file_summary` + `potential_smells` |
-| `prompts/explainer.md` | Explikation für unklare Findings | Klärung ob Finding berechtigt + Fix-Vorschlag |
-
-### Sozialforschungs-Prompts
-
-| Datei | Modus | Ausgabe |
-|---|---|---|
-| `prompts/mayring_deduktiv.md` | Deduktive Inhaltsanalyse (feste Kategorien) | JSON mit `file_summary` + `codierungen` |
-| `prompts/mayring_induktiv.md` | Induktive Inhaltsanalyse (offene Kategorien) | JSON mit `file_summary` + `codierungen` + `category_summary` |
-
-### Explikations-Workflow
-
-Findings mit `confidence: low` werden automatisch als `needs_explikation: true` markiert und im Report hervorgehoben. Für eine vertiefte Analyse:
+### Memory Ingest
 
 ```bash
-python checker.py --prompt prompts/explainer.md --full
+# Ingest GitHub Issues with multi-view chunking
+.venv/bin/python checker.py --ingest-issues owner/repo [--multiview] [--force-reingest]
+
+# Ingest images (vision captioning via qwen2.5vl)
+.venv/bin/python checker.py --ingest-images ./path/to/images --embed-model nomic-embed-text
+
+# Run retrieval benchmark
+.venv/bin/python src/benchmark_retrieval.py --queries benchmarks/retrieval_queries.yaml --top-k 5
+```
+
+### Pi Agent — Free-form Tasks
+
+The Pi Agent runs a tool-calling loop with access to `search_memory`. Use it to ask questions about ingested knowledge or to assign free-form work:
+
+```bash
+# Free-form task (uses memory for context)
+.venv/bin/python checker.py --pi-task "Develop PICO search terms for phytotherapy sleep interventions"
+
+# Scope memory to a specific repo
+.venv/bin/python checker.py \
+  --pi-task "Summarize all security findings from the last analysis" \
+  --repo https://github.com/owner/repo
+
+# File-by-file review mode (original Pi mode)
+.venv/bin/python checker.py --pi --repo https://github.com/owner/repo
 ```
 
 ---
 
-## Codebooks (Dateikategorisierung)
+## MCP Memory Layer
 
-Ein Codebook definiert, wie Dateien automatisch in Kategorien einsortiert werden. Es bestimmt **nicht**, welche Fehler gesucht werden — das macht der Prompt. Das Codebook bestimmt nur die **Sortierung und Priorisierung**.
+MayringCoder includes a local persistent memory system accessible via MCP stdio.
 
-### `codebook.yaml` — Code-Review (Standard)
+**Architecture:**
+- `cache/memory.db` (SQLite) — metadata, versions, feedback
+- `cache/memory_chroma/` (ChromaDB) — semantic vector index
+- `src/mcp_server.py` — FastMCP server exposing 8 tools
 
-| Kategorie | Beschreibung | Risiko-Priorität |
-|---|---|---|
-| `api` | Routes, Controller, Endpoints | 🔴 hoch |
-| `data_access` | ORM-Modelle, Migrations, Repositories | 🔴 hoch |
-| `domain` | Business-Logik, Services, Use Cases | 🔴 hoch |
-| `ui` | Templates, Komponenten, Views | normal |
-| `config` | Settings, YAML, ENV-Dateien | normal |
-| `utils` | Hilfsfunktionen, Helpers | normal |
-| `tests` | Unit- und Integrationstests | normal |
-| `temp_dummy` | Placeholder, TODOs, Backup-Dateien | normal |
+**Available MCP tools:**
 
-### `codebook_sozialforschung.yaml` — Qualitative Inhaltsanalyse
-
-| Kategorie | Beschreibung |
+| Tool | Description |
 |---|---|
-| `argumentation` | Thesen, Begründungen, Schlussfolgerungen |
-| `methodik` | Forschungsdesign, Methoden, Stichproben |
-| `ergebnis` | Befunde, Resultate, Daten, Kennzahlen |
-| `limitation` | Einschränkungen, Schwächen, offene Fragen |
-| `theorie` | Theoretische Rahmung, Konzepte, Definitionen |
-| `kontext` | Hintergrund, Forschungsstand, Literaturverweise |
-| `wertung` | Bewertungen, Empfehlungen, normative Aussagen |
-| `unklar` | Mehrdeutige oder nicht zuordenbare Textstellen |
+| `memory.put` | Ingest a new source into memory |
+| `memory.get` | Retrieve a chunk by ID |
+| `memory.search` | Hybrid retrieval (filter → symbolic → vector → rerank) |
+| `memory.update` | Update an existing chunk |
+| `memory.invalidate` | Deactivate a source |
+| `memory.list_by_source` | List all chunks from a source |
+| `memory.explain` | Explain why a chunk was retrieved |
+| `memory.reindex` | Re-embed all chunks |
+| `memory.feedback` | Record retrieval quality feedback |
 
-Eigene Kategorien können in beiden Codebooks ergänzt werden. Regex-Muster beginnen mit `re:`.
-
----
-
-## Report-Format
-
-Jeder Lauf erzeugt zwei Dateien in `reports/`:
-
-**`repo-check-YYYY-MM-DD_HHMM.md`** — Markdown-Report mit:
-- Summary (Dateien, Findings, Laufzeit)
-- Category Digest
-- Top-5 Findings (nach Severity × Konfidenz)
-- Per-File Findings mit Codeausschnitt und Fix-Vorschlag
-- Explikations-Liste (Findings zur manuellen Nachprüfung)
-- Empfohlene nächste Schritte
-
-**`repo-check-YYYY-MM-DD_HHMM_meta.json`** — Maschinenlesbare Metadaten (Diff-Stats, analysierte Dateien, Laufzeit)
-
-### Finding-Schema — Code-Review (JSON)
-
-```json
-{
-  "type": "zombie_code|redundancy|inconsistent_pattern|error_handling|overengineering|security|unclear",
-  "severity": "critical|warning|info",
-  "confidence": "high|medium|low",
-  "line_hint": "~42",
-  "evidence_excerpt": "max. 10 Zeilen relevanter Code",
-  "fix_suggestion": "konkrete Handlungsempfehlung",
-  "needs_explikation": false
-}
-```
-
-### Codierungs-Schema — Sozialforschung (JSON)
-
-```json
-{
-  "category": "argumentation|methodik|ergebnis|limitation|theorie|kontext|wertung|unklar",
-  "confidence": "high|medium|low",
-  "line_hint": "~42",
-  "evidence_excerpt": "wörtliches Zitat, max. 3 Sätze",
-  "reasoning": "Begründung der Zuordnung",
-  "needs_explikation": false
-}
-```
-
-Bei induktiver Analyse zusätzlich:
-
-```json
-{
-  "category_summary": [
-    {
-      "category": "aus_dem_text_abgeleitete_kategorie",
-      "definition": "Was diese Kategorie inhaltlich abdeckt (1 Satz)",
-      "count": 3
-    }
-  ]
-}
-```
-
----
-
-## Caching & Incremental Analysis
-
-MayringCoder legt für jedes Repository eine SQLite-Datenbank unter `cache/<repo-slug>.db` an.
-
-- Bei jedem Lauf wird ein neuer **Snapshot** erstellt
-- Dateien werden per **SHA256-Hash** verglichen
-- Nur Dateien ohne `analyzed_at`-Stempel für den aktiven Cache-Key kommen in die Queue
-- Das **Budget-Limit** (Standard: 20 Dateien) verhindert zu lange Laufzeiten
-- Verbleibende Dateien werden beim nächsten `python checker.py` automatisch fortgesetzt
-
-### Cache-Key Verhalten
-
-- Standard ohne Flags: Cache-Key = `default` (bisheriges Verhalten)
-- Mit `--cache-by-model`: Cache-Key = Modellname (z. B. `qwen2.5-coder:7b`)
-- Mit `--run-id xyz`: Cache-Key = `xyz` (überschreibt `--cache-by-model`)
-
-Damit sind Modellvergleiche möglich, ohne dass ein Lauf den anderen als "bereits analysiert" markiert.
+**Start the MCP server:**
 
 ```bash
-# Gesamten Repo-Cache löschen:
-python checker.py --reset
+nohup .venv/bin/python -m src.mcp_server > /tmp/mcp_memory.log 2>&1 &
+```
 
-# Nur einen bestimmten Run-Key zurücksetzen:
-python checker.py --reset --run-id llama-vs-qwen-20260402
+**Ingest Claude Code memory files into the store:**
 
-# Modellgebundenen Cache-Key zurücksetzen:
-python checker.py --reset --cache-by-model
+```bash
+.venv/bin/python tools/ingest_claude_memory.py          # new/changed only
+.venv/bin/python tools/ingest_claude_memory.py --force  # re-ingest all
+.venv/bin/python tools/ingest_claude_memory.py --dry-run
+```
+
+Full tool contracts: [`docs/mcp_contracts.md`](docs/mcp_contracts.md)
+
+---
+
+## Fine-tuning Pipeline
+
+Annotate analysis outputs and fine-tune a local model on your domain:
+
+```bash
+# 1. Annotate findings via Claude Haiku API
+.venv/bin/python tools/annotate_with_haiku.py \
+  --input cache/training_annotated.jsonl \
+  --output cache/haiku_annotations.jsonl
+
+# 2. Prepare training data (good quality only, precision ≥ 0.8)
+.venv/bin/python tools/prepare_finetuning_data.py \
+  --input cache/haiku_annotations.jsonl \
+  --output-dir cache/finetuning
+
+# 3. Fine-tune (QLoRA via Unsloth — optimized for RTX 3060)
+.venv/bin/python tools/finetune_qwen.py
+
+# 4. Export to Ollama
+.venv/bin/python tools/export_to_ollama.py --quant q4_k_m
+```
+
+The resulting model registers as `mayring-qwen3:2b` in Ollama with MayringCoder's system prompt baked in.
+
+---
+
+## Prompts Reference
+
+| File | Mode | Output |
+|---|---|---|
+| `prompts/file_inspector.md` | Standard code review | JSON: `file_summary` + `potential_smells` |
+| `prompts/smell_inspector.md` | Broader review (5 focus areas) | JSON: `file_summary` + `potential_smells` |
+| `prompts/overview.md` | Stage 1 overview summary | JSON: per-file summary for RAG index |
+| `prompts/explainer.md` | Explicate low-confidence findings | Clarification + fix suggestion |
+| `prompts/test_inspector.md` | Test file analysis | JSON: test quality findings |
+| `prompts/extract_findings.md` | 2nd-pass extraction fallback | Structured extraction from freetext |
+| `prompts/mayring_deduktiv.md` | Deductive content analysis | JSON: `codierungen` with fixed categories |
+| `prompts/mayring_induktiv.md` | Inductive content analysis | JSON: `codierungen` + `category_summary` |
+
+---
+
+## Codebooks
+
+Codebooks define how files are categorized — not what findings are looked for (that's the prompt's job).
+
+### `codebook.yaml` — Code Review
+
+| Category | Description | Risk Priority |
+|---|---|---|
+| `api` | Routes, controllers, endpoints | High |
+| `data_access` | ORM models, migrations, repositories | High |
+| `domain` | Business logic, services, use cases | High |
+| `ui` | Templates, components, views | Normal |
+| `config` | Settings, YAML, env files | Normal |
+| `utils` | Helper functions | Normal |
+| `tests` | Unit and integration tests | Normal |
+
+### `codebook_sozialforschung.yaml` — Social Research
+
+| Category | Description |
+|---|---|
+| `argumentation` | Theses, reasoning, conclusions |
+| `methodik` | Research design, methods, samples |
+| `ergebnis` | Findings, results, data |
+| `limitation` | Constraints, open questions |
+| `theorie` | Theoretical framing, concepts |
+| `kontext` | Background, literature references |
+| `wertung` | Evaluations, recommendations |
+| `unklar` | Ambiguous or unclassifiable passages |
+
+---
+
+## Recommended Models
+
+| Model | VRAM | Code Review | Social Research | Turbulence |
+|---|---|---|---|---|
+| `llama3.1:8b` | ~5 GB | Good | Good | Good |
+| `qwen2.5-coder:7b` | ~5 GB | Very good | — | Good |
+| `qwen3.5:9b` | ~7 GB | Excellent | Excellent | Good |
+| `deepseek-coder-v2:16b` | ~10 GB | Excellent | — | Very good |
+| `mistral:7b-instruct` | ~5 GB | Good | Good | Recommended (`TURB_MODEL`) |
+| `qwen2.5vl:3b` | ~3 GB | — | — | — (vision captioning) |
+| `nomic-embed-text` | ~270 MB | — | — | — (required for RAG/memory) |
+
+```bash
+ollama pull qwen2.5-coder:7b
+ollama pull nomic-embed-text
 ```
 
 ---
 
-## Projektstruktur
+## Project Structure
 
 ```
 MayringCoder/
-├── checker.py                        # Einstiegspunkt & Pipeline-Orchestrierung
-├── codebook.yaml                     # Dateikategorie-Definitionen (Code-Review)
-├── codebook_sozialforschung.yaml     # Dateikategorie-Definitionen (Sozialforschung)
-├── requirements.txt
-├── run.sh                            # Komplett-Lauf (Overview → Analyze)
-├── .env.example
-├── prompts/
-│   ├── file_inspector.md             # Standard-Prompt (strukturiertes JSON, Code-Review)
-│   ├── smell_inspector.md            # Alternativer Review-Prompt (5 Fokus-Bereiche, JSON)
-│   ├── explainer.md                  # Explikations-Prompt für unklare Findings
-│   ├── mayring_deduktiv.md           # Deduktive Inhaltsanalyse (feste Kategorien)
-│   └── mayring_induktiv.md           # Induktive Inhaltsanalyse (offene Kategorien)
+├── checker.py                    # Main entrypoint & pipeline orchestration
+├── turbulence_run.py             # Stage 3 runner
+├── pi_server.py                  # HTTP server for Pi agent REST API
+├── codebook.yaml                 # File categories (code review)
+├── codebook_sozialforschung.yaml # File categories (social research)
+├── run.sh / run-all.sh           # Full pipeline runners
+├── prompts/                      # LLM prompt templates
+├── docs/
+│   ├── mcp_contracts.md          # MCP tool input/output contracts
+│   └── memory_roadmap.md
+├── benchmarks/                   # Retrieval benchmark queries
+├── tools/
+│   ├── annotate_with_haiku.py    # Annotation via Claude Haiku API
+│   ├── prepare_finetuning_data.py
+│   ├── finetune_qwen.py          # QLoRA fine-tuning (Unsloth)
+│   ├── export_to_ollama.py       # GGUF export → ollama create
+│   ├── ingest_claude_memory.py   # Sync Claude memory files → MCP store
+│   └── budget_meter.py
 └── src/
-    ├── fetcher.py                    # Repo laden via gitingest
-    ├── splitter.py                   # gitingest-Output in Datei-Dicts aufteilen
-    ├── categorizer.py                # Dateien per Codebook kategorisieren + Exclude-Filter
-    ├── cache.py                      # SQLite Snapshot-Diff & Queue-Management
-    ├── context.py                    # Projektkontext: Overview-Cache + ChromaDB RAG
-    ├── analyzer.py                   # LLM-Analyse via Ollama (JSON-Parsing, Retry, Fallback)
-    ├── aggregator.py                 # Findings zusammenführen, ranken, deduplizieren
-    ├── report.py                     # Markdown-Report + run_meta.json generieren
-    ├── exporter.py                   # Export als CSV/JSON
-    ├── history.py                    # Run-History: Speichern, Vergleichen, Aufräumen
-    └── config.py                     # Zentrale Konstanten und Pfade
+    ├── config.py                 # All constants; repo_slug(), max_chars helpers
+    ├── fetcher.py                # Repo fetch via gitingest
+    ├── splitter.py               # Split gitingest output into file dicts
+    ├── categorizer.py            # Codebook matching, exclude patterns
+    ├── analyzer.py               # _ollama_generate() (stream), analyze_file(), overview_file()
+    ├── extractor.py              # Stage-2 extraction, validate_findings() (adversarial)
+    ├── aggregator.py             # Merge, rank, deduplicate findings
+    ├── report.py                 # Markdown report + run_meta.json
+    ├── cache.py                  # SQLite snapshot diff, run-key namespacing
+    ├── context.py                # Overview cache + ChromaDB RAG, _embed_texts()
+    ├── history.py                # Run persistence, compare_runs(), cleanup_runs()
+    ├── turbulence_analyzer.py    # Turbulence scoring (heuristic + LLM)
+    ├── model_selector.py         # Resolve Ollama model (interactive if unset)
+    ├── memory_schema.py          # Source, Chunk, RetrievalRecord dataclasses
+    ├── memory_store.py           # SQLite memory.db (4 tables + KV cache)
+    ├── memory_ingest.py          # structural_chunk(), mayring_categorize(), ingest()
+    ├── memory_retrieval.py       # 4-stage hybrid search + compress_for_prompt()
+    ├── mcp_server.py             # FastMCP stdio server (8 tools)
+    ├── pi_agent.py               # _agent_loop(), analyze_with_memory(), run_task_with_memory()
+    ├── gpu_metrics.py            # nvidia-smi monitoring
+    ├── image_ingest.py           # Image → caption ingestion
+    └── vision_captioner.py       # qwen2.5vl captioning
 ```
 
 ---
 
-## Empfohlene Modelle
+## Caching Model
 
-| Modell | VRAM | Code-Review | Sozialforschung | Turbulenz | Vision | Hinweis |
-|---|---|---|---|---|---|---|
-| `llama3.1:8b` | ~5 GB | gut | gut | gut | — | Solide Allround-Wahl |
-| `qwen2.5-coder:7b` | ~5 GB | sehr gut | — | gut | — | Spezialisiert auf Code |
-| `qwen3.5:9b` | ~7 GB | exzellent | exzellent | gut | — | Bestes Allround-Modell |
-| `deepseek-coder-v2:16b` | ~10 GB | exzellent | — | sehr gut | — | Für kritische Reviews, langsamer |
-| `mistral:7b-instruct` | ~5 GB | gut | gut | empfohlen | — | Standard für Turbulenz (`TURB_MODEL`) |
-| `qwen2.5vl:3b` | ~3 GB | — | — | — | empfohlen | Multimodal: Bilder → Text-Captions |
+MayringCoder maintains a SQLite database at `cache/<repo-slug>.db` per repository.
 
-**VRAM-Hinweise:**
-- Modelle teilen sich den VRAM mit Embedding (`nomic-embed-text`, ~270 MB)
-- Bei gleichzeitigem Vision-Captioning: +3 GB für `qwen2.5vl:3b`
-- 8 GB VRAM reicht für die meisten 7B-Modelle + Embedding
-- 16 GB empfohlen für 16B-Modelle oder parallele Nutzung
+- Files are compared by **SHA256 hash** across runs
+- Only new or changed files enter the analysis queue
+- **Budget limit** (default: 20 files/run) prevents runaway runtimes; remaining files auto-continue next run
+- Cache namespaces via `--cache-by-model` or `--run-id` enable side-by-side model comparisons
 
 ```bash
-ollama pull llama3.1:8b
-ollama pull qwen2.5-coder:7b
-ollama pull qwen3.5:9b
-ollama pull qwen2.5vl:3b          # für Bild-Captioning
-ollama pull nomic-embed-text       # für RAG/Embedding
+# Reset entire repo cache
+.venv/bin/python checker.py --reset
+
+# Reset a specific run namespace
+.venv/bin/python checker.py --reset --run-id my-run-key
 ```
 
 ---
 
-## Limitierungen
+## Development & Tests
 
-- Dateien werden auf **3.000 Zeichen** gekürzt — sehr große Dateien werden nur teilweise analysiert
-- Die LLM-Ausgabe ist nicht deterministisch — gleiche Dateien können bei unterschiedlichen Runs leicht abweichende Findings liefern
-- Findings mit `confidence: low` sollten mit dem Explainer-Prompt manuell nachgeprüft werden
-- Der `smell_inspector`-Prompt nutzt breitere Fokus-Bereiche als `file_inspector` — die Types im JSON unterscheiden sich entsprechend
-- Der Sozialforschungs-Modus erwartet Textdateien (.md, .txt, .pdf, .docx) — bei reinen Code-Repos liefert er keine sinnvollen Ergebnisse
+```bash
+pip install -r requirements-dev.txt
+
+.venv/bin/python -m pytest                          # all tests
+.venv/bin/python -m pytest tests/test_cache.py      # single file
+.venv/bin/python -m pytest -k "test_name"            # single test
+.venv/bin/python -m pytest --cov=src                # with coverage
+```
 
 ---
+
+## Limitations
+
+- Files are truncated to **20,000 characters** by default — override with `--max-chars N` or remove the limit with `--no-limit`
+- LLM output is non-deterministic — findings may vary slightly between runs on identical files
+- Low-confidence findings (`confidence: low`) are marked `needs_explikation: true` and should be reviewed manually with `prompts/explainer.md`
+- The social research mode expects text files (`.md`, `.txt`) — it produces no meaningful output on pure code repositories
+
+---
+
+## License
+
+[MIT](LICENSE)

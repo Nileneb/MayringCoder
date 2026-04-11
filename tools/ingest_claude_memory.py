@@ -14,7 +14,6 @@ Usage:
 import argparse
 import hashlib
 import os
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -31,7 +30,7 @@ def _hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
-def _already_ingested(conn: sqlite3.Connection, source_id: str, content_hash: str) -> bool:
+def _already_ingested(conn, source_id: str, content_hash: str) -> bool:
     cur = conn.cursor()
     cur.execute(
         "SELECT content_hash FROM sources WHERE source_id = ?", (source_id,)
@@ -59,8 +58,9 @@ def run(dry_run: bool = False, force: bool = False) -> None:
     import chromadb
     from src.memory_ingest import ingest
     from src.memory_schema import Source
+    from src.memory_store import init_memory_db
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = init_memory_db()
     chroma = chromadb.PersistentClient(path=CHROMA_PATH)
     collection = chroma.get_or_create_collection("memory_chunks")
 
