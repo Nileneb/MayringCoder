@@ -98,6 +98,13 @@ def _matches_patterns(filename: str, patterns: list[str]) -> bool:
     return False
 
 
+def _is_safe_profile_name(profile: str) -> bool:
+    """Allow only simple profile identifiers (no path chars / traversal)."""
+    if not profile:
+        return False
+    return re.fullmatch(r"[A-Za-z0-9_-]+", profile) is not None
+
+
 def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dict]]:
     """Load exclude patterns and categories from a codebook profile.
 
@@ -109,7 +116,16 @@ def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dic
     Fallback: if codebooks/ doesn't exist or the profile is not found,
     delegates to load_codebook() + load_exclude_patterns().
     """
-    profile_path = CODEBOOKS_DIR / "profiles" / f"{profile}.yaml"
+    if not _is_safe_profile_name(profile):
+        return load_exclude_patterns(), load_codebook()
+
+    profiles_dir = (CODEBOOKS_DIR / "profiles").resolve()
+    profile_path = (profiles_dir / f"{profile}.yaml").resolve()
+    try:
+        profile_path.relative_to(profiles_dir)
+    except ValueError:
+        return load_exclude_patterns(), load_codebook()
+
     if not CODEBOOKS_DIR.exists() or not profile_path.exists():
         return load_exclude_patterns(), load_codebook()
 
