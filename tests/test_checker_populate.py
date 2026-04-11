@@ -41,7 +41,7 @@ def test_populate_memory_source_metadata():
     args = _make_args()
     captured_sources = []
 
-    def capture_ingest(source, content, conn, chroma, ollama_url, model, opts=None):
+    def capture_ingest(source, content, conn, chroma, ollama_url, model, opts=None, workspace_id="default"):
         captured_sources.append(source)
         return {"chunk_ids": ["c1"], "deduped": 0}
 
@@ -73,7 +73,7 @@ def test_populate_memory_error_resilience():
     args = _make_args()
     call_count = 0
 
-    def flaky_ingest(source, content, conn, chroma, ollama_url, model, opts=None):
+    def flaky_ingest(source, content, conn, chroma, ollama_url, model, opts=None, workspace_id="default"):
         nonlocal call_count
         call_count += 1
         if call_count == 1:

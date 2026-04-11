@@ -186,7 +186,7 @@ class TestRunIngestIssues:
         ]
         captured = []
 
-        def capture(source, content, conn, chroma, ollama_url, model, opts=None):
+        def capture(source, content, conn, chroma, ollama_url, model, opts=None, workspace_id="default"):
             captured.append(source)
             return {"chunk_ids": [], "deduped": 0}
 

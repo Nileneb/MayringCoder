@@ -51,6 +51,7 @@ def run_image_ingest(
     max_images: int = 50,
     max_file_bytes: int = 5 * 1024 * 1024,
     force_reingest: bool = False,
+    workspace_id: str = "default",
 ) -> dict:
     """Shallow-clone repo, caption all images, ingest into memory.
 
@@ -75,6 +76,7 @@ def run_image_ingest(
             max_images=max_images,
             max_file_bytes=max_file_bytes,
             force_reingest=force_reingest,
+            workspace_id=workspace_id,
         )
     finally:
         shutil.rmtree(clone_dir, ignore_errors=True)
@@ -90,6 +92,7 @@ def _ingest_images_from_clone(
     max_images: int,
     max_file_bytes: int,
     force_reingest: bool,
+    workspace_id: str = "default",
 ) -> dict:
     print(f"[ingest-images] git clone --depth=1 {repo_url} ...")
     result = subprocess.run(
@@ -144,6 +147,7 @@ def _ingest_images_from_clone(
                     ollama_url=ollama_url,
                     model=embed_model,
                     vision_model=vision_model,
+                    workspace_id=workspace_id,
                 )
                 if r.get("deduped", 0) > 0:
                     skipped += 1

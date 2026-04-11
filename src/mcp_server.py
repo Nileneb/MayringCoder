@@ -238,6 +238,7 @@ def put(
     tags: list[str] | None = None,
     categorize: bool = False,
     log: bool = False,
+    workspace_id: str = "default",
 ) -> dict:
     """Ingest content into persistent memory.
 
@@ -249,6 +250,7 @@ def put(
         tags: Optional extra tags stored as category_labels on all chunks
         categorize: Run Mayring LLM categorization (requires Ollama)
         log: Write JSONL log entry
+        workspace_id: Tenant namespace (default: "default")
 
     Returns:
         {source_id, chunk_ids, indexed, deduped, superseded}
@@ -274,6 +276,7 @@ def put(
             ollama_url=_OLLAMA_URL,
             model=_MODEL,
             opts=opts,
+            workspace_id=workspace_id,
         )
         invalidate_query_cache()
         return result
@@ -318,6 +321,7 @@ def search_memory(
     source_affinity: str | None = None,
     char_budget: int = 6000,
     compacted: bool = False,
+    workspace_id: str | None = None,
 ) -> dict:
     """Hybrid 4-stage memory search (scope filter → symbolic → vector → rerank).
 
@@ -331,6 +335,7 @@ def search_memory(
         source_affinity: source_id to boost in affinity scoring
         char_budget: Max chars for prompt_context output
         compacted: Set True after /compact to boost conversation_summary chunks
+        workspace_id: Tenant namespace filter (None = no filter, searches all workspaces)
 
     Returns:
         {results: list[RetrievalRecord], prompt_context: str}
@@ -343,6 +348,7 @@ def search_memory(
             "top_k": top_k,
             "include_text": include_text,
             "source_affinity": source_affinity,
+            "workspace_id": workspace_id,
         }
         results = search(
             query=query,
@@ -484,11 +490,17 @@ def reindex(source_id: str | None = None) -> dict:
             try:
                 emb = _embed_texts([chunk.text[:500]], _OLLAMA_URL)[0]
                 if chroma is not None:
+                    # Lookup workspace_id for this chunk
+                    _ws_row = conn.execute(
+                        "SELECT workspace_id FROM chunks WHERE chunk_id = ?", (chunk.chunk_id,)
+                    ).fetchone()
+                    _ws_id = _ws_row[0] if _ws_row else "default"
                     chroma.upsert(
                         ids=[chunk.chunk_id],
                         documents=[chunk.text[:500]],
                         embeddings=[emb],
                         metadatas=[{
+                            "workspace_id": _ws_id,
                             "source_id": chunk.source_id,
                             "chunk_level": chunk.chunk_level,
                             "category_labels": ",".join(chunk.category_labels),

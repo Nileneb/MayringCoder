@@ -62,6 +62,7 @@ def _scope_filter(
     repo: str | None = None,
     categories: list[str] | None = None,
     source_type: str | None = None,
+    workspace_id: str | None = None,
 ) -> list[str]:
     """Return chunk_ids of active chunks matching hard scope filters."""
     query = """
@@ -72,6 +73,9 @@ def _scope_filter(
     """
     params: list[str] = []
 
+    if workspace_id:
+        query += " AND c.workspace_id = ?"
+        params.append(workspace_id)
     if repo:
         query += " AND s.repo = ?"
         params.append(repo)
@@ -265,6 +269,7 @@ def search(
     source_type: str | None = opts.get("source_type")
     affinity_source_id: str | None = opts.get("source_affinity")
     include_text: bool = bool(opts.get("include_text", True))
+    workspace_id: str | None = opts.get("workspace_id")
 
     # Query-Cache check — hit: re-hydrate from SQLite and return early
     _ck = _cache_key(query, opts, session_compacted)
@@ -284,7 +289,10 @@ def search(
         return hydrated
 
     # Stage 1: scope filter
-    candidate_ids = _scope_filter(conn, repo=repo, categories=categories, source_type=source_type)
+    candidate_ids = _scope_filter(
+        conn, repo=repo, categories=categories, source_type=source_type,
+        workspace_id=workspace_id,
+    )
     if not candidate_ids:
         return []
 
@@ -319,11 +327,23 @@ def search(
             query_emb = _embed_texts([query], ollama_url)[0]
             n_results = min(top_k * 2, chroma_collection.count())
             if n_results > 0:
-                results = chroma_collection.query(
-                    query_embeddings=[query_emb],
-                    n_results=n_results,
-                    include=["distances"],
+                chroma_where = (
+                    {"workspace_id": {"$eq": workspace_id}} if workspace_id else None
                 )
+                try:
+                    results = chroma_collection.query(
+                        query_embeddings=[query_emb],
+                        n_results=n_results,
+                        where=chroma_where,
+                        include=["distances"],
+                    )
+                except Exception:
+                    # Fallback: no where filter (older chunks without workspace_id metadata)
+                    results = chroma_collection.query(
+                        query_embeddings=[query_emb],
+                        n_results=n_results,
+                        include=["distances"],
+                    )
                 ids_list = results.get("ids", [[]])[0]
                 dist_list = results.get("distances", [[]])[0]
                 candidate_set = {c.chunk_id for c in candidates}

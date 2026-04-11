@@ -9,3 +9,5 @@ PyJWT
 anthropic
 python-telegram-bot
 openai-whisper
+fastapi
+uvicorn[standard]

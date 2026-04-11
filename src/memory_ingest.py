@@ -331,6 +331,7 @@ def ingest_image(
     ollama_url: str,
     model: str,
     vision_model: str = "qwen2.5vl:3b",
+    workspace_id: str = "default",
 ) -> dict:
     """Ingest a single image file via vision captioning.
 
@@ -344,7 +345,7 @@ def ingest_image(
     from src.context import _embed_texts
 
     # Step 1: persist source + log start
-    upsert_source(conn, source)
+    upsert_source(conn, source, workspace_id=workspace_id)
     log_ingestion_event(conn, source.source_id, "ingest_start", {"path": source.path})
 
     # Step 2: gather metadata
@@ -383,8 +384,8 @@ def ingest_image(
         created_at=_now_iso(),
     )
 
-    # Step 6: dedup check
-    canonical, is_dup = resolve_dedup(conn, chunk)
+    # Step 6: dedup check (workspace-scoped)
+    canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
     new_chunk_ids: list[str] = []
     deduped_count = 0
     indexed = False
@@ -393,7 +394,7 @@ def ingest_image(
         deduped_count += 1
     else:
         # insert into SQLite
-        insert_chunk(conn, chunk)
+        insert_chunk(conn, chunk, workspace_id=workspace_id)
 
         # embed
         try:
@@ -409,6 +410,7 @@ def ingest_image(
                     documents=[chunk.text[:500]],
                     embeddings=[emb],
                     metadatas=[{
+                        "workspace_id": workspace_id,
                         "source_id": chunk.source_id,
                         "chunk_level": chunk.chunk_level,
                         "category_labels": ",".join(chunk.category_labels),
@@ -603,13 +605,14 @@ def mayring_categorize(
 def resolve_dedup(
     conn: Any,  # sqlite3.Connection — avoid circular import with type hint
     chunk: Chunk,
+    workspace_id: str = "default",
 ) -> tuple[Chunk, bool]:
-    """Exact dedup via text_hash.
+    """Exact dedup via text_hash (workspace-scoped).
 
-    Returns (existing_chunk, True) if duplicate found.
+    Returns (existing_chunk, True) if duplicate found in same workspace.
     Returns (chunk, False) if no duplicate — caller should insert.
     """
-    existing = find_by_text_hash(conn, chunk.text_hash)
+    existing = find_by_text_hash(conn, chunk.text_hash, workspace_id=workspace_id)
     if existing is not None:
         return existing, True
     return chunk, False
@@ -640,6 +643,7 @@ def ingest(
     ollama_url: str,
     model: str,
     opts: dict | None = None,
+    workspace_id: str = "default",
 ) -> dict:
     """Orchestrate the full ingestion pipeline for one source.
 
@@ -661,7 +665,7 @@ def ingest(
     from src.context import _embed_texts
 
     # Step 1: persist source
-    upsert_source(conn, source)
+    upsert_source(conn, source, workspace_id=workspace_id)
     log_ingestion_event(conn, source.source_id, "ingest_start", {"path": source.path})
 
     # Step 2: structural chunking (or multi-view for github_issue)
@@ -684,14 +688,14 @@ def ingest(
     indexed = False
 
     for chunk in chunks:
-        # 4a: exact dedup
-        canonical, is_dup = resolve_dedup(conn, chunk)
+        # 4a: exact dedup (workspace-scoped)
+        canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
         if is_dup:
             deduped_count += 1
             continue
 
         # 4b: insert into SQLite
-        insert_chunk(conn, chunk)
+        insert_chunk(conn, chunk, workspace_id=workspace_id)
 
         # 4c: embed
         try:
@@ -707,6 +711,7 @@ def ingest(
                     documents=[chunk.text[:500]],
                     embeddings=[emb],
                     metadatas=[{
+                        "workspace_id": workspace_id,
                         "source_id": chunk.source_id,
                         "chunk_level": chunk.chunk_level,
                         "category_labels": ",".join(chunk.category_labels),
@@ -849,6 +854,7 @@ def ingest_conversation_summary(
     model: str,
     session_id: str | None = None,
     run_id: str | None = None,
+    workspace_id: str = "default",
 ) -> dict:
     """Ingest a Claude /compact summary as a conversation_summary source.
 
@@ -894,4 +900,5 @@ def ingest_conversation_summary(
             "mode": "hybrid",
             "log": True,
         },
+        workspace_id=workspace_id,
     )

@@ -161,6 +161,10 @@ def parse_args() -> argparse.Namespace:
                    help="Freier Auftrag an Pi mit Memory-Zugriff (z.B. 'Entwickle PICO-Suchterms für X'). "
                         "Gibt die Antwort als Freitext aus — kein JSON-Zwang. "
                         "Optional: --repo für Memory-Scope-Filter.")
+    p.add_argument("--workspace-id", default="default", metavar="ID",
+                   help="Tenant workspace für Multi-Tenancy (Standard: 'default'). "
+                        "Isoliert Memory-Daten und Reports per Nutzer. "
+                        "Erstelle Workspaces mit: tools/manage_workspaces.py create <id>")
     return p.parse_args()
 
 
@@ -1051,6 +1055,7 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
                         "mode": "hybrid",
                         "codebook": getattr(args, "codebook_profile", None) or "auto",
                     },
+                    workspace_id=getattr(args, "workspace_id", "default"),
                 )
                 dedup_count += result.get("deduped", 0)
                 ok_count += 1
@@ -1137,6 +1142,7 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
                     ollama_url,
                     model,
                     opts={"categorize": False, "mode": "hybrid", "codebook": "social", "multiview": do_multiview},
+                    workspace_id=getattr(args, "workspace_id", "default"),
                 )
                 dedup_count += result.get("deduped", 0)
                 ok_count += 1
@@ -1177,6 +1183,7 @@ def _run_ingest_images(args, ollama_url: str, model: str) -> None:
         embed_model=model,
         max_images=max_images,
         force_reingest=do_force,
+        workspace_id=getattr(args, "workspace_id", "default"),
     )
 
     print(

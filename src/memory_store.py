@@ -156,12 +156,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 # Source operations
 # ---------------------------------------------------------------------------
 
-def upsert_source(conn: sqlite3.Connection, source: Source) -> None:
+def upsert_source(
+    conn: sqlite3.Connection, source: Source, workspace_id: str = "default"
+) -> None:
     conn.execute(
         """
         INSERT INTO sources
-            (source_id, source_type, repo, path, branch, "commit", content_hash, captured_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (source_id, source_type, repo, path, branch, "commit", content_hash,
+             captured_at, workspace_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET
             source_type  = excluded.source_type,
             repo         = excluded.repo,
@@ -169,11 +172,13 @@ def upsert_source(conn: sqlite3.Connection, source: Source) -> None:
             branch       = excluded.branch,
             "commit"     = excluded."commit",
             content_hash = excluded.content_hash,
-            captured_at  = excluded.captured_at
+            captured_at  = excluded.captured_at,
+            workspace_id = excluded.workspace_id
         """,
         (
             source.source_id, source.source_type, source.repo, source.path,
             source.branch, source.commit, source.content_hash, source.captured_at,
+            workspace_id,
         ),
     )
     conn.commit()
@@ -202,7 +207,9 @@ def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
 # Chunk operations
 # ---------------------------------------------------------------------------
 
-def insert_chunk(conn: sqlite3.Connection, chunk: Chunk) -> None:
+def insert_chunk(
+    conn: sqlite3.Connection, chunk: Chunk, workspace_id: str = "default"
+) -> None:
     """Insert a new chunk. category_labels stored as comma-joined string."""
     labels_str = ",".join(chunk.category_labels)
     conn.execute(
@@ -211,12 +218,13 @@ def insert_chunk(conn: sqlite3.Connection, chunk: Chunk) -> None:
             (chunk_id, source_id, parent_chunk_id, chunk_level, ordinal,
              start_offset, end_offset, text, text_hash, summary, category_labels,
              category_version, embedding_model, embedding_id, quality_score,
-             dedup_key, created_at, superseded_by, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             dedup_key, created_at, superseded_by, is_active, workspace_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chunk_id) DO UPDATE SET
             text=excluded.text, text_hash=excluded.text_hash,
             summary=excluded.summary, category_labels=excluded.category_labels,
-            is_active=1, superseded_by=NULL, created_at=excluded.created_at
+            is_active=1, superseded_by=NULL, created_at=excluded.created_at,
+            workspace_id=excluded.workspace_id
         """,
         (
             chunk.chunk_id, chunk.source_id, chunk.parent_chunk_id,
@@ -224,7 +232,7 @@ def insert_chunk(conn: sqlite3.Connection, chunk: Chunk) -> None:
             chunk.text, chunk.text_hash, chunk.summary, labels_str,
             chunk.category_version, chunk.embedding_model, chunk.embedding_id,
             chunk.quality_score, chunk.dedup_key, chunk.created_at,
-            chunk.superseded_by, int(chunk.is_active),
+            chunk.superseded_by, int(chunk.is_active), workspace_id,
         ),
     )
     conn.commit()
@@ -252,11 +260,13 @@ def get_chunks_by_source(
     return [Chunk.from_dict(dict(r)) for r in rows]
 
 
-def find_by_text_hash(conn: sqlite3.Connection, text_hash: str) -> Chunk | None:
-    """Exact dedup: return first active chunk with this text_hash, or None."""
+def find_by_text_hash(
+    conn: sqlite3.Connection, text_hash: str, workspace_id: str = "default"
+) -> Chunk | None:
+    """Exact dedup: return first active chunk with this text_hash in workspace, or None."""
     row = conn.execute(
-        "SELECT * FROM chunks WHERE text_hash = ? AND is_active = 1 LIMIT 1",
-        (text_hash,),
+        "SELECT * FROM chunks WHERE text_hash = ? AND is_active = 1 AND workspace_id = ? LIMIT 1",
+        (text_hash, workspace_id),
     ).fetchone()
     return Chunk.from_dict(dict(row)) if row else None
 
