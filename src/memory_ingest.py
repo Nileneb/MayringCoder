@@ -499,7 +499,12 @@ def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
             return list(_ORIGINAL_MAYRING_CATEGORIES)
         try:
             from src.categorizer import load_codebook_modular
-            _profile_path = Path(__file__).parent.parent / "codebooks" / "profiles" / f"{safe_codebook}.yaml"
+            _profiles_dir = (Path(__file__).parent.parent / "codebooks" / "profiles").resolve()
+            _profile_path = (_profiles_dir / f"{safe_codebook}.yaml").resolve()
+            try:
+                _profile_path.relative_to(_profiles_dir)
+            except ValueError:
+                return list(_ORIGINAL_MAYRING_CATEGORIES)
             if _profile_path.exists():
                 _exclude_pats, _cats = load_codebook_modular(safe_codebook)
                 names = [cat["name"] for cat in _cats if "name" in cat]
