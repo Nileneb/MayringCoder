@@ -142,6 +142,13 @@ def parse_args() -> argparse.Namespace:
                    help="Multi-view Indexing für Issues: LLM extrahiert Fact/Impl/Decision/Entities-Sichten")
     p.add_argument("--force-reingest", action="store_true",
                    help="Bestehende Chunks invalidieren und neu ingesten (ignoriert Dedup-Schutz)")
+    p.add_argument("--ingest-images", metavar="REPO_URL",
+                   help="Repo-Bilder (PNG/JPG/SVG) captionieren und in Memory ingesten. "
+                        "z. B. --ingest-images https://github.com/Nileneb/app.linn.games")
+    p.add_argument("--vision-model", default="qwen2.5vl:3b", metavar="MODEL",
+                   help="Ollama Vision-Modell für Bild-Captioning (Standard: qwen2.5vl:3b)")
+    p.add_argument("--max-images", type=int, default=50, metavar="N",
+                   help="Maximale Anzahl Bilder pro Ingest-Lauf (Standard: 50)")
     p.add_argument("--gpu-metrics", action="store_true",
                    help="GPU-Metriken via nvidia-smi erfassen (VRAM, Auslastung, Watt, Temp). "
                         "Ergebnis unter cache/gpu_metrics_<ts>.csv.")
@@ -487,6 +494,10 @@ def main() -> None:
     # 3c. GitHub Issues ingestion mode
     if args.ingest_issues:
         _run_ingest_issues(args, ollama_url, model)
+        sys.exit(0)
+
+    if args.ingest_images:
+        _run_ingest_images(args, ollama_url)
         sys.exit(0)
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
@@ -1136,6 +1147,34 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
     print(
         f"\n[ingest-issues] Fertig: {len(sources)} Issues total, "
         f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
+    )
+
+
+def _run_ingest_images(args, ollama_url: str) -> None:
+    """Repo-Bilder captionieren und in Memory ingesten."""
+    from src.image_ingest import run_image_ingest
+
+    repo_url = args.ingest_images
+    vision_model = getattr(args, "vision_model", "qwen2.5vl:3b")
+    max_images = getattr(args, "max_images", 50)
+    do_force = getattr(args, "force_reingest", False)
+
+    print(f"[ingest-images] Starte Bild-Ingest für: {repo_url}")
+    print(f"[ingest-images] Vision-Modell: {vision_model}, Max-Bilder: {max_images}")
+
+    result = run_image_ingest(
+        repo_url=repo_url,
+        ollama_url=ollama_url,
+        vision_model=vision_model,
+        max_images=max_images,
+        force_reingest=do_force,
+    )
+
+    print(
+        f"\n[ingest-images] Fertig: {result['images_found']} Bilder total, "
+        f"{result['images_captioned']} captioniert, "
+        f"{result['images_skipped']} Dedup, "
+        f"{result['images_failed']} Fehler."
     )
 
 
