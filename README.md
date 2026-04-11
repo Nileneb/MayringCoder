@@ -367,18 +367,22 @@ Codebooks define how files are categorized — not what findings are looked for 
 
 ## Recommended Models
 
-| Model | VRAM | Code Review | Social Research | Turbulence |
-|---|---|---|---|---|
-| `llama3.1:8b` | ~5 GB | Good | Good | Good |
-| `qwen2.5-coder:7b` | ~5 GB | Very good | — | Good |
-| `qwen3.5:9b` | ~7 GB | Excellent | Excellent | Good |
-| `deepseek-coder-v2:16b` | ~10 GB | Excellent | — | Very good |
-| `mistral:7b-instruct` | ~5 GB | Good | Good | Recommended (`TURB_MODEL`) |
-| `qwen2.5vl:3b` | ~3 GB | — | — | — (vision captioning) |
-| `nomic-embed-text` | ~270 MB | — | — | — (required for RAG/memory) |
+| Model | VRAM | Code Review | Social Research | Turbulence | Notes |
+|---|---|---|---|---|---|
+| `mayring-qwen3:2b` | ~2 GB | **Best** | Good | Good | Fine-tuned on MayringCoder outputs — domain-optimized |
+| `qwen3.5:9b` | ~7 GB | Excellent | Excellent | Good | Best general-purpose baseline |
+| `qwen3.5:2b` | ~3 GB | Good | Good | Good | Fast, low VRAM |
+| `qwen2.5-coder:7b` | ~5 GB | Very good | — | Good | Strong on code structure |
+| `deepseek-coder:6.7b` | ~4 GB | Very good | — | Good | Good code reasoning |
+| `mistral:7b-instruct` | ~5 GB | Good | Good | Recommended (`TURB_MODEL`) | Default turbulence model |
+| `llama3.1:8b` | ~5 GB | Good | Good | Good | Solid all-rounder |
+| `llama3.2:3b` | ~2 GB | Decent | Decent | Decent | Minimal VRAM fallback |
+| `qwen2.5vl:3b` | ~3 GB | — | — | — | Vision captioning (`--ingest-images`) |
+| `minicpm-v` | ~5 GB | — | — | — | Alternative vision model |
+| `nomic-embed-text` | ~270 MB | — | — | — | **Required** for RAG and MCP memory |
 
 ```bash
-ollama pull qwen2.5-coder:7b
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text
 ```
 
