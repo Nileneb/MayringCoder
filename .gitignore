@@ -9,4 +9,6 @@ __pycache__/
 appLinnGames.txt
 .mcp.json
 unsloth_compiled_cache/
-.superpowers/brainstorm/*/state/
+.superpowers/
+.claude/
+AgentTemplates/
