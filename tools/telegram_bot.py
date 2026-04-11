@@ -29,6 +29,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Allow running from repo root or tools/
@@ -72,6 +73,18 @@ if "mayrng" not in WORKSPACES:
     WORKSPACES["mayrng"] = str(Path(__file__).parent.parent)
 
 CLAUDE_BIN = os.getenv("CLAUDE_BIN", "claude")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+
+# Lazy-loaded whisper model (loaded on first voice message)
+_whisper_model = None
+
+def _get_whisper():
+    global _whisper_model
+    if _whisper_model is None:
+        import whisper
+        log.info("Loading whisper model '%s'…", WHISPER_MODEL)
+        _whisper_model = whisper.load_model(WHISPER_MODEL)
+    return _whisper_model
 
 # ---------------------------------------------------------------------------
 # State (per user)
@@ -246,6 +259,42 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Nothing running.")
 
 
+async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Transcribe a voice message with Whisper, then forward to Claude."""
+    if not _authorized(update):
+        return
+    user_id = update.effective_user.id
+    if user_id in _running_procs:
+        await update.message.reply_text("⚠ Command already running. Use /cancel to abort.")
+        return
+
+    await update.message.reply_text("🎙 Transcribing…")
+    try:
+        voice = update.message.voice
+        tg_file = await context.bot.get_file(voice.file_id)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp_path = tmp.name
+        await tg_file.download_to_drive(tmp_path)
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: _get_whisper().transcribe(tmp_path, language=None, fp16=False),
+        )
+        Path(tmp_path).unlink(missing_ok=True)
+
+        text = result.get("text", "").strip()
+        if not text:
+            await update.message.reply_text("❌ Could not transcribe audio.")
+            return
+
+        await update.message.reply_text(f"🎙 _{text}_", parse_mode=ParseMode.MARKDOWN)
+        await _run_claude(update, user_id, text)
+
+    except Exception as exc:
+        await update.message.reply_text(f"❌ Voice error: {exc}")
+
+
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -280,6 +329,7 @@ def main() -> None:
     app.add_handler(CommandHandler("ws", cmd_ws))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    app.add_handler(MessageHandler(filters.VOICE, on_voice))
 
     print("Bot running. Press Ctrl+C to stop.")
     app.run_polling(drop_pending_updates=True)

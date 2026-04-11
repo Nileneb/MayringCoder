@@ -8,3 +8,4 @@ Pillow
 PyJWT
 anthropic
 python-telegram-bot
+openai-whisper
