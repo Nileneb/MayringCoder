@@ -157,6 +157,10 @@ def parse_args() -> argparse.Namespace:
                         "abzufragen, bevor Findings erzeugt werden. Reduziert false positives bei "
                         "schwachen Modellen (z.B. qwen3.5:2b). Benötigt befüllte Memory-DB "
                         "(--populate-memory, --ingest-issues oder --ingest-images).")
+    p.add_argument("--pi-task", metavar="TASK",
+                   help="Freier Auftrag an Pi mit Memory-Zugriff (z.B. 'Entwickle PICO-Suchterms für X'). "
+                        "Gibt die Antwort als Freitext aus — kein JSON-Zwang. "
+                        "Optional: --repo für Memory-Scope-Filter.")
     return p.parse_args()
 
 
@@ -498,6 +502,10 @@ def main() -> None:
 
     if args.ingest_images:
         _run_ingest_images(args, ollama_url, model)
+        sys.exit(0)
+
+    if args.pi_task:
+        _run_pi_task(args, ollama_url, model)
         sys.exit(0)
 
     # 4. Turbulenz-Modus: eigene Pipeline, kein Cache-Diff nötig
@@ -1177,6 +1185,32 @@ def _run_ingest_images(args, ollama_url: str, model: str) -> None:
         f"{result['images_skipped']} Dedup, "
         f"{result['images_failed']} Fehler."
     )
+
+
+def _run_pi_task(args, ollama_url: str, model: str) -> None:
+    """Freien Auftrag an Pi delegieren (mit Memory-Zugriff)."""
+    from src.pi_agent import run_task_with_memory
+
+    task = args.pi_task
+    repo_url = getattr(args, "repo", None)
+    repo_slug = None
+    if repo_url:
+        from src.config import repo_slug as _slug_fn
+        repo_slug = _slug_fn(repo_url)
+
+    print(f"[pi-task] Auftrag: {task[:80]}{'...' if len(task) > 80 else ''}")
+    if repo_slug:
+        print(f"[pi-task] Memory-Scope: {repo_slug}")
+    print()
+
+    result = run_task_with_memory(
+        task=task,
+        ollama_url=ollama_url,
+        model=model,
+        repo_slug=repo_slug,
+    )
+
+    print(result)
 
 
 if __name__ == "__main__":

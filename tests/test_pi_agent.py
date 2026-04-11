@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pi_agent import analyze_with_memory, _execute_search_memory
+from src.pi_agent import analyze_with_memory, run_task_with_memory, _execute_search_memory
 
 
 class TestAnalyzeWithMemory:
@@ -151,6 +151,86 @@ class TestAnalyzeWithMemory:
 
         assert "error" in result
         assert result["_parse_error"] is True
+
+
+class TestRunTaskWithMemory:
+    def _mock_final(self, content: str):
+        return MagicMock(
+            status_code=200,
+            json=lambda: {"message": {"role": "assistant", "content": content, "tool_calls": None}},
+        )
+
+    def _mock_tool_call(self, query: str):
+        return MagicMock(
+            status_code=200,
+            json=lambda: {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": "c1", "function": {"name": "search_memory", "arguments": {"query": query}}}],
+                }
+            },
+        )
+
+    @patch("src.pi_agent.init_memory_db")
+    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("httpx.post")
+    def test_returns_plain_text(self, mock_post, mock_chroma, mock_db):
+        """run_task_with_memory gibt Freitext zurück (kein JSON-Zwang)."""
+        mock_db.return_value = MagicMock()
+        mock_chroma.return_value = MagicMock()
+        mock_post.return_value = self._mock_final("## PICO-Suchterms\n- Population: Erwachsene\n- Intervention: Yoga")
+
+        result = run_task_with_memory(
+            "Entwickle PICO-Suchterms für Yoga-Studien",
+            "http://localhost:11434",
+            "qwen3.5:2b",
+        )
+
+        assert isinstance(result, str)
+        assert "PICO" in result or "Yoga" in result
+
+    @patch("src.pi_agent._execute_search_memory")
+    @patch("src.pi_agent.init_memory_db")
+    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("httpx.post")
+    def test_uses_memory_tool(self, mock_post, mock_chroma, mock_db, mock_search):
+        """Pi ruft search_memory auf und injiziert Ergebnis."""
+        mock_db.return_value = MagicMock()
+        mock_chroma.return_value = MagicMock()
+        mock_search.return_value = "## Memory\nProjekt nutzt Laravel-Konventionen."
+
+        mock_post.side_effect = [
+            self._mock_tool_call("Laravel Konventionen"),
+            self._mock_final("Suchterm: Laravel artisan pattern"),
+        ]
+
+        result = run_task_with_memory(
+            "Welche Frameworks nutzt das Projekt?",
+            "http://localhost:11434",
+            "qwen3.5:2b",
+        )
+
+        assert mock_search.called
+        assert isinstance(result, str)
+
+    @patch("src.pi_agent.init_memory_db")
+    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("httpx.post")
+    def test_http_error_returns_error_string(self, mock_post, mock_chroma, mock_db):
+        """HTTP-Fehler → Fehler-String, kein Crash."""
+        mock_db.return_value = MagicMock()
+        mock_chroma.return_value = MagicMock()
+        mock_post.side_effect = Exception("Connection refused")
+
+        result = run_task_with_memory(
+            "Irgendein Auftrag",
+            "http://localhost:11434",
+            "qwen3.5:2b",
+        )
+
+        assert isinstance(result, str)
+        assert "Fehler" in result or "Error" in result or "error" in result.lower()
 
 
 class TestExecuteSearchMemory:
