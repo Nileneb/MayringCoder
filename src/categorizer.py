@@ -17,11 +17,12 @@ try:
     import yaml as _yaml
     _HAS_YAML = True
 except ImportError:
+    _yaml = None  # type: ignore[assignment]
     _HAS_YAML = False
 
 
 def _load_yaml(path: Path) -> dict | list | None:
-    if not _HAS_YAML or not path.exists():
+    if not _HAS_YAML or _yaml is None or not path.exists():
         return None
     with path.open("r", encoding="utf-8") as fh:
         return _yaml.safe_load(fh)

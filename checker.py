@@ -1119,7 +1119,7 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
             old_chunks = get_chunks_by_source(conn, source.source_id, active_only=False)
             old_chunk_ids.extend(c.chunk_id for c in old_chunks)
             deactivate_chunks_by_source(conn, source.source_id)
-        if old_chunk_ids:
+        if old_chunk_ids and chroma is not None:
             try:
                 chroma.delete(ids=old_chunk_ids)
             except Exception:
