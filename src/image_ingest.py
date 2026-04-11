@@ -160,5 +160,5 @@ def _ingest_images_from_clone(
         "images_captioned": captioned,
         "images_skipped": skipped,
         "images_failed": failed,
-        "repo_slug": repo_owner_name,
+        "repo": repo_owner_name,
     }
