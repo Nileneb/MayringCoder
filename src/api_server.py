@@ -55,6 +55,7 @@ from src.sanctum_auth import validate_sanctum_token
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 _OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
+_MCP_AUTH_TOKEN = os.getenv("MAYRING_MCP_AUTH_TOKEN", "")
 
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 _bearer = HTTPBearer(auto_error=False)
@@ -87,6 +88,11 @@ async def get_workspace(
 ) -> str:
     if not creds:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer token")
+
+    # Static service-to-service token bypass (for Laravel MayringMcpClient)
+    if _MCP_AUTH_TOKEN and creds.credentials == _MCP_AUTH_TOKEN:
+        return "system"
+
     ws = validate_sanctum_token(creds.credentials)
     if not ws:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired Sanctum token")
@@ -232,6 +238,24 @@ async def memory_put(
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/search")
+async def search_alias(
+    request: MemorySearchRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Alias for /memory/search — used by Laravel MayringMcpClient."""
+    return await memory_search(request, workspace_id)
+
+
+@app.post("/ingest")
+async def ingest_alias(
+    request: MemoryPutRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Alias for /memory/put — used by Laravel MayringMcpClient."""
+    return await memory_put(request, workspace_id)
 
 
 @app.get("/reports")
