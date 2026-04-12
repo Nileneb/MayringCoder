@@ -47,7 +47,7 @@ from src.memory_ingest import get_or_create_chroma_collection, ingest
 from src.memory_retrieval import compress_for_prompt, search
 from src.memory_schema import Source
 from src.memory_store import init_memory_db
-from src.sanctum_auth import validate_sanctum_token
+from src.sanctum_auth import validate_sanctum_token_full
 
 # ---------------------------------------------------------------------------
 # Config
@@ -89,14 +89,24 @@ async def get_workspace(
     if not creds:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer token")
 
-    # Static service-to-service token bypass (for Laravel MayringMcpClient)
+    # Static service-to-service token bypass (for internal Laravel MayringMcpClient)
+    # This path is always allowed — no subscription check needed for the research platform itself
     if _MCP_AUTH_TOKEN and creds.credentials == _MCP_AUTH_TOKEN:
         return "system"
 
-    ws = validate_sanctum_token(creds.credentials)
-    if not ws:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired Sanctum token")
-    return ws
+    # External Sanctum token (Claude Desktop / Claude Web users)
+    info = validate_sanctum_token_full(creds.credentials)
+    if not info:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+    if not info.mayring_active:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="MayringCoder Memory requires an active subscription (€5/month). "
+                   "Subscribe at https://app.linn.games/einstellungen/mayring-abo",
+        )
+
+    return info.workspace_id
 
 
 # ---------------------------------------------------------------------------
