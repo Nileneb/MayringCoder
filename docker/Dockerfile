@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 COPY src/ ./src/
 COPY prompts/ ./prompts/
 COPY codebook.yaml codebook_sozialforschung.yaml ./
-COPY checker.py run.sh ./
+COPY checker.py run.sh pi_server.py run_mcp_server.py ./
 COPY .env.example ./
 
 # Create directories for persistence

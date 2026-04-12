@@ -13,3 +13,4 @@ unsloth_compiled_cache/
 .claude/
 AgentTemplates/
 .env.telegram
+.env.production
