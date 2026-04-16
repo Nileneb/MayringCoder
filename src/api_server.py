@@ -256,6 +256,11 @@ async def list_reports(
         reports_dir = base_reports_dir
     reports = []
     if reports_dir.exists():
-        for f in sorted(reports_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        markdown_files = [
+            p
+            for p in reports_dir.iterdir()
+            if p.is_file() and re.fullmatch(r"[A-Za-z0-9_.-]+\.md", p.name)
+        ]
+        for f in sorted(markdown_files, key=lambda p: p.stat().st_mtime, reverse=True):
             reports.append({"name": f.name, "size": f.stat().st_size})
     return {"workspace_id": safe_workspace_id, "reports": reports, "count": len(reports)}
