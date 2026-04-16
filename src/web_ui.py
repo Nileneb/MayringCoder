@@ -1,13 +1,20 @@
 """Gradio WebUI for MayringCoder Memory Layer.
 
 Usage:
-    python -m src.web_ui [--port 7860] [--auth user:pass] [--ollama-url http://localhost:11434]
+    python -m src.web_ui [--port 7860] [--ollama-url http://localhost:11434] [--api-url http://localhost:8080]
 
 Tabs:
-    1. Suche      — Hybrid memory search (symbolic + vector)
-    2. Ingest     — Ingest text/file into memory
-    3. Browser    — Browse all sources + chunk detail
-    4. Feedback   — Label chunks with positive/negative/neutral signal
+    Login     — Sanctum token auth (workspace isolation)
+    Suche     — Hybrid memory search (symbolic + vector)
+    Ingest    — Ingest text/file into memory
+    Browser   — Browse all sources + chunk detail
+    Feedback  — Label chunks with positive/negative/neutral signal
+    Analyse   — Trigger code analysis job (calls API server)
+    Overview  — Repository overview map (calls API server)
+    Turbulenz — Hot-zone analysis (calls API server)
+    Issues    — GitHub Issues → memory ingestion
+    Benchmark — Retrieval quality metrics
+    Training  — Download training data JSONL
 """
 
 from __future__ import annotations
@@ -32,6 +39,12 @@ except ImportError as _e:
     ) from _e
 
 from src.ollama_status import check_ollama
+
+try:
+    import httpx as _httpx
+    _HAS_HTTPX = True
+except ImportError:
+    _HAS_HTTPX = False
 
 # Memory modules — imported with graceful fallback
 _MEMORY_READY = False
@@ -61,6 +74,7 @@ except Exception as exc:
 _conn: sqlite3.Connection | None = None
 _chroma_collection: Any = None
 _ollama_url: str = "http://localhost:11434"
+_api_url: str = "http://localhost:8080"
 
 
 def _get_conn() -> sqlite3.Connection | None:
@@ -386,17 +400,113 @@ def _do_feedback(chunk_id: str, signal: str, label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Sanctum Auth + API Helpers
+# ---------------------------------------------------------------------------
+
+def _validate_token(token: str) -> tuple[bool, str]:
+    """Validate a Sanctum token and return (ok, workspace_id_or_error)."""
+    if not token.strip():
+        return False, "Kein Token eingegeben."
+    try:
+        from src.sanctum_auth import validate_sanctum_token
+        ws = validate_sanctum_token(token.strip())
+        if ws:
+            return True, ws
+        return False, "Token ungültig oder abgelaufen."
+    except Exception as exc:
+        return False, f"Auth-Fehler: {exc}"
+
+
+def _api_post(endpoint: str, payload: dict, token: str) -> dict:
+    """POST to the API server. Returns response dict or error dict."""
+    if not _HAS_HTTPX:
+        return {"error": "httpx nicht installiert"}
+    if not token:
+        return {"error": "Nicht eingeloggt."}
+    try:
+        r = _httpx.post(
+            f"{_api_url}/{endpoint.lstrip('/')}",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _api_get_job(job_id: str, token: str) -> dict:
+    """Poll job status from the API server."""
+    if not _HAS_HTTPX or not token:
+        return {"error": "Nicht verbunden."}
+    try:
+        r = _httpx.get(
+            f"{_api_url}/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+        return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _training_files() -> list[Path]:
+    """Return all training log JSONL files from cache/."""
+    if not _MEMORY_READY:
+        return []
+    try:
+        from src.config import CACHE_DIR
+        return sorted(CACHE_DIR.glob("*_training_log.jsonl"))
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # App Builder
 # ---------------------------------------------------------------------------
 
-def build_app(ollama_url: str) -> gr.Blocks:
+def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blocks:
     """Construct and return the Gradio Blocks app."""
-    global _ollama_url
+    global _ollama_url, _api_url
     _ollama_url = ollama_url
+    _api_url = api_url
 
     ollama_available, ollama_models = check_ollama(ollama_url)
 
     with gr.Blocks(title="MayringCoder Memory UI", theme=gr.themes.Soft()) as app:
+
+        # --- Sanctum Auth State ---
+        _token_state = gr.State("")
+        _workspace_state = gr.State("")
+
+        # --- Login Header ---
+        with gr.Accordion("🔑 Login (Sanctum Token)", open=True) as login_accordion:
+            with gr.Row():
+                login_token_input = gr.Textbox(
+                    label="Personal Access Token (aus app.linn.games)",
+                    placeholder="1|abc123...",
+                    type="password",
+                    scale=4,
+                )
+                login_btn = gr.Button("Einloggen", variant="primary", scale=1)
+            login_status = gr.Markdown("_Nicht eingeloggt. Token eingeben um fortzufahren._")
+
+        def _login(token):
+            ok, result = _validate_token(token)
+            if ok:
+                return (
+                    token,
+                    result,
+                    f"✅ **Eingeloggt als Workspace:** `{result}`",
+                    gr.Accordion(open=False),
+                )
+            return "", "", f"❌ {result}", gr.Accordion(open=True)
+
+        login_btn.click(
+            fn=_login,
+            inputs=[login_token_input],
+            outputs=[_token_state, _workspace_state, login_status, login_accordion],
+        )
 
         # --- Persistent status badge + model selector ---
         with gr.Row():
@@ -646,6 +756,195 @@ def build_app(ollama_url: str) -> gr.Blocks:
                 outputs=[conv_output],
             )
 
+        # -----------------------------------------------------------------------
+        # Tab 6: Analyse (API-gestützt)
+        # -----------------------------------------------------------------------
+        with gr.Tab("Analyse"):
+            gr.Markdown("### Code-Analyse starten\n*Erfordert Login. Läuft im Hintergrund.*")
+            analyse_repo = gr.Textbox(label="Repository URL", placeholder="https://github.com/owner/repo")
+            with gr.Row():
+                analyse_adversarial = gr.Checkbox(label="--adversarial (False-Positive-Filter)", value=False)
+                analyse_no_pi = gr.Checkbox(label="--no-pi (Pi-Agent deaktivieren)", value=False)
+            analyse_btn = gr.Button("Analyse starten", variant="primary")
+            analyse_job_id = gr.Textbox(label="Job-ID", interactive=False)
+            analyse_poll_btn = gr.Button("Status abfragen")
+            analyse_output = gr.Markdown("")
+
+            def _do_analyse(repo, adversarial, no_pi, token):
+                if not token:
+                    return "", "❌ Erst einloggen."
+                r = _api_post("analyze", {"repo": repo, "adversarial": adversarial, "no_pi": no_pi}, token)
+                if "error" in r:
+                    return "", f"❌ {r['error']}"
+                return r.get("pid", ""), f"✅ Gestartet (PID: {r.get('pid', '?')})"
+
+            def _poll_job(job_id, token):
+                if not job_id or not token:
+                    return "Job-ID oder Token fehlt."
+                r = _api_get_job(job_id, token)
+                if "error" in r:
+                    return f"❌ {r['error']}"
+                status = r.get("status", "?")
+                output = r.get("output", "")
+                return f"**Status:** {status}\n\n```\n{output[-3000:] if output else ''}\n```"
+
+            analyse_btn.click(fn=_do_analyse,
+                inputs=[analyse_repo, analyse_adversarial, analyse_no_pi, _token_state],
+                outputs=[analyse_job_id, analyse_output])
+            analyse_poll_btn.click(fn=_poll_job,
+                inputs=[analyse_job_id, _token_state], outputs=[analyse_output])
+
+        # -----------------------------------------------------------------------
+        # Tab 7: Overview (API-gestützt)
+        # -----------------------------------------------------------------------
+        with gr.Tab("Overview"):
+            gr.Markdown("### Repository-Inventar erstellen\n*Kartiert alle Dateien per LLM-Summary.*")
+            overview_repo = gr.Textbox(label="Repository URL", placeholder="https://github.com/owner/repo")
+            overview_btn = gr.Button("Overview starten", variant="primary")
+            overview_job_id = gr.Textbox(label="Job-ID", interactive=False)
+            overview_poll_btn = gr.Button("Status abfragen")
+            overview_output = gr.Markdown("")
+
+            def _do_overview(repo, token):
+                if not token:
+                    return "", "❌ Erst einloggen."
+                r = _api_post("overview", {"repo": repo}, token)
+                if "error" in r:
+                    return "", f"❌ {r['error']}"
+                return r.get("job_id", ""), f"✅ Gestartet (Job: {r.get('job_id', '?')})"
+
+            overview_btn.click(fn=_do_overview,
+                inputs=[overview_repo, _token_state],
+                outputs=[overview_job_id, overview_output])
+            overview_poll_btn.click(fn=_poll_job,
+                inputs=[overview_job_id, _token_state], outputs=[overview_output])
+
+        # -----------------------------------------------------------------------
+        # Tab 8: Turbulenz (API-gestützt)
+        # -----------------------------------------------------------------------
+        with gr.Tab("Turbulenz"):
+            gr.Markdown("### Hot-Zone Analyse\n*Erkennt Dateien mit gemischten Verantwortlichkeiten.*")
+            turb_repo = gr.Textbox(label="Repository URL", placeholder="https://github.com/owner/repo")
+            turb_llm = gr.Checkbox(label="LLM-Modus (langsamer, präziser)", value=False)
+            turb_btn = gr.Button("Turbulenz-Analyse starten", variant="primary")
+            turb_job_id = gr.Textbox(label="Job-ID", interactive=False)
+            turb_poll_btn = gr.Button("Status abfragen")
+            turb_output = gr.Markdown("")
+
+            def _do_turbulenz(repo, llm, token):
+                if not token:
+                    return "", "❌ Erst einloggen."
+                r = _api_post("turbulence", {"repo": repo, "llm": llm}, token)
+                if "error" in r:
+                    return "", f"❌ {r['error']}"
+                return r.get("job_id", ""), f"✅ Gestartet (Job: {r.get('job_id', '?')})"
+
+            turb_btn.click(fn=_do_turbulenz,
+                inputs=[turb_repo, turb_llm, _token_state],
+                outputs=[turb_job_id, turb_output])
+            turb_poll_btn.click(fn=_poll_job,
+                inputs=[turb_job_id, _token_state], outputs=[turb_output])
+
+        # -----------------------------------------------------------------------
+        # Tab 9: Issues Ingest (API-gestützt)
+        # -----------------------------------------------------------------------
+        with gr.Tab("Issues"):
+            gr.Markdown("### GitHub Issues → Memory\n*Ingestiert alle Issues eines Repos mit Multiview-Chunking.*")
+            issues_repo = gr.Textbox(label="Repo (owner/name)", placeholder="Nileneb/MayringCoder")
+            with gr.Row():
+                issues_state = gr.Dropdown(
+                    choices=["open", "closed", "all"],
+                    value="all",
+                    label="Issue-Status",
+                )
+                issues_force = gr.Checkbox(label="--force-reingest", value=False)
+            issues_btn = gr.Button("Issues ingestieren", variant="primary")
+            issues_job_id = gr.Textbox(label="Job-ID", interactive=False)
+            issues_poll_btn = gr.Button("Status abfragen")
+            issues_output = gr.Markdown("")
+
+            def _do_issues(repo, state, force, token):
+                if not token:
+                    return "", "❌ Erst einloggen."
+                r = _api_post("issues/ingest", {"repo": repo, "state": state, "force_reingest": force}, token)
+                if "error" in r:
+                    return "", f"❌ {r['error']}"
+                return r.get("job_id", ""), f"✅ Gestartet (Job: {r.get('job_id', '?')})"
+
+            issues_btn.click(fn=_do_issues,
+                inputs=[issues_repo, issues_state, issues_force, _token_state],
+                outputs=[issues_job_id, issues_output])
+            issues_poll_btn.click(fn=_poll_job,
+                inputs=[issues_job_id, _token_state], outputs=[issues_output])
+
+        # -----------------------------------------------------------------------
+        # Tab 10: Benchmark (API-gestützt)
+        # -----------------------------------------------------------------------
+        with gr.Tab("Benchmark"):
+            gr.Markdown("### Retrieval-Qualität messen\n*MRR, Recall@1, Recall@K über definierte Test-Queries.*")
+            bench_top_k = gr.Slider(minimum=1, maximum=20, value=5, step=1, label="Top-K")
+            bench_repo = gr.Textbox(label="Repo-Filter (optional)", placeholder="Nileneb/MayringCoder")
+            bench_btn = gr.Button("Benchmark starten", variant="primary")
+            bench_job_id = gr.Textbox(label="Job-ID", interactive=False)
+            bench_poll_btn = gr.Button("Status abfragen")
+            bench_output = gr.Markdown("")
+
+            def _do_benchmark(top_k, repo, token):
+                if not token:
+                    return "", "❌ Erst einloggen."
+                payload: dict = {"top_k": int(top_k)}
+                if repo.strip():
+                    payload["repo"] = repo.strip()
+                r = _api_post("benchmark", payload, token)
+                if "error" in r:
+                    return "", f"❌ {r['error']}"
+                return r.get("job_id", ""), f"✅ Gestartet (Job: {r.get('job_id', '?')})"
+
+            bench_btn.click(fn=_do_benchmark,
+                inputs=[bench_top_k, bench_repo, _token_state],
+                outputs=[bench_job_id, bench_output])
+            bench_poll_btn.click(fn=_poll_job,
+                inputs=[bench_job_id, _token_state], outputs=[bench_output])
+
+        # -----------------------------------------------------------------------
+        # Tab 11: Training Data
+        # -----------------------------------------------------------------------
+        with gr.Tab("Training Data"):
+            gr.Markdown(
+                "### Training-Daten exportieren\n"
+                "Gesammelte Prompt/Response-Logs aus `cache/*_training_log.jsonl`. "
+                "Für Unsloth/LoRA-Finetuning."
+            )
+            training_files_list = gr.Markdown("_Lade Dateiliste..._")
+            training_refresh_btn = gr.Button("Aktualisieren")
+            training_download = gr.File(label="JSONL-Datei herunterladen", interactive=False)
+            training_file_select = gr.Dropdown(label="Datei auswählen", choices=[], interactive=True)
+
+            def _load_training_list():
+                files = _training_files()
+                if not files:
+                    return "_Keine Training-Logs gefunden. Analyse mit `--log-training-data` starten._", [], None
+                lines = [f"- `{f.name}` ({f.stat().st_size // 1024} KB)" for f in files]
+                choices = [str(f) for f in files]
+                return "\n".join(lines), choices, None
+
+            def _select_training_file(path):
+                if not path:
+                    return None
+                return path
+
+            training_refresh_btn.click(
+                fn=_load_training_list,
+                outputs=[training_files_list, training_file_select, training_download],
+            )
+            training_file_select.change(
+                fn=_select_training_file,
+                inputs=[training_file_select],
+                outputs=[training_download],
+            )
+            app.load(fn=_load_training_list,
+                     outputs=[training_files_list, training_file_select, training_download])
+
     return app
 
 
@@ -662,34 +961,24 @@ def main() -> None:
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Bind-Adresse (127.0.0.1 fur lokal, 0.0.0.0 fur Docker)",
-    )
-    parser.add_argument(
-        "--auth",
-        default=None,
-        help="Authentifizierung im Format user:pass",
+        help="Bind-Adresse (127.0.0.1 für lokal, 0.0.0.0 für Docker)",
     )
     parser.add_argument(
         "--ollama-url",
         default=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         help="Ollama-Basis-URL",
     )
+    parser.add_argument(
+        "--api-url",
+        default=os.environ.get("MAYRING_API_URL", "http://localhost:8080"),
+        help="MayringCoder API-Server URL (für Analyse/Overview/Turbulenz-Tabs)",
+    )
     args = parser.parse_args()
 
-    # Parse auth
-    auth = None
-    if args.auth:
-        parts = args.auth.split(":", 1)
-        if len(parts) == 2:
-            auth = (parts[0], parts[1])
-        else:
-            parser.error("--auth muss das Format 'user:pass' haben.")
-
-    app = build_app(ollama_url=args.ollama_url)
+    app = build_app(ollama_url=args.ollama_url, api_url=args.api_url)
     app.launch(
         server_name=args.host,
         server_port=args.port,
-        auth=auth,
         show_error=True,
     )
 

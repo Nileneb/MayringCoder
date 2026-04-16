@@ -6,10 +6,16 @@ Auth: Bearer tokens from app.linn.games (Sanctum format: "{id}|{plaintext}")
 are validated directly against the shared MySQL DB.
 
 Start:
-    .venv/bin/python -m uvicorn src.api_server:app --port 8080
+    .venv/bin/python -m uvicorn src.api_server:app --host 0.0.0.0 --port 8080
 
 Endpoints (authenticated via Bearer <sanctum_token>):
-    POST /analyze          — submit analysis job
+    POST /analyze          — submit analysis job (returns pid)
+    POST /overview         — overview map of a repo (returns job_id)
+    POST /turbulence       — turbulence analysis (returns job_id)
+    POST /benchmark        — retrieval benchmark (returns job_id)
+    POST /issues/ingest    — GitHub issues → memory (returns job_id)
+    POST /populate         — repo source files → memory (returns job_id)
+    GET  /jobs/{job_id}    — poll job status and output
     POST /memory/search    — search workspace memory
     POST /memory/put       — ingest into workspace memory
     GET  /reports          — list reports
@@ -29,6 +35,8 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +89,47 @@ def _get_chroma():
 
 
 # ---------------------------------------------------------------------------
+# Job tracking (in-memory, sufficient for single-instance deployment)
+# ---------------------------------------------------------------------------
+
+_JOBS: dict[str, dict] = {}  # job_id → {status, output, workspace_id, started_at}
+
+
+def _make_job(workspace_id: str) -> str:
+    job_id = str(uuid.uuid4())[:8]
+    _JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "started",
+        "output": "",
+        "workspace_id": workspace_id,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return job_id
+
+
+def _python_exe() -> str:
+    p = str(_ROOT / ".venv" / "bin" / "python")
+    return p if Path(p).exists() else "python"
+
+
+async def _run_checker_job(job_id: str, checker_args: list[str], workspace_id: str) -> None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _python_exe(), str(_ROOT / "checker.py"), *checker_args,
+            "--workspace-id", workspace_id,
+            cwd=str(_ROOT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        _JOBS[job_id]["status"] = "done" if proc.returncode == 0 else "error"
+        _JOBS[job_id]["output"] = stdout.decode(errors="replace")
+    except Exception as exc:
+        _JOBS[job_id]["status"] = "error"
+        _JOBS[job_id]["output"] = str(exc)
+
+
+# ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
 
@@ -120,6 +169,31 @@ class AnalyzeRequest(BaseModel):
     adversarial: bool = False
     no_pi: bool = False
     budget: int | None = None
+
+
+class RepoRequest(BaseModel):
+    repo: str
+
+
+class TurbulenceRequest(BaseModel):
+    repo: str
+    llm: bool = False
+
+
+class BenchmarkRequest(BaseModel):
+    top_k: int = 5
+    repo: str | None = None
+
+
+class IssuesIngestRequest(BaseModel):
+    repo: str
+    state: str = "open"
+    force_reingest: bool = False
+
+
+class PopulateRequest(BaseModel):
+    repo: str
+    force_reingest: bool = False
 
 
 class MemorySearchRequest(BaseModel):
@@ -267,6 +341,112 @@ async def ingest_alias(
 ) -> dict:
     """Alias for /memory/put — used by Laravel MayringMcpClient."""
     return await memory_put(request, workspace_id)
+
+
+@app.get("/jobs/{job_id}")
+async def get_job(
+    job_id: str,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Poll status of a background job."""
+    job = _JOBS.get(job_id)
+    if not job or job["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.post("/overview")
+async def trigger_overview(
+    request: RepoRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Start an overview map (function/class catalog) for a repository."""
+    job_id = _make_job(workspace_id)
+    asyncio.create_task(_run_checker_job(
+        job_id,
+        ["--repo", request.repo, "--mode", "overview", "--no-limit"],
+        workspace_id,
+    ))
+    return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+@app.post("/turbulence")
+async def trigger_turbulence(
+    request: TurbulenceRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Start a turbulence (hot-zone) analysis for a repository."""
+    job_id = _make_job(workspace_id)
+    args = ["--repo", request.repo, "--mode", "turbulence"]
+    if request.llm:
+        args.append("--llm")
+    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+@app.post("/benchmark")
+async def trigger_benchmark(
+    request: BenchmarkRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Run the retrieval benchmark and return MRR/Recall metrics."""
+    job_id = _make_job(workspace_id)
+
+    async def _run_benchmark(job_id: str) -> None:
+        try:
+            args = [
+                _python_exe(), "-m", "src.benchmark_retrieval",
+                "--top-k", str(request.top_k),
+            ]
+            if request.repo:
+                args += ["--repo", request.repo]
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                cwd=str(_ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await proc.communicate()
+            _JOBS[job_id]["status"] = "done" if proc.returncode == 0 else "error"
+            _JOBS[job_id]["output"] = stdout.decode(errors="replace")
+        except Exception as exc:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["output"] = str(exc)
+
+    asyncio.create_task(_run_benchmark(job_id))
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/issues/ingest")
+async def trigger_issues_ingest(
+    request: IssuesIngestRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Ingest GitHub issues from a repository into workspace memory."""
+    job_id = _make_job(workspace_id)
+    args = [
+        "--ingest-issues", request.repo,
+        "--issues-state", request.state,
+        "--multiview",
+    ]
+    if request.force_reingest:
+        args.append("--force-reingest")
+    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+@app.post("/populate")
+async def trigger_populate(
+    request: PopulateRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Ingest repository source files into workspace memory."""
+    job_id = _make_job(workspace_id)
+    args = ["--repo", request.repo, "--populate-memory", "--multiview"]
+    if request.force_reingest:
+        args.append("--force-reingest")
+    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    return {"job_id": job_id, "status": "started", "repo": request.repo}
 
 
 @app.get("/reports")

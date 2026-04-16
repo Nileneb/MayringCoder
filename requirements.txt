@@ -12,3 +12,9 @@ openai-whisper
 fastapi
 uvicorn[standard]
 psycopg2-binary
+gradio>=4.0
+pymysql
+
+# Dev
+pytest
+pytest-cov

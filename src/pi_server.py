@@ -1,8 +1,8 @@
 """Lightweight HTTP server that exposes Pi-agent (run_task_with_memory) via REST.
 
 Start:
-    .venv/bin/python pi_server.py          # port 8091
-    PI_PORT=8099 .venv/bin/python pi_server.py
+    .venv/bin/python -m src.pi_server          # port 8091
+    PI_PORT=8099 .venv/bin/python -m src.pi_server
 
 POST /pi-task
     Body: {"task": "...", "repo_slug": "optional", "system_prompt": "optional"}

@@ -1,29 +1,21 @@
 FROM python:3.11-slim
-
 WORKDIR /app
 
-# Install system dependencies (if any)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir fastapi uvicorn gradio
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (only what's needed)
 COPY src/ ./src/
 COPY prompts/ ./prompts/
 COPY codebook.yaml codebook_sozialforschung.yaml ./
-COPY checker.py run.sh pi_server.py run_mcp_server.py ./
-COPY .env.example ./
+COPY checker.py run.sh ./
 
-# Create directories for persistence
 RUN mkdir -p /app/cache /app/reports
 
-# Transport mode: stdio (default) or http
-ENV MCP_TRANSPORT=stdio
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    MCP_TRANSPORT=stdio
 
-# Default command: stdio transport for Claude Code
 CMD ["python", "-m", "src.mcp_server"]
