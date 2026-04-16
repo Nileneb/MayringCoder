@@ -979,6 +979,7 @@ def main() -> None:
     app.launch(
         server_name=args.host,
         server_port=args.port,
+        root_path=os.environ.get("GRADIO_ROOT_PATH", ""),
         show_error=True,
     )
 
