@@ -239,10 +239,13 @@ async def list_reports(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """List analysis reports for this workspace."""
-    reports_dir = _ROOT / "reports" / workspace_id
+    base_reports_dir = (_ROOT / "reports").resolve()
+    reports_dir = (base_reports_dir / workspace_id).resolve()
+    if reports_dir != base_reports_dir and base_reports_dir not in reports_dir.parents:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id path")
     if not reports_dir.exists():
         # Also check legacy flat reports dir
-        reports_dir = _ROOT / "reports"
+        reports_dir = base_reports_dir
     reports = []
     if reports_dir.exists():
         for f in sorted(reports_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
