@@ -246,21 +246,24 @@ async def list_reports(
     if not safe_workspace_id or safe_workspace_id != workspace_id:
         raise HTTPException(status_code=400, detail="Invalid workspace_id")
     base_reports_dir = (_ROOT / "reports").resolve()
-    reports_dir = (base_reports_dir / safe_workspace_id).resolve()
-    try:
-        reports_dir.relative_to(base_reports_dir)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid workspace_id path")
-    if not reports_dir.exists():
-        # Also check legacy flat reports dir
-        reports_dir = base_reports_dir
+
     reports = []
-    if reports_dir.exists():
-        markdown_files = [
+    if base_reports_dir.exists():
+        workspace_prefix = f"{safe_workspace_id}_"
+        candidate_dirs = [base_reports_dir]
+        candidate_dirs.extend(
             p
-            for p in reports_dir.iterdir()
-            if p.is_file() and re.fullmatch(r"[A-Za-z0-9_.-]+\.md", p.name)
-        ]
-        for f in sorted(markdown_files, key=lambda p: p.stat().st_mtime, reverse=True):
-            reports.append({"name": f.name, "size": f.stat().st_size})
+            for p in base_reports_dir.iterdir()
+            if p.is_dir() and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", p.name)
+        )
+        for candidate_dir in candidate_dirs:
+            markdown_files = [
+                p
+                for p in candidate_dir.iterdir()
+                if p.is_file()
+                and re.fullmatch(r"[A-Za-z0-9_.-]+\.md", p.name)
+                and p.name.startswith(workspace_prefix)
+            ]
+            for f in sorted(markdown_files, key=lambda p: p.stat().st_mtime, reverse=True):
+                reports.append({"name": f.name, "size": f.stat().st_size})
     return {"workspace_id": safe_workspace_id, "reports": reports, "count": len(reports)}
