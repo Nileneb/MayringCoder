@@ -242,7 +242,9 @@ async def list_reports(
     """List analysis reports for this workspace."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
         raise HTTPException(status_code=400, detail="Invalid workspace_id")
-    safe_workspace_id = workspace_id
+    safe_workspace_id = re.sub(r"[^A-Za-z0-9_-]", "", workspace_id)
+    if not safe_workspace_id or safe_workspace_id != workspace_id:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id")
     base_reports_dir = (_ROOT / "reports").resolve()
     reports_dir = (base_reports_dir / safe_workspace_id).resolve()
     try:
