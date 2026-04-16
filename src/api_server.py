@@ -242,8 +242,9 @@ async def list_reports(
     """List analysis reports for this workspace."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
         raise HTTPException(status_code=400, detail="Invalid workspace_id")
+    safe_workspace_id = workspace_id
     base_reports_dir = (_ROOT / "reports").resolve()
-    reports_dir = (base_reports_dir / workspace_id).resolve()
+    reports_dir = (base_reports_dir / safe_workspace_id).resolve()
     if reports_dir != base_reports_dir and base_reports_dir not in reports_dir.parents:
         raise HTTPException(status_code=400, detail="Invalid workspace_id path")
     if not reports_dir.exists():
@@ -253,4 +254,4 @@ async def list_reports(
     if reports_dir.exists():
         for f in sorted(reports_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
             reports.append({"name": f.name, "size": f.stat().st_size})
-    return {"workspace_id": workspace_id, "reports": reports, "count": len(reports)}
+    return {"workspace_id": safe_workspace_id, "reports": reports, "count": len(reports)}
