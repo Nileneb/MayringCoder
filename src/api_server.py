@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -239,6 +240,8 @@ async def list_reports(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """List analysis reports for this workspace."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
+        raise HTTPException(status_code=400, detail="Invalid workspace_id")
     base_reports_dir = (_ROOT / "reports").resolve()
     reports_dir = (base_reports_dir / workspace_id).resolve()
     if reports_dir != base_reports_dir and base_reports_dir not in reports_dir.parents:
