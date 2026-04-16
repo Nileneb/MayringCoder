@@ -477,6 +477,9 @@ _CODEBOOK_PATHS: dict[str, Path] = {
 }
 
 
+_ALLOWED_MODULAR_CODEBOOK_PROFILES = {"generic", "python", "laravel"}
+
+
 def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     """Return list of category names for the given codebook/source_type.
 
@@ -498,6 +501,9 @@ def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
         safe_codebook = str(codebook).strip()
         # Allow only simple profile identifiers; block traversal/absolute-path input.
         if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_codebook):
+            return list(_ORIGINAL_MAYRING_CATEGORIES)
+        # Explicit allowlist prevents user-controlled arbitrary profile path selection.
+        if safe_codebook not in _ALLOWED_MODULAR_CODEBOOK_PROFILES:
             return list(_ORIGINAL_MAYRING_CATEGORIES)
         try:
             from src.categorizer import load_codebook_modular
