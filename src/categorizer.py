@@ -128,10 +128,22 @@ def load_codebook_modular(profile: str = "generic") -> tuple[list[str], list[dic
         return load_exclude_patterns(), load_codebook()
 
     profiles_dir = (CODEBOOKS_DIR / "profiles").resolve()
-    profile_path = (profiles_dir / f"{profile}.yaml").resolve()
-    try:
-        profile_path.relative_to(profiles_dir)
-    except ValueError:
+    if not profiles_dir.exists() or not profiles_dir.is_dir():
+        return load_exclude_patterns(), load_codebook()
+
+    allowed_profiles: dict[str, Path] = {}
+    for p in profiles_dir.glob("*.yaml"):
+        if not p.is_file():
+            continue
+        rp = p.resolve()
+        try:
+            rp.relative_to(profiles_dir)
+        except ValueError:
+            continue
+        allowed_profiles[p.stem] = rp
+
+    profile_path = allowed_profiles.get(profile)
+    if profile_path is None:
         return load_exclude_patterns(), load_codebook()
 
     if not CODEBOOKS_DIR.exists() or not profile_path.exists():

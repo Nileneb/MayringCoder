@@ -477,6 +477,9 @@ _CODEBOOK_PATHS: dict[str, Path] = {
 }
 
 
+_ALLOWED_MODULAR_CODEBOOK_PROFILES = {"generic", "python", "laravel"}
+
+
 def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     """Return list of category names for the given codebook/source_type.
 
@@ -489,29 +492,25 @@ def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     """
     _RESERVED = {"auto", "code", "social", "original"}
 
+    codebook = str(codebook).strip().lower()
     if codebook == "auto":
         codebook = _SOURCE_TYPE_TO_CODEBOOK.get(source_type, "original")
 
     # Profile-based resolution: try modular codebook for non-reserved names
     # that are not in _CODEBOOK_PATHS (e.g. "laravel", "python", "generic").
     if codebook not in _RESERVED and codebook not in _CODEBOOK_PATHS:
-        safe_codebook = str(codebook).strip()
         # Allow only simple profile identifiers; block traversal/absolute-path input.
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_codebook):
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", codebook):
+            return list(_ORIGINAL_MAYRING_CATEGORIES)
+        # Explicit allowlist prevents user-controlled arbitrary profile path selection.
+        if codebook not in _ALLOWED_MODULAR_CODEBOOK_PROFILES:
             return list(_ORIGINAL_MAYRING_CATEGORIES)
         try:
             from src.categorizer import load_codebook_modular
-            _profiles_dir = (Path(__file__).parent.parent / "codebooks" / "profiles").resolve()
-            _profile_path = (_profiles_dir / f"{safe_codebook}.yaml").resolve()
-            try:
-                _profile_path.relative_to(_profiles_dir)
-            except ValueError:
-                return list(_ORIGINAL_MAYRING_CATEGORIES)
-            if _profile_path.exists():
-                _exclude_pats, _cats = load_codebook_modular(safe_codebook)
-                names = [cat["name"] for cat in _cats if "name" in cat]
-                if names:
-                    return names
+            _exclude_pats, _cats = load_codebook_modular(codebook)
+            names = [cat["name"] for cat in _cats if "name" in cat]
+            if names:
+                return names
         except Exception:
             pass
         # Unknown profile — fall through to original categories fallback below
