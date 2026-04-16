@@ -245,7 +245,9 @@ async def list_reports(
     safe_workspace_id = workspace_id
     base_reports_dir = (_ROOT / "reports").resolve()
     reports_dir = (base_reports_dir / safe_workspace_id).resolve()
-    if reports_dir != base_reports_dir and base_reports_dir not in reports_dir.parents:
+    try:
+        reports_dir.relative_to(base_reports_dir)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid workspace_id path")
     if not reports_dir.exists():
         # Also check legacy flat reports dir
