@@ -369,9 +369,12 @@ def main() -> None:
     print(f"\nFertig: {total_i} {action}, {total_s} übersprungen, {total_e} Fehler")
 
     if not args.dry_run and total_i > 0:
-        print("\nKnowledge Graph aktualisieren …")
-        from tools.generate_knowledge_graph import generate
-        generate()
+        try:
+            print("\nKnowledge Graph aktualisieren …")
+            from tools.generate_knowledge_graph import generate
+            generate()
+        except (ImportError, ModuleNotFoundError):
+            pass
 
 
 if __name__ == "__main__":
