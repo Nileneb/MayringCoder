@@ -815,7 +815,8 @@ def main() -> None:
         from starlette.applications import Starlette
         from starlette.routing import Mount, Route
 
-        _mcp_asgi = _PathNormMiddleware(mcp.streamable_http_app())
+        _mcp_http_app = mcp.streamable_http_app()
+        _mcp_asgi = _PathNormMiddleware(_mcp_http_app)
         _inner = _JWTAuthMiddleware(_mcp_asgi)
 
         _auth_label = (
@@ -831,15 +832,18 @@ def main() -> None:
             f" | oauth={_OAUTH_BASE_URL}"
         )
 
-        app = Starlette(routes=[
-            Route("/.well-known/oauth-authorization-server", _oauth_metadata),
-            Route("/.well-known/oauth-protected-resource", _oauth_metadata),
-            Route("/.well-known/oauth-protected-resource/sse", _oauth_metadata),
-            Route("/register", _oauth_register, methods=["POST"]),
-            Route("/authorize", _oauth_authorize, methods=["GET", "POST"]),
-            Route("/token", _oauth_token, methods=["POST"]),
-            Mount("/", app=_inner),
-        ])
+        app = Starlette(
+            routes=[
+                Route("/.well-known/oauth-authorization-server", _oauth_metadata),
+                Route("/.well-known/oauth-protected-resource", _oauth_metadata),
+                Route("/.well-known/oauth-protected-resource/sse", _oauth_metadata),
+                Route("/register", _oauth_register, methods=["POST"]),
+                Route("/authorize", _oauth_authorize, methods=["GET", "POST"]),
+                Route("/token", _oauth_token, methods=["POST"]),
+                Mount("/", app=_inner),
+            ],
+            lifespan=_mcp_http_app.router.lifespan_context,
+        )
         uvicorn.run(app, host=_HTTP_HOST, port=_HTTP_PORT)
     else:
         mcp.run()  # stdio transport (local dev)
