@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pytest
 
-from src.memory_ingest import (
+from src.memory.ingest import (
     discover_images,
     run_image_ingest,
     _IMAGE_EXTENSIONS,
@@ -52,12 +52,12 @@ class TestRunImageIngest:
         mock_chroma = MagicMock()
 
         with (
-            patch("src.memory_ingest.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch("src.memory_ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
-            patch("src.memory_ingest.shutil.rmtree") as mock_rmtree,
-            patch("src.memory_ingest.ingest_image", mock_ingest_image),
-            patch("src.memory_ingest.init_memory_db", return_value=mock_conn),
-            patch("src.memory_ingest.get_or_create_chroma_collection", return_value=mock_chroma),
+            patch("src.memory.ingest.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch("src.memory.ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
+            patch("src.memory.ingest.shutil.rmtree") as mock_rmtree,
+            patch("src.memory.ingest.ingest_image", mock_ingest_image),
+            patch("src.memory.ingest.init_memory_db", return_value=mock_conn),
+            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
         ):
             result = run_image_ingest(
                 repo_url="https://github.com/Nileneb/app.linn.games",
@@ -73,9 +73,9 @@ class TestRunImageIngest:
 
     def test_cleanup_runs_even_on_error(self, tmp_path):
         with (
-            patch("src.memory_ingest.subprocess.run", side_effect=RuntimeError("clone failed")),
-            patch("src.memory_ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
-            patch("src.memory_ingest.shutil.rmtree") as mock_rmtree,
+            patch("src.memory.ingest.subprocess.run", side_effect=RuntimeError("clone failed")),
+            patch("src.memory.ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
+            patch("src.memory.ingest.shutil.rmtree") as mock_rmtree,
         ):
             with pytest.raises(RuntimeError):
                 run_image_ingest(
@@ -95,12 +95,12 @@ class TestRunImageIngest:
         ])
 
         with (
-            patch("src.memory_ingest.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch("src.memory_ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
-            patch("src.memory_ingest.shutil.rmtree"),
-            patch("src.memory_ingest.ingest_image", mock_ingest_image),
-            patch("src.memory_ingest.init_memory_db", return_value=MagicMock()),
-            patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+            patch("src.memory.ingest.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch("src.memory.ingest.tempfile.mkdtemp", return_value=str(tmp_path)),
+            patch("src.memory.ingest.shutil.rmtree"),
+            patch("src.memory.ingest.ingest_image", mock_ingest_image),
+            patch("src.memory.ingest.init_memory_db", return_value=MagicMock()),
+            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
         ):
             result = run_image_ingest(
                 repo_url="https://github.com/Nileneb/app.linn.games",

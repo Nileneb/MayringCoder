@@ -143,7 +143,7 @@ def _summarize(
     ollama_url: str,
     model: str,
 ) -> str:
-    from src.analyzer import _ollama_generate
+    from src.analysis.analyzer import _ollama_generate
 
     prompt = _SUMMARIZE_PROMPT.format(
         related_context=related_context or "(kein verwandter Kontext)",
@@ -190,9 +190,9 @@ def _ingest_workspace(
     dry_run: bool,
     include_subagents: bool,
 ) -> tuple[int, int, int]:
-    from src.memory_ingest import ingest
-    from src.memory_retrieval import compress_for_prompt, search
-    from src.memory_schema import Source
+    from src.memory.ingest import ingest
+    from src.memory.retrieval import compress_for_prompt, search
+    from src.memory.schema import Source
 
     slug = _slug(workspace_path)
 
@@ -326,8 +326,8 @@ def main() -> None:
     if args.dry_run:
         print("[dry-run aktiv — keine Änderungen]")
 
-    from src.memory_ingest import get_or_create_chroma_collection
-    from src.memory_store import init_memory_db
+    from src.memory.ingest import get_or_create_chroma_collection
+    from src.memory.store import init_memory_db
 
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()

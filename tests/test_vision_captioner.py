@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from src.vision_captioner import (
+from src.agents.vision import (
     caption_image,
     caption_images_batch,
     get_image_metadata,

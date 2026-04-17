@@ -50,9 +50,9 @@ def run(dry_run: bool = False, force: bool = False, workspace_id: str = "system"
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     model = os.getenv("OLLAMA_MODEL", os.getenv("EMBEDDING_MODEL", "nomic-embed-text"))
 
-    from src.memory_ingest import get_or_create_chroma_collection, ingest
-    from src.memory_schema import Source
-    from src.memory_store import init_memory_db
+    from src.memory.ingest import get_or_create_chroma_collection, ingest
+    from src.memory.schema import Source
+    from src.memory.store import init_memory_db
 
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()

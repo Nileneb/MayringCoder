@@ -73,7 +73,7 @@ def mock_cache(tmp_path: Path):
     overview_path = cache_dir / overview_filename
     overview_path.write_text(json.dumps(overview_data, ensure_ascii=False), encoding="utf-8")
 
-    with patch("src.context.CACHE_DIR", cache_dir):
+    with patch("src.analysis.context.CACHE_DIR", cache_dir):
         yield {
             "cache_dir": cache_dir,
             "overview_path": overview_path,
@@ -88,14 +88,14 @@ def mock_cache(tmp_path: Path):
 
 class TestBuildInventoryContext:
     def test_returns_context_string(self, mock_cache):
-        from src.context import build_inventory_context
+        from src.analysis.context import build_inventory_context
 
         ctx = build_inventory_context(mock_cache["repo_url"])
         assert ctx is not None
         assert isinstance(ctx, str)
 
     def test_includes_file_types(self, mock_cache):
-        from src.context import build_inventory_context
+        from src.analysis.context import build_inventory_context
 
         ctx = build_inventory_context(mock_cache["repo_url"])
         assert "type=service" in ctx
@@ -103,27 +103,27 @@ class TestBuildInventoryContext:
         assert "type=test" in ctx
 
     def test_includes_responsibilities(self, mock_cache):
-        from src.context import build_inventory_context
+        from src.analysis.context import build_inventory_context
 
         ctx = build_inventory_context(mock_cache["repo_url"])
         assert "register()" in ctx
         assert "updateProfile()" in ctx
 
     def test_truncates_long_summaries(self, mock_cache):
-        from src.context import build_inventory_context
+        from src.analysis.context import build_inventory_context
 
         ctx = build_inventory_context(mock_cache["repo_url"])
         # Summary for UserService is >100 chars so should be truncated
         assert "..." in ctx or len(ctx) < 5000
 
     def test_nonexistent_repo_returns_none(self, mock_cache):
-        from src.context import build_inventory_context
+        from src.analysis.context import build_inventory_context
 
         ctx = build_inventory_context("https://nonexistent.com/does/not/exist.git")
         assert ctx is None
 
     def test_includes_all_files(self, mock_cache):
-        from src.context import build_inventory_context
+        from src.analysis.context import build_inventory_context
 
         ctx = build_inventory_context(mock_cache["repo_url"])
         assert "UserService.php" in ctx
@@ -137,7 +137,7 @@ class TestBuildInventoryContext:
 
 class TestBuildDependencyContext:
     def test_returns_context_for_known_file(self, mock_cache):
-        from src.context import build_dependency_context
+        from src.analysis.context import build_dependency_context
 
         ctx = build_dependency_context(
             mock_cache["repo_url"],
@@ -147,7 +147,7 @@ class TestBuildDependencyContext:
         assert "referenzierte Dateien" in ctx.lower() or "UserService.php" in ctx
 
     def test_includes_self_entry(self, mock_cache):
-        from src.context import build_dependency_context
+        from src.analysis.context import build_dependency_context
 
         ctx = build_dependency_context(
             mock_cache["repo_url"],
@@ -156,7 +156,7 @@ class TestBuildDependencyContext:
         assert "UserService.php" in ctx
 
     def test_includes_dependency_summaries(self, mock_cache):
-        from src.context import build_dependency_context
+        from src.analysis.context import build_dependency_context
 
         ctx = build_dependency_context(
             mock_cache["repo_url"],
@@ -166,7 +166,7 @@ class TestBuildDependencyContext:
         assert "User" in ctx
 
     def test_unknown_file_returns_none(self, mock_cache):
-        from src.context import build_dependency_context
+        from src.analysis.context import build_dependency_context
 
         ctx = build_dependency_context(
             mock_cache["repo_url"],
@@ -175,7 +175,7 @@ class TestBuildDependencyContext:
         assert ctx is None
 
     def test_nonexistent_repo_returns_none(self, mock_cache):
-        from src.context import build_dependency_context
+        from src.analysis.context import build_dependency_context
 
         ctx = build_dependency_context(
             "https://nonexistent.com/repo.git",
@@ -190,7 +190,7 @@ class TestBuildDependencyContext:
 
 class TestSaveOverviewContextSignatures:
     def test_preserves_signatures(self, mock_cache):
-        from src.context import save_overview_context
+        from src.analysis.context import save_overview_context
 
         results = [
             {
@@ -210,7 +210,7 @@ class TestSaveOverviewContextSignatures:
         assert loaded[0]["_signatures"]["classes"] == ["A"]
 
     def test_skips_error_results(self, mock_cache):
-        from src.context import save_overview_context
+        from src.analysis.context import save_overview_context
 
         results = [
             {"filename": "a.py", "error": "Timeout"},
@@ -222,7 +222,7 @@ class TestSaveOverviewContextSignatures:
         assert loaded[0]["filename"] == "b.py"
 
     def test_preserves_enrichment_fields(self, mock_cache):
-        from src.context import save_overview_context
+        from src.analysis.context import save_overview_context
 
         results = [
             {
@@ -249,7 +249,7 @@ class TestSaveOverviewContextSignatures:
 
 class TestSaveOverviewContextFeedForward:
     def test_preserves_functions_field(self, mock_cache):
-        from src.context import save_overview_context
+        from src.analysis.context import save_overview_context
 
         results = [
             {
@@ -268,7 +268,7 @@ class TestSaveOverviewContextFeedForward:
         assert loaded[0]["functions"][0]["calls"] == ["DB::insert"]
 
     def test_preserves_external_deps_field(self, mock_cache):
-        from src.context import save_overview_context
+        from src.analysis.context import save_overview_context
 
         results = [
             {
@@ -283,7 +283,7 @@ class TestSaveOverviewContextFeedForward:
         assert loaded[0]["external_deps"] == ["Auth", "DB", "Mail"]
 
     def test_omits_missing_functions_field(self, mock_cache):
-        from src.context import save_overview_context
+        from src.analysis.context import save_overview_context
 
         results = [
             {"filename": "c.php", "category": "config", "file_summary": "Just config"},
@@ -299,7 +299,7 @@ class TestSaveOverviewContextFeedForward:
 
 class TestLoadOverviewCacheRaw:
     def test_returns_dict_keyed_by_filename(self, mock_cache):
-        from src.context import load_overview_cache_raw
+        from src.analysis.context import load_overview_cache_raw
 
         result = load_overview_cache_raw(mock_cache["repo_url"])
         assert result is not None
@@ -308,13 +308,13 @@ class TestLoadOverviewCacheRaw:
         assert "app/Models/User.php" in result
 
     def test_entries_contain_category(self, mock_cache):
-        from src.context import load_overview_cache_raw
+        from src.analysis.context import load_overview_cache_raw
 
         result = load_overview_cache_raw(mock_cache["repo_url"])
         assert result["src/UserService.php"]["category"] == "domain"
 
     def test_nonexistent_repo_returns_none(self, mock_cache):
-        from src.context import load_overview_cache_raw
+        from src.analysis.context import load_overview_cache_raw
 
         result = load_overview_cache_raw("https://nonexistent.com/no/repo.git")
         assert result is None
@@ -332,7 +332,7 @@ class TestIndexOverviewFunctionDocs:
     @pytest.fixture
     def setup_index(self, tmp_path, monkeypatch):
         """CACHE_DIR patchen, Overview-JSON schreiben, ChromaDB + embed mocken."""
-        import src.context as ctx_mod
+        import src.analysis.context as ctx_mod
         from unittest.mock import MagicMock, patch as _patch
 
         if not ctx_mod._HAS_CHROMADB:
@@ -374,17 +374,17 @@ class TestIndexOverviewFunctionDocs:
             return [[0.0] * 4 for _ in texts]
 
         with _patch.object(ctx_mod, "_embed_texts", fake_embed), \
-             _patch("src.context.chromadb.PersistentClient", return_value=mock_client):
+             _patch("src.analysis.context.chromadb.PersistentClient", return_value=mock_client):
             yield {"entries": entries, "collection": mock_collection}
 
     def test_total_document_count(self, setup_index):
-        from src.context import index_overview_to_vectordb
+        from src.analysis.context import index_overview_to_vectordb
         total = index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
         # 2 entries: UserService (summary + functions) + config (summary only) → 3
         assert total == 3
 
     def test_function_doc_contains_function_names(self, setup_index):
-        from src.context import index_overview_to_vectordb
+        from src.analysis.context import index_overview_to_vectordb
         index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
         docs = setup_index["collection"].add.call_args.kwargs["documents"]
         fn_docs = [d for d in docs if "functions:" in d]
@@ -393,14 +393,14 @@ class TestIndexOverviewFunctionDocs:
         assert "delete_user" in fn_docs[0]
 
     def test_function_doc_contains_calls(self, setup_index):
-        from src.context import index_overview_to_vectordb
+        from src.analysis.context import index_overview_to_vectordb
         index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
         docs = setup_index["collection"].add.call_args.kwargs["documents"]
         fn_docs = [d for d in docs if "functions:" in d]
         assert "DB::insert" in fn_docs[0]
 
     def test_function_doc_contains_external_deps(self, setup_index):
-        from src.context import index_overview_to_vectordb
+        from src.analysis.context import index_overview_to_vectordb
         index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
         docs = setup_index["collection"].add.call_args.kwargs["documents"]
         fn_docs = [d for d in docs if "functions:" in d]
@@ -408,14 +408,14 @@ class TestIndexOverviewFunctionDocs:
         assert "DB" in fn_docs[0]
 
     def test_no_function_doc_for_entry_without_functions(self, setup_index):
-        from src.context import index_overview_to_vectordb
+        from src.analysis.context import index_overview_to_vectordb
         index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
         ids = setup_index["collection"].add.call_args.kwargs["ids"]
         assert "config/app.php::functions" not in ids
         assert "config/app.php::summary" in ids
 
     def test_function_doc_metadata_has_doc_type(self, setup_index):
-        from src.context import index_overview_to_vectordb
+        from src.analysis.context import index_overview_to_vectordb
         index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
         kwargs = setup_index["collection"].add.call_args.kwargs
         ids = kwargs["ids"]
@@ -426,7 +426,7 @@ class TestIndexOverviewFunctionDocs:
         assert metadatas[sum_idx]["doc_type"] == "summary"
 
     def test_staleness_check_uses_expected_count(self, tmp_path, monkeypatch):
-        import src.context as ctx_mod
+        import src.analysis.context as ctx_mod
         from unittest.mock import MagicMock, patch as _patch
 
         if not ctx_mod._HAS_CHROMADB:
@@ -455,8 +455,8 @@ class TestIndexOverviewFunctionDocs:
             return [[0.0] * 4 for _ in texts]
 
         with _patch.object(ctx_mod, "_embed_texts", fake_embed), \
-             _patch("src.context.chromadb.PersistentClient", return_value=mock_client):
-            from src.context import index_overview_to_vectordb
+             _patch("src.analysis.context.chromadb.PersistentClient", return_value=mock_client):
+            from src.analysis.context import index_overview_to_vectordb
             result = index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
 
         # Staleness matched → skip, return expected_count

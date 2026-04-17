@@ -256,7 +256,7 @@ def _default_log_path() -> Path | None:
 
 def _interactive_label_categories(output_path: Path) -> None:
     """Show uncategorized chunks from memory DB and ask for manual category assignment."""
-    from src.memory_store import init_memory_db
+    from src.memory.store import init_memory_db
 
     conn = init_memory_db()
     rows = conn.execute(

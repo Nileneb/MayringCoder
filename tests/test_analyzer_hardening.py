@@ -14,7 +14,7 @@ from unittest.mock import patch, MagicMock
 
 class TestParseLlmJsonDelimiters:
     def _parse(self, text):
-        from src.analyzer import _parse_llm_json
+        from src.analysis.analyzer import _parse_llm_json
         return _parse_llm_json(text)
 
     def test_delimiter_primary_strategy(self):
@@ -91,7 +91,7 @@ class TestOllamaGenerateSystemPrompt:
         return mock_resp
 
     def test_system_prompt_included_in_request(self):
-        from src.analyzer import _ollama_generate
+        from src.analysis.analyzer import _ollama_generate
 
         captured = {}
 
@@ -99,7 +99,7 @@ class TestOllamaGenerateSystemPrompt:
             captured["json"] = json
             return self._make_mock_response()
 
-        with patch("src.analyzer.httpx.stream", side_effect=fake_stream):
+        with patch("src.analysis.analyzer.httpx.stream", side_effect=fake_stream):
             _ollama_generate("user content", "http://localhost", "model", "test",
                              system_prompt="system instructions")
 
@@ -108,7 +108,7 @@ class TestOllamaGenerateSystemPrompt:
         assert captured["json"]["prompt"] == "user content"
 
     def test_no_system_prompt_omits_key(self):
-        from src.analyzer import _ollama_generate
+        from src.analysis.analyzer import _ollama_generate
 
         captured = {}
 
@@ -116,13 +116,13 @@ class TestOllamaGenerateSystemPrompt:
             captured["json"] = json
             return self._make_mock_response()
 
-        with patch("src.analyzer.httpx.stream", side_effect=fake_stream):
+        with patch("src.analysis.analyzer.httpx.stream", side_effect=fake_stream):
             _ollama_generate("user content", "http://localhost", "model", "test")
 
         assert "system" not in captured["json"]
 
     def test_none_system_prompt_omits_key(self):
-        from src.analyzer import _ollama_generate
+        from src.analysis.analyzer import _ollama_generate
 
         captured = {}
 
@@ -130,7 +130,7 @@ class TestOllamaGenerateSystemPrompt:
             captured["json"] = json
             return self._make_mock_response()
 
-        with patch("src.analyzer.httpx.stream", side_effect=fake_stream):
+        with patch("src.analysis.analyzer.httpx.stream", side_effect=fake_stream):
             _ollama_generate("user content", "http://localhost", "model", "test",
                              system_prompt=None)
 
@@ -138,7 +138,7 @@ class TestOllamaGenerateSystemPrompt:
 
     def test_analyze_file_sends_system_prompt(self):
         """analyze_file() passes prompt_template as system_prompt to _ollama_generate."""
-        from src.analyzer import analyze_file
+        from src.analysis.analyzer import analyze_file
 
         captured = {}
 
@@ -147,7 +147,7 @@ class TestOllamaGenerateSystemPrompt:
             captured["prompt"] = prompt
             return '{"file_summary": "ok", "potential_smells": []}'
 
-        with patch("src.analyzer._ollama_generate", side_effect=fake_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=fake_generate):
             file = {"filename": "app/Foo.php", "content": "<?php echo 1;", "category": "domain"}
             analyze_file(file, "SYSTEM INSTRUCTIONS", "http://localhost", "model")
 
@@ -157,7 +157,7 @@ class TestOllamaGenerateSystemPrompt:
 
     def test_overview_file_sends_system_prompt(self):
         """overview_file() passes prompt_template as system_prompt."""
-        from src.analyzer import overview_file
+        from src.analysis.analyzer import overview_file
 
         captured = {}
 
@@ -166,7 +166,7 @@ class TestOllamaGenerateSystemPrompt:
             captured["prompt"] = prompt
             return '{"file_summary": "summary", "file_type": "service"}'
 
-        with patch("src.analyzer._ollama_generate", side_effect=fake_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=fake_generate):
             file = {"filename": "app/Foo.php", "content": "<?php", "category": "domain"}
             overview_file(file, "OVERVIEW TEMPLATE", "http://localhost", "model")
 

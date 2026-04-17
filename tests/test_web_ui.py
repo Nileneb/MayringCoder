@@ -2,7 +2,7 @@
 
 Mock strategy:
   - unittest.mock.patch on src.ollama_status.check_ollama
-  - unittest.mock.patch on src.memory_retrieval.search
+  - unittest.mock.patch on src.memory.retrieval.search
   - unittest.mock.patch on subprocess.run for subprocess-path tests
   - unittest.mock.patch on httpx.get for HTTP-fallback tests
 """
@@ -139,7 +139,7 @@ class TestIngestTabWithoutOllama:
 
     def test_warning_in_output_when_ollama_down(self, tmp_path):
         """Ingest proceeds but result contains warning key."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         # Patch memory modules so we can test without real DB
         mock_ingest_result = {
@@ -155,11 +155,11 @@ class TestIngestTabWithoutOllama:
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
             patch.object(web_ui, "_conn", fake_conn),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui._get_chroma", return_value=None),
-            patch("src.web_ui.ingest", return_value=mock_ingest_result),
-            patch("src.web_ui.Source") as MockSource,
-            patch("src.web_ui.hashlib") as mock_hashlib,
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui._get_chroma", return_value=None),
+            patch("src.api.web_ui.ingest", return_value=mock_ingest_result),
+            patch("src.api.web_ui.Source") as MockSource,
+            patch("src.api.web_ui.hashlib") as mock_hashlib,
         ):
             # Setup hashlib mock
             mock_hash = MagicMock()
@@ -189,7 +189,7 @@ class TestIngestTabWithoutOllama:
 
     def test_no_content_returns_error(self):
         """Empty text + no file → error JSON."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         with patch.object(web_ui, "_MEMORY_READY", True):
             raw = web_ui._do_ingest(
@@ -217,8 +217,8 @@ class TestSearchFallbackSymbolic:
 
     def test_search_returns_list_without_embedding(self):
         """_do_search returns (status, rows) when ollama_available=False."""
-        import src.web_ui as web_ui
-        from src.memory_schema import RetrievalRecord
+        import src.api.web_ui as web_ui
+        from src.memory.schema import RetrievalRecord
 
         fake_record = RetrievalRecord(
             chunk_id="chk_aabbccdd112233",
@@ -234,9 +234,9 @@ class TestSearchFallbackSymbolic:
 
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui._get_chroma", return_value=None),
-            patch("src.web_ui.search", return_value=[fake_record]),
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui._get_chroma", return_value=None),
+            patch("src.api.web_ui.search", return_value=[fake_record]),
         ):
             status, rows = web_ui._do_search(
                 query="foo",
@@ -250,7 +250,7 @@ class TestSearchFallbackSymbolic:
 
     def test_search_empty_query_returns_hint(self):
         """Empty query → hint message, no rows."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         with patch.object(web_ui, "_MEMORY_READY", True):
             status, rows = web_ui._do_search("", 8, False)
@@ -260,7 +260,7 @@ class TestSearchFallbackSymbolic:
 
     def test_search_no_memory_ready(self):
         """_MEMORY_READY=False → error message, no rows."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         with patch.object(web_ui, "_MEMORY_READY", False):
             status, rows = web_ui._do_search("something", 8, True)
@@ -278,14 +278,14 @@ class TestFeedbackWrite:
 
     def test_feedback_positive(self):
         """Positive signal without label → add_feedback called with empty metadata."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         fake_conn = MagicMock(spec=sqlite3.Connection)
 
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui.add_feedback") as mock_add_feedback,
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
         ):
             result = web_ui._do_feedback(
                 chunk_id="chk_aabbccdd",
@@ -300,14 +300,14 @@ class TestFeedbackWrite:
 
     def test_feedback_with_label(self):
         """Label is passed in metadata dict."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         fake_conn = MagicMock(spec=sqlite3.Connection)
 
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui.add_feedback") as mock_add_feedback,
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
         ):
             web_ui._do_feedback(
                 chunk_id="chk_test",
@@ -321,11 +321,11 @@ class TestFeedbackWrite:
 
     def test_feedback_empty_chunk_id(self):
         """Empty chunk_id → error message without calling add_feedback."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui.add_feedback") as mock_add_feedback,
+            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
         ):
             result = web_ui._do_feedback(
                 chunk_id="",
@@ -338,11 +338,11 @@ class TestFeedbackWrite:
 
     def test_feedback_memory_not_ready(self):
         """_MEMORY_READY=False → error message."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
 
         with (
             patch.object(web_ui, "_MEMORY_READY", False),
-            patch("src.web_ui.add_feedback") as mock_add_feedback,
+            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
         ):
             result = web_ui._do_feedback("chk_x", "positive", "")
 
@@ -359,17 +359,17 @@ class TestModelSelector:
 
     def test_do_ingest_uses_provided_model(self) -> None:
         """_do_ingest() übergibt model an ingest()."""
-        from src.web_ui import _do_ingest
+        from src.api.web_ui import _do_ingest
         captured: list[str] = []
 
         def fake_ingest(source, content, conn, chroma_collection, ollama_url, model, opts=None):
             captured.append(model)
             return {"source_id": "x", "chunk_ids": [], "indexed": False, "deduped": 0, "superseded": 0}
 
-        with patch("src.web_ui.ingest", side_effect=fake_ingest), \
-             patch("src.web_ui._get_conn", return_value=MagicMock()), \
-             patch("src.web_ui._get_chroma", return_value=None), \
-             patch("src.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui.ingest", side_effect=fake_ingest), \
+             patch("src.api.web_ui._get_conn", return_value=MagicMock()), \
+             patch("src.api.web_ui._get_chroma", return_value=None), \
+             patch("src.api.web_ui._MEMORY_READY", True):
             _do_ingest("hello world", None, "test.txt", "owner/repo",
                        categorize=False, mode="hybrid", codebook="auto",
                        model="mistral:7b", ollama_available=True)
@@ -378,17 +378,17 @@ class TestModelSelector:
 
     def test_do_ingest_passes_mode_and_codebook_in_opts(self) -> None:
         """_do_ingest() schreibt mode + codebook in opts."""
-        from src.web_ui import _do_ingest
+        from src.api.web_ui import _do_ingest
         captured_opts: list[dict] = []
 
         def fake_ingest(source, content, conn, chroma_collection, ollama_url, model, opts=None):
             captured_opts.append(opts or {})
             return {"source_id": "x", "chunk_ids": [], "indexed": False, "deduped": 0, "superseded": 0}
 
-        with patch("src.web_ui.ingest", side_effect=fake_ingest), \
-             patch("src.web_ui._get_conn", return_value=MagicMock()), \
-             patch("src.web_ui._get_chroma", return_value=None), \
-             patch("src.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui.ingest", side_effect=fake_ingest), \
+             patch("src.api.web_ui._get_conn", return_value=MagicMock()), \
+             patch("src.api.web_ui._get_chroma", return_value=None), \
+             patch("src.api.web_ui._MEMORY_READY", True):
             _do_ingest("hello world", None, "test.txt", "owner/repo",
                        categorize=True, mode="deductive", codebook="social",
                        model="llama3", ollama_available=True)
@@ -406,7 +406,7 @@ class TestConversationTab:
     """Tests für Conversation-Summary Ingestion via UI."""
 
     def test_do_ingest_conversation_calls_ingest_conversation_summary(self) -> None:
-        from src.web_ui import _do_ingest_conversation
+        from src.api.web_ui import _do_ingest_conversation
         captured: list[dict] = []
 
         def fake_ingest_conv(summary_text, conn, chroma_collection, ollama_url, model,
@@ -414,10 +414,10 @@ class TestConversationTab:
             captured.append({"session_id": session_id, "run_id": run_id, "text": summary_text})
             return {"source_id": "conv:x", "chunk_ids": ["c1"], "indexed": False, "deduped": 0, "superseded": 0}
 
-        with patch("src.web_ui.ingest_conversation_summary", side_effect=fake_ingest_conv), \
-             patch("src.web_ui._get_conn", return_value=MagicMock()), \
-             patch("src.web_ui._get_chroma", return_value=None), \
-             patch("src.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui.ingest_conversation_summary", side_effect=fake_ingest_conv), \
+             patch("src.api.web_ui._get_conn", return_value=MagicMock()), \
+             patch("src.api.web_ui._get_chroma", return_value=None), \
+             patch("src.api.web_ui._MEMORY_READY", True):
             result = _do_ingest_conversation(
                 summary_text="## Summary\n\nWas wir gemacht haben.",
                 session_id="sess-abc",
@@ -431,8 +431,8 @@ class TestConversationTab:
         assert "conv:x" in result
 
     def test_do_ingest_conversation_empty_text_returns_error(self) -> None:
-        from src.web_ui import _do_ingest_conversation
-        with patch("src.web_ui._MEMORY_READY", True):
+        from src.api.web_ui import _do_ingest_conversation
+        with patch("src.api.web_ui._MEMORY_READY", True):
             result = _do_ingest_conversation("", "sess-1", "", "model", True)
         assert "error" in result.lower() or "Kein" in result
 
@@ -446,20 +446,20 @@ class TestE2EAnalysisFlow:
 
     def test_ingest_then_search_returns_results(self):
         """Ingest text, then search for it — full roundtrip."""
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
         fake_conn = MagicMock(spec=sqlite3.Connection)
         ingest_result = {"source_id": "repo:test:e2e.py", "chunk_ids": ["chk_e2e001"], "indexed": True, "deduped": 0, "superseded": 0}
-        from src.memory_schema import RetrievalRecord
+        from src.memory.schema import RetrievalRecord
         search_result = RetrievalRecord(chunk_id="chk_e2e001", score_final=0.85, score_symbolic=0.6, source_id="repo:test:e2e.py", text="def authenticate(user): pass", category_labels=["auth"], reasons=["token_overlap", "embedding_similarity"])
 
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui._get_chroma", return_value=None),
-            patch("src.web_ui.ingest", return_value=ingest_result),
-            patch("src.web_ui.Source") as MockSource,
-            patch("src.web_ui.hashlib") as mock_hashlib,
-            patch("src.web_ui.search", return_value=[search_result]),
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui._get_chroma", return_value=None),
+            patch("src.api.web_ui.ingest", return_value=ingest_result),
+            patch("src.api.web_ui.Source") as MockSource,
+            patch("src.api.web_ui.hashlib") as mock_hashlib,
+            patch("src.api.web_ui.search", return_value=[search_result]),
         ):
             mock_hash = MagicMock()
             mock_hash.hexdigest.return_value = "b" * 64
@@ -476,12 +476,12 @@ class TestE2EAnalysisFlow:
             assert "auth" in str(rows[0])
 
     def test_feedback_after_search(self):
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
         fake_conn = MagicMock(spec=sqlite3.Connection)
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui.add_feedback") as mock_fb,
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui.add_feedback") as mock_fb,
         ):
             result = web_ui._do_feedback("chk_e2e001", "positive", "relevant")
         mock_fb.assert_called_once_with(fake_conn, "chk_e2e001", "positive", {"label": "relevant"})
@@ -496,18 +496,18 @@ class TestE2EConversationFlow:
     """End-to-end: conversation summary ingestion + search."""
 
     def test_conversation_ingest_then_search(self):
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
         fake_conn = MagicMock(spec=sqlite3.Connection)
         conv_result = {"source_id": "conv:sess-e2e", "chunk_ids": ["chk_conv_001"], "indexed": True, "deduped": 0, "superseded": 0}
-        from src.memory_schema import RetrievalRecord
+        from src.memory.schema import RetrievalRecord
         search_hit = RetrievalRecord(chunk_id="chk_conv_001", score_final=0.72, source_id="conv:sess-e2e", text="Wir haben HTTP-Transport implementiert.", category_labels=["Zusammenfassung"], reasons=["token_overlap"])
 
         with (
             patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.web_ui._get_conn", return_value=fake_conn),
-            patch("src.web_ui._get_chroma", return_value=None),
-            patch("src.web_ui.ingest_conversation_summary", return_value=conv_result),
-            patch("src.web_ui.search", return_value=[search_hit]),
+            patch("src.api.web_ui._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui._get_chroma", return_value=None),
+            patch("src.api.web_ui.ingest_conversation_summary", return_value=conv_result),
+            patch("src.api.web_ui.search", return_value=[search_hit]),
         ):
             raw = web_ui._do_ingest_conversation(summary_text="## Summary\nWir haben HTTP-Transport implementiert.", session_id="sess-e2e", run_id="run-001", model="", ollama_available=False)
             assert "conv:sess-e2e" in raw
@@ -524,21 +524,21 @@ class TestE2EErrorCases:
     """E2E error handling."""
 
     def test_ingest_with_no_content_and_no_file(self):
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
         with patch.object(web_ui, "_MEMORY_READY", True):
             raw = web_ui._do_ingest("", None, "", "", False, "hybrid", "auto", "", False)
         result = json.loads(raw)
         assert "error" in result
 
     def test_search_with_memory_not_loaded(self):
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
         with patch.object(web_ui, "_MEMORY_READY", False):
             status, rows = web_ui._do_search("test", 5, True)
         assert rows == []
         assert "memory" in status.lower() or "nicht" in status.lower()
 
     def test_feedback_on_empty_chunk_id(self):
-        import src.web_ui as web_ui
+        import src.api.web_ui as web_ui
         with patch.object(web_ui, "_MEMORY_READY", True):
             result = web_ui._do_feedback("", "positive", "")
         assert "chunk" in result.lower() or "id" in result.lower()

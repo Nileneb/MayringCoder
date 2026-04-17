@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.benchmark_retrieval import category_precision_at_k, uncategorized_rate
-from src.memory_ingest import _resolve_codebook, _path_fallback_category
-from src.memory_schema import Chunk
+from src.memory.ingest import _resolve_codebook, _path_fallback_category
+from src.memory.schema import Chunk
 
 
 # ---------------------------------------------------------------------------
@@ -118,66 +118,66 @@ class TestMayringCategorizeValidation:
             text="def authenticate(token): pass",
         )
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_deductive_mode_validates_against_codebook(self, mock_gen):
         mock_gen.return_value = "api\nsicherheit"
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         chunks = [self._make_chunk()]
         result = mayring_categorize(chunks, "http://localhost:11434", "nomic", "deductive", "code", "repo_file")
         # Only labels present in codebook should be kept
         assert isinstance(result[0].category_labels, list)
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_inductive_mode_accepts_free_labels(self, mock_gen):
         mock_gen.return_value = "custom-pattern-xyz\nnew-concept"
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         chunks = [self._make_chunk()]
         result = mayring_categorize(chunks, "http://localhost:11434", "nomic", "inductive", "code", "repo_file")
         # Inductive: free-form labels accepted
         assert "custom-pattern-xyz" in result[0].category_labels
         assert "new-concept" in result[0].category_labels
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_hybrid_mode_keeps_neu_prefix(self, mock_gen):
         mock_gen.return_value = "[neu]custom-label"
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         chunks = [self._make_chunk()]
         result = mayring_categorize(chunks, "http://localhost:11434", "nomic", "hybrid", "code", "repo_file")
         assert "[neu]custom-label" in result[0].category_labels
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_error_triggers_path_fallback(self, mock_gen):
         mock_gen.side_effect = Exception("connection refused")
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         chunk = self._make_chunk("github_issue:repo:api_route.py:abc123")
         result = mayring_categorize([chunk], "http://localhost:11434", "nomic", "deductive", "code", "repo_file")
         assert result[0].category_source == "fallback"
         assert isinstance(result[0].category_labels, list)
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_category_confidence_set_when_labels_found(self, mock_gen):
         mock_gen.return_value = "api"
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         chunks = [self._make_chunk()]
         result = mayring_categorize(chunks, "http://localhost:11434", "nomic", "deductive", "code", "repo_file")
         if result[0].category_labels:
             assert result[0].category_confidence == 1.0
             assert result[0].category_source in ("deductive", "inductive", "hybrid")
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_label_with_comma_rejected(self, mock_gen):
         mock_gen.return_value = "api,sicherheit"  # comma in single label (invalid)
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         chunks = [self._make_chunk()]
         result = mayring_categorize(chunks, "http://localhost:11434", "nomic", "inductive", "code", "repo_file")
         # Label with comma should be rejected
         assert all("," not in lbl for lbl in result[0].category_labels)
 
-    @patch("src.analyzer._ollama_generate")
+    @patch("src.analysis.analyzer._ollama_generate")
     def test_truncation_at_1200_chars(self, mock_gen):
         """Verify the prompt passed to _ollama_generate is not longer than 1200 chars of text."""
         mock_gen.return_value = "api"
-        from src.memory_ingest import mayring_categorize
+        from src.memory.ingest import mayring_categorize
         long_text = "x" * 5000
         chunk = Chunk(
             chunk_id="c_long",

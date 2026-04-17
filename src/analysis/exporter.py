@@ -48,7 +48,7 @@ _FIELDNAMES = [
 def export_results(
     results: list[dict],
     export_path: str | Path,
-    codebook_name: str = "codebook.yaml",
+    codebook_name: str = "code.yaml",
     prompt_mode: str = "analyze",
 ) -> str:
     """Export findings to CSV or JSON (detected by file extension).

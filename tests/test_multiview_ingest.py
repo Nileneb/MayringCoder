@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import json
 import pytest
 
-from src.memory_ingest import generate_multiview_chunks
+from src.memory.ingest import generate_multiview_chunks
 
 
 SAMPLE_ISSUE = """# Login schlägt fehl nach Token-Erneuerung
@@ -34,7 +34,7 @@ class TestGenerateMultiviewChunks:
         assert chunks[0].chunk_level == "view_full"
 
     def test_ollama_failure_returns_only_view_full(self):
-        with patch("src.analyzer._ollama_generate", side_effect=Exception("connection refused")):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=Exception("connection refused")):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -43,7 +43,7 @@ class TestGenerateMultiviewChunks:
         assert SAMPLE_ISSUE[:50] in chunks[0].text
 
     def test_successful_call_returns_5_chunks(self):
-        with patch("src.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -56,7 +56,7 @@ class TestGenerateMultiviewChunks:
         assert len(chunks) == 5
 
     def test_chunk_ids_are_unique(self):
-        with patch("src.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -64,7 +64,7 @@ class TestGenerateMultiviewChunks:
         assert len(ids) == len(set(ids))
 
     def test_view_full_contains_original_content(self):
-        with patch("src.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -78,7 +78,7 @@ class TestGenerateMultiviewChunks:
             "decision_summary": "",
             "entities_keywords": "auth",
         })
-        with patch("src.analyzer._ollama_generate", return_value=response):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=response):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -86,7 +86,7 @@ class TestGenerateMultiviewChunks:
         assert "view_decision" not in levels
 
     def test_source_id_is_set_on_all_chunks(self):
-        with patch("src.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=self._mock_ollama_response()):
             chunks = generate_multiview_chunks(
                 "src::test123", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -95,7 +95,7 @@ class TestGenerateMultiviewChunks:
     def test_markdown_fenced_json_is_handled(self):
         """LLM sometimes wraps JSON in ```json ... ``` — must be parsed correctly."""
         fenced = "```json\n" + self._mock_ollama_response() + "\n```"
-        with patch("src.analyzer._ollama_generate", return_value=fenced):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=fenced):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -103,7 +103,7 @@ class TestGenerateMultiviewChunks:
 
     def test_llm_returns_list_instead_of_dict(self):
         """If LLM returns a JSON array instead of object, fall back to view_full only."""
-        with patch("src.analyzer._ollama_generate", return_value='["fact", "decision"]'):
+        with patch("src.analysis.analyzer._ollama_generate", return_value='["fact", "decision"]'):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -117,7 +117,7 @@ class TestGenerateMultiviewChunks:
             "decision_summary": "Ansatz B gewählt.",
             "entities_keywords": ["AuthService", "TokenManager", "LoginActivity"],
         })
-        with patch("src.analyzer._ollama_generate", return_value=response):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=response):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -133,7 +133,7 @@ class TestGenerateMultiviewChunks:
             "decision_summary": "Ansatz B gewählt.",
             "entities_keywords": [],
         })
-        with patch("src.analyzer._ollama_generate", return_value=response):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=response):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -147,7 +147,7 @@ class TestGenerateMultiviewChunks:
             "decision_summary": "OK.",
             "entities_keywords": "auth",
         })
-        with patch("src.analyzer._ollama_generate", return_value=response):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=response):
             chunks = generate_multiview_chunks(
                 "src::test", SAMPLE_ISSUE, "http://localhost:11434", "mistral"
             )
@@ -161,9 +161,9 @@ class TestIngestMultiviewIntegration:
 
     def test_ingest_multiview_true_calls_generate_multiview(self, tmp_path):
         from unittest.mock import patch, MagicMock
-        from src.memory_ingest import ingest
-        from src.memory_store import init_memory_db, upsert_source
-        from src.memory_schema import Source
+        from src.memory.ingest import ingest
+        from src.memory.store import init_memory_db, upsert_source
+        from src.memory.schema import Source
 
         conn = init_memory_db(tmp_path / "memory.db")
         source = Source(
@@ -177,8 +177,8 @@ class TestIngestMultiviewIntegration:
         mock_chunks = []  # generate_multiview_chunks returns empty → ingest returns 0 chunks
 
         with (
-            patch("src.memory_ingest.generate_multiview_chunks", return_value=mock_chunks) as mock_gen,
-            patch("src.memory_ingest.structural_chunk") as mock_struct,
+            patch("src.memory.ingest.generate_multiview_chunks", return_value=mock_chunks) as mock_gen,
+            patch("src.memory.ingest.structural_chunk") as mock_struct,
         ):
             ingest(source, SAMPLE_ISSUE, conn, None, "http://localhost:11434", "mistral",
                    opts={"multiview": True})
@@ -188,9 +188,9 @@ class TestIngestMultiviewIntegration:
 
     def test_ingest_multiview_false_uses_structural_chunk(self, tmp_path):
         from unittest.mock import patch
-        from src.memory_ingest import ingest
-        from src.memory_store import init_memory_db
-        from src.memory_schema import Source
+        from src.memory.ingest import ingest
+        from src.memory.store import init_memory_db
+        from src.memory.schema import Source
 
         conn = init_memory_db(tmp_path / "memory.db")
         source = Source(
@@ -202,8 +202,8 @@ class TestIngestMultiviewIntegration:
         )
 
         with (
-            patch("src.memory_ingest.generate_multiview_chunks") as mock_gen,
-            patch("src.memory_ingest.structural_chunk", return_value=[]) as mock_struct,
+            patch("src.memory.ingest.generate_multiview_chunks") as mock_gen,
+            patch("src.memory.ingest.structural_chunk", return_value=[]) as mock_struct,
         ):
             ingest(source, SAMPLE_ISSUE, conn, None, "http://localhost:11434", "mistral",
                    opts={"multiview": False})

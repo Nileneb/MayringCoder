@@ -1,7 +1,7 @@
-"""Unit tests for src.splitter.smart_split()."""
+"""Unit tests for src.analysis.splitter.smart_split()."""
 
 import pytest
-from src.splitter import smart_split
+from src.analysis.splitter import smart_split
 
 
 # ---------------------------------------------------------------------------

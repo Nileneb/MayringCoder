@@ -47,7 +47,7 @@ def get_chroma_collection(
             _chroma_clients[chroma_path] = chromadb.PersistentClient(path=chroma_path)
         _chroma_collections[key] = _chroma_clients[chroma_path].get_or_create_collection(name)
     return _chroma_collections[key]
-from src.memory_schema import Chunk, Source
+from src.memory.schema import Chunk, Source
 
 MEMORY_DB_PATH: Path = CACHE_DIR / "memory.db"
 

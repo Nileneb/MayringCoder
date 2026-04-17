@@ -136,7 +136,7 @@ def export(
 
 def _export_categories(output_path: Path) -> int:
     """Export (text, categories) pairs from memory DB for categorization training."""
-    from src.memory_store import init_memory_db
+    from src.memory.store import init_memory_db
 
     conn = init_memory_db()
     rows = conn.execute(

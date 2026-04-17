@@ -1,4 +1,4 @@
-"""Unit tests for src.report (Issue #14).
+"""Unit tests for src.analysis.report (Issue #14).
 
 All tests run without mocking global config state — generate_report()
 now accepts max_chars_per_file as a parameter so tests can be fully
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.report import generate_report, generate_overview_report
+from src.analysis.report import generate_report, generate_overview_report
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def _minimal_aggregation(**overrides) -> dict:
 
 class TestGenerateReport:
     def test_returns_path_string(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -74,7 +74,7 @@ class TestGenerateReport:
         assert Path(path).exists()
 
     def test_report_file_contains_repo_url(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -88,7 +88,7 @@ class TestGenerateReport:
         assert "https://github.com/test/repo" in content
 
     def test_report_contains_model_name(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -102,7 +102,7 @@ class TestGenerateReport:
         assert "qwen2.5-coder" in content
 
     def test_run_id_appears_in_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -117,7 +117,7 @@ class TestGenerateReport:
         assert "my-run-42" in content
 
     def test_default_run_id_is_default(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -131,7 +131,7 @@ class TestGenerateReport:
         assert "run_id: default" in content
 
     def test_meta_json_written(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         generate_report(
             repo_url="https://github.com/test/repo",
@@ -149,7 +149,7 @@ class TestGenerateReport:
         assert "run_time_s" in meta
 
     def test_findings_appear_in_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         result = _minimal_result(
             potential_smells=[{
@@ -186,7 +186,7 @@ class TestGenerateReport:
 
     def test_truncated_file_uses_max_chars_parameter(self, tmp_path):
         """max_chars_per_file parameter — no global config call needed."""
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         result = _minimal_result(truncated=True)
         path = generate_report(
@@ -202,7 +202,7 @@ class TestGenerateReport:
         assert "5000 Zeichen" in content
 
     def test_truncated_message_absent_when_not_truncated(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         result = _minimal_result(truncated=False)
         path = generate_report(
@@ -218,7 +218,7 @@ class TestGenerateReport:
         assert "Zeichen" not in content
 
     def test_embedding_prefilter_meta_in_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         ep = {
             "model": "nomic-embed-text",
@@ -243,7 +243,7 @@ class TestGenerateReport:
         assert "security bugs" in content
 
     def test_embedding_prefilter_meta_in_json(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         ep = {
             "model": "nomic-embed-text",
@@ -268,7 +268,7 @@ class TestGenerateReport:
         assert meta["embedding_prefilter"]["model"] == "nomic-embed-text"
 
     def test_error_result_rendered(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         result = {"filename": "bad.py", "error": "Timeout after 240s"}
         path = generate_report(
@@ -289,7 +289,7 @@ class TestGenerateReport:
 
 class TestGenerateOverviewReport:
     def test_returns_path_string(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_overview_report(
             repo_url="https://github.com/test/repo",
@@ -302,7 +302,7 @@ class TestGenerateOverviewReport:
         assert Path(path).exists()
 
     def test_file_summary_appears(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         results = [_minimal_result(file_summary="Does important things.")]
         path = generate_overview_report(
@@ -316,7 +316,7 @@ class TestGenerateOverviewReport:
         assert "Does important things." in content
 
     def test_error_result_rendered(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         results = [{"filename": "fail.py", "category": "domain", "error": "Connection refused"}]
         path = generate_overview_report(
@@ -330,7 +330,7 @@ class TestGenerateOverviewReport:
         assert "Connection refused" in content
 
     def test_grouped_by_category(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         results = [
             _minimal_result("a.py", category="api"),
@@ -348,7 +348,7 @@ class TestGenerateOverviewReport:
         assert "## domain" in content
 
     def test_run_id_in_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_overview_report(
             repo_url="https://github.com/test/repo",
@@ -368,7 +368,7 @@ class TestGenerateOverviewReport:
 
 class TestFullScanMetadata:
     def test_full_scan_in_analyze_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -384,7 +384,7 @@ class TestFullScanMetadata:
         assert "Full Scan" in content
 
     def test_full_scan_in_meta_json(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         generate_report(
             repo_url="https://github.com/test/repo",
@@ -400,7 +400,7 @@ class TestFullScanMetadata:
         assert meta["full_scan"] is True
 
     def test_full_scan_absent_by_default(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_report(
             repo_url="https://github.com/test/repo",
@@ -414,7 +414,7 @@ class TestFullScanMetadata:
         assert "full_scan" not in content
 
     def test_full_scan_in_overview_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
         path = generate_overview_report(
             repo_url="https://github.com/test/repo",

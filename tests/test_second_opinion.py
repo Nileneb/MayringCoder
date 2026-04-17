@@ -1,4 +1,4 @@
-"""Unit tests for second_opinion_validate() in src.extractor (Issue #15).
+"""Unit tests for second_opinion_validate() in src.analysis.extractor (Issue #15).
 
 All tests are fully offline — _ollama_generate is monkeypatched so no
 real Ollama instance is needed.
@@ -8,7 +8,7 @@ import json
 import pytest
 from unittest.mock import patch
 
-from src.extractor import second_opinion_validate
+from src.analysis.extractor import second_opinion_validate
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ class TestSecondOpinionValidate:
 
     def test_bestätigt_keeps_finding(self):
         raw = _raw_json("BESTÄTIGT")
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding()], [_file()], "http://localhost:11434", "deepseek-coder:6.7b"
             )
@@ -62,7 +62,7 @@ class TestSecondOpinionValidate:
 
     def test_abgelehnt_drops_finding(self):
         raw = _raw_json("ABGELEHNT", reasoning="This is a framework convention.")
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding()], [_file()], "http://localhost:11434", "deepseek-coder:6.7b"
             )
@@ -72,7 +72,7 @@ class TestSecondOpinionValidate:
 
     def test_präzisiert_keeps_finding_and_adjusts_severity(self):
         raw = _raw_json("PRÄZISIERT", reasoning="True but only info.", adjusted_severity="info")
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding(severity="warning")], [_file()],
                 "http://localhost:11434", "deepseek-coder:6.7b"
@@ -84,7 +84,7 @@ class TestSecondOpinionValidate:
 
     def test_präzisiert_without_adjusted_severity_leaves_severity_unchanged(self):
         raw = _raw_json("PRÄZISIERT", reasoning="Close enough.", adjusted_severity=None)
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding(severity="warning")], [_file()],
                 "http://localhost:11434", "model"
@@ -94,7 +94,7 @@ class TestSecondOpinionValidate:
 
     def test_invalid_adjusted_severity_leaves_severity_unchanged(self):
         raw = _raw_json("PRÄZISIERT", adjusted_severity="extreme")
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding(severity="warning")], [_file()],
                 "http://localhost:11434", "model"
@@ -103,14 +103,14 @@ class TestSecondOpinionValidate:
 
     def test_additional_note_stored_on_finding(self):
         raw = _raw_json("BESTÄTIGT", additional_note="Check also bar.py")
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, _ = second_opinion_validate(
                 [_finding()], [_file()], "http://localhost:11434", "model"
             )
         assert validated[0].get("_second_opinion_note") == "Check also bar.py"
 
     def test_llm_error_keeps_finding_and_increments_errors(self):
-        with patch("src.analyzer._ollama_generate", side_effect=Exception("timeout")):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=Exception("timeout")):
             validated, stats = second_opinion_validate(
                 [_finding()], [_file()], "http://localhost:11434", "model"
             )
@@ -119,7 +119,7 @@ class TestSecondOpinionValidate:
         assert validated[0]["_second_opinion_verdict"] == "ERROR"
 
     def test_malformed_json_defaults_to_bestätigt(self):
-        with patch("src.analyzer._ollama_generate", return_value="not json at all"):
+        with patch("src.analysis.analyzer._ollama_generate", return_value="not json at all"):
             validated, stats = second_opinion_validate(
                 [_finding()], [_file()], "http://localhost:11434", "model"
             )
@@ -134,7 +134,7 @@ class TestSecondOpinionValidate:
         ]
         findings = [_finding("a.py"), _finding("b.py"), _finding("c.py")]
         files = [_file("a.py"), _file("b.py"), _file("c.py")]
-        with patch("src.analyzer._ollama_generate", side_effect=responses):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=responses):
             validated, stats = second_opinion_validate(
                 findings, files, "http://localhost:11434", "model"
             )
@@ -142,7 +142,7 @@ class TestSecondOpinionValidate:
         assert stats == {"confirmed": 1, "rejected": 1, "refined": 1, "errors": 0}
 
     def test_empty_findings_returns_empty(self):
-        with patch("src.analyzer._ollama_generate") as mock:
+        with patch("src.analysis.analyzer._ollama_generate") as mock:
             validated, stats = second_opinion_validate(
                 [], [], "http://localhost:11434", "model"
             )
@@ -152,7 +152,7 @@ class TestSecondOpinionValidate:
 
     def test_json_in_fenced_code_block_is_parsed(self):
         raw = f"```json\n{_raw_json('ABGELEHNT')}\n```"
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding()], [_file()], "http://localhost:11434", "model"
             )
@@ -161,7 +161,7 @@ class TestSecondOpinionValidate:
     def test_file_not_in_map_still_processes_finding(self):
         """Finding references a file not in the files list → code_snippet is empty."""
         raw = _raw_json("BESTÄTIGT")
-        with patch("src.analyzer._ollama_generate", return_value=raw):
+        with patch("src.analysis.analyzer._ollama_generate", return_value=raw):
             validated, stats = second_opinion_validate(
                 [_finding("missing.py")], [], "http://localhost:11434", "model"
             )
@@ -174,14 +174,14 @@ class TestSecondOpinionValidate:
 
 class TestAggregatorSecondOpinionStats:
     def test_second_opinion_stats_in_aggregation(self):
-        from src.aggregator import aggregate_findings
+        from src.analysis.aggregator import aggregate_findings
         results = [{"filename": "a.py", "potential_smells": [], "_parse_error": False}]
         so_stats = {"confirmed": 3, "rejected": 1, "refined": 1, "errors": 0}
         agg = aggregate_findings(results, second_opinion_stats=so_stats)
         assert agg["second_opinion_stats"] == so_stats
 
     def test_second_opinion_stats_defaults_to_empty_dict(self):
-        from src.aggregator import aggregate_findings
+        from src.analysis.aggregator import aggregate_findings
         agg = aggregate_findings([])
         assert agg["second_opinion_stats"] == {}
 
@@ -192,9 +192,9 @@ class TestAggregatorSecondOpinionStats:
 
 class TestReportSecondOpinionStats:
     def test_second_opinion_appears_in_report(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
-        from src.report import generate_report
+        from src.analysis.report import generate_report
 
         so_stats = {"confirmed": 2, "rejected": 1, "refined": 1, "errors": 0}
         agg = {
@@ -226,9 +226,9 @@ class TestReportSecondOpinionStats:
         assert "1 PRÄZISIERT" in content
 
     def test_second_opinion_absent_when_stats_empty(self, tmp_path):
-        from src import report as mod
+        from src.analysis import report as mod
         mod.REPORTS_DIR = tmp_path
-        from src.report import generate_report
+        from src.analysis.report import generate_report
 
         agg = {
             "total_findings": 0,
@@ -263,29 +263,29 @@ class TestReportSecondOpinionStats:
 class TestBuildSecondOpinionQuestion:
 
     def test_redundanz_returns_targeted_question(self):
-        from src.extractor import _build_second_opinion_question
+        from src.analysis.extractor import _build_second_opinion_question
         q = _build_second_opinion_question({"type": "redundanz", "evidence_excerpt": "getUserData()"})
         assert "getUserData()" in q
         assert "aehnlicher" in q.lower() or "gleicher" in q.lower()
 
     def test_sicherheit_mentions_sanitization(self):
-        from src.extractor import _build_second_opinion_question
+        from src.analysis.extractor import _build_second_opinion_question
         q = _build_second_opinion_question({"type": "sicherheit", "evidence_excerpt": "$_POST['name']"})
         assert "unsanitisiert" in q.lower() or "validiert" in q.lower()
 
     def test_zombie_code_mentions_reference(self):
-        from src.extractor import _build_second_opinion_question
+        from src.analysis.extractor import _build_second_opinion_question
         q = _build_second_opinion_question({"type": "zombie_code", "evidence_excerpt": "oldMethod()"})
         assert "aufgerufen" in q.lower() or "referenziert" in q.lower()
 
     def test_unknown_type_uses_fallback(self):
-        from src.extractor import _build_second_opinion_question
+        from src.analysis.extractor import _build_second_opinion_question
         q = _build_second_opinion_question({"type": "neuartig", "evidence_excerpt": "some code"})
         assert "some code" in q
         assert len(q) > 20
 
     def test_empty_evidence_uses_fix_suggestion(self):
-        from src.extractor import _build_second_opinion_question
+        from src.analysis.extractor import _build_second_opinion_question
         q = _build_second_opinion_question({
             "type": "redundanz",
             "evidence_excerpt": "",
@@ -294,13 +294,13 @@ class TestBuildSecondOpinionQuestion:
         assert "Zusammenfuehren" in q or "siehe Code" in q
 
     def test_completely_empty_finding_still_returns_question(self):
-        from src.extractor import _build_second_opinion_question
+        from src.analysis.extractor import _build_second_opinion_question
         q = _build_second_opinion_question({})
         assert isinstance(q, str)
         assert len(q) > 10
 
     def test_all_known_types_produce_questions(self):
-        from src.extractor import _build_second_opinion_question, _QUESTION_TEMPLATES
+        from src.analysis.extractor import _build_second_opinion_question, _QUESTION_TEMPLATES
         for ftype in _QUESTION_TEMPLATES:
             q = _build_second_opinion_question({"type": ftype, "evidence_excerpt": "test"})
             assert len(q) > 20, f"Typ '{ftype}' liefert zu kurze Frage"
@@ -314,7 +314,7 @@ class TestBuildSecondOpinionQuestion:
             return _raw_json("BESTÄTIGT")
 
         findings = [_finding(type="zombie_code", evidence_excerpt="deadFunc()")]
-        with patch("src.analyzer._ollama_generate", side_effect=mock_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=mock_generate):
             second_opinion_validate(findings, [_file()], "http://localhost:11434", "model")
 
         assert len(captured_prompts) == 1

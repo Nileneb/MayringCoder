@@ -1,7 +1,7 @@
-"""Unit tests for src.categorizer."""
+"""Unit tests for src.analysis.categorizer."""
 
 import pytest
-from src.categorizer import (
+from src.analysis.categorizer import (
     _matches_patterns,
     filter_excluded_files,
     categorize_files,

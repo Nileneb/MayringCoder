@@ -83,29 +83,29 @@ class TestLoadTurbulenceCache:
             yield {"cache_dir": cache_dir, "repo_url": repo_url, "report": report}
 
     def test_returns_hot_zone_map_and_tier_map(self, turb_cache):
-        from checker import _load_turbulence_cache
+        from src.pipeline import load_turbulence_cache
 
-        with patch("src.config.CACHE_DIR", turb_cache["cache_dir"]):
-            hz_map, tier_map = _load_turbulence_cache(turb_cache["repo_url"])
+        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+            hz_map, tier_map = load_turbulence_cache(turb_cache["repo_url"])
 
         assert hz_map is not None
         assert tier_map is not None
 
     def test_tier_map_has_correct_tiers(self, turb_cache):
-        from checker import _load_turbulence_cache
+        from src.pipeline import load_turbulence_cache
 
-        with patch("src.config.CACHE_DIR", turb_cache["cache_dir"]):
-            _, tier_map = _load_turbulence_cache(turb_cache["repo_url"])
+        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+            _, tier_map = load_turbulence_cache(turb_cache["repo_url"])
 
         assert tier_map["app/Services/PaymentService.php"] == "deep"
         assert tier_map["app/Http/Controllers/UserController.php"] == "light"
         assert tier_map["app/Models/User.php"] == "stable"
 
     def test_hot_zone_context_includes_line_info(self, turb_cache):
-        from checker import _load_turbulence_cache
+        from src.pipeline import load_turbulence_cache
 
-        with patch("src.config.CACHE_DIR", turb_cache["cache_dir"]):
-            hz_map, _ = _load_turbulence_cache(turb_cache["repo_url"])
+        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+            hz_map, _ = load_turbulence_cache(turb_cache["repo_url"])
 
         ctx = hz_map.get("app/Services/PaymentService.php", "")
         assert "45" in ctx
@@ -113,29 +113,29 @@ class TestLoadTurbulenceCache:
         assert "Hot-Zone" in ctx
 
     def test_hot_zone_context_includes_affected_functions(self, turb_cache):
-        from checker import _load_turbulence_cache
+        from src.pipeline import load_turbulence_cache
 
-        with patch("src.config.CACHE_DIR", turb_cache["cache_dir"]):
-            hz_map, _ = _load_turbulence_cache(turb_cache["repo_url"])
+        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+            hz_map, _ = load_turbulence_cache(turb_cache["repo_url"])
 
         ctx = hz_map.get("app/Services/PaymentService.php", "")
         assert "processPayment" in ctx
         assert "Stripe::charge" in ctx
 
     def test_files_without_hot_zones_have_no_context(self, turb_cache):
-        from checker import _load_turbulence_cache
+        from src.pipeline import load_turbulence_cache
 
-        with patch("src.config.CACHE_DIR", turb_cache["cache_dir"]):
-            hz_map, _ = _load_turbulence_cache(turb_cache["repo_url"])
+        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+            hz_map, _ = load_turbulence_cache(turb_cache["repo_url"])
 
         assert "app/Http/Controllers/UserController.php" not in hz_map or \
                not hz_map.get("app/Http/Controllers/UserController.php")
 
     def test_nonexistent_cache_returns_none(self, tmp_path):
-        from checker import _load_turbulence_cache
+        from src.pipeline import load_turbulence_cache
 
-        with patch("src.config.CACHE_DIR", tmp_path / "nonexistent"):
-            result = _load_turbulence_cache("https://example.com/no/repo.git")
+        with patch("src.pipeline.CACHE_DIR", tmp_path / "nonexistent"):
+            result = load_turbulence_cache("https://example.com/no/repo.git")
         assert result == (None, None)
 
 
@@ -146,7 +146,7 @@ class TestLoadTurbulenceCache:
 class TestAnalyzeFileHotZoneContext:
     def test_hot_zone_context_injected_into_prompt(self):
         """Verify that hot_zone_context appears in the prompt sent to LLM."""
-        from src.analyzer import analyze_file
+        from src.analysis.analyzer import analyze_file
 
         captured_prompt = {}
 
@@ -158,7 +158,7 @@ class TestAnalyzeFileHotZoneContext:
         template = "Analyze this file."
         hz_context = "ACHTUNG: Hot-Zone bei Zeile 10-20 (Sicherheit × Daten)"
 
-        with patch("src.analyzer._ollama_generate", side_effect=mock_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=mock_generate):
             analyze_file(file, template, "http://localhost", "test-model",
                          hot_zone_context=hz_context)
 
@@ -167,7 +167,7 @@ class TestAnalyzeFileHotZoneContext:
 
     def test_no_hot_zone_context_by_default(self):
         """When hot_zone_context is None, prompt should not contain Hot-Zone."""
-        from src.analyzer import analyze_file
+        from src.analysis.analyzer import analyze_file
 
         captured_prompt = {}
 
@@ -177,7 +177,7 @@ class TestAnalyzeFileHotZoneContext:
 
         file = {"filename": "test.php", "content": "<?php echo 1;", "category": "domain"}
 
-        with patch("src.analyzer._ollama_generate", side_effect=mock_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=mock_generate):
             analyze_file(file, "Analyze.", "http://localhost", "test-model")
 
         assert "Hot-Zone" not in captured_prompt["value"]
@@ -190,7 +190,7 @@ class TestAnalyzeFileHotZoneContext:
 class TestAnalyzeFilesHotZoneMap:
     def test_passes_hot_zone_context_per_file(self, tmp_path):
         """Verify that hot_zone_context_map values are passed to each file's analysis."""
-        from src.analyzer import analyze_files
+        from src.analysis.analyzer import analyze_files
 
         captured_contexts = []
 
@@ -209,7 +209,7 @@ class TestAnalyzeFilesHotZoneMap:
             "a.php": "ACHTUNG: Hot-Zone A",
         }
 
-        with patch("src.analyzer._ollama_generate", side_effect=mock_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=mock_generate):
             results, budget_hit = analyze_files(
                 files, ["a.php", "b.php"], prompt_file, "http://localhost", "m",
                 hot_zone_context_map=hz_map,
@@ -234,9 +234,9 @@ class TestTimeBudget:
                 for i in range(n)]
 
     def test_no_budget_returns_all_files(self, tmp_path):
-        from src.analyzer import analyze_files
+        from src.analysis.analyzer import analyze_files
         files = self._files(3)
-        with patch("src.analyzer._ollama_generate",
+        with patch("src.analysis.analyzer._ollama_generate",
                    return_value='{"potential_smells": []}'):
             results, hit = analyze_files(
                 files, [f["filename"] for f in files],
@@ -247,9 +247,9 @@ class TestTimeBudget:
 
     def test_expired_budget_stops_after_first_file(self, tmp_path):
         """Budget of 0 seconds expires immediately — only first file is processed."""
-        from src.analyzer import analyze_files
+        from src.analysis.analyzer import analyze_files
         files = self._files(5)
-        with patch("src.analyzer._ollama_generate",
+        with patch("src.analysis.analyzer._ollama_generate",
                    return_value='{"potential_smells": []}'):
             results, hit = analyze_files(
                 files, [f["filename"] for f in files],
@@ -261,9 +261,9 @@ class TestTimeBudget:
 
     def test_sufficient_budget_processes_all(self, tmp_path):
         """Large budget → all files processed, budget_hit=False."""
-        from src.analyzer import analyze_files
+        from src.analysis.analyzer import analyze_files
         files = self._files(3)
-        with patch("src.analyzer._ollama_generate",
+        with patch("src.analysis.analyzer._ollama_generate",
                    return_value='{"potential_smells": []}'):
             results, hit = analyze_files(
                 files, [f["filename"] for f in files],
@@ -275,9 +275,9 @@ class TestTimeBudget:
 
     def test_overview_files_budget(self, tmp_path):
         """overview_files also respects time_budget."""
-        from src.analyzer import overview_files
+        from src.analysis.analyzer import overview_files
         files = self._files(5)
-        with patch("src.analyzer._ollama_generate",
+        with patch("src.analysis.analyzer._ollama_generate",
                    return_value='{"file_summary": "ok"}'):
             results, hit = overview_files(
                 files, [f["filename"] for f in files],

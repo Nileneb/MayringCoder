@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pi_agent import analyze_with_memory, run_task_with_memory, _execute_search_memory
+from src.agents.pi import analyze_with_memory, run_task_with_memory, _execute_search_memory
 
 
 class TestAnalyzeWithMemory:
@@ -42,8 +42,8 @@ class TestAnalyzeWithMemory:
             },
         )
 
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_direct_json_response(self, mock_post, mock_chroma, mock_db):
         """Model antwortet direkt ohne Tool-Call."""
@@ -62,9 +62,9 @@ class TestAnalyzeWithMemory:
         assert result["potential_smells"] == []
         assert result["_pi_tool_calls"] == 0
 
-    @patch("src.pi_agent._execute_search_memory")
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi._execute_search_memory")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_tool_call_then_final(self, mock_post, mock_chroma, mock_db, mock_search):
         """Model ruft search_memory auf, dann final response."""
@@ -88,9 +88,9 @@ class TestAnalyzeWithMemory:
         assert result["_pi_tool_calls"] == 1
         assert result["potential_smells"] == []
 
-    @patch("src.pi_agent._execute_search_memory")
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi._execute_search_memory")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_max_tool_calls_limit(self, mock_post, mock_chroma, mock_db, mock_search):
         """Nach max_tool_calls wird kein weiteres Tool aufgerufen."""
@@ -116,8 +116,8 @@ class TestAnalyzeWithMemory:
         assert mock_search.call_count == 2
         assert result["_pi_tool_calls"] == 2
 
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_parse_error_fallback(self, mock_post, mock_chroma, mock_db):
         """Kein valides JSON → _parse_error=True, leere findings."""
@@ -134,8 +134,8 @@ class TestAnalyzeWithMemory:
         assert result["_parse_error"] is True
         assert result["potential_smells"] == []
 
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_http_error_returns_error_dict(self, mock_post, mock_chroma, mock_db):
         """HTTP-Fehler → error-Dict zurückgeben, kein Crash."""
@@ -172,8 +172,8 @@ class TestRunTaskWithMemory:
             },
         )
 
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_returns_plain_text(self, mock_post, mock_chroma, mock_db):
         """run_task_with_memory gibt Freitext zurück (kein JSON-Zwang)."""
@@ -190,9 +190,9 @@ class TestRunTaskWithMemory:
         assert isinstance(result, str)
         assert "PICO" in result or "Yoga" in result
 
-    @patch("src.pi_agent._execute_search_memory")
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi._execute_search_memory")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_uses_memory_tool(self, mock_post, mock_chroma, mock_db, mock_search):
         """Pi ruft search_memory auf und injiziert Ergebnis."""
@@ -214,8 +214,8 @@ class TestRunTaskWithMemory:
         assert mock_search.called
         assert isinstance(result, str)
 
-    @patch("src.pi_agent.init_memory_db")
-    @patch("src.pi_agent.get_or_create_chroma_collection")
+    @patch("src.agents.pi.init_memory_db")
+    @patch("src.agents.pi.get_or_create_chroma_collection")
     @patch("httpx.post")
     def test_http_error_returns_error_string(self, mock_post, mock_chroma, mock_db):
         """HTTP-Fehler → Fehler-String, kein Crash."""
@@ -239,8 +239,8 @@ class TestExecuteSearchMemory:
         mock_conn = MagicMock()
         mock_chroma = MagicMock()
 
-        with patch("src.pi_agent.search") as mock_search, \
-             patch("src.pi_agent.compress_for_prompt") as mock_compress:
+        with patch("src.agents.pi.search") as mock_search, \
+             patch("src.agents.pi.compress_for_prompt") as mock_compress:
             mock_search.return_value = []
             mock_compress.return_value = ""
 

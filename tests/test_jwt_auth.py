@@ -63,11 +63,11 @@ class TestJWTMiddleware:
         monkeypatch.setenv("MCP_AUTH_ENABLED", "true")
         monkeypatch.setenv("MCP_AUTH_SECRET", SECRET)
         monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_ENABLED", True)
         monkeypatch.setattr(mod, "_AUTH_SECRET", SECRET)
         monkeypatch.setattr(mod, "_AUTH_TOKEN", "")
-        from src.mcp_server import _JWTAuthMiddleware
+        from src.api.mcp import _JWTAuthMiddleware
         return _JWTAuthMiddleware(AsyncMock())
 
     def test_valid_token_passes_through(self, monkeypatch):
@@ -153,11 +153,11 @@ class TestJWTMiddlewareDisabled:
     """When MCP_AUTH_ENABLED=false, all requests pass and workspace_id='default'."""
 
     def _get_middleware(self, monkeypatch):
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_ENABLED", False)
         monkeypatch.setattr(mod, "_AUTH_SECRET", "")
         monkeypatch.setattr(mod, "_AUTH_TOKEN", "")
-        from src.mcp_server import _JWTAuthMiddleware
+        from src.api.mcp import _JWTAuthMiddleware
         return _JWTAuthMiddleware(AsyncMock())
 
     def test_disabled_auth_passes_all_requests(self, monkeypatch):

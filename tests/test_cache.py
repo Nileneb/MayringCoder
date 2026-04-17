@@ -1,11 +1,11 @@
-"""Unit tests for src.cache."""
+"""Unit tests for src.analysis.cache."""
 
 import pytest
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
-from src.cache import (
+from src.analysis.cache import (
     _repo_slug,
     reset_repo,
     init_db,
@@ -55,16 +55,16 @@ class TestRepoSlug:
 
 class TestInitDb:
     def test_creates_cache_dir(self, tmp_path):
-        with patch("src.cache.CACHE_DIR", tmp_path / "cache"):
-            with patch("src.cache.CACHE_DIR", tmp_path / "cache"):
-                from src import cache as cache_module
+        with patch("src.analysis.cache.CACHE_DIR", tmp_path / "cache"):
+            with patch("src.analysis.cache.CACHE_DIR", tmp_path / "cache"):
+                from src.analysis import cache as cache_module
                 cache_module.CACHE_DIR = tmp_path / "cache"
                 conn = cache_module.init_db("https://github.com/test/repo.git")
                 assert (tmp_path / "cache").exists()
                 conn.close()
 
     def test_creates_snapshots_table(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path / "cache"
         conn = cache_module.init_db("https://github.com/test/repo.git")
         rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -75,7 +75,7 @@ class TestInitDb:
 
     def test_runs_migrations_adds_analyzed_at(self, tmp_path):
         """When an old DB without analyzed_at is opened, it should be added."""
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path / "cache"
 
         # Create a bare DB without analyzed_at column
@@ -115,7 +115,7 @@ class TestInitDb:
 
 class TestSnapshots:
     def test_create_snapshot_returns_id(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         conn = cache_module.init_db("https://github.com/test/repo.git")
         snap_id = cache_module._create_snapshot(conn, "https://github.com/test/repo.git")
@@ -123,7 +123,7 @@ class TestSnapshots:
         conn.close()
 
     def test_last_snapshot_returns_most_recent(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         conn = cache_module.init_db("https://github.com/test/repo.git")
         id1 = cache_module._create_snapshot(conn, "https://github.com/test/repo.git")
@@ -133,7 +133,7 @@ class TestSnapshots:
         conn.close()
 
     def test_last_snapshot_returns_none_for_new_repo(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         conn = cache_module.init_db("https://github.com/test/new-repo.git")
         assert cache_module._last_snapshot_id(conn, "https://github.com/test/new-repo.git") is None
@@ -146,7 +146,7 @@ class TestSnapshots:
 
 class TestInsertFileVersions:
     def _conn(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         conn = cache_module.init_db("https://github.com/test/repo.git")
         snap_id = cache_module._create_snapshot(conn, "https://github.com/test/repo.git")
@@ -194,7 +194,7 @@ class TestInsertFileVersions:
 
 class TestMarkFilesAnalyzed:
     def test_stamps_analyzed_at(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         conn = cache_module.init_db("https://github.com/test/repo.git")
         snap_id = cache_module._create_snapshot(conn, "https://github.com/test/repo.git")
@@ -275,7 +275,7 @@ def make_filespec(name: str, hash_val: str) -> dict:
 
 class TestFindChangedFiles:
     def _conn(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         return cache_module.init_db("https://github.com/test/repo.git")
 
@@ -388,7 +388,7 @@ class TestFindChangedFiles:
 
 class TestResetRepo:
     def test_reset_without_run_key_deletes_db(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         cache_module.init_db("https://github.com/test/repo.git").close()
 
@@ -397,13 +397,13 @@ class TestResetRepo:
         assert not (tmp_path / "test-repo.db").exists()
 
     def test_reset_nonexistent_returns_none(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         result = cache_module.reset_repo("https://github.com/test/nonexistent.git")
         assert result is None
 
     def test_reset_with_run_key_clears_analyzed_at(self, tmp_path):
-        from src import cache as cache_module
+        from src.analysis import cache as cache_module
         cache_module.CACHE_DIR = tmp_path
         conn = cache_module.init_db("https://github.com/test/repo.git")
         snap_id = cache_module._create_snapshot(conn, "https://github.com/test/repo.git")

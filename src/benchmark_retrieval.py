@@ -151,7 +151,7 @@ def run_benchmark(
     Returns:
         {mrr, recall_at_1, recall_at_k, category_precision_at_k, uncategorized_rate, k, results}
     """
-    from src.memory_retrieval import search
+    from src.memory.retrieval import search
 
     all_ranked: list[list[str]] = []
     all_relevant: list[list[str]] = []
@@ -283,8 +283,8 @@ def main() -> None:
     from dotenv import load_dotenv
     load_dotenv()
 
-    from src.memory_store import init_memory_db
-    from src.memory_ingest import get_or_create_chroma_collection
+    from src.memory.store import init_memory_db
+    from src.memory.ingest import get_or_create_chroma_collection
 
     print(f"Lade Queries aus: {args.queries}")
     queries = load_queries(args.queries)

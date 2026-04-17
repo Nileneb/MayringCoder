@@ -1,9 +1,8 @@
-"""Tests for --populate-memory mode in checker.py."""
+"""Tests for --populate-memory mode (run_populate_memory in src/pipeline.py)."""
 from unittest.mock import MagicMock, patch
 import pytest
 
-# Import the private function directly
-from checker import _run_populate_memory
+from src.pipeline import run_populate_memory
 
 
 def _make_args(memory_categorize=False, codebook=None):
@@ -21,17 +20,17 @@ def test_populate_memory_calls_ingest_per_file(tmp_path):
     ]
     args = _make_args()
     with (
-        patch("checker.fetch_repo", return_value=("slug", "commit", "content")),
-        patch("checker.split_into_files", return_value=files),
-        patch("checker.filter_excluded_files", return_value=(files, [])),
-        patch("checker.load_codebook", return_value={}),
-        patch("checker.load_exclude_patterns", return_value=[]),
-        patch("checker.load_mayringignore", return_value=[]),
-        patch("src.memory_store.init_memory_db", return_value=MagicMock()),
-        patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-        patch("src.memory_ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
+        patch("src.pipeline.fetch_repo", return_value=("slug", "commit", "content")),
+        patch("src.pipeline.split_into_files", return_value=files),
+        patch("src.pipeline.filter_excluded_files", return_value=(files, [])),
+        patch("src.pipeline.load_codebook", return_value={}),
+        patch("src.pipeline.load_exclude_patterns", return_value=[]),
+        patch("src.pipeline.load_mayringignore", return_value=[]),
+        patch("src.memory.store.init_memory_db", return_value=MagicMock()),
+        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+        patch("src.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
     ):
-        _run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
+        run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
         assert mock_ingest.call_count == 2
 
 
@@ -46,17 +45,17 @@ def test_populate_memory_source_metadata():
         return {"chunk_ids": ["c1"], "deduped": 0}
 
     with (
-        patch("checker.fetch_repo", return_value=("slug", "commit", "content")),
-        patch("checker.split_into_files", return_value=files),
-        patch("checker.filter_excluded_files", return_value=(files, [])),
-        patch("checker.load_codebook", return_value={}),
-        patch("checker.load_exclude_patterns", return_value=[]),
-        patch("checker.load_mayringignore", return_value=[]),
-        patch("src.memory_store.init_memory_db", return_value=MagicMock()),
-        patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-        patch("src.memory_ingest.ingest", side_effect=capture_ingest),
+        patch("src.pipeline.fetch_repo", return_value=("slug", "commit", "content")),
+        patch("src.pipeline.split_into_files", return_value=files),
+        patch("src.pipeline.filter_excluded_files", return_value=(files, [])),
+        patch("src.pipeline.load_codebook", return_value={}),
+        patch("src.pipeline.load_exclude_patterns", return_value=[]),
+        patch("src.pipeline.load_mayringignore", return_value=[]),
+        patch("src.memory.store.init_memory_db", return_value=MagicMock()),
+        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+        patch("src.memory.ingest.ingest", side_effect=capture_ingest),
     ):
-        _run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
+        run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
 
     assert len(captured_sources) == 1
     assert captured_sources[0].source_type == "repo_file"
@@ -81,16 +80,16 @@ def test_populate_memory_error_resilience():
         return {"chunk_ids": ["c1"], "deduped": 0}
 
     with (
-        patch("checker.fetch_repo", return_value=("slug", "commit", "content")),
-        patch("checker.split_into_files", return_value=files),
-        patch("checker.filter_excluded_files", return_value=(files, [])),
-        patch("checker.load_codebook", return_value={}),
-        patch("checker.load_exclude_patterns", return_value=[]),
-        patch("checker.load_mayringignore", return_value=[]),
-        patch("src.memory_store.init_memory_db", return_value=MagicMock()),
-        patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-        patch("src.memory_ingest.ingest", side_effect=flaky_ingest),
+        patch("src.pipeline.fetch_repo", return_value=("slug", "commit", "content")),
+        patch("src.pipeline.split_into_files", return_value=files),
+        patch("src.pipeline.filter_excluded_files", return_value=(files, [])),
+        patch("src.pipeline.load_codebook", return_value={}),
+        patch("src.pipeline.load_exclude_patterns", return_value=[]),
+        patch("src.pipeline.load_mayringignore", return_value=[]),
+        patch("src.memory.store.init_memory_db", return_value=MagicMock()),
+        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+        patch("src.memory.ingest.ingest", side_effect=flaky_ingest),
     ):
         # Must not raise
-        _run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
+        run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
     assert call_count == 2  # Both files attempted

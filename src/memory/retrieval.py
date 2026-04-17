@@ -16,8 +16,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from src.memory_schema import Chunk, RetrievalRecord
-from src.memory_store import get_chunk, kv_get
+from src.memory.schema import Chunk, RetrievalRecord
+from src.memory.store import get_chunk, kv_get
 
 # ---------------------------------------------------------------------------
 # Query-Cache (in-process, invalidated on any memory mutation)
@@ -38,7 +38,7 @@ def invalidate_query_cache() -> None:
     _QUERY_CACHE.clear()
 
 try:
-    from src.context import _embed_texts
+    from src.analysis.context import _embed_texts
     _HAS_EMBED = True
 except ImportError:
     _HAS_EMBED = False
@@ -371,7 +371,7 @@ def search(
 
     # Enrich with cross-source refs (same text found in other sources)
     try:
-        from src.memory_store import get_source_refs
+        from src.memory.store import get_source_refs
         for r in ranked:
             all_refs = get_source_refs(conn, r.chunk_id)
             r.also_in_sources = [s for s in all_refs if s != r.source_id]

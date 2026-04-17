@@ -275,7 +275,7 @@ def analyze_file(
         # Stage 2: Try to extract structured findings from unstructured output.
         # Fast path — pure regex, no network call.
         try:
-            from src.extractor import parse_freetext_findings, parse_llm_extraction, EXTRACT_PROMPT
+            from src.analysis.extractor import parse_freetext_findings, parse_llm_extraction, EXTRACT_PROMPT
 
             extracted = parse_freetext_findings(raw_response, filename)
 
@@ -400,7 +400,7 @@ def analyze_files(
             ctx = project_context
         hz_ctx = hot_zone_context_map.get(fn) if hot_zone_context_map else None
         if use_pi:
-            from src.pi_agent import analyze_with_memory
+            from src.agents.pi import analyze_with_memory
             result = analyze_with_memory(file, ollama_url, model, pi_repo_slug)
         else:
             result = analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx)
@@ -475,7 +475,7 @@ def overview_file(
 
     # Enrich with signature extraction for Phase 3 (redundancy check).
     try:
-        from src.extractor import extract_python_signatures
+        from src.analysis.extractor import extract_python_signatures
 
         if filename.endswith(".py"):
             result["_signatures"] = extract_python_signatures(content)

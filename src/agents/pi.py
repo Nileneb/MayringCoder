@@ -34,7 +34,7 @@ _TOOLS = [
     }
 ]
 
-_SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "pi_system.md"
+_SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "pi_system.md"
 
 _TASK_SYSTEM_PROMPT = """\
 Du bist Pi, ein intelligenter Assistent mit Zugriff auf ein Projekt-Memory-System.
@@ -53,18 +53,18 @@ def _load_system_prompt() -> str:
 
 
 try:
-    from src.memory_retrieval import compress_for_prompt, search  # type: ignore
+    from src.memory.retrieval import compress_for_prompt, search  # type: ignore
 except ImportError:
     search = None  # type: ignore
     compress_for_prompt = None  # type: ignore
 
 try:
-    from src.memory_store import init_memory_db  # type: ignore
+    from src.memory.store import init_memory_db  # type: ignore
 except ImportError:
     init_memory_db = None  # type: ignore
 
 try:
-    from src.memory_ingest import get_or_create_chroma_collection  # type: ignore
+    from src.memory.ingest import get_or_create_chroma_collection  # type: ignore
 except ImportError:
     get_or_create_chroma_collection = None  # type: ignore
 
@@ -81,7 +81,7 @@ def _execute_search_memory(
     _search = search
     _compress = compress_for_prompt
     if _search is None or _compress is None:
-        from src.memory_retrieval import compress_for_prompt as _compress, search as _search  # type: ignore
+        from src.memory.retrieval import compress_for_prompt as _compress, search as _search  # type: ignore
 
     opts: dict = {"top_k": top_k, "include_text": True}
     if repo_slug:
@@ -221,14 +221,14 @@ def analyze_with_memory(
     Returns:
         Analysis result dict with "file_summary" and "potential_smells"
     """
-    from src.analyzer import _parse_llm_json
+    from src.analysis.analyzer import _parse_llm_json
 
     _init_db = init_memory_db
     if _init_db is None:
-        from src.memory_store import init_memory_db as _init_db  # type: ignore
+        from src.memory.store import init_memory_db as _init_db  # type: ignore
     _get_chroma = get_or_create_chroma_collection
     if _get_chroma is None:
-        from src.memory_ingest import get_or_create_chroma_collection as _get_chroma  # type: ignore
+        from src.memory.ingest import get_or_create_chroma_collection as _get_chroma  # type: ignore
 
     filename = file.get("filename", "?")
     content = file.get("content", "")
@@ -322,10 +322,10 @@ def run_task_with_memory(
     """
     _init_db = init_memory_db
     if _init_db is None:
-        from src.memory_store import init_memory_db as _init_db  # type: ignore
+        from src.memory.store import init_memory_db as _init_db  # type: ignore
     _get_chroma = get_or_create_chroma_collection
     if _get_chroma is None:
-        from src.memory_ingest import get_or_create_chroma_collection as _get_chroma  # type: ignore
+        from src.memory.ingest import get_or_create_chroma_collection as _get_chroma  # type: ignore
 
     conn = _init_db()
     chroma = _get_chroma()

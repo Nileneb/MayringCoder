@@ -45,9 +45,9 @@ class TestXAuthMiddlewareNoToken:
     """When MCP_AUTH_TOKEN is empty, all requests pass through without auth."""
 
     def test_http_request_passes_without_auth(self, monkeypatch):
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_TOKEN", "")
-        from src.mcp_server import _XAuthMiddleware
+        from src.api.mcp import _XAuthMiddleware
 
         async def _run():
             mw = _XAuthMiddleware(AsyncMock())
@@ -58,9 +58,9 @@ class TestXAuthMiddlewareNoToken:
         anyio.run(_run)
 
     def test_non_http_scope_passes_without_auth(self, monkeypatch):
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_TOKEN", "")
-        from src.mcp_server import _XAuthMiddleware
+        from src.api.mcp import _XAuthMiddleware
 
         async def _run():
             mw = _XAuthMiddleware(AsyncMock())
@@ -81,9 +81,9 @@ class TestXAuthMiddlewareWithToken:
     TOKEN = "super-secret-42"
 
     def test_correct_token_passes(self, monkeypatch):
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_TOKEN", self.TOKEN)
-        from src.mcp_server import _XAuthMiddleware
+        from src.api.mcp import _XAuthMiddleware
 
         async def _run():
             mw = _XAuthMiddleware(AsyncMock())
@@ -94,9 +94,9 @@ class TestXAuthMiddlewareWithToken:
         anyio.run(_run)
 
     def test_wrong_token_returns_401(self, monkeypatch):
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_TOKEN", self.TOKEN)
-        from src.mcp_server import _XAuthMiddleware
+        from src.api.mcp import _XAuthMiddleware
 
         async def _run():
             mw = _XAuthMiddleware(AsyncMock())
@@ -111,9 +111,9 @@ class TestXAuthMiddlewareWithToken:
         anyio.run(_run)
 
     def test_missing_token_returns_401(self, monkeypatch):
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_TOKEN", self.TOKEN)
-        from src.mcp_server import _XAuthMiddleware
+        from src.api.mcp import _XAuthMiddleware
 
         async def _run():
             mw = _XAuthMiddleware(AsyncMock())
@@ -125,9 +125,9 @@ class TestXAuthMiddlewareWithToken:
 
     def test_lifespan_scope_skips_auth(self, monkeypatch):
         """ASGI lifespan events must never be rejected by auth."""
-        import src.mcp_server as mod
+        import src.api.mcp as mod
         monkeypatch.setattr(mod, "_AUTH_TOKEN", self.TOKEN)
-        from src.mcp_server import _XAuthMiddleware
+        from src.api.mcp import _XAuthMiddleware
 
         async def _run():
             mw = _XAuthMiddleware(AsyncMock())

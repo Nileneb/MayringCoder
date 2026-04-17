@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import json
 import pytest
 
-from src.memory_ingest import fetch_issues, issues_to_sources
+from src.memory.ingest import fetch_issues, issues_to_sources
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ class TestRunIngestIssues:
         return args
 
     def test_ingest_called_per_issue(self):
-        from checker import _run_ingest_issues
+        from src.pipeline import run_ingest_issues
 
         mock_issues = [
             {"number": 1, "title": "T1", "body": "B1", "state": "open",
@@ -167,18 +167,18 @@ class TestRunIngestIssues:
         ]
 
         with (
-            patch("src.memory_ingest.subprocess.run",
+            patch("src.memory.ingest.subprocess.run",
                   return_value=MagicMock(returncode=0, stdout=json.dumps(mock_issues))),
-            patch("src.memory_store.init_memory_db", return_value=MagicMock()),
-            patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-            patch("src.memory_ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
+            patch("src.memory.store.init_memory_db", return_value=MagicMock()),
+            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+            patch("src.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
         ):
-            _run_ingest_issues(self._make_args(), "http://localhost:11434", "mistral")
+            run_ingest_issues(self._make_args(), "http://localhost:11434", "mistral")
 
         assert mock_ingest.call_count == 2
 
     def test_source_type_in_ingest_call(self):
-        from checker import _run_ingest_issues
+        from src.pipeline import run_ingest_issues
 
         mock_issues = [
             {"number": 5, "title": "Issue", "body": "Text", "state": "open",
@@ -191,13 +191,13 @@ class TestRunIngestIssues:
             return {"chunk_ids": [], "deduped": 0}
 
         with (
-            patch("src.memory_ingest.subprocess.run",
+            patch("src.memory.ingest.subprocess.run",
                   return_value=MagicMock(returncode=0, stdout=json.dumps(mock_issues))),
-            patch("src.memory_store.init_memory_db", return_value=MagicMock()),
-            patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-            patch("src.memory_ingest.ingest", side_effect=capture),
+            patch("src.memory.store.init_memory_db", return_value=MagicMock()),
+            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+            patch("src.memory.ingest.ingest", side_effect=capture),
         ):
-            _run_ingest_issues(self._make_args(), "http://localhost:11434", "mistral")
+            run_ingest_issues(self._make_args(), "http://localhost:11434", "mistral")
 
         assert captured[0].source_type == "github_issue"
         assert captured[0].path == "issue/5"

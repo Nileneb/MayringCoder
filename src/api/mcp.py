@@ -9,7 +9,7 @@ Option 1: Direct Python venv (development):
     "mcpServers": {
         "memory": {
             "command": "/path/to/.venv/bin/python",
-            "args": ["-m", "src.mcp_server"],
+            "args": ["-m", "src.api.mcp"],
             "cwd": "/path/to/MayringCoder"
         }
     }
@@ -54,7 +54,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 # Load .env from project root
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parent.parent.parent
 load_dotenv(_ROOT / ".env")
 
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ class _JWTAuthMiddleware:
         )
 
         if use_sanctum:
-            from src.sanctum_auth import validate_sanctum_token_full
+            from src.api.sanctum_auth import validate_sanctum_token_full
             info = validate_sanctum_token_full(token)
             if not info:
                 await self._send_401(send, "Invalid or expired token")
@@ -221,10 +221,10 @@ class _JWTAuthMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-from src.memory_ingest import get_or_create_chroma_collection, ingest
-from src.memory_retrieval import compress_for_prompt, invalidate_query_cache, search
-from src.memory_schema import Chunk, Source, make_memory_key, source_fingerprint
-from src.memory_store import (
+from src.memory.ingest import get_or_create_chroma_collection, ingest
+from src.memory.retrieval import compress_for_prompt, invalidate_query_cache, search
+from src.memory.schema import Chunk, Source, make_memory_key, source_fingerprint
+from src.memory.store import (
     add_feedback,
     deactivate_chunks_by_source,
     get_active_chunk_count,
@@ -511,7 +511,7 @@ def reindex(source_id: str | None = None) -> dict:
         {reindexed_count, errors}
     """
     try:
-        from src.context import _embed_texts
+        from src.analysis.context import _embed_texts
 
         chroma = _get_chroma()
         conn = _get_conn()

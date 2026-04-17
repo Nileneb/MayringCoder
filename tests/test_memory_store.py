@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src.memory_schema import Chunk, Source
-from src.memory_store import (
+from src.memory.schema import Chunk, Source
+from src.memory.store import (
     add_feedback,
     deactivate_chunks_by_source,
     find_by_text_hash,

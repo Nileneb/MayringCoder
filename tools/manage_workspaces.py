@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def cmd_list() -> None:
-    from src.memory_store import init_memory_db
+    from src.memory.store import init_memory_db
     conn = init_memory_db()
     rows = conn.execute(
         "SELECT workspace_id, COUNT(*) as chunk_count FROM chunks GROUP BY workspace_id"
@@ -45,7 +45,7 @@ def cmd_delete(workspace_id: str, purge: bool) -> None:
         print("Auth tokens are managed in app.linn.games — revoke them there.")
         return
 
-    from src.memory_store import init_memory_db
+    from src.memory.store import init_memory_db
     conn = init_memory_db()
     chunk_count = conn.execute(
         "SELECT COUNT(*) FROM chunks WHERE workspace_id = ?", (workspace_id,)

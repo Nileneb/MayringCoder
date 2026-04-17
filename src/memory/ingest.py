@@ -33,8 +33,8 @@ except ImportError:
     _HAS_CHROMADB = False
 
 from src.config import CACHE_DIR, EMBEDDING_MODEL
-from src.memory_schema import Chunk, Source
-from src.memory_store import (
+from src.memory.schema import Chunk, Source
+from src.memory.store import (
     add_source_ref,
     find_by_text_hash,
     get_source,
@@ -347,8 +347,8 @@ def ingest_image(
     Returns:
         {source_id, chunk_ids, indexed, deduped, superseded}
     """
-    from src.vision_captioner import caption_image, get_image_metadata
-    from src.context import _embed_texts
+    from src.agents.vision import caption_image, get_image_metadata
+    from src.analysis.context import _embed_texts
 
     # Step 1: persist source + log start
     upsert_source(conn, source, workspace_id=workspace_id)
@@ -456,7 +456,7 @@ def ingest_image(
 # Task 2.2 — Mayring categorization — Prompt-Template Ansatz
 # ---------------------------------------------------------------------------
 
-_PROMPTS_DIR: Path = Path(__file__).parent.parent / "prompts"
+_PROMPTS_DIR: Path = Path(__file__).parent.parent.parent / "prompts"
 
 _ORIGINAL_MAYRING_CATEGORIES: list[str] = [
     "Zusammenfassung",
@@ -486,7 +486,7 @@ _INGEST_DEFAULTS: dict[str, dict] = {
 }
 _INGEST_DEFAULT_FALLBACK: dict = {"categorize": True, "codebook": "auto", "mode": "hybrid", "multiview": False}
 
-_CODEBOOK_DIR = Path(__file__).parent.parent / "codebooks"
+_CODEBOOK_DIR = Path(__file__).parent.parent.parent / "codebooks"
 
 
 def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
@@ -595,7 +595,7 @@ def mayring_categorize(
         return chunks
 
     try:
-        from src.analyzer import _ollama_generate
+        from src.analysis.analyzer import _ollama_generate
     except ImportError:
         return chunks
 
@@ -639,7 +639,7 @@ def mayring_categorize(
             chunk.category_confidence = 0.5 if chunk.category_labels else 0.0
             if conn is not None:
                 try:
-                    from src.memory_store import log_ingestion_event
+                    from src.memory.store import log_ingestion_event
                     log_ingestion_event(conn, chunk.chunk_id, "categorize_error",
                                         {"error": str(exc)[:200]})
                 except Exception:
@@ -676,7 +676,7 @@ def get_or_create_chroma_collection(chroma_dir: Path | None = None):
     """Get or create the 'memory_chunks' ChromaDB collection (process singleton)."""
     if not _HAS_CHROMADB:
         return None
-    from src.memory_store import get_chroma_collection as get_collection
+    from src.memory.store import get_chroma_collection as get_collection
     return get_collection("memory_chunks", path=chroma_dir)
 
 
@@ -711,7 +711,7 @@ def ingest(
     codebook_choice: str = effective.get("codebook", "auto")
 
     # Import here to keep top-level imports clean
-    from src.context import _embed_texts
+    from src.analysis.context import _embed_texts
 
     # Step 0: skip if source content unchanged
     if source.content_hash:
@@ -850,7 +850,7 @@ def generate_multiview_chunks(
     Falls der LLM-Call fehlschlägt, wird nur view_full zurückgegeben.
     """
     import json as _json_mod
-    from src.analyzer import _ollama_generate
+    from src.analysis.analyzer import _ollama_generate
 
     view_full = Chunk(
         chunk_id=Chunk.make_id(source_id, 0, "view_full"),
@@ -993,7 +993,7 @@ def fetch_issues(repo: str, state: str = "open", limit: int = 100) -> list[dict]
 
 def issues_to_sources(issues: list[dict], repo: str) -> list[tuple[Source, str]]:
     """Map gh issues to (Source, content) tuples for ingest()."""
-    from src.memory_schema import source_fingerprint
+    from src.memory.schema import source_fingerprint
     result: list[tuple[Source, str]] = []
     for issue in issues:
         if not isinstance(issue, dict) or "number" not in issue:
@@ -1087,8 +1087,8 @@ def _run_image_ingest_from_clone(
     if not images:
         return {"images_found": 0, "images_captioned": 0, "images_skipped": 0, "images_failed": 0, "repo": repo_owner_name}
 
-    from src.memory_store import deactivate_chunks_by_source
-    from src.memory_retrieval import invalidate_query_cache
+    from src.memory.store import deactivate_chunks_by_source
+    from src.memory.retrieval import invalidate_query_cache
 
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()

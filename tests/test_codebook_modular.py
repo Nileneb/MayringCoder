@@ -1,7 +1,7 @@
 """Tests for modular codebook loading and profile auto-detection."""
 
 import pytest
-from src.categorizer import load_codebook_modular, detect_profile, detect_profile_from_tree
+from src.analysis.categorizer import load_codebook_modular, detect_profile, detect_profile_from_tree
 
 
 class TestLoadCodebookModular:

@@ -6,7 +6,7 @@ Auth: Bearer tokens from app.linn.games (Sanctum format: "{id}|{plaintext}")
 are validated directly against the shared MySQL DB.
 
 Start:
-    .venv/bin/python -m uvicorn src.api_server:app --host 0.0.0.0 --port 8080
+    .venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8080
 
 Endpoints (authenticated via Bearer <sanctum_token>):
     POST /analyze          — submit analysis job (returns pid)
@@ -42,7 +42,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parent.parent.parent
 load_dotenv(_ROOT / ".env")
 
 try:
@@ -52,11 +52,11 @@ try:
 except ImportError:
     raise ImportError("Missing dependency: pip install fastapi uvicorn")
 
-from src.memory_ingest import get_or_create_chroma_collection, ingest
-from src.memory_retrieval import compress_for_prompt, search
-from src.memory_schema import Source
-from src.memory_store import init_memory_db
-from src.sanctum_auth import validate_sanctum_token_full
+from src.memory.ingest import get_or_create_chroma_collection, ingest
+from src.memory.retrieval import compress_for_prompt, search
+from src.memory.schema import Source
+from src.memory.store import init_memory_db
+from src.api.sanctum_auth import validate_sanctum_token_full
 
 # ---------------------------------------------------------------------------
 # Config
@@ -84,7 +84,7 @@ def _get_conn():
 def _get_chroma():
     global _chroma
     if _chroma is None:
-        from src.memory_store import get_chroma_collection as get_collection
+        from src.memory.store import get_chroma_collection as get_collection
         _chroma = get_collection()
     return _chroma
 
@@ -236,7 +236,7 @@ async def pi_task(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Run a task via the Pi-agent (memory-augmented reasoning)."""
-    from src.pi_agent import run_task_with_memory
+    from src.agents.pi import run_task_with_memory
     _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
     try:
         result = await asyncio.get_event_loop().run_in_executor(

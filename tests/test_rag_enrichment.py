@@ -10,7 +10,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.context import _build_rag_query, enrich_findings_with_rag
+from src.analysis.context import _build_rag_query, enrich_findings_with_rag
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +106,9 @@ class TestBuildRagQuery:
 
 class TestEnrichFindingsWithRag:
 
-    @patch("src.context._HAS_CHROMADB", True)
-    @patch("src.context._embed_texts")
-    @patch("src.context.chromadb")
+    @patch("src.analysis.context._HAS_CHROMADB", True)
+    @patch("src.analysis.context._embed_texts")
+    @patch("src.analysis.context.chromadb")
     def test_stores_rag_context_and_query(self, mock_chromadb, mock_embed):
         # Setup mocks
         mock_embed.return_value = [[0.1] * 384]
@@ -124,7 +124,7 @@ class TestEnrichFindingsWithRag:
 
         results = [_result("a.py", [_finding("redundanz")])]
 
-        with patch("src.context._chroma_dir") as mock_dir:
+        with patch("src.analysis.context._chroma_dir") as mock_dir:
             mock_dir.return_value = MagicMock(exists=MagicMock(return_value=True))
             enriched = enrich_findings_with_rag(results, "https://github.com/t/r", "http://localhost:11434")
 
@@ -133,13 +133,13 @@ class TestEnrichFindingsWithRag:
         assert "_rag_context" in finding
         assert "user.py" in finding["_rag_context"]
 
-    @patch("src.context._HAS_CHROMADB", True)
-    @patch("src.context._embed_texts")
-    @patch("src.context.chromadb")
+    @patch("src.analysis.context._HAS_CHROMADB", True)
+    @patch("src.analysis.context._embed_texts")
+    @patch("src.analysis.context.chromadb")
     def test_empty_results_noop(self, mock_chromadb, mock_embed):
         results = [{"filename": "a.py", "category": "domain", "potential_smells": []}]
 
-        with patch("src.context._chroma_dir") as mock_dir:
+        with patch("src.analysis.context._chroma_dir") as mock_dir:
             mock_dir.return_value = MagicMock(exists=MagicMock(return_value=True))
             mock_client = MagicMock()
             mock_chromadb.PersistentClient.return_value = mock_client
@@ -152,16 +152,16 @@ class TestEnrichFindingsWithRag:
         mock_embed.assert_not_called()
         assert enriched[0]["potential_smells"] == []
 
-    @patch("src.context._HAS_CHROMADB", False)
+    @patch("src.analysis.context._HAS_CHROMADB", False)
     def test_no_chromadb_returns_unchanged(self):
         results = [_result()]
         enriched = enrich_findings_with_rag(results, "https://github.com/t/r", "http://localhost:11434")
         finding = enriched[0]["potential_smells"][0]
         assert "_rag_context" not in finding
 
-    @patch("src.context._HAS_CHROMADB", True)
-    @patch("src.context._embed_texts")
-    @patch("src.context.chromadb")
+    @patch("src.analysis.context._HAS_CHROMADB", True)
+    @patch("src.analysis.context._embed_texts")
+    @patch("src.analysis.context.chromadb")
     def test_multiple_findings_batch_embedded(self, mock_chromadb, mock_embed):
         mock_embed.return_value = [[0.1] * 384, [0.2] * 384, [0.3] * 384]
 
@@ -181,7 +181,7 @@ class TestEnrichFindingsWithRag:
         ]
         results = [_result("a.py", findings)]
 
-        with patch("src.context._chroma_dir") as mock_dir:
+        with patch("src.analysis.context._chroma_dir") as mock_dir:
             mock_dir.return_value = MagicMock(exists=MagicMock(return_value=True))
             enrich_findings_with_rag(results, "https://github.com/t/r", "http://localhost:11434")
 
@@ -190,9 +190,9 @@ class TestEnrichFindingsWithRag:
         queries_arg = mock_embed.call_args[0][0]
         assert len(queries_arg) == 3
 
-    @patch("src.context._HAS_CHROMADB", True)
-    @patch("src.context._embed_texts")
-    @patch("src.context.chromadb")
+    @patch("src.analysis.context._HAS_CHROMADB", True)
+    @patch("src.analysis.context._embed_texts")
+    @patch("src.analysis.context.chromadb")
     def test_error_in_results_skipped(self, mock_chromadb, mock_embed):
         """Results with 'error' key should be skipped entirely."""
         mock_embed.return_value = []
@@ -205,7 +205,7 @@ class TestEnrichFindingsWithRag:
 
         results = [{"filename": "a.py", "error": "Timeout"}]
 
-        with patch("src.context._chroma_dir") as mock_dir:
+        with patch("src.analysis.context._chroma_dir") as mock_dir:
             mock_dir.return_value = MagicMock(exists=MagicMock(return_value=True))
             enriched = enrich_findings_with_rag(results, "https://github.com/t/r", "http://localhost:11434")
 
@@ -221,7 +221,7 @@ class TestSecondOpinionWithRagContext:
 
     def test_rag_context_injected_into_prompt(self):
         """When finding has _rag_context, it should appear in the second opinion prompt."""
-        from src.extractor import second_opinion_validate
+        from src.analysis.extractor import second_opinion_validate
 
         finding = {
             "_filename": "a.py",
@@ -240,7 +240,7 @@ class TestSecondOpinionWithRagContext:
             captured_prompt.append(prompt)
             return json.dumps({"verdict": "BESTÄTIGT", "reasoning": "ok"})
 
-        with patch("src.analyzer._ollama_generate", side_effect=_capture_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=_capture_generate):
             second_opinion_validate([finding], files, "http://localhost:11434", "model")
 
         assert len(captured_prompt) == 1
@@ -249,7 +249,7 @@ class TestSecondOpinionWithRagContext:
 
     def test_no_rag_context_uses_default_text(self):
         """When finding has no _rag_context, prompt should say no context available."""
-        from src.extractor import second_opinion_validate
+        from src.analysis.extractor import second_opinion_validate
 
         finding = {
             "_filename": "a.py",
@@ -267,7 +267,7 @@ class TestSecondOpinionWithRagContext:
             captured_prompt.append(prompt)
             return json.dumps({"verdict": "BESTÄTIGT", "reasoning": "ok"})
 
-        with patch("src.analyzer._ollama_generate", side_effect=_capture_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=_capture_generate):
             second_opinion_validate([finding], files, "http://localhost:11434", "model")
 
         assert len(captured_prompt) == 1
@@ -282,7 +282,7 @@ class TestAdversarialWithRagContext:
 
     def test_rag_context_appended_to_adversarial_prompt(self):
         """When finding has _rag_context, it should be appended to the adversarial prompt."""
-        from src.extractor import validate_findings
+        from src.analysis.extractor import validate_findings
 
         finding = {
             "_filename": "a.py",
@@ -301,7 +301,7 @@ class TestAdversarialWithRagContext:
             captured_prompt.append(prompt)
             return "BESTÄTIGT: Correct finding."
 
-        with patch("src.analyzer._ollama_generate", side_effect=_capture_generate):
+        with patch("src.analysis.analyzer._ollama_generate", side_effect=_capture_generate):
             validate_findings([finding], files, "http://localhost:11434", "model")
 
         assert len(captured_prompt) == 1

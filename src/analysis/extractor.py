@@ -24,7 +24,7 @@ def _coerce_str(val: object) -> str:
 
 # Load the extraction prompt from file; fall back to an inline default so the
 # module works without the prompts directory (e.g. in isolated unit tests).
-_EXTRACT_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extract_findings.md"
+_EXTRACT_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "extract_findings.md"
 try:
     EXTRACT_PROMPT: str = _EXTRACT_PROMPT_PATH.read_text(encoding="utf-8")
 except Exception:
@@ -300,7 +300,7 @@ def validate_findings(
           - rejected:  count of ABGELEHNT findings
           - errors:    count of validation failures (Ollama unreachable etc.)
     """
-    from src.analyzer import _ollama_generate
+    from src.analysis.analyzer import _ollama_generate
 
     VALID_CONFIDENCE = {"high": 0, "medium": 1, "low": 2}
     min_rank = VALID_CONFIDENCE.get(min_confidence.lower(), 2)
@@ -371,7 +371,7 @@ def validate_findings(
 # Second-opinion validation — different model reviews primary findings
 # ---------------------------------------------------------------------------
 
-_SECOND_OPINION_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "second_opinion.md"
+_SECOND_OPINION_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "second_opinion.md"
 try:
     _SECOND_OPINION_PROMPT: str = _SECOND_OPINION_PROMPT_PATH.read_text(encoding="utf-8")
 except Exception:
@@ -458,7 +458,7 @@ def second_opinion_validate(
           - refined:   count of PRÄZISIERT findings kept (with adjusted severity)
           - errors:    count of LLM call failures (kept in output, not counted as confirmed)
     """
-    from src.analyzer import _ollama_generate
+    from src.analysis.analyzer import _ollama_generate
 
     if not _SECOND_OPINION_PROMPT:
         # Prompt file missing — pass all findings through unchanged

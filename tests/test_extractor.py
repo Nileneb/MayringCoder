@@ -1,8 +1,8 @@
-"""Unit tests for src.extractor."""
+"""Unit tests for src.analysis.extractor."""
 
 import json
 import pytest
-from src.extractor import (
+from src.analysis.extractor import (
     extract_python_signatures,
     parse_freetext_findings,
     parse_llm_extraction,
@@ -51,7 +51,7 @@ class TestParseFreetextFindings:
 
     def test_no_ollama_call_made(self, monkeypatch):
         """parse_freetext_findings must never call Ollama."""
-        import src.extractor as mod
+        import src.analysis.extractor as mod
         monkeypatch.setattr(mod, "_regex_extract_findings",
                             lambda raw, fn: [{"type": "freitext", "line_hint": "",
                                               "evidence_excerpt": raw[:50],

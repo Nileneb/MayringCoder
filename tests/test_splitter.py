@@ -1,7 +1,7 @@
-"""Unit tests for src.splitter."""
+"""Unit tests for src.analysis.splitter."""
 
 import pytest
-from src.splitter import split_into_files, _normalize_eol
+from src.analysis.splitter import split_into_files, _normalize_eol
 
 
 # ---------------------------------------------------------------------------

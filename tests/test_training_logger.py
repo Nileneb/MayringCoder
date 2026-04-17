@@ -1,4 +1,4 @@
-"""Tests for the training-data logger in src.analyzer."""
+"""Tests for the training-data logger in src.analysis.analyzer."""
 
 import json
 import pytest
@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 def _reset_logger():
     """Reset module-level logger state between tests."""
-    import src.analyzer as mod
+    import src.analysis.analyzer as mod
     mod._training_log_path = None
     mod._training_run_id = "default"
 
@@ -27,16 +27,16 @@ def _read_log(path: Path) -> list[dict]:
 
 class TestConfigureTrainingLog:
     def test_sets_path_and_run_id(self, tmp_path):
-        import src.analyzer as mod
+        import src.analysis.analyzer as mod
         _reset_logger()
-        from src.analyzer import configure_training_log
+        from src.analysis.analyzer import configure_training_log
         configure_training_log(tmp_path / "log.jsonl", run_id="bench_test")
         assert mod._training_log_path == tmp_path / "log.jsonl"
         assert mod._training_run_id == "bench_test"
         _reset_logger()
 
     def test_creates_parent_dir(self, tmp_path):
-        from src.analyzer import configure_training_log
+        from src.analysis.analyzer import configure_training_log
         _reset_logger()
         deep = tmp_path / "a" / "b" / "log.jsonl"
         configure_training_log(deep)
@@ -51,12 +51,12 @@ class TestConfigureTrainingLog:
 class TestLogTrainingEntry:
     def test_no_op_when_not_configured(self, tmp_path):
         _reset_logger()
-        from src.analyzer import _log_training_entry
+        from src.analysis.analyzer import _log_training_entry
         # Should not raise and should not create any file
         _log_training_entry("m", "f.py", "prompt", "response", True, 3)
 
     def test_appends_jsonl_entry(self, tmp_path):
-        from src.analyzer import configure_training_log, _log_training_entry
+        from src.analysis.analyzer import configure_training_log, _log_training_entry
         _reset_logger()
         log = tmp_path / "log.jsonl"
         configure_training_log(log, run_id="r1")
@@ -76,7 +76,7 @@ class TestLogTrainingEntry:
         _reset_logger()
 
     def test_call_type_stored(self, tmp_path):
-        from src.analyzer import configure_training_log, _log_training_entry
+        from src.analysis.analyzer import configure_training_log, _log_training_entry
         _reset_logger()
         log = tmp_path / "log.jsonl"
         configure_training_log(log)
@@ -86,7 +86,7 @@ class TestLogTrainingEntry:
         _reset_logger()
 
     def test_multiple_entries_appended(self, tmp_path):
-        from src.analyzer import configure_training_log, _log_training_entry
+        from src.analysis.analyzer import configure_training_log, _log_training_entry
         _reset_logger()
         log = tmp_path / "log.jsonl"
         configure_training_log(log)
@@ -98,7 +98,7 @@ class TestLogTrainingEntry:
         _reset_logger()
 
     def test_prompt_hash_is_16_chars(self, tmp_path):
-        from src.analyzer import configure_training_log, _log_training_entry
+        from src.analysis.analyzer import configure_training_log, _log_training_entry
         _reset_logger()
         log = tmp_path / "log.jsonl"
         configure_training_log(log)
@@ -119,7 +119,7 @@ class TestAnalyzeFileLogging:
         return p
 
     def test_analyze_file_logs_entry(self, tmp_path):
-        from src.analyzer import configure_training_log, analyze_file, _load_prompt
+        from src.analysis.analyzer import configure_training_log, analyze_file, _load_prompt
         _reset_logger()
         log = tmp_path / "log.jsonl"
         configure_training_log(log, run_id="test_run")
@@ -127,7 +127,7 @@ class TestAnalyzeFileLogging:
         prompt_template = "Analyze this."
         file = {"filename": "app/Foo.php", "content": "<?php echo 'hi';", "category": "domain"}
 
-        with patch("src.analyzer._ollama_generate",
+        with patch("src.analysis.analyzer._ollama_generate",
                    return_value='{"file_summary": "ok", "potential_smells": []}'):
             analyze_file(file, prompt_template, "http://localhost", "model")
 
@@ -138,14 +138,14 @@ class TestAnalyzeFileLogging:
         _reset_logger()
 
     def test_parsed_ok_false_when_no_json(self, tmp_path):
-        from src.analyzer import configure_training_log, analyze_file
+        from src.analysis.analyzer import configure_training_log, analyze_file
         _reset_logger()
         log = tmp_path / "log.jsonl"
         configure_training_log(log)
 
         file = {"filename": "f.php", "content": "x", "category": "domain"}
 
-        with patch("src.analyzer._ollama_generate", return_value="plain text no json"):
+        with patch("src.analysis.analyzer._ollama_generate", return_value="plain text no json"):
             analyze_file(file, "Analyze.", "http://localhost", "model")
 
         entries = [e for e in _read_log(log) if e["call_type"] == "analyze"]
@@ -153,11 +153,11 @@ class TestAnalyzeFileLogging:
         _reset_logger()
 
     def test_no_log_when_not_configured(self, tmp_path):
-        from src.analyzer import analyze_file
+        from src.analysis.analyzer import analyze_file
         _reset_logger()
 
         file = {"filename": "f.php", "content": "x", "category": "domain"}
-        with patch("src.analyzer._ollama_generate",
+        with patch("src.analysis.analyzer._ollama_generate",
                    return_value='{"potential_smells": []}'):
             analyze_file(file, "Analyze.", "http://localhost", "model")
         # No crash, no file created
