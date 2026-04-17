@@ -16,9 +16,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace as _dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.model_router import ModelRouter
 
 try:
     import yaml as _yaml
@@ -581,6 +585,7 @@ def mayring_categorize(
     codebook: str = "auto",
     source_type: str = "repo_file",
     conn: Any = None,
+    router: "ModelRouter | None" = None,
 ) -> list[Chunk]:
     """Assign Mayring category labels to each chunk via LLM.
 
@@ -590,7 +595,13 @@ def mayring_categorize(
         codebook: "auto" (detect from source_type), "code", "social", or profile name
         source_type: used for auto-detection of codebook
         conn: optional SQLite connection for error logging
+        router: optional ModelRouter for task-based model selection
     """
+    if router is not None and not model:
+        _task = "mayring_code" if source_type == "repo_file" else "mayring_social"
+        if router.is_available(_task):
+            model = router.resolve(_task)
+
     if not model or not ollama_url:
         return chunks
 
@@ -688,6 +699,7 @@ def ingest(
     ollama_url: str,
     model: str,
     opts: dict | None = None,
+    router: "ModelRouter | None" = None,
     workspace_id: str = "default",
 ) -> dict:
     """Orchestrate the full ingestion pipeline for one source.
@@ -700,6 +712,35 @@ def ingest(
         {source_id, chunk_ids, indexed, deduped, superseded}
     """
     opts = opts or {}
+
+    # ── Automatische Visual Pipeline ─────────────────────────────────────────
+    # Delegate to ingest_image() for known image extensions when router provides
+    # a vision model. This keeps a single image pipeline with consistent chunk
+    # schema (chunk_level="image_caption") instead of a second ad-hoc path.
+    if _is_image_file(source.path):
+        if source.source_type not in ("image",):
+            source = _dc_replace(source, source_type="image")
+        if router is not None and router.is_available("vision"):
+            try:
+                return ingest_image(
+                    source=source,
+                    image_path=Path(source.path),
+                    conn=conn,
+                    chroma_collection=chroma_collection,
+                    ollama_url=ollama_url,
+                    model=model,
+                    vision_model=router.resolve("vision"),
+                    workspace_id=workspace_id,
+                )
+            except Exception:
+                pass  # Vision failed — fall through to generic pipeline with source_type=image
+
+    # Modell aus Router wenn kein explizites model übergeben
+    if router is not None and not model:
+        _task = "mayring_code" if source.source_type == "repo_file" else "mayring_social"
+        if router.is_available(_task):
+            model = router.resolve(_task)
+
     # Merge source_type defaults with caller overrides (caller wins)
     defaults = _INGEST_DEFAULTS.get(source.source_type, _INGEST_DEFAULT_FALLBACK)
     effective = {**defaults, **opts}
@@ -740,6 +781,7 @@ def ingest(
             mode=mode, codebook=codebook_choice,
             source_type=source.source_type,
             conn=conn,
+            router=router,
         )
 
     # Step 4: dedup + embed + store
