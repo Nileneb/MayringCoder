@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "memory": {
+      "type": "streamable-http",
+      "url": "https://mcp.linn.games/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_SANCTUM_TOKEN_HERE"
+      }
+    }
+  }
+}

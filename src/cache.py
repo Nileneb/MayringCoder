@@ -12,13 +12,21 @@ from datetime import datetime
 from src.config import CACHE_DIR, MAX_FILES_PER_RUN, RISK_CATEGORIES, repo_slug as _repo_slug
 
 
-def reset_repo(repo_url: str, run_key: str | None = None) -> str | None:
+def _db_path(repo_url: str, workspace_id: str = "default") -> "Path":
+    from pathlib import Path as _Path
+    slug = _repo_slug(repo_url)
+    if workspace_id and workspace_id != "default":
+        return CACHE_DIR / workspace_id / f"{slug}.db"
+    return CACHE_DIR / f"{slug}.db"
+
+
+def reset_repo(repo_url: str, run_key: str | None = None, workspace_id: str = "default") -> str | None:
     """Reset cache for a repo.
 
     - Without run_key: delete the SQLite DB for the repo (legacy behavior).
     - With run_key: clear analyzed_at stamps only for that run key.
     """
-    db_path = CACHE_DIR / f"{_repo_slug(repo_url)}.db"
+    db_path = _db_path(repo_url, workspace_id)
     if run_key is not None:
         if not db_path.exists():
             return None
@@ -36,9 +44,10 @@ def reset_repo(repo_url: str, run_key: str | None = None) -> str | None:
     return None
 
 
-def init_db(repo_url: str) -> sqlite3.Connection:
+def init_db(repo_url: str, workspace_id: str = "default") -> sqlite3.Connection:
+    db_path = _db_path(repo_url, workspace_id)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    db_path = CACHE_DIR / f"{_repo_slug(repo_url)}.db"
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript("""

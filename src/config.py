@@ -8,8 +8,8 @@ BASE_DIR = Path(__file__).parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 REPORTS_DIR = BASE_DIR / "reports"
 PROMPTS_DIR = BASE_DIR / "prompts"
-CODEBOOK_PATH = BASE_DIR / "codebook.yaml"
 CODEBOOKS_DIR: Path = Path(__file__).parent.parent / "codebooks"
+CODEBOOK_PATH = CODEBOOKS_DIR / "code.yaml"
 
 DEFAULT_PROMPT = PROMPTS_DIR / "file_inspector.md"
 EXPLAINER_PROMPT = PROMPTS_DIR / "explainer.md"

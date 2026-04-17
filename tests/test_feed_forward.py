@@ -295,7 +295,7 @@ class TestTimeBudget:
 class TestTurbulenceOverviewCache:
     def test_overview_cache_sets_chunk_category(self, tmp_path):
         """When overview_cache provides a category, chunks should use it."""
-        from src.turbulence_analyzer import analyze_repo
+        from src.turbulence import analyze_repo
 
         # Create a minimal PHP file
         php_dir = tmp_path / "app" / "Services"
@@ -319,7 +319,7 @@ class TestTurbulenceOverviewCache:
 
     def test_without_overview_cache_falls_back_to_heuristic(self, tmp_path):
         """Without cache, categorization should still work via heuristic."""
-        from src.turbulence_analyzer import analyze_repo
+        from src.turbulence import analyze_repo
 
         php_dir = tmp_path / "app"
         php_dir.mkdir()
@@ -337,8 +337,8 @@ class TestTurbulenceOverviewCache:
 
 class TestBuildReportAllFiles:
     def test_all_files_contains_every_tier(self):
-        from src.turbulence_calculator import FileAnalysis
-        from src.turbulence_report import build_report
+        from src.turbulence import FileAnalysis
+        from src.turbulence import build_report
 
         analyses = [
             FileAnalysis(path="deep.php", total_lines=100,
@@ -362,8 +362,8 @@ class TestBuildReportAllFiles:
         assert tiers["stable.php"] == "stable"
 
     def test_critical_files_still_only_deep(self):
-        from src.turbulence_calculator import FileAnalysis
-        from src.turbulence_report import build_report
+        from src.turbulence import FileAnalysis
+        from src.turbulence import build_report
 
         analyses = [
             FileAnalysis(path="deep.php", total_lines=100,
@@ -377,8 +377,8 @@ class TestBuildReportAllFiles:
         assert report["critical_files"][0]["path"] == "deep.php"
 
     def test_all_files_entries_have_tier_field(self):
-        from src.turbulence_calculator import FileAnalysis
-        from src.turbulence_report import build_report
+        from src.turbulence import FileAnalysis
+        from src.turbulence import build_report
 
         analyses = [
             FileAnalysis(path="a.php", total_lines=10,

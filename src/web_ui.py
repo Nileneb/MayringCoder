@@ -38,7 +38,7 @@ except ImportError as _e:
         "gradio is not installed. Run: pip install -r requirements-ui.txt"
     ) from _e
 
-from src.ollama_status import check_ollama
+from src.ollama_client import check_ollama
 
 try:
     import httpx as _httpx
@@ -99,7 +99,8 @@ def _get_chroma() -> Any:
     if not _MEMORY_READY:
         return None
     try:
-        _chroma_collection = get_or_create_chroma_collection()
+        from src.memory_store import get_chroma_collection as get_collection
+        _chroma_collection = get_collection()
         return _chroma_collection
     except Exception:
         return None

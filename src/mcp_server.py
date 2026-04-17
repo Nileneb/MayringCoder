@@ -44,6 +44,7 @@ Tools exposed (wire name = mcp__memory__<name>):
 
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
 from pathlib import Path
@@ -62,10 +63,21 @@ load_dotenv(_ROOT / ".env")
 
 _TRANSPORT    = os.getenv("MCP_TRANSPORT", "stdio")
 _AUTH_ENABLED = os.getenv("MCP_AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+_AUTH_MODE    = os.getenv("MCP_AUTH_MODE", "auto")   # "sanctum" | "jwt" | "static" | "none" | "auto"
 _AUTH_SECRET  = os.getenv("MCP_AUTH_SECRET", "")
-_AUTH_TOKEN   = os.getenv("MCP_AUTH_TOKEN", "")  # legacy backward compat
+_AUTH_TOKEN   = os.getenv("MCP_AUTH_TOKEN", "")      # legacy static token
 _HTTP_PORT    = int(os.getenv("MCP_HTTP_PORT", "8000"))
 _HTTP_HOST    = os.getenv("MCP_HTTP_HOST", "0.0.0.0")
+
+# Per-request context: workspace_id derived from Bearer token in HTTP mode.
+# Empty string → stdio mode → tools fall back to their caller-supplied default.
+_WORKSPACE_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("workspace_id", default="")
+
+
+def _effective_workspace_id(caller_default: str = "default") -> str:
+    """Return workspace_id from token context (HTTP) or caller default (stdio)."""
+    ctx = _WORKSPACE_CTX.get("")
+    return ctx if ctx else (caller_default or "default")
 
 
 class _XAuthMiddleware:
@@ -97,19 +109,17 @@ class _XAuthMiddleware:
 
 
 class _JWTAuthMiddleware:
-    """JWT authentication middleware for MCP HTTP transport.
+    """Unified auth middleware for MCP HTTP transport.
 
-    Supports three modes:
-    - JWT (MCP_AUTH_ENABLED=true + MCP_AUTH_SECRET set): validates HS256 JWT,
-      extracts workspace_id from payload.
-    - Legacy static (MCP_AUTH_ENABLED=true + MCP_AUTH_TOKEN set): compares
-      X-Auth-Token header value, sets workspace_id="default".
-    - Disabled (MCP_AUTH_ENABLED=false, default): passes all requests through
-      with workspace_id="default".
+    Auth modes (MCP_AUTH_MODE env var):
+    - "sanctum"  — Laravel Sanctum token "{id}|{plaintext}" validated against
+                   app.linn.games PostgreSQL. workspace_id from workspaces table.
+    - "jwt"      — HS256 JWT with MCP_AUTH_SECRET; workspace_id from payload.
+    - "static"   — compare against MCP_AUTH_TOKEN; workspace_id="default".
+    - "none"     — no auth (dev/local only).
+    - "auto"     — detect by token format: Sanctum if contains "|", else JWT/static.
 
-    Token can be passed as:
-      X-Auth-Token: <token>
-      Authorization: Bearer <token>
+    Token via: Authorization: Bearer <token>  or  X-Auth-Token: <token>
     """
 
     def __init__(self, app: Any) -> None:
@@ -120,14 +130,13 @@ class _JWTAuthMiddleware:
             await self._app(scope, receive, send)
             return
 
-        if not _AUTH_ENABLED:
+        if not _AUTH_ENABLED or _AUTH_MODE == "none":
+            _WORKSPACE_CTX.set("")
             scope["workspace_id"] = "default"
             await self._app(scope, receive, send)
             return
 
         headers = dict(scope.get("headers", []))
-
-        # Extract token: X-Auth-Token first, then Authorization: Bearer
         token: str = ""
         raw = headers.get(b"x-auth-token", b"").decode().strip()
         if raw:
@@ -141,40 +150,73 @@ class _JWTAuthMiddleware:
             await self._send_401(send, "Missing authentication token")
             return
 
-        if _AUTH_SECRET:
-            # JWT validation (lazy import to avoid ImportError when not used)
+        workspace_id = await self._validate_token(token, send)
+        if workspace_id is None:
+            return  # _validate_token already sent 401
+
+        _WORKSPACE_CTX.set(workspace_id)
+        scope["workspace_id"] = workspace_id
+        await self._app(scope, receive, send)
+
+    async def _validate_token(self, token: str, send: Any) -> str | None:
+        """Validate token and return workspace_id, or None after sending 401."""
+        use_sanctum = (
+            _AUTH_MODE == "sanctum"
+            or (_AUTH_MODE == "auto" and "|" in token)
+        )
+
+        if use_sanctum:
+            from src.sanctum_auth import validate_sanctum_token_full
+            info = validate_sanctum_token_full(token)
+            if not info:
+                await self._send_401(send, "Invalid or expired token")
+                return None
+            if not info.mayring_active:
+                await self._send_402(send,
+                    "MayringCoder Memory requires an active subscription. "
+                    "Subscribe at https://app.linn.games/einstellungen/mayring-abo"
+                )
+                return None
+            return info.workspace_id
+
+        if _AUTH_MODE in ("jwt", "auto") and _AUTH_SECRET:
             import jwt  # type: ignore[import]
             try:
                 payload = jwt.decode(token, _AUTH_SECRET, algorithms=["HS256"])
-                scope["workspace_id"] = payload.get("workspace_id", "default")
+                return payload.get("workspace_id", "default")
             except jwt.ExpiredSignatureError:
                 await self._send_401(send, "Token expired")
-                return
+                return None
             except jwt.InvalidTokenError:
                 await self._send_401(send, "Invalid token")
-                return
-        elif _AUTH_TOKEN:
-            # Legacy static token comparison
+                return None
+
+        if _AUTH_TOKEN:
             if token != _AUTH_TOKEN:
                 await self._send_401(send, "Unauthorized")
-                return
-            scope["workspace_id"] = "default"
-        else:
-            await self._send_401(send, "No auth secret configured")
-            return
+                return None
+            return "default"
 
-        await self._app(scope, receive, send)
+        await self._send_401(send, "No auth method configured")
+        return None
 
     @staticmethod
     async def _send_401(send: Any, message: str) -> None:
         body = message.encode()
         await send({
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [
-                [b"content-type", b"text/plain; charset=utf-8"],
-                [b"content-length", str(len(body)).encode()],
-            ],
+            "type": "http.response.start", "status": 401,
+            "headers": [[b"content-type", b"text/plain; charset=utf-8"],
+                        [b"content-length", str(len(body)).encode()]],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    @staticmethod
+    async def _send_402(send: Any, message: str) -> None:
+        body = message.encode()
+        await send({
+            "type": "http.response.start", "status": 402,
+            "headers": [[b"content-type", b"text/plain; charset=utf-8"],
+                        [b"content-length", str(len(body)).encode()]],
         })
         await send({"type": "http.response.body", "body": body})
 
@@ -276,7 +318,7 @@ def put(
             ollama_url=_OLLAMA_URL,
             model=_MODEL,
             opts=opts,
-            workspace_id=workspace_id,
+            workspace_id=_effective_workspace_id(workspace_id),
         )
         invalidate_query_cache()
         return result
@@ -348,7 +390,7 @@ def search_memory(
             "top_k": top_k,
             "include_text": include_text,
             "source_affinity": source_affinity,
-            "workspace_id": workspace_id,
+            "workspace_id": _effective_workspace_id(workspace_id or "default"),
         }
         results = search(
             query=query,
@@ -552,17 +594,19 @@ if __name__ == "__main__":
     if _TRANSPORT == "http":
         import uvicorn
 
-        # FastMCP exposes its internal ASGI app via streamable_http_app()
         _asgi_app = mcp.streamable_http_app()
         _wrapped = _JWTAuthMiddleware(_asgi_app)
-        if _AUTH_ENABLED:
-            _auth_mode = "JWT" if _AUTH_SECRET else "static"
-        else:
-            _auth_mode = "disabled"
+        _auth_label = (
+            "sanctum" if (_AUTH_ENABLED and _AUTH_MODE == "sanctum") else
+            "auto-detect" if (_AUTH_ENABLED and _AUTH_MODE == "auto") else
+            "jwt" if (_AUTH_ENABLED and _AUTH_SECRET) else
+            "static" if (_AUTH_ENABLED and _AUTH_TOKEN) else
+            "disabled"
+        )
         print(
-            f"[mcp-memory] HTTP mode on {_HTTP_HOST}:{_HTTP_PORT}"
-            f" | auth={_auth_mode}"
+            f"[mcp-memory] HTTP/streamable-http on {_HTTP_HOST}:{_HTTP_PORT}"
+            f" | auth={_auth_label}"
         )
         uvicorn.run(_wrapped, host=_HTTP_HOST, port=_HTTP_PORT)
     else:
-        mcp.run()  # stdio transport (default for Claude Code)
+        mcp.run()  # stdio transport (local dev)

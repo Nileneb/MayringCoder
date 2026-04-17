@@ -12,7 +12,10 @@ from __future__ import annotations
 import ast
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,7 +35,10 @@ except ImportError:
 from src.config import CACHE_DIR, EMBEDDING_MODEL
 from src.memory_schema import Chunk, Source
 from src.memory_store import (
+    add_source_ref,
     find_by_text_hash,
+    get_source,
+    init_memory_db,
     insert_chunk,
     kv_put,
     log_ingestion_event,
@@ -392,9 +398,11 @@ def ingest_image(
 
     if is_dup:
         deduped_count += 1
+        add_source_ref(conn, canonical.chunk_id, source.source_id, workspace_id)
     else:
         # insert into SQLite
         insert_chunk(conn, chunk, workspace_id=workspace_id)
+        add_source_ref(conn, chunk.chunk_id, source.source_id, workspace_id)
 
         # embed
         try:
@@ -414,6 +422,8 @@ def ingest_image(
                         "source_id": chunk.source_id,
                         "chunk_level": chunk.chunk_level,
                         "category_labels": ",".join(chunk.category_labels),
+                        "category_source": chunk.category_source,
+                        "category_confidence": chunk.category_confidence,
                         "is_active": 1,
                     }],
                 )
@@ -458,81 +468,96 @@ _ORIGINAL_MAYRING_CATEGORIES: list[str] = [
     "Ankerbeispiel",
 ]
 
-_SOURCE_TYPE_TO_CODEBOOK: dict[str, str] = {
-    "repo_file": "code",
-    "note": "code",
-    "conversation": "social",
-    "conversation_summary": "social",
-}
-
 _MODE_TO_TEMPLATE: dict[str, str] = {
     "deductive": "mayring_deduktiv",
     "inductive": "mayring_induktiv",
     "hybrid": "mayring_hybrid",
 }
 
-_CODEBOOK_PATHS: dict[str, Path] = {
-    "code": Path(__file__).parent.parent / "codebook.yaml",
-    "social": Path(__file__).parent.parent / "codebook_sozialforschung.yaml",
+# Ingest defaults per source_type — no more scattered opts in callers
+_INGEST_DEFAULTS: dict[str, dict] = {
+    "repo_file":            {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": False},
+    "github_issue":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
+    "conversation_summary": {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
+    "note":                 {"categorize": True,  "codebook": "auto",   "mode": "hybrid", "multiview": False},
+    "session_knowledge":    {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
+    "session_note":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
+    "image":                {"categorize": False, "codebook": "auto",   "mode": "hybrid", "multiview": False},
 }
+_INGEST_DEFAULT_FALLBACK: dict = {"categorize": True, "codebook": "auto", "mode": "hybrid", "multiview": False}
 
-
-_ALLOWED_MODULAR_CODEBOOK_PROFILES = {"generic", "python", "laravel"}
+_CODEBOOK_DIR = Path(__file__).parent.parent / "codebooks"
 
 
 def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
-    """Return list of category names for the given codebook/source_type.
+    """Return category names for the given codebook/source_type.
 
-    codebook: "auto" | "code" | "social" | "original" | <profile-name>
-    source_type: used only when codebook="auto"
-
-    Profile names (e.g. "laravel", "python", "generic") are resolved via
-    load_codebook_modular() from codebooks/profiles/<profile>.yaml.
-    Reserved names ("auto", "code", "social", "original") take priority.
+    Resolution order:
+      1. "auto" → maps source_type to "code" or "social"
+      2. codebooks/<name>.yaml (code, social, or any custom)
+      3. codebooks/profiles/<name>.yaml (generic, python, laravel, ...)
+      4. Fallback → original Mayring categories
     """
-    _RESERVED = {"auto", "code", "social", "original"}
-
     codebook = str(codebook).strip().lower()
     if codebook == "auto":
-        codebook = _SOURCE_TYPE_TO_CODEBOOK.get(source_type, "original")
+        _AUTO = {
+            "repo_file": "code", "note": "code",
+            "conversation": "social", "conversation_summary": "social",
+            "session_knowledge": "social", "session_note": "social",
+            "github_issue": "social",
+        }
+        codebook = _AUTO.get(source_type, "code")
 
-    # Profile-based resolution: try modular codebook for non-reserved names
-    # that are not in _CODEBOOK_PATHS (e.g. "laravel", "python", "generic").
-    if codebook not in _RESERVED and codebook not in _CODEBOOK_PATHS:
-        # Allow only simple profile identifiers; block traversal/absolute-path input.
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", codebook):
-            return list(_ORIGINAL_MAYRING_CATEGORIES)
-        # Explicit allowlist prevents user-controlled arbitrary profile path selection.
-        if codebook not in _ALLOWED_MODULAR_CODEBOOK_PROFILES:
-            return list(_ORIGINAL_MAYRING_CATEGORIES)
-        try:
-            from src.categorizer import load_codebook_modular
-            _exclude_pats, _cats = load_codebook_modular(codebook)
-            names = [cat["name"] for cat in _cats if "name" in cat]
-            if names:
-                return names
-        except Exception:
-            pass
-        # Unknown profile — fall through to original categories fallback below
+    if codebook == "original":
         return list(_ORIGINAL_MAYRING_CATEGORIES)
 
-    if codebook == "original" or codebook not in _CODEBOOK_PATHS:
+    # Security: only alphanumeric + _ and - (blocks path traversal)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", codebook):
         return list(_ORIGINAL_MAYRING_CATEGORIES)
 
-    yaml_path = _CODEBOOK_PATHS[codebook]
-    if not yaml_path.exists():
-        return list(_ORIGINAL_MAYRING_CATEGORIES)
-
-    try:
-        if _HAS_YAML:
-            import yaml as _yaml_local
-            with yaml_path.open(encoding="utf-8") as f:
-                data = _yaml_local.safe_load(f)
-            return [cat["name"] for cat in data.get("categories", []) if "name" in cat]
-    except Exception:
-        pass
+    for candidate in [
+        _CODEBOOK_DIR / f"{codebook}.yaml",
+        _CODEBOOK_DIR / "profiles" / f"{codebook}.yaml",
+    ]:
+        if candidate.exists() and _HAS_YAML:
+            try:
+                import yaml as _yaml_local
+                data = _yaml_local.safe_load(candidate.read_text(encoding="utf-8"))
+                cats = data.get("categories", []) if isinstance(data, dict) else data
+                names: list[str] = []
+                for c in cats:
+                    if isinstance(c, str):
+                        names.append(c)
+                    elif isinstance(c, dict):
+                        n = c.get("label") or c.get("name", "")
+                        if n:
+                            names.append(n)
+                if names:
+                    return names
+            except Exception:
+                continue
 
     return list(_ORIGINAL_MAYRING_CATEGORIES)
+
+
+def _path_fallback_category(path: str) -> list[str]:
+    """Regex-based category from file path when LLM categorization fails."""
+    _RULES = [
+        (r"test_|_test\.|/tests/|conftest", "tests"),
+        (r"/api/|/routes/|/controllers/|router", "api"),
+        (r"/models?/|/db/|/migration|repositor", "data_access"),
+        (r"/auth|/security|/guards?/|/policies?", "auth"),
+        (r"/service|/domain|/usecase|/business", "domain"),
+        (r"/middleware|/pipeline", "middleware"),
+        (r"config.*\.(py|yaml|yml|env)|settings\.|constants\.", "config"),
+        (r"/utils?/|/helpers?/|/tools?/", "utils"),
+        (r"/cache|redis|memcache", "caching"),
+        (r"/log|monitor|metric|trace", "logging"),
+    ]
+    for pattern, cat in _RULES:
+        if re.search(pattern, path, re.IGNORECASE):
+            return [cat]
+    return []
 
 
 def _load_mayring_template(mode: str) -> str:
@@ -555,14 +580,16 @@ def mayring_categorize(
     mode: str = "hybrid",
     codebook: str = "auto",
     source_type: str = "repo_file",
+    conn: Any = None,
 ) -> list[Chunk]:
-    """Assign Mayring category labels to each chunk via LLM (optional, best-effort).
+    """Assign Mayring category labels to each chunk via LLM.
 
     Args:
         mode: "deductive" (closed category set), "inductive" (free derivation),
               "hybrid" (anchors + new categories marked with [neu])
-        codebook: "auto" (detect from source_type), "code", "social", "original"
+        codebook: "auto" (detect from source_type), "code", "social", or profile name
         source_type: used for auto-detection of codebook
+        conn: optional SQLite connection for error logging
     """
     if not model or not ollama_url:
         return chunks
@@ -573,12 +600,13 @@ def mayring_categorize(
         return chunks
 
     categories = _resolve_codebook(codebook, source_type)
+    valid_set = {c.lower() for c in categories if c}
     template = _load_mayring_template(mode)
     system_prompt = template.replace("{{categories}}", ", ".join(categories))
 
     for chunk in chunks:
         try:
-            prompt = f"Text chunk (first 400 chars):\n\n{chunk.text[:400]}"
+            prompt = f"Text chunk:\n\n{chunk.text[:1200]}"
             response = _ollama_generate(
                 prompt=prompt,
                 ollama_url=ollama_url,
@@ -586,13 +614,36 @@ def mayring_categorize(
                 label=f"mayring:{chunk.chunk_id[:8]}",
                 system_prompt=system_prompt,
             )
-            parts = re.split(r"[,\n]", response)
-            labels = [re.sub(r"^[-•*]\s*", "", p).strip() for p in parts]
-            labels = [l for l in labels if l and len(l) < 80]
-            if labels:
-                chunk.category_labels = labels[:5]
-        except Exception:
-            pass  # Categorization is strictly optional
+            raw = [re.sub(r"^[-•*]\s*", "", p).strip()
+                   for p in re.split(r"[,\n]", response)]
+
+            validated: list[str] = []
+            for lbl in raw:
+                if not lbl or len(lbl) > 60 or "," in lbl or len(lbl.split()) > 4:
+                    continue
+                if mode == "inductive":
+                    # Free derivation — accept any reasonable label
+                    validated.append(lbl)
+                elif mode == "hybrid" and lbl.lower().startswith("[neu]"):
+                    validated.append(lbl)  # Keep [neu] prefix
+                elif lbl.lower() in valid_set:
+                    validated.append(lbl.lower())
+
+            chunk.category_labels = validated[:5]
+            chunk.category_source = mode
+            chunk.category_confidence = 1.0 if validated else 0.0
+
+        except Exception as exc:
+            chunk.category_labels = _path_fallback_category(chunk.source_id or "")
+            chunk.category_source = "fallback"
+            chunk.category_confidence = 0.5 if chunk.category_labels else 0.0
+            if conn is not None:
+                try:
+                    from src.memory_store import log_ingestion_event
+                    log_ingestion_event(conn, chunk.chunk_id, "categorize_error",
+                                        {"error": str(exc)[:200]})
+                except Exception:
+                    pass
 
     return chunks
 
@@ -622,16 +673,11 @@ def resolve_dedup(
 # ---------------------------------------------------------------------------
 
 def get_or_create_chroma_collection(chroma_dir: Path | None = None):
-    """Get or create the 'memory_chunks' ChromaDB collection.
-
-    Returns the collection object, or None if chromadb is unavailable.
-    """
+    """Get or create the 'memory_chunks' ChromaDB collection (process singleton)."""
     if not _HAS_CHROMADB:
         return None
-    path = chroma_dir or MEMORY_CHROMA_DIR
-    path.mkdir(parents=True, exist_ok=True)
-    client = _chromadb.PersistentClient(path=str(path))
-    return client.get_or_create_collection("memory_chunks")
+    from src.memory_store import get_chroma_collection as get_collection
+    return get_collection("memory_chunks", path=chroma_dir)
 
 
 def ingest(
@@ -654,14 +700,28 @@ def ingest(
         {source_id, chunk_ids, indexed, deduped, superseded}
     """
     opts = opts or {}
-    do_categorize: bool = bool(opts.get("categorize", False))
-    do_log: bool = bool(opts.get("log", False))
-    do_multiview: bool = bool(opts.get("multiview", False))
-    mode: str = opts.get("mode", "hybrid")
-    codebook_choice: str = opts.get("codebook", "auto")
+    # Merge source_type defaults with caller overrides (caller wins)
+    defaults = _INGEST_DEFAULTS.get(source.source_type, _INGEST_DEFAULT_FALLBACK)
+    effective = {**defaults, **opts}
+
+    do_categorize: bool = bool(effective.get("categorize", True)) and bool(model)
+    do_log: bool = bool(effective.get("log", False))
+    do_multiview: bool = bool(effective.get("multiview", False))
+    mode: str = effective.get("mode", "hybrid")
+    codebook_choice: str = effective.get("codebook", "auto")
 
     # Import here to keep top-level imports clean
     from src.context import _embed_texts
+
+    # Step 0: skip if source content unchanged
+    if source.content_hash:
+        existing_src = get_source(conn, source.source_id)
+        if existing_src and existing_src.content_hash == source.content_hash:
+            return {
+                "source_id": source.source_id,
+                "chunk_ids": [], "indexed": False,
+                "deduped": 0, "superseded": 0, "skipped": True,
+            }
 
     # Step 1: persist source
     upsert_source(conn, source, workspace_id=workspace_id)
@@ -679,6 +739,7 @@ def ingest(
             chunks, ollama_url, model,
             mode=mode, codebook=codebook_choice,
             source_type=source.source_type,
+            conn=conn,
         )
 
     # Step 4: dedup + embed + store
@@ -691,10 +752,12 @@ def ingest(
         canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
         if is_dup:
             deduped_count += 1
+            add_source_ref(conn, canonical.chunk_id, source.source_id, workspace_id)
             continue
 
-        # 4b: insert into SQLite
+        # 4b: insert into SQLite + register source ref for new chunk
         insert_chunk(conn, chunk, workspace_id=workspace_id)
+        add_source_ref(conn, chunk.chunk_id, source.source_id, workspace_id)
 
         # 4c: embed
         try:
@@ -714,6 +777,8 @@ def ingest(
                         "source_id": chunk.source_id,
                         "chunk_level": chunk.chunk_level,
                         "category_labels": ",".join(chunk.category_labels),
+                        "category_source": chunk.category_source,
+                        "category_confidence": chunk.category_confidence,
                         "is_active": 1,
                     }],
                 )
@@ -901,3 +966,164 @@ def ingest_conversation_summary(
         },
         workspace_id=workspace_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# GitHub Issues ingestion (merged from ingest_github_issues.py)
+# ---------------------------------------------------------------------------
+
+_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
+
+
+def fetch_issues(repo: str, state: str = "open", limit: int = 100) -> list[dict]:
+    """Fetch issues via gh CLI. Returns empty list on any error."""
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "list", "--repo", repo, "--state", state,
+             "--limit", str(limit), "--json", "number,title,body,labels,state,url,createdAt"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+
+def issues_to_sources(issues: list[dict], repo: str) -> list[tuple[Source, str]]:
+    """Map gh issues to (Source, content) tuples for ingest()."""
+    from src.memory_schema import source_fingerprint
+    result: list[tuple[Source, str]] = []
+    for issue in issues:
+        if not isinstance(issue, dict) or "number" not in issue:
+            continue
+        title = issue.get("title") or ""
+        body = issue.get("body") or ""
+        content = f"# {title}\n\n{body}"
+        content_hash = source_fingerprint(content)
+        source = Source(
+            source_id=f"github_issue:{repo}:issue/{issue['number']}:{content_hash[:16]}",
+            source_type="github_issue",
+            repo=repo,
+            path=f"issue/{issue['number']}",
+            content_hash=content_hash,
+            branch=issue.get("state"),
+            commit=str(issue["number"]),
+        )
+        result.append((source, content))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Image ingestion (merged from image_ingest.py)
+# ---------------------------------------------------------------------------
+
+def discover_images(root: Path, max_file_bytes: int = 5 * 1024 * 1024, max_images: int = 50) -> list[Path]:
+    """Walk root recursively, return image files within size and count limits."""
+    found: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if len(found) >= max_images:
+            break
+        if not path.is_file():
+            continue
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
+            continue
+        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            continue
+        try:
+            if path.stat().st_size > max_file_bytes:
+                print(f"[ingest-images] Skip (too large): {path.relative_to(root)}")
+                continue
+        except OSError:
+            continue
+        found.append(path)
+    return found
+
+
+def run_image_ingest(
+    repo_url: str,
+    ollama_url: str,
+    vision_model: str = "qwen2.5vl:3b",
+    embed_model: str = "nomic-embed-text",
+    max_images: int = 50,
+    max_file_bytes: int = 5 * 1024 * 1024,
+    force_reingest: bool = False,
+    workspace_id: str = "default",
+) -> dict:
+    """Shallow-clone repo, caption all images, ingest into memory."""
+    url = repo_url.rstrip("/").removesuffix(".git")
+    parts = url.split("github.com/", 1)
+    repo_owner_name = parts[1] if len(parts) == 2 else url
+    repo_slug = repo_owner_name.replace("/", "-").lower()
+    clone_dir = tempfile.mkdtemp(prefix=f"mayring-{repo_slug}-images-")
+    try:
+        return _run_image_ingest_from_clone(
+            repo_url=url, clone_dir=Path(clone_dir),
+            repo_owner_name=repo_owner_name, ollama_url=ollama_url,
+            vision_model=vision_model, embed_model=embed_model,
+            max_images=max_images, max_file_bytes=max_file_bytes,
+            force_reingest=force_reingest, workspace_id=workspace_id,
+        )
+    finally:
+        shutil.rmtree(clone_dir, ignore_errors=True)
+
+
+def _run_image_ingest_from_clone(
+    repo_url: str, clone_dir: Path, repo_owner_name: str, ollama_url: str,
+    vision_model: str, embed_model: str, max_images: int, max_file_bytes: int,
+    force_reingest: bool, workspace_id: str = "default",
+) -> dict:
+    print(f"[ingest-images] git clone --depth=1 {repo_url} ...")
+    result = subprocess.run(
+        ["git", "clone", "--depth=1", repo_url, str(clone_dir)],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
+
+    images = discover_images(clone_dir, max_file_bytes=max_file_bytes, max_images=max_images)
+    print(f"[ingest-images] {len(images)} Bilder gefunden")
+    if not images:
+        return {"images_found": 0, "images_captioned": 0, "images_skipped": 0, "images_failed": 0, "repo": repo_owner_name}
+
+    from src.memory_store import deactivate_chunks_by_source
+    from src.memory_retrieval import invalidate_query_cache
+
+    conn = init_memory_db()
+    chroma = get_or_create_chroma_collection()
+    captioned = skipped = failed = 0
+
+    if force_reingest:
+        for img_path in images:
+            rel = str(img_path.relative_to(clone_dir))
+            deactivate_chunks_by_source(conn, Source.make_id(repo_owner_name, rel))
+        invalidate_query_cache()
+
+    try:
+        for img_path in images:
+            rel = str(img_path.relative_to(clone_dir))
+            source = Source(
+                source_id=Source.make_id(repo_owner_name, rel),
+                source_type="repo_file", repo=repo_owner_name, path=rel,
+            )
+            try:
+                r = ingest_image(
+                    source=source, image_path=img_path, conn=conn,
+                    chroma_collection=chroma, ollama_url=ollama_url,
+                    model=embed_model, vision_model=vision_model, workspace_id=workspace_id,
+                )
+                if r.get("deduped", 0) > 0:
+                    skipped += 1
+                    print(f"[ingest-images] Dedup: {rel}")
+                else:
+                    captioned += 1
+                    print(f"[ingest-images] OK: {rel}")
+            except Exception as exc:
+                failed += 1
+                print(f"[ingest-images] FEHLER {rel}: {exc}")
+    finally:
+        conn.close()
+
+    return {"images_found": len(images), "images_captioned": captioned,
+            "images_skipped": skipped, "images_failed": failed, "repo": repo_owner_name}

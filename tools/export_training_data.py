@@ -134,6 +134,34 @@ def export(
 # CLI
 # ---------------------------------------------------------------------------
 
+def _export_categories(output_path: Path) -> int:
+    """Export (text, categories) pairs from memory DB for categorization training."""
+    from src.memory_store import init_memory_db
+
+    conn = init_memory_db()
+    rows = conn.execute(
+        "SELECT text, category_labels, category_source, source_type "
+        "FROM chunks WHERE is_active = 1 AND category_labels != '' AND category_labels IS NOT NULL"
+    ).fetchall()
+    conn.close()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with output_path.open("w", encoding="utf-8") as fh:
+        for text, cat_raw, cat_source, source_type in rows:
+            categories = [c for c in (cat_raw or "").split(",") if c]
+            if not categories:
+                continue
+            fh.write(json.dumps({
+                "text": text,
+                "categories": categories,
+                "category_source": cat_source or "",
+                "source_type": source_type or "",
+            }, ensure_ascii=False) + "\n")
+            written += 1
+    return written
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Labeled Training-Daten exportieren")
     p.add_argument("--log", type=Path, metavar="PATH",
@@ -146,9 +174,18 @@ def main() -> None:
                    help="Label-Filter: positive|candidate|all (Standard: positive)")
     p.add_argument("--call-type", default="analyze",
                    help="Call-Type-Filter: analyze|overview|all (Standard: analyze)")
+    p.add_argument("--mode", choices=["findings", "categories"], default="findings",
+                   help="Export-Modus: findings (Standard) oder categories (text→category Paare aus Memory-DB)")
     p.add_argument("--stats", action="store_true",
                    help="Statistik vor dem Export anzeigen")
     args = p.parse_args()
+
+    if args.mode == "categories":
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+        output_path = args.output or (TRAINING_DIR / f"categories_{ts}.jsonl")
+        n = _export_categories(output_path)
+        print(f"Kategorisierungs-Export: {n} (text, categories) Paare → {output_path}")
+        return
 
     log_path = args.log or _default_labeled_log()
     if log_path is None or not log_path.exists():

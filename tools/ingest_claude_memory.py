@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Ingest Claude Code auto-memory files into the MCP memory store.
+"""Ingest Claude Code auto-memory files into the MCP memory store.
 
 Scans ~/.claude/projects/<project-slug>/memory/*.md and ingests any
 new or changed files. Safe to re-run — deduplication via content_hash.
@@ -8,7 +7,8 @@ new or changed files. Safe to re-run — deduplication via content_hash.
 Usage:
     .venv/bin/python tools/ingest_claude_memory.py
     .venv/bin/python tools/ingest_claude_memory.py --dry-run
-    .venv/bin/python tools/ingest_claude_memory.py --force   # re-ingest all
+    .venv/bin/python tools/ingest_claude_memory.py --force
+    .venv/bin/python tools/ingest_claude_memory.py --workspace-id system
 """
 
 import argparse
@@ -17,12 +17,9 @@ import os
 import sys
 from pathlib import Path
 
-# Allow running from repo root or tools/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 MEMORY_DIR = Path.home() / ".claude/projects/-home-nileneb-Desktop-MayringCoder/memory"
-DB_PATH = "cache/memory.db"
-CHROMA_PATH = "cache/memory_chroma"
 REPO = "nileneb/MayringCoder"
 
 
@@ -31,15 +28,13 @@ def _hash(content: str) -> str:
 
 
 def _already_ingested(conn, source_id: str, content_hash: str) -> bool:
-    cur = conn.cursor()
-    cur.execute(
+    row = conn.execute(
         "SELECT content_hash FROM sources WHERE source_id = ?", (source_id,)
-    )
-    row = cur.fetchone()
+    ).fetchone()
     return row is not None and row[0] == content_hash
 
 
-def run(dry_run: bool = False, force: bool = False) -> None:
+def run(dry_run: bool = False, force: bool = False, workspace_id: str = "system") -> None:
     if not MEMORY_DIR.exists():
         print(f"Memory-Verzeichnis nicht gefunden: {MEMORY_DIR}", file=sys.stderr)
         sys.exit(1)
@@ -53,18 +48,16 @@ def run(dry_run: bool = False, force: bool = False) -> None:
     load_dotenv()
 
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    embed_model = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+    model = os.getenv("OLLAMA_MODEL", os.getenv("EMBEDDING_MODEL", "nomic-embed-text"))
 
-    import chromadb
-    from src.memory_ingest import ingest
+    from src.memory_ingest import get_or_create_chroma_collection, ingest
     from src.memory_schema import Source
     from src.memory_store import init_memory_db
 
     conn = init_memory_db()
-    chroma = chromadb.PersistentClient(path=CHROMA_PATH)
-    collection = chroma.get_or_create_collection("memory_chunks")
+    chroma = get_or_create_chroma_collection()
 
-    ingested = skipped = 0
+    ingested = skipped = errors = 0
 
     for md_file in md_files:
         content = md_file.read_text(encoding="utf-8")
@@ -90,20 +83,40 @@ def run(dry_run: bool = False, force: bool = False) -> None:
             commit="",
             content_hash=content_hash,
         )
-        result = ingest(source, content, conn, collection, ollama_url, embed_model)
-        chunks = len(result.get("chunk_ids", []))
-        deduped = result.get("deduped", 0)
-        print(f"  ingest  {md_file.name}  →  {chunks} chunks  (deduped={deduped})")
-        ingested += 1
+        try:
+            result = ingest(
+                source, content, conn, chroma, ollama_url, model,
+                workspace_id=workspace_id,
+                # ingest() handles categorize/codebook/mode via _INGEST_DEFAULTS["note"]
+            )
+            chunks = len(result.get("chunk_ids", []))
+            deduped = result.get("deduped", 0)
+            print(f"  ingest  {md_file.name}  →  {chunks} chunks  (deduped={deduped})")
+            ingested += 1
+        except Exception as exc:
+            print(f"  ERROR  {md_file.name}: {exc}", file=sys.stderr)
+            errors += 1
 
     conn.close()
     action = "würde ingestiert" if dry_run else "ingested"
-    print(f"\nFertig: {ingested} {action}, {skipped} übersprungen.")
+    print(f"\nFertig: {ingested} {action}, {skipped} übersprungen, {errors} Fehler.")
+
+    if not dry_run and ingested > 0:
+        print("\nKnowledge Graph aktualisieren …")
+        try:
+            from tools.generate_knowledge_graph import generate
+            generate()
+        except Exception as exc:
+            print(f"  Knowledge Graph Fehler: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ingest Claude memory files into MCP store")
-    parser.add_argument("--dry-run", action="store_true", help="Zeige was ingested würde, ohne zu schreiben")
-    parser.add_argument("--force", action="store_true", help="Re-ingestiere alle Dateien auch wenn unverändert")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Zeige was ingested würde, ohne zu schreiben")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-ingestiere alle Dateien auch wenn unverändert")
+    parser.add_argument("--workspace-id", default="system", metavar="ID",
+                        help="Memory workspace-ID (Standard: system)")
     args = parser.parse_args()
-    run(dry_run=args.dry_run, force=args.force)
+    run(dry_run=args.dry_run, force=args.force, workspace_id=args.workspace_id)

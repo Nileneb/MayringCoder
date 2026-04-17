@@ -25,7 +25,7 @@ class TestCheckOllamaUnavailable:
 
     def test_both_paths_fail(self):
         """subprocess fails + httpx fails → (False, [])."""
-        from src.ollama_status import check_ollama
+        from src.ollama_client import check_ollama
 
         with (
             patch("subprocess.run", side_effect=FileNotFoundError("ollama not found")),
@@ -38,7 +38,7 @@ class TestCheckOllamaUnavailable:
 
     def test_no_exception_raised(self):
         """Must not propagate any exception."""
-        from src.ollama_status import check_ollama
+        from src.ollama_client import check_ollama
 
         with (
             patch("subprocess.run", side_effect=OSError("no such file")),
@@ -53,7 +53,7 @@ class TestCheckOllamaUnavailable:
     def test_timeout_in_subprocess(self):
         """subprocess timeout → httpx path → also fails → (False, [])."""
         import subprocess
-        from src.ollama_status import check_ollama
+        from src.ollama_client import check_ollama
 
         with (
             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ollama", 3)),
@@ -74,7 +74,7 @@ class TestCheckOllamaSubprocessFallback:
 
     def test_subprocess_fails_httpx_succeeds(self):
         """subprocess returncode != 0 → httpx returns model list."""
-        from src.ollama_status import check_ollama
+        from src.ollama_client import check_ollama
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -97,7 +97,7 @@ class TestCheckOllamaSubprocessFallback:
 
     def test_subprocess_fails_httpx_status_error(self):
         """subprocess fails + httpx returns 500 → (False, [])."""
-        from src.ollama_status import check_ollama
+        from src.ollama_client import check_ollama
 
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -113,7 +113,7 @@ class TestCheckOllamaSubprocessFallback:
 
     def test_subprocess_success_no_httpx_call(self):
         """If subprocess succeeds, httpx must not be called."""
-        from src.ollama_status import check_ollama
+        from src.ollama_client import check_ollama
 
         proc_mock = MagicMock()
         proc_mock.returncode = 0

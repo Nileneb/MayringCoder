@@ -1,13 +1,10 @@
-"""Memory Storage Layer — SQLite schema for sources, chunks, feedback, and ingestion log.
-
-This module manages a SEPARATE SQLite database at cache/memory.db.
-It does NOT touch the per-repo .db files managed by cache.py.
+"""Memory Storage Layer — SQLite + ChromaDB singletons.
 
 Tables:
-    sources         — ingested source records
-    chunks          — versioned memory chunks
-    chunk_feedback  — user feedback per chunk
-    ingestion_log   — audit trail for all ingestion events
+    sources, chunks, chunk_feedback, ingestion_log
+
+ChromaDB:
+    get_chroma_collection(name, path) — process-scoped singleton
 """
 
 from __future__ import annotations
@@ -16,8 +13,40 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from src.config import CACHE_DIR
+
+# ---------------------------------------------------------------------------
+# ChromaDB process-scoped singleton (replaces chroma_factory.py)
+# ---------------------------------------------------------------------------
+
+_chroma_clients: dict[str, Any] = {}
+_chroma_collections: dict[str, Any] = {}
+
+
+def get_chroma_collection(
+    name: str = "memory_chunks",
+    path: str | Path | None = None,
+) -> Any:
+    """Return a process-scoped ChromaDB collection singleton.
+
+    The same (name, path) pair always returns the same object, preventing
+    multiple PersistentClient instances pointing at the same directory.
+    Returns None if chromadb is not installed.
+    """
+    try:
+        import chromadb
+    except ImportError:
+        return None
+    chroma_path = str(path or CACHE_DIR / "memory_chroma")
+    key = f"{chroma_path}::{name}"
+    if key not in _chroma_collections:
+        if chroma_path not in _chroma_clients:
+            Path(chroma_path).mkdir(parents=True, exist_ok=True)
+            _chroma_clients[chroma_path] = chromadb.PersistentClient(path=chroma_path)
+        _chroma_collections[key] = _chroma_clients[chroma_path].get_or_create_collection(name)
+    return _chroma_collections[key]
 from src.memory_schema import Chunk, Source
 
 MEMORY_DB_PATH: Path = CACHE_DIR / "memory.db"
@@ -61,14 +90,23 @@ def init_memory_db(db_path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def _migrate_workspace_id(conn: sqlite3.Connection) -> None:
-    """Add workspace_id column if missing (migration for existing DBs)."""
-    for table in ("sources", "chunks"):
-        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        if "workspace_id" not in cols:
-            conn.execute(
-                f"ALTER TABLE {table} ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"
-            )
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Add missing columns to existing DBs (idempotent migrations)."""
+    migrations = {
+        "sources": [
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
+        "chunks": [
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+            ("category_source", "TEXT NOT NULL DEFAULT ''"),
+            ("category_confidence", "REAL NOT NULL DEFAULT 0.0"),
+        ],
+    }
+    for table, columns in migrations.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col_name, col_def in columns:
+            if col_name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -126,6 +164,20 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_feedback_chunk_id
             ON chunk_feedback(chunk_id);
 
+        CREATE TABLE IF NOT EXISTS chunk_source_refs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            canonical_chunk_id  TEXT NOT NULL,
+            source_id       TEXT NOT NULL,
+            workspace_id    TEXT NOT NULL DEFAULT 'default',
+            created_at      TEXT NOT NULL,
+            UNIQUE(canonical_chunk_id, source_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chunk_source_refs_canonical
+            ON chunk_source_refs(canonical_chunk_id);
+        CREATE INDEX IF NOT EXISTS idx_chunk_source_refs_source
+            ON chunk_source_refs(source_id);
+
         CREATE TABLE IF NOT EXISTS ingestion_log (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             source_id       TEXT NOT NULL DEFAULT '',
@@ -138,8 +190,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             ON ingestion_log(source_id);
     """)
 
-    # Migration: add workspace_id column if not present (existing DBs)
-    _migrate_workspace_id(conn)
+    # Migration: add missing columns to existing DBs
+    _migrate_schema(conn)
 
     # Indexes for workspace_id filtering
     conn.execute(
@@ -218,11 +270,14 @@ def insert_chunk(
             (chunk_id, source_id, parent_chunk_id, chunk_level, ordinal,
              start_offset, end_offset, text, text_hash, summary, category_labels,
              category_version, embedding_model, embedding_id, quality_score,
-             dedup_key, created_at, superseded_by, is_active, workspace_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             dedup_key, category_source, category_confidence,
+             created_at, superseded_by, is_active, workspace_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chunk_id) DO UPDATE SET
             text=excluded.text, text_hash=excluded.text_hash,
             summary=excluded.summary, category_labels=excluded.category_labels,
+            category_source=excluded.category_source,
+            category_confidence=excluded.category_confidence,
             is_active=1, superseded_by=NULL, created_at=excluded.created_at,
             workspace_id=excluded.workspace_id
         """,
@@ -231,8 +286,9 @@ def insert_chunk(
             chunk.chunk_level, chunk.ordinal, chunk.start_offset, chunk.end_offset,
             chunk.text, chunk.text_hash, chunk.summary, labels_str,
             chunk.category_version, chunk.embedding_model, chunk.embedding_id,
-            chunk.quality_score, chunk.dedup_key, chunk.created_at,
-            chunk.superseded_by, int(chunk.is_active), workspace_id,
+            chunk.quality_score, chunk.dedup_key,
+            chunk.category_source, chunk.category_confidence,
+            chunk.created_at, chunk.superseded_by, int(chunk.is_active), workspace_id,
         ),
     )
     conn.commit()
@@ -346,3 +402,37 @@ def get_active_chunk_count(conn: sqlite3.Connection) -> int:
 
 def get_source_count(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
+# Cross-source references (dedup co-occurrence)
+# ---------------------------------------------------------------------------
+
+def add_source_ref(
+    conn: sqlite3.Connection,
+    canonical_chunk_id: str,
+    source_id: str,
+    workspace_id: str = "default",
+) -> None:
+    """Record that source_id contains the same text as canonical_chunk_id."""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO chunk_source_refs
+            (canonical_chunk_id, source_id, workspace_id, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (canonical_chunk_id, source_id, workspace_id, _now_iso()),
+    )
+    conn.commit()
+
+
+def get_source_refs(
+    conn: sqlite3.Connection,
+    canonical_chunk_id: str,
+) -> list[str]:
+    """Return all source_ids that share the same text as canonical_chunk_id."""
+    rows = conn.execute(
+        "SELECT source_id FROM chunk_source_refs WHERE canonical_chunk_id = ?",
+        (canonical_chunk_id,),
+    ).fetchall()
+    return [r[0] for r in rows]

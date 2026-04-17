@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from src.turbulence_calculator import (
+from src.turbulence import (
     Chunk,
     FileAnalysis,
     Redundancy,
@@ -316,7 +316,7 @@ class TestFindRedundancies:
 
 class TestBuildReport:
     def test_returns_expected_keys(self):
-        from src.turbulence_report import build_report
+        from src.turbulence import build_report
         analyses = [
             FileAnalysis(path="a.py", total_lines=10, tier="skip",
                          turbulence_score=0.1),
@@ -327,7 +327,7 @@ class TestBuildReport:
         assert "redundancies" in report
 
     def test_summary_counts_tiers(self):
-        from src.turbulence_report import build_report
+        from src.turbulence import build_report
         analyses = [
             FileAnalysis(path="a.py", total_lines=5, tier="skip", turbulence_score=0.1),
             FileAnalysis(path="b.py", total_lines=5, tier="light", turbulence_score=0.3),
@@ -339,7 +339,7 @@ class TestBuildReport:
         assert report["summary"]["critical"] == 1
 
     def test_build_markdown_returns_string(self):
-        from src.turbulence_report import build_report, build_markdown
+        from src.turbulence import build_report, build_markdown
         analyses = [
             FileAnalysis(path="x.py", total_lines=20, tier="light", turbulence_score=0.25),
         ]
@@ -351,7 +351,7 @@ class TestBuildReport:
 
     def test_stable_tier_counted_in_summary(self):
         """Files with < MIN_CHUNKS_FOR_TRIAGE should be counted in stable summary."""
-        from src.turbulence_report import build_report
+        from src.turbulence import build_report
         analyses = [
             FileAnalysis(path="tiny.py", total_lines=5, tier="stable", turbulence_score=0.0),
             FileAnalysis(path="normal.py", total_lines=50, tier="deep", turbulence_score=0.7),
@@ -361,7 +361,7 @@ class TestBuildReport:
         assert report["summary"]["critical"] == 1
 
     def test_stable_and_skip_both_counted_as_stable(self):
-        from src.turbulence_report import build_report
+        from src.turbulence import build_report
         analyses = [
             FileAnalysis(path="a.py", total_lines=5, tier="stable", turbulence_score=0.0),
             FileAnalysis(path="b.py", total_lines=20, tier="skip", turbulence_score=0.1),
@@ -380,7 +380,7 @@ class TestMinChunksForTriage:
 
     def test_analyze_repo_marks_tiny_file_as_stable(self, tmp_path):
         """A file that produces < MIN_CHUNKS_FOR_TRIAGE chunks must get tier='stable'."""
-        from src.turbulence_analyzer import analyze_repo
+        from src.turbulence import analyze_repo
 
         # Write a tiny file (< 30 lines → at most 2 chunks with default chunk_size=15)
         tiny = tmp_path / "tiny.py"
@@ -393,7 +393,7 @@ class TestMinChunksForTriage:
 
     def test_model_param_passed_to_report(self, tmp_path):
         """analyze_repo with model param runs without error and returns report dict."""
-        from src.turbulence_analyzer import analyze_repo
+        from src.turbulence import analyze_repo
 
         f = tmp_path / "sample.py"
         f.write_text("\n".join(f"x = {i}" for i in range(50)))

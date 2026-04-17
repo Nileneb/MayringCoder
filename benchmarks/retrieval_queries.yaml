@@ -15,6 +15,7 @@ queries:
       - "issue/133"
       - "issue/147"
     view: fact
+    expected_category: "bug"
     description: "Bugs rund um CreditService und AgentDailyLimit"
 
   - id: q02
@@ -97,6 +98,7 @@ queries:
     relevant_paths:
       - "issue/157"
     view: impl
+    expected_category: "implementierung"
     description: "Embedding-Pipeline Erweiterung und RAG-Migration"
 
   - id: q13
@@ -149,6 +151,7 @@ queries:
       - "issue/156"
       - "issue/159"
     view: decision
+    expected_category: "architekturentscheidung"
     description: "Architektur-Entscheidung: API → MCP + Langdock-Integration"
 
   - id: q20
@@ -187,6 +190,7 @@ queries:
       - "issue/137"
       - "issue/161"
     view: fact
+    expected_category: "sicherheit"
     description: "Security-Issues: MCP ohne Auth + Postgres-MCP-Absicherung"
 
   - id: q25
@@ -194,6 +198,7 @@ queries:
     relevant_paths:
       - "issue/148"
     view: fact
+    expected_category: "sicherheit"
     description: "Security: SQL-Injection-Risiko im ContextInjector"
 
   # --- Entities / Keyword-Suche ---

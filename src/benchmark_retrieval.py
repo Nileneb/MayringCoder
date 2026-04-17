@@ -56,16 +56,7 @@ def recall_at_k(
     relevant_paths: list[list[str]],
     k: int = 5,
 ) -> float:
-    """Recall@K über alle Queries: Anteil relevanter Items in den Top-K Ergebnissen.
-
-    Args:
-        ranked_paths: Für jede Query — geordnete Liste der zurückgegebenen Pfade.
-        relevant_paths: Für jede Query — Menge der relevanten Pfade (Ground Truth).
-        k: Cutoff-Tiefe.
-
-    Returns:
-        Recall@K-Score zwischen 0.0 und 1.0.
-    """
+    """Recall@K über alle Queries: Anteil relevanter Items in den Top-K Ergebnissen."""
     if not ranked_paths:
         return 0.0
     recalls: list[float] = []
@@ -78,6 +69,50 @@ def recall_at_k(
         hit_count = len(top_k & relevant_set)
         recalls.append(hit_count / len(relevant_set))
     return sum(recalls) / len(recalls)
+
+
+def category_precision_at_k(
+    records_per_query: list[list[Any]],
+    expected_categories: list[str | None],
+    k: int = 5,
+) -> float:
+    """Category Precision@K: Anteil der Queries, bei denen mind. ein Top-K-Ergebnis
+    die erwartete Kategorie enthält.
+
+    Queries ohne expected_category werden übersprungen (nicht mitgezählt).
+    Returns 0.0 if no queries have expected_category.
+    """
+    hits = 0
+    total = 0
+    for records, expected in zip(records_per_query, expected_categories):
+        if not expected:
+            continue
+        total += 1
+        expected_lower = expected.lower()
+        for rec in records[:k]:
+            labels = [lbl.lower() for lbl in (getattr(rec, "category_labels", []) or [])]
+            if any(expected_lower in lbl or lbl in expected_lower for lbl in labels):
+                hits += 1
+                break
+    return hits / total if total else 0.0
+
+
+def uncategorized_rate(conn: Any) -> float:
+    """Anteil der aktiven Chunks ohne Kategorie-Labels.
+
+    Returns 1.0 if no chunks exist.
+    """
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN category_labels = '' OR category_labels IS NULL THEN 1 ELSE 0 END) "
+            "FROM chunks WHERE is_active = 1"
+        ).fetchone()
+        total, uncategorized = row
+        if not total:
+            return 1.0
+        return (uncategorized or 0) / total
+    except Exception:
+        return 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -114,40 +149,33 @@ def run_benchmark(
     """Führt alle Queries gegen die Memory-Pipeline aus und berechnet Metriken.
 
     Returns:
-        {
-            mrr: float,
-            recall_at_k: float,
-            k: int,
-            results: list[dict]  — Details pro Query
-        }
+        {mrr, recall_at_1, recall_at_k, category_precision_at_k, uncategorized_rate, k, results}
     """
     from src.memory_retrieval import search
 
     all_ranked: list[list[str]] = []
     all_relevant: list[list[str]] = []
+    all_records: list[list[Any]] = []
+    all_expected_cats: list[str | None] = []
     query_results: list[dict] = []
 
     for q in queries:
         query_text = q.get("query", "")
         relevant = q.get("relevant_paths", [])
         view = q.get("view")
+        expected_cat = q.get("expected_category")
 
         opts: dict = {"top_k": top_k}
         if repo:
             opts["repo"] = repo
         if view:
-            # Filter by chunk_level (view_fact, view_decision, etc.)
-            opts["source_type"] = None  # no source_type filter; view via categories
+            opts["source_type"] = None
 
+        records: list[Any] = []
+        normalized: list[str] = []
         try:
             records = search(query_text, conn, chroma_collection, ollama_url, opts=opts)
-            ranked_paths = [r.source_id.split(":")[-1].strip("/") for r in records]
-            # Normalize: source_id might be "github_issue:repo:issue/7:hash..."
-            # We extract the "issue/N" segment
-            normalized: list[str] = []
             for r in records:
-                # source_id format: "github_issue:{repo}:issue/{N}:{hash}"
-                # path format: "issue/{N}"
                 parts = r.source_id.split(":")
                 for part in parts:
                     if part.startswith("issue/"):
@@ -156,30 +184,24 @@ def run_benchmark(
                 else:
                     normalized.append(r.source_id)
 
-            # Filter by view if requested (chunk_level contains view type)
             if view:
                 view_level = f"view_{view}"
-                normalized_filtered = [
+                filtered = [
                     p for r, p in zip(records, normalized)
                     if view_level in (getattr(r, "chunk_level", "") or "")
                 ]
-                if normalized_filtered:
-                    normalized = normalized_filtered
+                if filtered:
+                    normalized = filtered
 
         except Exception as exc:
-            normalized = []
             print(f"  [WARN] Query {q.get('id', '?')} fehlgeschlagen: {exc}")
 
         all_ranked.append(normalized)
         all_relevant.append(relevant)
+        all_records.append(records)
+        all_expected_cats.append(expected_cat)
 
-        # First hit info
-        first_hit = None
-        for path in normalized:
-            if path in set(relevant):
-                first_hit = path
-                break
-
+        first_hit = next((p for p in normalized if p in set(relevant)), None)
         query_results.append({
             "id": q.get("id", "?"),
             "query": query_text[:80],
@@ -187,12 +209,15 @@ def run_benchmark(
             "relevant": relevant,
             "first_hit": first_hit,
             "hit": first_hit is not None,
+            "expected_category": expected_cat,
         })
 
     return {
         "mrr": mrr(all_ranked, all_relevant),
         "recall_at_1": recall_at_k(all_ranked, all_relevant, k=1),
         "recall_at_k": recall_at_k(all_ranked, all_relevant, k=top_k),
+        "category_precision_at_k": category_precision_at_k(all_records, all_expected_cats, k=top_k),
+        "uncategorized_rate": uncategorized_rate(conn),
         "k": top_k,
         "results": query_results,
     }
@@ -221,11 +246,17 @@ def print_report(benchmark: dict) -> None:
             print(f"    Erster Hit:  {r['first_hit']}")
 
     print(f"\n{'─'*70}")
-    print(f"  MRR:          {benchmark['mrr']:.4f}")
-    print(f"  Recall@1:     {benchmark['recall_at_1']:.4f}")
-    print(f"  Recall@{k}:     {benchmark['recall_at_k']:.4f}")
+    print(f"  MRR:                    {benchmark['mrr']:.4f}")
+    print(f"  Recall@1:               {benchmark['recall_at_1']:.4f}")
+    print(f"  Recall@{k}:               {benchmark['recall_at_k']:.4f}")
+    cat_prec = benchmark.get("category_precision_at_k")
+    if cat_prec is not None:
+        print(f"  Category Precision@{k}:   {cat_prec:.4f}")
+    unc = benchmark.get("uncategorized_rate")
+    if unc is not None:
+        print(f"  Uncategorized Rate:     {unc:.1%}")
     hits = sum(1 for r in results if r["hit"])
-    print(f"  Hits:         {hits}/{len(results)}")
+    print(f"  Hits:                   {hits}/{len(results)}")
     print(f"{'='*70}\n")
 
 

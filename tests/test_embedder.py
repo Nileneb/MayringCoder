@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.embedder import (
+from src.context import (
     _cosine_similarity,
     _file_snippet,
     _index_path,
@@ -104,7 +104,7 @@ def _fake_embed(texts, ollama_url):
 
 class TestBuildFileIndex:
     def test_returns_one_entry_per_file(self, tmp_path):
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
 
@@ -115,7 +115,7 @@ class TestBuildFileIndex:
         assert {e["filename"] for e in index} == {"a.py", "b.py"}
 
     def test_each_entry_has_embedding(self, tmp_path):
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
 
@@ -126,7 +126,7 @@ class TestBuildFileIndex:
         assert len(index[0]["embedding"]) == 2
 
     def test_cache_is_written_and_reused(self, tmp_path):
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
 
@@ -146,7 +146,7 @@ class TestBuildFileIndex:
         assert call_count["n"] == 1, "Embed should only be called once; second call uses cache"
 
     def test_force_reindex_bypasses_cache(self, tmp_path):
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
 
@@ -165,7 +165,7 @@ class TestBuildFileIndex:
         assert call_count["n"] == 2
 
     def test_cache_invalidated_on_file_set_change(self, tmp_path):
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
 
@@ -193,7 +193,7 @@ class TestFilterByEmbedding:
     """Tests for the main prefilter function."""
 
     def _run_filter(self, files, query, top_k=10, threshold=None, tmp_path=None):
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         if tmp_path is not None:
             cfg.CACHE_DIR = tmp_path
             embedder.CACHE_DIR = tmp_path
@@ -237,7 +237,7 @@ class TestFilterByEmbedding:
         Files with longer content produce longer snippets → higher embedding value.
         Our fake embed uses [len(text), 0], so longer snippets score higher vs a long query.
         Use a high threshold to force some files to be excluded."""
-        from src import config as cfg, embedder
+        from src import config as cfg, context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
 

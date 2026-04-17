@@ -182,7 +182,8 @@ class TestIngest:
         ingest(source, content, conn, chroma, "http://localhost:11434", "", {})
         result2 = ingest(source, content, conn, chroma, "http://localhost:11434", "", {})
 
-        assert result2["deduped"] >= 1
+        # Source-level skip: same content_hash → pipeline skipped entirely
+        assert result2.get("skipped") is True
         assert len(result2["chunk_ids"]) == 0
 
     def test_jsonl_log_written(self, tmp_path: Path) -> None:

@@ -369,6 +369,15 @@ def search(
         session_compacted=session_compacted,
     )
 
+    # Enrich with cross-source refs (same text found in other sources)
+    try:
+        from src.memory_store import get_source_refs
+        for r in ranked:
+            all_refs = get_source_refs(conn, r.chunk_id)
+            r.also_in_sources = [s for s in all_refs if s != r.source_id]
+    except Exception:
+        pass
+
     # Store in query cache (IDs + score_final only, no full text)
     _QUERY_CACHE[_ck] = [(r.chunk_id, r.score_final) for r in ranked]
     return ranked

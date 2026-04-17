@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import json
 import pytest
 
-from src.ingest_github_issues import fetch_issues, issues_to_sources
+from src.memory_ingest import fetch_issues, issues_to_sources
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ class TestRunIngestIssues:
         ]
 
         with (
-            patch("src.ingest_github_issues.subprocess.run",
+            patch("src.memory_ingest.subprocess.run",
                   return_value=MagicMock(returncode=0, stdout=json.dumps(mock_issues))),
             patch("src.memory_store.init_memory_db", return_value=MagicMock()),
             patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),
@@ -191,7 +191,7 @@ class TestRunIngestIssues:
             return {"chunk_ids": [], "deduped": 0}
 
         with (
-            patch("src.ingest_github_issues.subprocess.run",
+            patch("src.memory_ingest.subprocess.run",
                   return_value=MagicMock(returncode=0, stdout=json.dumps(mock_issues))),
             patch("src.memory_store.init_memory_db", return_value=MagicMock()),
             patch("src.memory_ingest.get_or_create_chroma_collection", return_value=MagicMock()),

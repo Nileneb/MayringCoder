@@ -1,0 +1,73 @@
+# MayringCoder – Codebook für qualitative Inhaltsanalyse
+# Verwendung: --codebook codebook_sozialforschung.yaml
+# Dieses Codebook ersetzt NICHT das Standard-Codebook (codebook.yaml).
+# Es wird nur aktiv, wenn es explizit per CLI-Flag ausgewählt wird.
+
+categories:
+  - name: argumentation
+    description: Argumentationslinien, Thesen, Begründungen, Schlussfolgerungen
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: methodik
+    description: Beschreibung von Forschungsdesign, Methoden, Stichproben, Vorgehen
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: ergebnis
+    description: Befunde, Resultate, Daten, Kennzahlen, empirische Aussagen
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: limitation
+    description: Einschränkungen, Schwächen, offene Fragen, Unsicherheiten
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: theorie
+    description: Theoretische Rahmung, Konzepte, Definitionen, Modelle
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: kontext
+    description: Hintergrundinformationen, Forschungsstand, Literaturverweise
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: wertung
+    description: Bewertungen, Empfehlungen, normative Aussagen, Implikationen
+    patterns:
+      - "*.md"
+      - "*.txt"
+      - "*.pdf"
+      - "*.docx"
+      - "*.tex"
+
+  - name: unklar
+    description: Mehrdeutige oder nicht zuordenbare Textstellen
+    patterns:
+      - "*"

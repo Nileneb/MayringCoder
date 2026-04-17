@@ -77,6 +77,8 @@ class Chunk:
     embedding_id: str = ""
     quality_score: float = 0.0
     dedup_key: str = ""           # sha256 of normalized text (for near-dedup)
+    category_source: str = ""     # "deductive"|"inductive"|"hybrid"|"fallback"|"manual"|""
+    category_confidence: float = 0.0
     created_at: str = field(default_factory=lambda: _now_iso())
     superseded_by: str | None = None
     is_active: bool = True
@@ -108,6 +110,8 @@ class Chunk:
             "embedding_id": self.embedding_id,
             "quality_score": self.quality_score,
             "dedup_key": self.dedup_key,
+            "category_source": self.category_source,
+            "category_confidence": self.category_confidence,
             "created_at": self.created_at,
             "superseded_by": self.superseded_by,
             "is_active": self.is_active,
@@ -172,6 +176,7 @@ class RetrievalRecord:
     text: str = ""
     summary: str = ""
     category_labels: list[str] = field(default_factory=list)
+    also_in_sources: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -186,6 +191,7 @@ class RetrievalRecord:
             "text": self.text,
             "summary": self.summary,
             "category_labels": self.category_labels,
+            "also_in_sources": self.also_in_sources,
         }
 
 

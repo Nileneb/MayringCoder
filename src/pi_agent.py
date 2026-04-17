@@ -139,13 +139,15 @@ def _agent_loop(
         if tool_calls_made < max_tool_calls:
             request_body["tools"] = _TOOLS
 
-        resp = httpx.post(
-            f"{_base_url}/api/chat",
-            json=request_body,
+        from src.ollama_client import chat as _oc_chat
+        data = _oc_chat(
+            ollama_url, model, messages,
+            system=system_prompt,
+            tools=request_body.get("tools"),
+            options=request_body["options"],
+            stream=False,
             timeout=timeout,
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         message = data.get("message", {})
         tool_calls = message.get("tool_calls") or []

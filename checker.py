@@ -317,7 +317,7 @@ def main() -> None:
 
     # --history: show past runs and exit
     if args.history:
-        runs = list_runs(repo_url)
+        runs = list_runs(repo_url, workspace_id=getattr(args, "workspace_id", "default"))
         if not runs:
             print("Keine Run-History vorhanden.")
         else:
@@ -333,7 +333,7 @@ def main() -> None:
     # --compare: diff two runs and exit
     if args.compare:
         try:
-            cmp = compare_runs(args.compare[0], args.compare[1], repo_url)
+            cmp = compare_runs(args.compare[0], args.compare[1], repo_url, workspace_id=getattr(args, "workspace_id", "default"))
         except FileNotFoundError as exc:
             print(f"Fehler: {exc}")
             sys.exit(1)
@@ -369,7 +369,9 @@ def main() -> None:
 
     # Codebook/Prompt-Kompatibilitätscheck
     _COMPAT_MAP = {
+        "social.yaml": {"mayring_deduktiv.md", "mayring_induktiv.md"},
         "codebook_sozialforschung.yaml": {"mayring_deduktiv.md", "mayring_induktiv.md"},
+        "code.yaml": {"file_inspector.md", "smell_inspector.md", "explainer.md"},
         "codebook.yaml": {"file_inspector.md", "smell_inspector.md", "explainer.md"},
     }
     cb_name = codebook_path.name
@@ -441,7 +443,7 @@ def main() -> None:
     # 3b. Embedding prefilter (Issue #11) — optional, applied before cache diff
     embedding_prefilter_meta: dict | None = None
     if args.embedding_prefilter:
-        from src.embedder import filter_by_embedding
+        from src.context import filter_by_embedding
 
         embed_model = args.embedding_model or EMBEDDING_MODEL
 
@@ -550,7 +552,7 @@ def main() -> None:
         conn = None
         print(f"--mode overview: {len(filenames_to_check)} Dateien kartieren (keine Fehlersuche)")
     else:
-        conn = init_db(repo_url)
+        conn = init_db(repo_url, workspace_id=getattr(args, "workspace_id", "default"))
         diff = find_changed_files(conn, repo_url, files, categories, max_files, run_key=cache_run_key)
         # conn stays open — needed for mark_files_analyzed after analysis
 
@@ -621,7 +623,8 @@ def main() -> None:
 
         # Save run history
         rid = args.run_id or generate_run_id()
-        run_path = save_run(rid, repo_url, model, "overview", results, diff, elapsed)
+        run_path = save_run(rid, repo_url, model, "overview", results, diff, elapsed,
+                            workspace_id=getattr(args, "workspace_id", "default"))
         print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
     else:
@@ -842,6 +845,7 @@ def main() -> None:
             embedding_prefilter_meta=embedding_prefilter_meta,
             full_scan=args.full,
             time_budget_hit=_time_budget_hit,
+            workspace_id=getattr(args, "workspace_id", "default"),
         )
         n_filtered = aggregation.get("_below_confidence_filtered", 0)
         print(f"\nReport: {report_path}")
@@ -869,7 +873,8 @@ def main() -> None:
         # Save run history
         rid = args.run_id or generate_run_id()
         run_path = save_run(rid, repo_url, model, "analyze", results, diff, elapsed, aggregation,
-                            extra={"time_budget_hit": _time_budget_hit})
+                            extra={"time_budget_hit": _time_budget_hit},
+                            workspace_id=getattr(args, "workspace_id", "default"))
         print(f"Run-History: {run_path.name}")
         print(f"Fertig in {elapsed:.0f}s")
 
@@ -879,8 +884,7 @@ def _run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> No
     import json
     from datetime import datetime
     from src.config import CACHE_DIR, REPORTS_DIR, repo_slug as _repo_slug
-    from src.turbulence_analyzer import analyze_repo
-    from src.turbulence_report import build_markdown
+    from src.turbulence import analyze_repo, build_markdown
 
     print(f"\n{'='*60}")
     print("  Stufe 2: Turbulenz-Analyse")
@@ -1042,6 +1046,14 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
                 commit="",
             )
             try:
+                # ingest() uses _INGEST_DEFAULTS["repo_file"] as baseline;
+                # only pass explicit overrides from CLI
+                _opts: dict = {}
+                if not args.memory_categorize:
+                    _opts["categorize"] = False   # explicit opt-out
+                codebook_profile = getattr(args, "codebook_profile", None)
+                if codebook_profile:
+                    _opts["codebook"] = codebook_profile
                 result = ingest(
                     source,
                     f["content"],
@@ -1049,11 +1061,7 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
                     chroma,
                     ollama_url,
                     model,
-                    opts={
-                        "categorize": args.memory_categorize,
-                        "mode": "hybrid",
-                        "codebook": getattr(args, "codebook_profile", None) or "auto",
-                    },
+                    opts=_opts or None,
                     workspace_id=getattr(args, "workspace_id", "default"),
                 )
                 dedup_count += result.get("deduped", 0)
@@ -1075,10 +1083,20 @@ def _run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> No
         f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
     )
 
+    if ok_count > 0 and not getattr(args, "dry_run", False):
+        print("\nKnowledge Graph aktualisieren …")
+        try:
+            from src.config import repo_slug as _repo_slug
+            from tools.generate_knowledge_graph import generate
+            slug = _repo_slug(repo_url)
+            generate(project_filter=slug)
+        except Exception as _kg_exc:
+            print(f"  Knowledge Graph Fehler: {_kg_exc}")
+
 
 def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
     """GitHub Issues in die Memory-Pipeline ingesten."""
-    from src.ingest_github_issues import fetch_issues, issues_to_sources
+    from src.memory_ingest import fetch_issues, issues_to_sources
     from src.memory_ingest import get_or_create_chroma_collection, ingest
     from src.memory_store import init_memory_db
     from src.gpu_metrics import start_monitoring, stop_monitoring, parse_metrics, format_summary
@@ -1140,7 +1158,9 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
                     chroma,
                     ollama_url,
                     model,
-                    opts={"categorize": False, "mode": "hybrid", "codebook": "social", "multiview": do_multiview},
+                    # ingest() uses _INGEST_DEFAULTS["github_issue"]: categorize=True, codebook=social, multiview=True
+                    # Only override multiview if CLI explicitly disables it
+                    opts={"multiview": do_multiview} if not do_multiview else None,
                     workspace_id=getattr(args, "workspace_id", "default"),
                 )
                 dedup_count += result.get("deduped", 0)
@@ -1162,10 +1182,20 @@ def _run_ingest_issues(args, ollama_url: str, model: str) -> None:
         f"{ok_count} OK, {error_count} Fehler, {dedup_count} Dedup."
     )
 
+    if ok_count > 0 and not getattr(args, "dry_run", False):
+        print("\nKnowledge Graph aktualisieren …")
+        try:
+            from src.config import repo_slug as _repo_slug
+            from tools.generate_knowledge_graph import generate
+            slug = _repo_slug(getattr(args, "ingest_issues", ""))
+            generate(project_filter=slug)
+        except Exception as _kg_exc:
+            print(f"  Knowledge Graph Fehler: {_kg_exc}")
+
 
 def _run_ingest_images(args, ollama_url: str, model: str) -> None:
     """Repo-Bilder captionieren und in Memory ingesten."""
-    from src.image_ingest import run_image_ingest
+    from src.memory_ingest import run_image_ingest
 
     repo_url = args.ingest_images
     vision_model = getattr(args, "vision_model", "qwen2.5vl:3b")

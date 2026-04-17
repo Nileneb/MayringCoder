@@ -84,7 +84,8 @@ def _get_conn():
 def _get_chroma():
     global _chroma
     if _chroma is None:
-        _chroma = get_or_create_chroma_collection()
+        from src.memory_store import get_chroma_collection as get_collection
+        _chroma = get_collection()
     return _chroma
 
 
@@ -163,6 +164,13 @@ async def get_workspace(
 # Request/Response models
 # ---------------------------------------------------------------------------
 
+class PiTaskRequest(BaseModel):
+    task: str
+    repo_slug: str | None = None
+    system_prompt: str | None = None
+    timeout: float = 180.0
+
+
 class AnalyzeRequest(BaseModel):
     repo: str
     full: bool = False
@@ -220,6 +228,31 @@ class MemoryPutRequest(BaseModel):
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.post("/pi-task")
+async def pi_task(
+    request: PiTaskRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Run a task via the Pi-agent (memory-augmented reasoning)."""
+    from src.pi_agent import run_task_with_memory
+    _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_task_with_memory(
+                task=request.task,
+                ollama_url=_OLLAMA_URL,
+                model=_OLLAMA_MODEL,
+                repo_slug=_repo_slug,
+                system_prompt=request.system_prompt,
+                timeout=request.timeout,
+            ),
+        )
+        return {"workspace_id": workspace_id, "content": result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/analyze")

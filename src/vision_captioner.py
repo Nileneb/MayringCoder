@@ -79,20 +79,13 @@ def caption_image(
         raw_bytes = path.read_bytes()
         b64_data = base64.b64encode(raw_bytes).decode("ascii")
 
-        payload = {
-            "model": model,
-            "prompt": _CAPTION_PROMPT,
-            "images": [b64_data],
-            "stream": False,
-        }
-
-        response = httpx.post(
-            f"{ollama_url.rstrip('/')}/api/generate",
-            json=payload,
+        from src.ollama_client import generate as _oc_generate
+        return _oc_generate(
+            ollama_url, model, _CAPTION_PROMPT,
+            images=[b64_data],
+            stream=False,
             timeout=timeout,
         )
-        response.raise_for_status()
-        return response.json().get("response", "")
 
     except Exception:
         return ""

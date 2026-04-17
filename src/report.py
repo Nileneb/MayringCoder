@@ -21,11 +21,13 @@ def generate_report(
     max_chars_per_file: int | None = None,
     full_scan: bool = False,
     time_budget_hit: bool = False,
+    workspace_id: str = "default",
 ) -> str:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    report_path = REPORTS_DIR / f"repo-check-{timestamp}.md"
-    meta_path = REPORTS_DIR / f"repo-check-{timestamp}_meta.json"
+    prefix = f"{workspace_id}-" if workspace_id and workspace_id != "default" else ""
+    report_path = REPORTS_DIR / f"{prefix}repo-check-{timestamp}.md"
+    meta_path = REPORTS_DIR / f"{prefix}repo-check-{timestamp}_meta.json"
     _max_chars = max_chars_per_file if max_chars_per_file is not None else get_max_chars_per_file()
 
     files_total = (

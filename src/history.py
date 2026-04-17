@@ -7,9 +7,12 @@ from pathlib import Path
 from src.config import CACHE_DIR, repo_slug as _repo_slug
 
 
-def _runs_dir(repo_url: str) -> Path:
-    """Return ``cache/{repo_slug}/runs/`` directory for the given repo."""
-    return CACHE_DIR / _repo_slug(repo_url) / "runs"
+def _runs_dir(repo_url: str, workspace_id: str = "default") -> Path:
+    """Return runs directory for the given repo + workspace."""
+    slug = _repo_slug(repo_url)
+    if workspace_id and workspace_id != "default":
+        return CACHE_DIR / workspace_id / slug / "runs"
+    return CACHE_DIR / slug / "runs"
 
 
 def generate_run_id() -> str:
@@ -61,12 +64,13 @@ def save_run(
     timing: float,
     aggregation: dict | None = None,
     extra: dict | None = None,
+    workspace_id: str = "default",
 ) -> Path:
     """Persist a single run as ``{runs_dir}/{run_id}.json``.
 
     Handles collisions by appending ``_1``, ``_2``, … if the ID already exists.
     """
-    runs = _runs_dir(repo_url)
+    runs = _runs_dir(repo_url, workspace_id)
     runs.mkdir(parents=True, exist_ok=True)
 
     out = runs / f"{run_id}.json"
@@ -80,9 +84,9 @@ def save_run(
     return out
 
 
-def list_runs(repo_url: str) -> list[dict]:
+def list_runs(repo_url: str, workspace_id: str = "default") -> list[dict]:
     """Return lightweight metadata for all stored runs, newest first."""
-    runs = _runs_dir(repo_url)
+    runs = _runs_dir(repo_url, workspace_id)
     if not runs.exists():
         return []
 
@@ -103,9 +107,9 @@ def list_runs(repo_url: str) -> list[dict]:
     return entries
 
 
-def load_run(run_id: str, repo_url: str) -> dict | None:
+def load_run(run_id: str, repo_url: str, workspace_id: str = "default") -> dict | None:
     """Load the full payload for a given run-ID. Returns *None* if not found."""
-    runs = _runs_dir(repo_url)
+    runs = _runs_dir(repo_url, workspace_id)
     path = runs / f"{run_id}.json"
     if not path.exists():
         return None
@@ -115,14 +119,14 @@ def load_run(run_id: str, repo_url: str) -> dict | None:
         return None
 
 
-def compare_runs(run_id_a: str, run_id_b: str, repo_url: str) -> dict:
+def compare_runs(run_id_a: str, run_id_b: str, repo_url: str, workspace_id: str = "default") -> dict:
     """Compare two runs and return new, resolved, and severity-changed findings.
 
     ``run_id_a`` is treated as the *older* run, ``run_id_b`` as the *newer* one.
     Returns a dict with ``new``, ``resolved``, ``severity_changed``, and ``summary``.
     """
-    a = load_run(run_id_a, repo_url)
-    b = load_run(run_id_b, repo_url)
+    a = load_run(run_id_a, repo_url, workspace_id)
+    b = load_run(run_id_b, repo_url, workspace_id)
 
     if a is None:
         raise FileNotFoundError(f"Run '{run_id_a}' nicht gefunden")
@@ -177,9 +181,9 @@ def compare_runs(run_id_a: str, run_id_b: str, repo_url: str) -> dict:
     }
 
 
-def cleanup_runs(repo_url: str, keep: int = 10) -> int:
+def cleanup_runs(repo_url: str, keep: int = 10, workspace_id: str = "default") -> int:
     """Delete old runs, keeping the *keep* newest. Returns number of deleted runs."""
-    runs = _runs_dir(repo_url)
+    runs = _runs_dir(repo_url, workspace_id)
     if not runs.exists():
         return 0
 

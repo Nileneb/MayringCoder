@@ -254,6 +254,55 @@ def _default_log_path() -> Path | None:
     return candidates[0] if candidates else None
 
 
+def _interactive_label_categories(output_path: Path) -> None:
+    """Show uncategorized chunks from memory DB and ask for manual category assignment."""
+    from src.memory_store import init_memory_db
+
+    conn = init_memory_db()
+    rows = conn.execute(
+        "SELECT chunk_id, text, source_id, source_type "
+        "FROM chunks WHERE is_active = 1 AND (category_labels = '' OR category_labels IS NULL) "
+        "LIMIT 100"
+    ).fetchall()
+
+    if not rows:
+        print("Keine unkategorisierten Chunks gefunden.")
+        conn.close()
+        return
+
+    print(f"\n{len(rows)} unkategorisierte Chunks. Kategorien eingeben (comma-separated) oder leer lassen zum Überspringen.\n")
+    print("Tasten: Kategorie(n) eingeben → Enter  |  leer → Skip  |  'q' → Quit\n")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    labeled = 0
+
+    with output_path.open("a", encoding="utf-8") as fh:
+        for i, (chunk_id, text, source_id, source_type) in enumerate(rows, 1):
+            print(f"─── [{i}/{len(rows)}] {source_id}")
+            print(f"  Typ: {source_type}")
+            print(f"  Text: {(text or '')[:300].replace(chr(10), ' ')}…")
+            print()
+            raw = input("  Kategorien: ").strip()
+            if raw.lower() == "q":
+                print(f"\nAbgebrochen nach {i - 1} Einträgen.")
+                break
+            if not raw:
+                continue
+            cats = [c.strip() for c in raw.split(",") if c.strip()]
+            conn.execute(
+                "UPDATE chunks SET category_labels = ?, category_source = 'manual', category_confidence = 1.0 "
+                "WHERE chunk_id = ?",
+                (",".join(cats), chunk_id),
+            )
+            conn.commit()
+            fh.write(json.dumps({"chunk_id": chunk_id, "categories": cats, "source": "manual"}, ensure_ascii=False) + "\n")
+            labeled += 1
+            print(f"  → {cats}\n")
+
+    conn.close()
+    print(f"Fertig: {labeled} Chunks manuell kategorisiert → {output_path}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Training-Daten labeln")
     mode = p.add_mutually_exclusive_group(required=True)
@@ -263,6 +312,8 @@ def main() -> None:
                       help="Manuell labeln (Terminal-UI für candidate-Einträge)")
     mode.add_argument("--stats", action="store_true",
                       help="Statistik anzeigen")
+    p.add_argument("--mode", choices=["findings", "categories"], default="findings",
+                   help="Label-Modus: findings (Standard) oder categories (Memory-Chunks ohne Kategorie labeln)")
     p.add_argument("--log", type=Path, metavar="PATH",
                    help="Training-Log JSONL (Standard: erster gefundener in cache/)")
     p.add_argument("--output", type=Path, metavar="PATH",
@@ -272,6 +323,13 @@ def main() -> None:
     p.add_argument("--call-type", metavar="T",
                    help="Nur Einträge für diesen Call-Typ (analyze/overview/extract)")
     args = p.parse_args()
+
+    if args.mode == "categories":
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y-%m-%d_%H%M")
+        out = args.output or (CACHE_DIR / f"category_labels_{ts}.jsonl")
+        _interactive_label_categories(out)
+        return
 
     log_path = args.log or _default_log_path()
     if log_path is None or not log_path.exists():

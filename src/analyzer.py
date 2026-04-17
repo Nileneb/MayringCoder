@@ -50,6 +50,8 @@ def _log_training_entry(
     parsed_ok: bool,
     findings_count: int,
     call_type: str = "analyze",
+    category_labels: list[str] | None = None,
+    codebook: str | None = None,
 ) -> None:
     """Append one JSONL entry to the training log. No-op if logging is disabled."""
     if _training_log_path is None:
@@ -59,13 +61,17 @@ def _log_training_entry(
         "run_id": _training_run_id,
         "model": model,
         "label": label,
-        "call_type": call_type,          # "analyze" | "overview" | "extract" | "adversarial" | "second_opinion"
+        "call_type": call_type,
         "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest()[:16],
         "prompt": prompt,
         "raw_response": raw_response,
         "parsed_ok": parsed_ok,
         "findings_count": findings_count,
     }
+    if category_labels is not None:
+        entry["category_labels"] = category_labels
+    if codebook is not None:
+        entry["codebook"] = codebook
     with _training_log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -180,49 +186,17 @@ def _ollama_generate(
     *,
     system_prompt: str | None = None,
 ) -> str:
-    """Send a prompt to Ollama and collect the streamed response.
-
-    Uses stream=True so httpx's read_timeout fires if the model stops producing
-    tokens for OLLAMA_TIMEOUT seconds — prevents the 19-minute hangs that occur
-    with stream=False (server holds connection open until generation is complete).
-
-    Args:
-        system_prompt: Optional system role content (format instructions, guardrails).
-                       Passed as Ollama's ``system`` parameter, which most models treat
-                       with higher authority than the user prompt.
-    """
-    for attempt in range(_MAX_RETRIES):
-        try:
-            chunks: list[str] = []
-            json_body: dict = {"model": model, "prompt": prompt, "stream": True}
-            if system_prompt:
-                json_body["system"] = system_prompt
-            with httpx.stream(
-                "POST",
-                f"{ollama_url}/api/generate",
-                json=json_body,
-                timeout=OLLAMA_TIMEOUT,
-            ) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    chunks.append(data.get("response", ""))
-                    if data.get("done"):
-                        break
-            return "".join(chunks)
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            if attempt < _MAX_RETRIES - 1:
-                delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
-                print(f"    ⟳ Retry {attempt + 1}/{_MAX_RETRIES} für {label} (in {delay}s) …", flush=True)
-                time.sleep(delay)
-            else:
-                raise
-    raise RuntimeError("unreachable")
+    """Send a prompt to Ollama and collect the streamed response."""
+    from src.ollama_client import generate as _oc_generate
+    return _oc_generate(
+        ollama_url, model, prompt,
+        system=system_prompt,
+        stream=True,
+        timeout=OLLAMA_TIMEOUT,
+        max_retries=_MAX_RETRIES,
+        retry_delays=_RETRY_DELAYS,
+        label=label,
+    )
 
 
 # ---------------------------------------------------------------------------
