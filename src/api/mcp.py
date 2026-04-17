@@ -196,10 +196,10 @@ class _JWTAuthMiddleware:
                 return None
 
         if _AUTH_TOKEN:
-            if token != _AUTH_TOKEN:
+            if not secrets.compare_digest(token, _AUTH_TOKEN):
                 await self._send_401(send, "Unauthorized")
                 return None
-            return "default"
+            return "system"
 
         await self._send_401(send, "No auth method configured")
         return None
