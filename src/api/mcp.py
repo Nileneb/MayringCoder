@@ -623,121 +623,51 @@ async def _oauth_metadata(request: Any) -> Any:
     })
 
 
-_AUTHORIZE_HTML = """\
-<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MayringCoder — Anmelden</title>
-<style>
-*{{box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-     background:#f8fafc;display:flex;align-items:center;justify-content:center;
-     min-height:100vh;margin:0;padding:16px}}
-.card{{background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);
-       padding:32px;width:100%;max-width:420px}}
-h2{{margin:0 0 8px;font-size:1.25rem;color:#1e293b}}
-p{{margin:0 0 20px;color:#64748b;font-size:.95rem;line-height:1.5}}
-a{{color:#2563eb}}
-label{{display:block;font-size:.875rem;font-weight:500;color:#374151;margin-bottom:6px}}
-input[type=password]{{width:100%;padding:10px 12px;border:1px solid #d1d5db;
-                      border-radius:8px;font-size:1rem;outline:none;
-                      transition:border-color .15s}}
-input[type=password]:focus{{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12)}}
-.hint{{margin:6px 0 20px;font-size:.8rem;color:#94a3b8}}
-button{{width:100%;background:#2563eb;color:#fff;border:none;padding:11px;
-        border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;
-        transition:background .15s}}
-button:hover{{background:#1d4ed8}}
-.err{{color:#dc2626;font-size:.875rem;margin-bottom:12px}}
-</style>
-</head>
-<body>
-<div class="card">
-  <h2>MayringCoder Memory</h2>
-  <p>Sanctum-Token von
-     <a href="https://app.linn.games/einstellungen" target="_blank">app.linn.games/einstellungen</a>
-     eingeben, um Claude Web mit deinem Memory zu verbinden.</p>
-  {error}
-  <form method="post" action="/authorize">
-    <label for="token">API-Token</label>
-    <input type="password" id="token" name="token"
-           placeholder="z.B. 42|abc123..." autocomplete="off" required>
-    <p class="hint">Das Token findest du unter Einstellungen → API-Token.</p>
-    {hidden}
-    <button type="submit">Verbinden</button>
-  </form>
-</div>
-</body>
-</html>"""
-
-
 async def _oauth_authorize(request: Any) -> Any:
+    """GET /authorize — redirect to app.linn.games for session-based auth."""
     from starlette.requests import Request
-    from starlette.responses import HTMLResponse, RedirectResponse
+    from starlette.responses import RedirectResponse
     req: Request = request
 
-    if req.method == "GET":
-        params = dict(req.query_params)
-        hidden = "".join(
-            f'<input type="hidden" name="{k}" value="{v}">'
-            for k, v in params.items()
-        )
-        return HTMLResponse(_AUTHORIZE_HTML.format(error="", hidden=hidden))
-
-    # POST — validate token + issue auth code
-    form = await req.form()
-    token = str(form.get("token", "")).strip()
-    redirect_uri = str(form.get("redirect_uri", ""))
-    state = str(form.get("state", ""))
-    code_challenge = str(form.get("code_challenge", ""))
-    code_challenge_method = str(form.get("code_challenge_method", "S256"))
-    client_id = str(form.get("client_id", ""))
-
-    # Rebuild hidden fields for error re-render
-    hidden = "".join(
-        f'<input type="hidden" name="{k}" value="{v}">'
-        for k, v in {
-            "redirect_uri": redirect_uri, "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": code_challenge_method,
-            "client_id": client_id,
-        }.items()
+    params = dict(req.query_params)
+    qs = "&".join(f"{k}={v}" for k, v in params.items())
+    return RedirectResponse(
+        f"https://app.linn.games/mcp/authorize?{qs}",
+        status_code=302,
     )
 
-    if not token:
-        err = '<p class="err">Bitte Token eingeben.</p>'
-        return HTMLResponse(_AUTHORIZE_HTML.format(error=err, hidden=hidden), status_code=400)
 
-    # Validate via Sanctum
+async def _oauth_register_code(request: Any) -> Any:
+    """POST /authorize/register-code — internal endpoint for app.linn.games to register auth codes."""
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    req: Request = request
+
+    # Verify static service-to-service token
+    auth_header = req.headers.get("authorization", "")
+    token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    if not _AUTH_TOKEN or not secrets.compare_digest(token, _AUTH_TOKEN):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     try:
-        from src.api.sanctum_auth import validate_sanctum_token_full
-        info = validate_sanctum_token_full(token)
+        body = await req.json()
     except Exception:
-        info = None
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-    if not info:
-        err = '<p class="err">Token ungültig oder abgelaufen.</p>'
-        return HTMLResponse(_AUTHORIZE_HTML.format(error=err, hidden=hidden), status_code=401)
-    if not info.mayring_active:
-        err = ('<p class="err">Kein aktives Mayring-Abo. '
-               '<a href="https://app.linn.games/einstellungen/mayring-abo">Jetzt aktivieren</a>.</p>')
-        return HTMLResponse(_AUTHORIZE_HTML.format(error=err, hidden=hidden), status_code=402)
+    code = str(body.get("code", "")).strip()
+    if not code:
+        return JSONResponse({"error": "code required"}, status_code=400)
 
-    code = secrets.token_urlsafe(32)
     _auth_codes[code] = {
-        "token": token,
-        "workspace_id": info.workspace_id,
-        "code_challenge": code_challenge,
-        "code_challenge_method": code_challenge_method,
-        "redirect_uri": redirect_uri,
-        "state": state,
-        "expires_at": time.time() + 300,
+        "token":                 str(body.get("token", "")),
+        "workspace_id":          str(body.get("workspace_id", "default")),
+        "code_challenge":        str(body.get("code_challenge", "")),
+        "code_challenge_method": str(body.get("code_challenge_method", "S256")),
+        "redirect_uri":          str(body.get("redirect_uri", "")),
+        "state":                 str(body.get("state", "")),
+        "expires_at":            time.time() + 300,
     }
-
-    callback = f"{redirect_uri}?code={code}&state={state}"
-    return RedirectResponse(callback, status_code=302)
+    return JSONResponse({"ok": True})
 
 
 async def _oauth_token(request: Any) -> Any:
@@ -838,7 +768,8 @@ def main() -> None:
                 Route("/.well-known/oauth-protected-resource", _oauth_metadata),
                 Route("/.well-known/oauth-protected-resource/sse", _oauth_metadata),
                 Route("/register", _oauth_register, methods=["POST"]),
-                Route("/authorize", _oauth_authorize, methods=["GET", "POST"]),
+                Route("/authorize", _oauth_authorize, methods=["GET"]),
+                Route("/authorize/register-code", _oauth_register_code, methods=["POST"]),
                 Route("/token", _oauth_token, methods=["POST"]),
                 Mount("/", app=_inner),
             ],
