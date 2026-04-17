@@ -427,6 +427,24 @@ def _do_feedback(chunk_id: str, signal: str, label: str) -> str:
 def _validate_token(token: str) -> tuple[bool, str]:
     if not token.strip():
         return False, "Kein Token eingegeben."
+    # Primary: validate via API server (has DB access even when webui doesn't)
+    if _HAS_HTTPX:
+        try:
+            r = _httpx.post(
+                f"{_api_url}/memory/search",
+                json={"query": "ping", "top_k": 1},
+                headers={"Authorization": f"Bearer {token.strip()}"},
+                timeout=5.0,
+            )
+            if r.status_code == 200:
+                return True, r.json().get("workspace_id", "default")
+            if r.status_code == 402:
+                return False, "Kein aktives Mayring-Abo (€5/Monat auf app.linn.games)."
+            if r.status_code == 401:
+                return False, "Token ungültig oder abgelaufen."
+        except Exception:
+            pass  # API unreachable — fall through to local validation
+    # Fallback: direct DB validation (works when DB env vars are present)
     try:
         from src.api.sanctum_auth import validate_sanctum_token
         ws = validate_sanctum_token(token.strip())
