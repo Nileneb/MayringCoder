@@ -57,6 +57,7 @@ from src.memory.retrieval import compress_for_prompt, search
 from src.memory.schema import Source
 from src.memory.store import init_memory_db
 from src.api.sanctum_auth import validate_sanctum_token_full
+from src.api.training import router as _training_router
 
 # ---------------------------------------------------------------------------
 # Config
@@ -67,6 +68,7 @@ _OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
 _MCP_AUTH_TOKEN = os.getenv("MAYRING_MCP_AUTH_TOKEN", "")
 
 app = FastAPI(title="MayringCoder API", version="1.0.0")
+app.include_router(_training_router)
 _bearer = HTTPBearer(auto_error=False)
 
 # Lazy singletons
