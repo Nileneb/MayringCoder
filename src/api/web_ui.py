@@ -500,7 +500,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
 
     ollama_available, ollama_models = check_ollama(ollama_url)
 
-    with gr.Blocks(title="MayringCoder", theme=gr.themes.Soft()) as app:
+    with gr.Blocks(title="MayringCoder") as app:
 
         _token_state = gr.State("")
         _workspace_state = gr.State("")
@@ -930,6 +930,7 @@ def main() -> None:
         server_port=args.port,
         root_path=os.environ.get("GRADIO_ROOT_PATH", ""),
         show_error=True,
+        theme=gr.themes.Soft(),
     )
 
 
