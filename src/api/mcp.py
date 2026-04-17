@@ -788,6 +788,24 @@ async def _oauth_register(request: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Path normalizer — Claude Web sends POST / after OAuth, FastMCP expects /mcp
+# ---------------------------------------------------------------------------
+
+class _PathNormMiddleware:
+    """Rewrite / and /sse → /mcp so the streamable_http_app Route('/mcp') matches."""
+
+    _REWRITE = frozenset(("/", "/sse", ""))
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http" and scope.get("path", "/") in self._REWRITE:
+            scope = {**scope, "path": "/mcp", "raw_path": b"/mcp"}
+        await self._app(scope, receive, send)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -797,7 +815,8 @@ def main() -> None:
         from starlette.applications import Starlette
         from starlette.routing import Mount, Route
 
-        _inner = _JWTAuthMiddleware(mcp.sse_app())
+        _mcp_asgi = _PathNormMiddleware(mcp.streamable_http_app())
+        _inner = _JWTAuthMiddleware(_mcp_asgi)
 
         _auth_label = (
             "sanctum" if (_AUTH_ENABLED and _AUTH_MODE == "sanctum") else
@@ -807,7 +826,7 @@ def main() -> None:
             "disabled"
         )
         print(
-            f"[mcp-memory] HTTP/SSE on {_HTTP_HOST}:{_HTTP_PORT}"
+            f"[mcp-memory] HTTP/streamable on {_HTTP_HOST}:{_HTTP_PORT}"
             f" | auth={_auth_label}"
             f" | oauth={_OAUTH_BASE_URL}"
         )
