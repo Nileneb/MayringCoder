@@ -44,9 +44,13 @@ Tools exposed (wire name = mcp__memory__<name>):
 
 from __future__ import annotations
 
+import base64
 import contextvars
+import hashlib
 import os
+import secrets
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -587,15 +591,214 @@ def feedback(
 
 
 # ---------------------------------------------------------------------------
+# OAuth 2.0 / PKCE — for Claude Web MCP connector
+# ---------------------------------------------------------------------------
+
+_OAUTH_BASE_URL = os.getenv("MCP_OAUTH_BASE_URL", "https://mcp.linn.games")
+
+# In-memory auth-code store (TTL = 5 min, cleared on exchange)
+_auth_codes: dict[str, dict[str, Any]] = {}
+
+
+def _pkce_verify(verifier: str, challenge: str, method: str) -> bool:
+    if method == "S256":
+        digest = hashlib.sha256(verifier.encode()).digest()
+        expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+        return secrets.compare_digest(expected, challenge)
+    return secrets.compare_digest(verifier, challenge)
+
+
+async def _oauth_metadata(request: Any) -> Any:
+    from starlette.responses import JSONResponse
+    base = _OAUTH_BASE_URL
+    return JSONResponse({
+        "issuer": base,
+        "authorization_endpoint": f"{base}/authorize",
+        "token_endpoint": f"{base}/token",
+        "registration_endpoint": f"{base}/register",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+    })
+
+
+_AUTHORIZE_HTML = """\
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MayringCoder — Anmelden</title>
+<style>
+*{{box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+     background:#f8fafc;display:flex;align-items:center;justify-content:center;
+     min-height:100vh;margin:0;padding:16px}}
+.card{{background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);
+       padding:32px;width:100%;max-width:420px}}
+h2{{margin:0 0 8px;font-size:1.25rem;color:#1e293b}}
+p{{margin:0 0 20px;color:#64748b;font-size:.95rem;line-height:1.5}}
+a{{color:#2563eb}}
+label{{display:block;font-size:.875rem;font-weight:500;color:#374151;margin-bottom:6px}}
+input[type=password]{{width:100%;padding:10px 12px;border:1px solid #d1d5db;
+                      border-radius:8px;font-size:1rem;outline:none;
+                      transition:border-color .15s}}
+input[type=password]:focus{{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12)}}
+.hint{{margin:6px 0 20px;font-size:.8rem;color:#94a3b8}}
+button{{width:100%;background:#2563eb;color:#fff;border:none;padding:11px;
+        border-radius:8px;font-size:1rem;font-weight:500;cursor:pointer;
+        transition:background .15s}}
+button:hover{{background:#1d4ed8}}
+.err{{color:#dc2626;font-size:.875rem;margin-bottom:12px}}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>MayringCoder Memory</h2>
+  <p>Sanctum-Token von
+     <a href="https://app.linn.games/einstellungen" target="_blank">app.linn.games/einstellungen</a>
+     eingeben, um Claude Web mit deinem Memory zu verbinden.</p>
+  {error}
+  <form method="post" action="/authorize">
+    <label for="token">API-Token</label>
+    <input type="password" id="token" name="token"
+           placeholder="z.B. 42|abc123..." autocomplete="off" required>
+    <p class="hint">Das Token findest du unter Einstellungen → API-Token.</p>
+    {hidden}
+    <button type="submit">Verbinden</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+
+async def _oauth_authorize(request: Any) -> Any:
+    from starlette.requests import Request
+    from starlette.responses import HTMLResponse, RedirectResponse
+    req: Request = request
+
+    if req.method == "GET":
+        params = dict(req.query_params)
+        hidden = "".join(
+            f'<input type="hidden" name="{k}" value="{v}">'
+            for k, v in params.items()
+        )
+        return HTMLResponse(_AUTHORIZE_HTML.format(error="", hidden=hidden))
+
+    # POST — validate token + issue auth code
+    form = await req.form()
+    token = str(form.get("token", "")).strip()
+    redirect_uri = str(form.get("redirect_uri", ""))
+    state = str(form.get("state", ""))
+    code_challenge = str(form.get("code_challenge", ""))
+    code_challenge_method = str(form.get("code_challenge_method", "S256"))
+    client_id = str(form.get("client_id", ""))
+
+    # Rebuild hidden fields for error re-render
+    hidden = "".join(
+        f'<input type="hidden" name="{k}" value="{v}">'
+        for k, v in {
+            "redirect_uri": redirect_uri, "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": code_challenge_method,
+            "client_id": client_id,
+        }.items()
+    )
+
+    if not token:
+        err = '<p class="err">Bitte Token eingeben.</p>'
+        return HTMLResponse(_AUTHORIZE_HTML.format(error=err, hidden=hidden), status_code=400)
+
+    # Validate via Sanctum
+    try:
+        from src.api.sanctum_auth import validate_sanctum_token_full
+        info = validate_sanctum_token_full(token)
+    except Exception:
+        info = None
+
+    if not info:
+        err = '<p class="err">Token ungültig oder abgelaufen.</p>'
+        return HTMLResponse(_AUTHORIZE_HTML.format(error=err, hidden=hidden), status_code=401)
+    if not info.mayring_active:
+        err = ('<p class="err">Kein aktives Mayring-Abo. '
+               '<a href="https://app.linn.games/einstellungen/mayring-abo">Jetzt aktivieren</a>.</p>')
+        return HTMLResponse(_AUTHORIZE_HTML.format(error=err, hidden=hidden), status_code=402)
+
+    code = secrets.token_urlsafe(32)
+    _auth_codes[code] = {
+        "token": token,
+        "workspace_id": info.workspace_id,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "expires_at": time.time() + 300,
+    }
+
+    callback = f"{redirect_uri}?code={code}&state={state}"
+    return RedirectResponse(callback, status_code=302)
+
+
+async def _oauth_token(request: Any) -> Any:
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    req: Request = request
+
+    ct = req.headers.get("content-type", "")
+    if "application/json" in ct:
+        body = await req.json()
+    else:
+        form = await req.form()
+        body = dict(form)
+
+    grant_type = body.get("grant_type", "")
+    if grant_type != "authorization_code":
+        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+
+    code = str(body.get("code", ""))
+    code_verifier = str(body.get("code_verifier", ""))
+    redirect_uri = str(body.get("redirect_uri", ""))
+
+    entry = _auth_codes.pop(code, None)
+    if not entry:
+        return JSONResponse({"error": "invalid_grant", "error_description": "Unknown code"}, 400)
+    if time.time() > entry["expires_at"]:
+        return JSONResponse({"error": "invalid_grant", "error_description": "Code expired"}, 400)
+    if redirect_uri and redirect_uri != entry["redirect_uri"]:
+        return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, 400)
+    if code_verifier and not _pkce_verify(code_verifier, entry["code_challenge"], entry["code_challenge_method"]):
+        return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, 400)
+
+    return JSONResponse({
+        "access_token": entry["token"],
+        "token_type": "bearer",
+        "workspace_id": entry["workspace_id"],
+    })
+
+
+async def _oauth_register(request: Any) -> Any:
+    from starlette.responses import JSONResponse
+    client_id = secrets.token_urlsafe(16)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return JSONResponse({"client_id": client_id, "client_secret": None, **body}, status_code=201)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    if _TRANSPORT == "http":
+    if _TRANSPORT in ("http", "sse"):
         import uvicorn
+        from starlette.applications import Starlette
+        from starlette.routing import Mount, Route
 
-        _asgi_app = mcp.streamable_http_app()
-        _wrapped = _JWTAuthMiddleware(_asgi_app)
+        _inner = _JWTAuthMiddleware(mcp.sse_app())
+
         _auth_label = (
             "sanctum" if (_AUTH_ENABLED and _AUTH_MODE == "sanctum") else
             "auto-detect" if (_AUTH_ENABLED and _AUTH_MODE == "auto") else
@@ -604,10 +807,21 @@ def main() -> None:
             "disabled"
         )
         print(
-            f"[mcp-memory] HTTP/streamable-http on {_HTTP_HOST}:{_HTTP_PORT}"
+            f"[mcp-memory] HTTP/SSE on {_HTTP_HOST}:{_HTTP_PORT}"
             f" | auth={_auth_label}"
+            f" | oauth={_OAUTH_BASE_URL}"
         )
-        uvicorn.run(_wrapped, host=_HTTP_HOST, port=_HTTP_PORT)
+
+        app = Starlette(routes=[
+            Route("/.well-known/oauth-authorization-server", _oauth_metadata),
+            Route("/.well-known/oauth-protected-resource", _oauth_metadata),
+            Route("/.well-known/oauth-protected-resource/sse", _oauth_metadata),
+            Route("/register", _oauth_register, methods=["POST"]),
+            Route("/authorize", _oauth_authorize, methods=["GET", "POST"]),
+            Route("/token", _oauth_token, methods=["POST"]),
+            Mount("/", app=_inner),
+        ])
+        uvicorn.run(app, host=_HTTP_HOST, port=_HTTP_PORT)
     else:
         mcp.run()  # stdio transport (local dev)
 
