@@ -1,0 +1,33 @@
+# MayringCoder Model Router Configuration
+# Maps each task type to a specific Ollama model.
+# Empty string "" means: use OLLAMA_MODEL environment variable.
+
+mayring_code:
+  model: "mayringqwen:latest"
+  fallback: "llama3.1:8b"
+  timeout: 240
+
+mayring_social:
+  model: "llama3.1:8b"
+  fallback: "mistral:7b-instruct"
+  timeout: 240
+
+mayring_hybrid:
+  model: "llama3.1:8b"
+  fallback: "mistral:7b-instruct"
+  timeout: 240
+
+vision:
+  model: "qwen2.5vl:3b"
+  fallback: ""
+  timeout: 120
+
+analysis:
+  model: ""
+  fallback: "llama3.1:8b"
+  timeout: 240
+
+embedding:
+  model: "nomic-embed-text"
+  fallback: "nomic-embed-text"
+  timeout: 60
