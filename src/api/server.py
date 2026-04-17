@@ -116,7 +116,7 @@ def _python_exe() -> str:
 async def _run_checker_job(job_id: str, checker_args: list[str], workspace_id: str) -> None:
     try:
         proc = await asyncio.create_subprocess_exec(
-            _python_exe(), str(_ROOT / "checker.py"), *checker_args,
+            _python_exe(), "-m", "src.pipeline", *checker_args,
             "--workspace-id", workspace_id,
             cwd=str(_ROOT),
             stdout=asyncio.subprocess.PIPE,
@@ -260,16 +260,11 @@ async def trigger_analysis(
     request: AnalyzeRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    """Submit a code analysis job. Runs checker.py in a subprocess.
+    """Submit a code analysis job. Runs src.pipeline in a subprocess.
 
     Returns immediately with job metadata; analysis output goes to reports/.
     """
-    checker = str(_ROOT / "checker.py")
-    python = str(_ROOT / ".venv" / "bin" / "python")
-    if not Path(python).exists():
-        python = "python"
-
-    cmd = [python, checker, "--repo", request.repo, "--workspace-id", workspace_id]
+    cmd = [_python_exe(), "-m", "src.pipeline", "--repo", request.repo, "--workspace-id", workspace_id]
     if request.full:
         cmd.append("--full")
     if request.adversarial:
@@ -294,7 +289,7 @@ async def trigger_analysis(
             "pid": proc.pid,
         }
     except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="checker.py or python not found")
+        raise HTTPException(status_code=500, detail="src.pipeline or python not found")
 
 
 @app.post("/memory/search")
