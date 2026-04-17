@@ -1,68 +1,39 @@
 name: mayringcoder
 
 # Profile:
-#   dev        — mcp-server + web-ui (externes Ollama)
-#                docker compose --profile dev up -d
-#   production — alle 4 Services, externes Ollama, laravel_net für Sanctum-Auth
+#   dev        — alle Services (externes Ollama)
+#                docker compose --profile dev up -d --build
+#   production — alle Services + Sanctum-Auth + laravel_net
 #                docker compose --profile production --env-file ../.env.production up -d --build
-#   full       — alle 4 Services + eingebettetes Ollama (self-contained)
+#   full       — alle Services + eingebettetes Ollama (self-contained)
 #                docker compose --profile full up -d --build
 
 services:
-  api-server:
-    profiles: [production, full]
+  mayringcoder:
+    profiles: [dev, production, full]
     build: { context: .., dockerfile: docker/Dockerfile }
-    command: python -m uvicorn src.api_server:app --host 0.0.0.0 --port 8080 --workers 2
-    ports: ["127.0.0.1:8080:8080"]
+    command: python -m src.main
+    ports:
+      - "127.0.0.1:7860:7860"   # Web UI
+      - "127.0.0.1:8080:8080"   # API
+      - "127.0.0.1:8090:8090"   # MCP (HTTP/SSE)
+      - "127.0.0.1:8091:8091"   # Pi-Agent
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HTTP_HOST: "0.0.0.0"
+      MCP_HTTP_PORT: "8090"
+      API_URL: "http://localhost:8080"
     env_file: ../.env.production
     volumes:
       - ../cache:/app/cache
       - ../reports:/app/reports
     restart: unless-stopped
     networks: [mayring, laravel_net]
-
-  mcp-server:
-    profiles: [production, full, dev]
-    build: { context: .., dockerfile: docker/Dockerfile }
-    command: python -m src.mcp_server
-    ports: ["127.0.0.1:8090:8090"]
-    environment:
-      MCP_TRANSPORT: http
-      MCP_HTTP_HOST: "0.0.0.0"
-      MCP_HTTP_PORT: "8090"
-    env_file: ../.env.production
-    volumes:
-      - ../cache:/app/cache
-    restart: unless-stopped
-    networks: [mayring]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  pi-server:
-    profiles: [production, full]
-    build: { context: .., dockerfile: docker/Dockerfile }
-    command: python -m src.pi_server
-    ports: ["127.0.0.1:8091:8091"]
-    env_file: ../.env.production
-    volumes:
-      - ../cache:/app/cache
-    restart: unless-stopped
-    networks: [mayring]
-
-  web-ui:
-    profiles: [production, full, dev]
-    build: { context: .., dockerfile: docker/Dockerfile }
-    command: python -m src.web_ui --host 0.0.0.0 --port 7860 --api-url http://api-server:8080
-    ports: ["127.0.0.1:7860:7860"]
-    env_file: ../.env.production
-    volumes:
-      - ../cache:/app/cache
-      - ../reports:/app/reports
-    restart: unless-stopped
-    networks: [mayring]
 
   # Ollama nur für lokale Entwicklung (full-Profil).
   # Produktion: Ollama läuft auf three.linn.games — nie hier deployen.
