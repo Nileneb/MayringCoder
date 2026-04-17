@@ -514,3 +514,13 @@ async def list_reports(
             for f in sorted(markdown_files, key=lambda p: p.stat().st_mtime, reverse=True):
                 reports.append({"name": f.name, "size": f.stat().st_size})
     return {"workspace_id": safe_workspace_id, "reports": reports, "count": len(reports)}
+
+
+def main() -> None:
+    import uvicorn
+    import os
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("API_PORT", "8080")))
+
+
+if __name__ == "__main__":
+    main()

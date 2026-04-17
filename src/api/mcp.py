@@ -590,7 +590,7 @@ def feedback(
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main() -> None:
     if _TRANSPORT == "http":
         import uvicorn
 
@@ -610,3 +610,7 @@ if __name__ == "__main__":
         uvicorn.run(_wrapped, host=_HTTP_HOST, port=_HTTP_PORT)
     else:
         mcp.run()  # stdio transport (local dev)
+
+
+if __name__ == "__main__":
+    main()
