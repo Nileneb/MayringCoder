@@ -24,6 +24,7 @@ from src.analysis.categorizer import (
     load_exclude_patterns,
     load_mayringignore,
 )
+from src.model_router import ModelRouter
 from src.config import (
     CACHE_DIR,
     CODEBOOK_PATH,
@@ -114,7 +115,7 @@ def load_turbulence_cache(repo_url: str) -> tuple[dict[str, str] | None, dict[st
     return hot_zone_map, tier_map
 
 
-def run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> None:
+def run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str, router: ModelRouter | None = None) -> None:
     from src.turbulence import analyze_repo, build_markdown
 
     print(f"\n{'='*60}")
@@ -199,7 +200,12 @@ def run_turbulence(args, repo_url: str, ollama_url: str, turb_model: str) -> Non
     print(f"Fertig in {elapsed:.0f}s")
 
 
-def run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> None:
+def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
+    # Model-Auflösung über Router, falls verfügbar
+    if router is not None and not model:
+        if router.is_available("embedding"):
+            model = router.resolve("embedding")
+
     from src.memory.ingest import get_or_create_chroma_collection, ingest
     from src.memory.store import init_memory_db
     from src.memory.schema import Source
@@ -314,7 +320,12 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str) -> Non
             print(f"  Knowledge Graph Fehler: {_kg_exc}")
 
 
-def run_ingest_issues(args, ollama_url: str, model: str) -> None:
+def run_ingest_issues(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
+    # Model-Auflösung über Router, falls verfügbar
+    if router is not None and not model:
+        if router.is_available("embedding"):
+            model = router.resolve("embedding")
+
     from src.memory.ingest import fetch_issues, issues_to_sources
     from src.memory.ingest import get_or_create_chroma_collection, ingest
     from src.memory.store import init_memory_db
@@ -407,7 +418,12 @@ def run_ingest_issues(args, ollama_url: str, model: str) -> None:
             print(f"  Knowledge Graph Fehler: {_kg_exc}")
 
 
-def run_ingest_images(args, ollama_url: str, model: str) -> None:
+def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
+    # Model-Auflösung über Router, falls verfügbar
+    if router is not None and not model:
+        if router.is_available("vision"):
+            model = router.resolve("vision")
+
     from src.memory.ingest import run_image_ingest
 
     repo_url = args.ingest_images
@@ -436,7 +452,12 @@ def run_ingest_images(args, ollama_url: str, model: str) -> None:
     )
 
 
-def run_pi_task(args, ollama_url: str, model: str) -> None:
+def run_pi_task(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
+    # Model-Auflösung über Router, falls verfügbar
+    if router is not None and not model:
+        if router.is_available("analysis"):
+            model = router.resolve("analysis")
+
     from src.agents.pi import run_task_with_memory
 
     task = args.pi_task
@@ -460,8 +481,13 @@ def run_pi_task(args, ollama_url: str, model: str) -> None:
     print(result)
 
 
-def run_analysis(args, repo_url: str, ollama_url: str, model: str, start_time: float) -> None:
+def run_analysis(args, repo_url: str, ollama_url: str, model: str, start_time: float, router: ModelRouter | None = None) -> None:
     """Haupt-Analyse-Pipeline: fetch → split → filter → categorize → diff → analyze → report."""
+    # Model-Auflösung über Router, falls verfügbar
+    if router is not None and not model:
+        if router.is_available("analysis"):
+            model = router.resolve("analysis")
+
     token = os.getenv("GITHUB_TOKEN") or None
     prompt_path = Path(args.prompt) if args.prompt else None
     from src.config import DEFAULT_PROMPT
@@ -867,7 +893,13 @@ def _run_overview(
     args, repo_url: str, ollama_url: str, model: str,
     files: list[dict], categories: dict, codebook_path: Path,
     cache_run_key: str, start_time: float,
+    router: ModelRouter | None = None,
 ) -> None:
+    # Model-Auflösung über Router, falls verfügbar
+    if router is not None and not model:
+        if router.is_available("overview"):
+            model = router.resolve("overview")
+
     filenames_to_check = [f["filename"] for f in files]
     diff = {
         "changed": [], "added": filenames_to_check, "removed": [],
