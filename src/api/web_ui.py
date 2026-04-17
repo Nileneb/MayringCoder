@@ -508,6 +508,99 @@ def _training_files() -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Training-Tab Helpers (rufen /api/training/* auf)
+# ---------------------------------------------------------------------------
+
+def _get_training_status() -> str:
+    try:
+        r = _httpx.get(f"{_api_url}/api/training/status", timeout=5)
+        d = r.json()
+        job = d.get("finetune_job", {})
+        job_str = f" | Job: {job.get('status', 'idle')}" if job.get("status") != "idle" else ""
+        return (
+            f"**Trainingsdaten:** {d.get('sample_count', 0)} Samples (Val: {d.get('val_count', 0)}) | "
+            f"**Annotiert:** {d.get('annotated', 0)} (Haiku: {d.get('haiku_annotations', 0)}, "
+            f"Langdock: {d.get('langdock_batches', 0)}){job_str}"
+        )
+    except Exception as e:
+        return f"Fehler beim Laden: {e}"
+
+
+def _export_training_batch() -> str:
+    try:
+        r = _httpx.post(f"{_api_url}/api/training/batches/export", timeout=30)
+        d = r.json()
+        if d.get("sample_count", 0) == 0:
+            return d.get("message", "Keine neuen Samples gefunden.")
+        return f"✅ Batch `{d['batch_id']}` exportiert — **{d['sample_count']} Samples** in `{d.get('batch_file', '')}`"
+    except Exception as e:
+        return f"Fehler: {e}"
+
+
+def _merge_training_annotations() -> str:
+    try:
+        r = _httpx.post(f"{_api_url}/api/training/merge", timeout=60)
+        d = r.json()
+        return (
+            f"✅ Merge fertig: **{d.get('total', 0)} Samples** in train.jsonl | "
+            f"+{d.get('added', 0)} neu | {d.get('skipped', 0)} übersprungen"
+        )
+    except Exception as e:
+        return f"Fehler: {e}"
+
+
+def _trigger_finetune() -> str:
+    try:
+        r = _httpx.post(f"{_api_url}/api/training/finetune", timeout=10)
+        if r.status_code == 409:
+            return "⚠️ Fine-tuning läuft bereits."
+        if r.status_code == 400:
+            return f"❌ {r.json().get('detail', 'Fehler')}"
+        d = r.json()
+        return f"🚀 Fine-tuning gestartet (Job: `{d.get('job_id')}`, {d.get('train_samples')} Samples)"
+    except Exception as e:
+        return f"Fehler: {e}"
+
+
+def _get_finetune_status() -> str:
+    try:
+        r = _httpx.get(f"{_api_url}/api/training/finetune/status", timeout=5)
+        d = r.json()
+        status = d.get("status", "idle")
+        if status == "idle":
+            return "Kein laufender Fine-tune-Job."
+        elif status == "running":
+            return f"⏳ Läuft... (PID: {d.get('pid')}, gestartet: {d.get('started_at', '?')})"
+        elif status == "done":
+            return f"✅ Fertig (beendet: {d.get('finished_at', '?')})"
+        else:
+            return f"❌ Fehler: {d.get('error', 'Unbekannt')}"
+    except Exception as e:
+        return f"Fehler: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Router-Config Helpers
+# ---------------------------------------------------------------------------
+
+def _save_router_config(*model_values) -> str:
+    """Save router config from WebUI to config/model_routes.yaml."""
+    try:
+        from src.model_router import ModelRouter
+        from src.api.server import _router
+
+        tasks = ModelRouter.TASKS
+        for task, model_value in zip(tasks, model_values):
+            _router.set_route(task, str(model_value).strip())
+
+        from pathlib import Path
+        _router.save_config(Path("config/model_routes.yaml"))
+        return "✅ Router-Konfiguration gespeichert in `config/model_routes.yaml`"
+    except Exception as e:
+        return f"Fehler beim Speichern: {e}"
+
+
+# ---------------------------------------------------------------------------
 # App Builder
 # ---------------------------------------------------------------------------
 
@@ -917,6 +1010,101 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     fn=_load_training_list,
                     outputs=[training_files_list, training_file_select, training_download],
                 )
+
+        # =======================================================================
+        # Tab 5: Einstellungen (Model Router)
+        # =======================================================================
+        with gr.Tab("Einstellungen"):
+            gr.Markdown("## Modell-Router Konfiguration")
+            gr.Markdown(
+                "Weise jeder Aufgabe ein spezifisches Ollama-Modell zu. "
+                "**Leer** = globales Modell aus ENV (`OLLAMA_MODEL`). "
+                "Änderungen sofort aktiv, via **Speichern** dauerhaft."
+            )
+
+            try:
+                from src.model_router import ModelRouter
+                from src.api.server import _router as _active_router
+                _router_available = True
+            except Exception:
+                _active_router = None
+                _router_available = False
+
+            route_inputs = []
+            task_labels = {
+                "mayring_code": "Code-Analyse (mayring_code)",
+                "mayring_social": "Sozialforschung (mayring_social)",
+                "mayring_hybrid": "Hybrid-Modus (mayring_hybrid)",
+                "vision": "Bild-Captioning (vision)",
+                "analysis": "Allgemeine Analyse (analysis)",
+                "embedding": "Embeddings (embedding)",
+            }
+
+            for task in (ModelRouter.TASKS if _router_available else []):
+                current_model = _active_router.resolve(task) if _active_router else ""
+                with gr.Row():
+                    gr.Markdown(f"**{task_labels.get(task, task)}**", scale=2)
+                    inp = gr.Textbox(
+                        value=current_model,
+                        placeholder="model:tag oder leer (= ENV)",
+                        show_label=False,
+                        scale=3,
+                    )
+                    route_inputs.append(inp)
+
+            if not _router_available:
+                gr.Markdown("> Router nicht verfügbar.")
+
+            with gr.Row():
+                save_routes_btn = gr.Button("Speichern", variant="primary")
+                routes_out = gr.Markdown("")
+
+            if route_inputs:
+                save_routes_btn.click(
+                    fn=_save_router_config,
+                    inputs=route_inputs,
+                    outputs=[routes_out],
+                )
+
+        # =======================================================================
+        # Tab 6: Training
+        # =======================================================================
+        with gr.Tab("Training"):
+            gr.Markdown("## Trainingspipeline")
+
+            with gr.Accordion("Status", open=True):
+                train_status_md = gr.Markdown(_get_training_status())
+                refresh_status_btn = gr.Button("Aktualisieren", size="sm")
+                refresh_status_btn.click(fn=_get_training_status, outputs=[train_status_md])
+
+            with gr.Accordion("Langdock Annotation", open=True):
+                gr.Markdown(
+                    "Exportiert nicht-annotierte Samples aus den Training-Logs als Batch. "
+                    "Langdock annotiert sie und schickt sie per Webhook zurück "
+                    f"(Endpoint: `POST /api/training/langdock/webhook`)."
+                )
+                export_btn = gr.Button("Batch exportieren → Langdock", variant="secondary")
+                export_out = gr.Markdown("")
+                export_btn.click(fn=_export_training_batch, outputs=[export_out])
+
+            with gr.Accordion("Merge + Fine-tune", open=False):
+                gr.Markdown(
+                    "Merged alle annotierten Batches (Langdock + Haiku) in `cache/finetuning/train.jsonl`. "
+                    "Danach Fine-tuning starten."
+                )
+                merge_btn = gr.Button("Annotierte Batches mergen", variant="secondary")
+                merge_out = gr.Markdown("")
+                merge_btn.click(fn=_merge_training_annotations, outputs=[merge_out])
+
+                gr.Markdown("---")
+                finetune_btn = gr.Button("Fine-tuning starten", variant="primary")
+                finetune_out = gr.Markdown("")
+                finetune_btn.click(fn=_trigger_finetune, outputs=[finetune_out])
+
+                gr.Markdown("### Job-Status")
+                finetune_status_md = gr.Markdown(_get_finetune_status())
+                poll_btn = gr.Button("Status aktualisieren", size="sm")
+                poll_btn.click(fn=_get_finetune_status, outputs=[finetune_status_md])
 
     return app
 
