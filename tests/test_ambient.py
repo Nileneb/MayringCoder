@@ -387,3 +387,70 @@ def test_build_context_collects_trigger_ids(tmp_path, monkeypatch):
     build_context("What does CreditService do?", conn, "", "myrepo", _out_trigger_ids=out_ids)
     assert any("creditservice" in tid for tid in out_ids)
     conn.close()
+
+
+# ── Task 3: compute_feedback + update_trigger_stats ──────────────────────────
+
+def test_compute_feedback_no_ollama():
+    """Empty ollama_url → was_referenced=False, relevance_score=0.0, still persisted to DB."""
+    from src.memory.ambient import compute_feedback
+    conn = _init_test_db()
+    fb = compute_feedback("some context", "some response", ["keyword:foo"], False, conn, "")
+    assert fb.was_referenced is False
+    assert fb.relevance_score == 0.0
+    row = conn.execute("SELECT COUNT(*) FROM context_feedback_log").fetchone()
+    assert row[0] == 1
+    conn.close()
+
+
+def test_compute_feedback_persists_to_db():
+    """After compute_feedback call, context_feedback_log has 1 row."""
+    from src.memory.ambient import compute_feedback
+    conn = _init_test_db()
+    compute_feedback("ctx", "resp", ["k:foo"], True, conn, "")
+    count = conn.execute("SELECT COUNT(*) FROM context_feedback_log").fetchone()[0]
+    assert count == 1
+    conn.close()
+
+
+def test_update_trigger_stats_increments():
+    """Two calls → fire_count=2."""
+    from src.memory.ambient import update_trigger_stats
+    conn = _init_test_db()
+    update_trigger_stats(["keyword:foo"], True, conn)
+    update_trigger_stats(["keyword:foo"], False, conn)
+    row = conn.execute(
+        "SELECT fire_count, ref_count FROM trigger_stats WHERE trigger_id = ?",
+        ("keyword:foo",),
+    ).fetchone()
+    assert row[0] == 2
+    assert row[1] == 1
+    conn.close()
+
+
+def test_update_trigger_stats_deactivates_below_threshold():
+    """50 fires, 4 refs (8%) → is_active=0."""
+    from src.memory.ambient import update_trigger_stats
+    conn = _init_test_db()
+    for i in range(50):
+        update_trigger_stats(["keyword:bar"], i < 4, conn)
+    row = conn.execute(
+        "SELECT is_active FROM trigger_stats WHERE trigger_id = ?",
+        ("keyword:bar",),
+    ).fetchone()
+    assert row[0] == 0
+    conn.close()
+
+
+def test_update_trigger_stats_keeps_active_above_threshold():
+    """50 fires, 10 refs (20%) → is_active=1."""
+    from src.memory.ambient import update_trigger_stats
+    conn = _init_test_db()
+    for i in range(50):
+        update_trigger_stats(["keyword:baz"], i < 10, conn)
+    row = conn.execute(
+        "SELECT is_active FROM trigger_stats WHERE trigger_id = ?",
+        ("keyword:baz",),
+    ).fetchone()
+    assert row[0] == 1
+    conn.close()

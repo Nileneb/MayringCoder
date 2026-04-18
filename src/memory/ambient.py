@@ -171,6 +171,92 @@ def trigger_scan(
     return TriggerResult(context="", trigger_ids=[])
 
 
+def compute_feedback(
+    context_text: str,
+    llm_response: str,
+    trigger_ids: list[str],
+    led_to_retrieval: bool,
+    conn: Any,
+    ollama_url: str,
+) -> ContextFeedback:
+    """Compute implicit feedback by embedding-cosine context vs. response.
+
+    Persists result to context_feedback_log. Returns ContextFeedback.
+    """
+    was_referenced = False
+    relevance_score = 0.0
+
+    if context_text and llm_response and ollama_url:
+        try:
+            from src.analysis.context import _embed_texts
+            vecs = _embed_texts([context_text, llm_response], ollama_url)
+            if len(vecs) == 2:
+                relevance_score = round(_cosine(vecs[0], vecs[1]), 4)
+                was_referenced = relevance_score >= 0.65
+        except Exception:
+            pass
+
+    captured_at = datetime.utcnow().isoformat()
+    fb = ContextFeedback(
+        trigger_ids=trigger_ids,
+        context_text=context_text[:500],
+        was_referenced=was_referenced,
+        led_to_retrieval=led_to_retrieval,
+        relevance_score=relevance_score,
+        captured_at=captured_at,
+    )
+
+    try:
+        conn.execute(
+            """INSERT INTO context_feedback_log
+               (trigger_ids, context_text, was_referenced, led_to_retrieval, relevance_score, captured_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (json.dumps(trigger_ids), context_text[:500],
+             int(was_referenced), int(led_to_retrieval),
+             relevance_score, captured_at),
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+    return fb
+
+
+def update_trigger_stats(
+    trigger_ids: list[str],
+    was_referenced: bool,
+    conn: Any,
+    deactivate_threshold: float = 0.10,
+    min_fires_for_deactivation: int = 50,
+) -> None:
+    """Increment fire_count + ref_count. Deactivate if below threshold after min_fires."""
+    now = datetime.utcnow().isoformat()
+    for trigger_id in trigger_ids:
+        conn.execute(
+            """INSERT INTO trigger_stats (trigger_id, fire_count, ref_count, is_active, last_fired)
+               VALUES (?, 1, ?, 1, ?)
+               ON CONFLICT(trigger_id) DO UPDATE SET
+                   fire_count = fire_count + 1,
+                   ref_count  = ref_count + ?,
+                   last_fired = ?""",
+            (trigger_id, int(was_referenced), now, int(was_referenced), now),
+        )
+        row = conn.execute(
+            "SELECT fire_count, ref_count FROM trigger_stats WHERE trigger_id = ?",
+            (trigger_id,),
+        ).fetchone()
+        if row:
+            fires, refs = row
+            if fires >= min_fires_for_deactivation:
+                rate = refs / fires
+                if rate < deactivate_threshold:
+                    conn.execute(
+                        "UPDATE trigger_stats SET is_active = 0 WHERE trigger_id = ?",
+                        (trigger_id,),
+                    )
+    conn.commit()
+
+
 def generate_ambient_snapshot(
     conn: Any,
     ollama_url: str,
