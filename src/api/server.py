@@ -35,8 +35,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,17 +45,15 @@ load_dotenv(_ROOT / ".env")
 
 try:
     from fastapi import Depends, FastAPI, HTTPException, status
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel
 except ImportError:
     raise ImportError("Missing dependency: pip install fastapi uvicorn")
 
-from src.memory.ingest import get_or_create_chroma_collection, ingest
-from src.memory.retrieval import compress_for_prompt, search
-from src.memory.schema import Source
-from src.memory.store import init_memory_db
-from src.api.sanctum_auth import validate_sanctum_token_full
+from src.api.memory_service import run_ingest as _run_ingest, run_search as _run_search
+from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
+from src.api.auth import get_workspace
 from src.api.training import router as _training_router
+from src.api.job_queue import get_job as _get_job, make_job as _make_job, python_exe as _python_exe, run_checker_job as _run_checker_job, _JOBS
 from src.model_router import ModelRouter as _ModelRouter
 
 # ---------------------------------------------------------------------------
@@ -66,103 +62,10 @@ from src.model_router import ModelRouter as _ModelRouter
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 _OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
-_MCP_AUTH_TOKEN = os.getenv("MAYRING_MCP_AUTH_TOKEN", "")
 _router = _ModelRouter(_OLLAMA_URL)
 
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 app.include_router(_training_router)
-_bearer = HTTPBearer(auto_error=False)
-
-# Lazy singletons
-_conn = None
-_chroma = None
-
-
-def _get_conn():
-    global _conn
-    if _conn is None:
-        _conn = init_memory_db()
-    return _conn
-
-
-def _get_chroma():
-    global _chroma
-    if _chroma is None:
-        from src.memory.store import get_chroma_collection as get_collection
-        _chroma = get_collection()
-    return _chroma
-
-
-# ---------------------------------------------------------------------------
-# Job tracking (in-memory, sufficient for single-instance deployment)
-# ---------------------------------------------------------------------------
-
-_JOBS: dict[str, dict] = {}  # job_id → {status, output, workspace_id, started_at}
-
-
-def _make_job(workspace_id: str) -> str:
-    job_id = str(uuid.uuid4())[:8]
-    _JOBS[job_id] = {
-        "job_id": job_id,
-        "status": "started",
-        "output": "",
-        "workspace_id": workspace_id,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
-    return job_id
-
-
-def _python_exe() -> str:
-    p = str(_ROOT / ".venv" / "bin" / "python")
-    return p if Path(p).exists() else "python"
-
-
-async def _run_checker_job(job_id: str, checker_args: list[str], workspace_id: str) -> None:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            _python_exe(), "-m", "src.pipeline", *checker_args,
-            "--workspace-id", workspace_id,
-            cwd=str(_ROOT),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await proc.communicate()
-        _JOBS[job_id]["status"] = "done" if proc.returncode == 0 else "error"
-        _JOBS[job_id]["output"] = stdout.decode(errors="replace")
-    except Exception as exc:
-        _JOBS[job_id]["status"] = "error"
-        _JOBS[job_id]["output"] = str(exc)
-
-
-# ---------------------------------------------------------------------------
-# Auth dependency
-# ---------------------------------------------------------------------------
-
-async def get_workspace(
-    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> str:
-    if not creds:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer token")
-
-    # Static service-to-service token bypass (for internal Laravel MayringMcpClient)
-    # This path is always allowed — no subscription check needed for the research platform itself
-    if _MCP_AUTH_TOKEN and creds.credentials == _MCP_AUTH_TOKEN:
-        return "system"
-
-    # External Sanctum token (Claude Desktop / Claude Web users)
-    info = validate_sanctum_token_full(creds.credentials)
-    if not info:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-
-    if not info.mayring_active:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="MayringCoder Memory requires an active subscription (€5/month). "
-                   "Subscribe at https://app.linn.games/einstellungen/mayring-abo",
-        )
-
-    return info.workspace_id
-
 
 # ---------------------------------------------------------------------------
 # Request/Response models
@@ -295,6 +198,9 @@ async def trigger_analysis(
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="src.pipeline or python not found")
 
+    # Note: _JOBS is intentionally not used here — analyze endpoint returns pid directly,
+    # not via job queue (unlike /overview, /turbulence, /benchmark which use job_id)
+
 
 @app.post("/memory/search")
 async def memory_search(
@@ -302,30 +208,15 @@ async def memory_search(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Search workspace memory."""
-    opts: dict[str, Any] = {
-        "top_k": request.top_k,
-        "workspace_id": workspace_id,
-    }
-    if request.repo:
-        opts["repo"] = request.repo
-    if request.source_type:
-        opts["source_type"] = request.source_type
-
     try:
-        results = search(
-            query=request.query,
-            conn=_get_conn(),
-            chroma_collection=_get_chroma(),
-            ollama_url=_OLLAMA_URL,
-            opts=opts,
-            # TODO(Task 3): Add router=_router once Task 2 (memory_retrieval) merges
-        )
-        prompt_context = compress_for_prompt(results, request.char_budget)
-        return {
-            "workspace_id": workspace_id,
-            "results": [r.to_dict() for r in results],
-            "prompt_context": prompt_context,
-        }
+        opts: dict[str, Any] = {"top_k": request.top_k, "workspace_id": workspace_id}
+        if request.repo:
+            opts["repo"] = request.repo
+        if request.source_type:
+            opts["source_type"] = request.source_type
+        result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
+                             opts, request.char_budget)
+        return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -337,23 +228,11 @@ async def memory_put(
 ) -> dict:
     """Ingest content into workspace memory."""
     try:
-        src = Source(
-            source_id=request.source_id or Source.make_id(request.repo, request.path),
-            source_type=request.source_type,
-            repo=request.repo,
-            path=request.path,
-        )
-        result = ingest(
-            source=src,
-            content=request.content,
-            conn=_get_conn(),
-            chroma_collection=_get_chroma(),
-            ollama_url=_OLLAMA_URL,
-            model=_OLLAMA_MODEL,
-            opts={"categorize": request.categorize},
-            workspace_id=workspace_id,
-            # TODO(Task 3): Add router=_router once Task 2 (memory_ingest) merges
-        )
+        source_dict = {"source_id": request.source_id, "source_type": request.source_type,
+                       "repo": request.repo, "path": request.path}
+        result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
+                             _OLLAMA_URL, _OLLAMA_MODEL, {"categorize": request.categorize},
+                             workspace_id)
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -383,7 +262,7 @@ async def get_job(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Poll status of a background job."""
-    job = _JOBS.get(job_id)
+    job = _get_job(job_id)
     if not job or job["workspace_id"] != workspace_id:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -441,11 +320,15 @@ async def trigger_benchmark(
                 stderr=asyncio.subprocess.STDOUT,
             )
             stdout, _ = await proc.communicate()
-            _JOBS[job_id]["status"] = "done" if proc.returncode == 0 else "error"
-            _JOBS[job_id]["output"] = stdout.decode(errors="replace")
+            job = _get_job(job_id)
+            if job:
+                job["status"] = "done" if proc.returncode == 0 else "error"
+                job["output"] = stdout.decode(errors="replace")
         except Exception as exc:
-            _JOBS[job_id]["status"] = "error"
-            _JOBS[job_id]["output"] = str(exc)
+            job = _get_job(job_id)
+            if job:
+                job["status"] = "error"
+                job["output"] = str(exc)
 
     asyncio.create_task(_run_benchmark(job_id))
     return {"job_id": job_id, "status": "started"}
