@@ -657,9 +657,12 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             code = params.get("code", "").strip()
             if code and _HAS_HTTPX:
                 try:
+                    base = os.environ.get("LARAVEL_INTERNAL_URL", "https://app.linn.games").rstrip("/")
+                    headers = {"Host": "app.linn.games"} if base.startswith("http://") else {}
                     resp = _httpx.get(
-                        "https://app.linn.games/api/mayring/token-exchange",
+                        f"{base}/api/mayring/token-exchange",
                         params={"code": code},
+                        headers=headers,
                         timeout=5.0,
                     )
                     if resp.status_code == 200:
@@ -1194,6 +1197,7 @@ def main() -> None:
         server_port=args.port,
         root_path=os.environ.get("GRADIO_ROOT_PATH", ""),
         show_error=True,
+        pwa=True,
         theme=gr.themes.Soft(),
     )
 
