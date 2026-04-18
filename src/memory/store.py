@@ -188,6 +188,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_ingestion_log_source_id
             ON ingestion_log(source_id);
+
+        CREATE TABLE IF NOT EXISTS wiki_paper_cache (
+            source_id    TEXT NOT NULL,
+            rule_name    TEXT NOT NULL,
+            extracted    TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            PRIMARY KEY (source_id, rule_name)
+        );
     """)
 
     # Migration: add missing columns to existing DBs
