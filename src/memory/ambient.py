@@ -101,50 +101,72 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na > 0 and nb > 0 else 0.0
 
 
+def _is_trigger_active(trigger_id: str, conn: Any) -> bool:
+    """Returns True if trigger is active or not yet in trigger_stats."""
+    row = conn.execute(
+        "SELECT is_active FROM trigger_stats WHERE trigger_id = ?", (trigger_id,)
+    ).fetchone()
+    return row is None or bool(row[0])
+
+
 def trigger_scan(
     user_message: str,
     keyword_index: dict[str, list[str]],
     cluster_embs: dict[str, list[float]],
     ollama_url: str,
+    conn: Any = None,
     threshold: float = 0.75,
     max_tokens: int = 400,
-) -> str:
+) -> TriggerResult:
     """Cascaded trigger scan: keyword-first (< 1ms), embedding only on miss.
 
-    Returns a short context string (max_tokens chars) or empty string.
+    Returns TriggerResult with context string (max_tokens chars) and fired trigger_ids.
     """
     msg_lower = user_message.lower()
     words = set(w.strip(".,!?;:()[]{}\"'") for w in msg_lower.split() if len(w) > 2)
 
-    # Stage 1: keyword match (< 1ms)
     matched_clusters: list[str] = []
+    fired_ids: list[str] = []
+
+    # Stage 1: keyword match (< 1ms)
     for word in words:
         if word in keyword_index:
+            trigger_id = f"keyword:{word}"
+            if conn is not None and not _is_trigger_active(trigger_id, conn):
+                continue
             matched_clusters.extend(keyword_index[word])
+            fired_ids.append(trigger_id)
 
     if matched_clusters:
         top = list(dict.fromkeys(matched_clusters))[:3]
-        return f"[Relevante Cluster: {', '.join(top)}]"[:max_tokens]
+        ctx = f"[Relevante Cluster: {', '.join(top)}]"[:max_tokens]
+        return TriggerResult(context=ctx, trigger_ids=fired_ids)
 
     # Stage 2: embedding cosine (only if no keyword hit)
     if not cluster_embs or not ollama_url:
-        return ""
+        return TriggerResult(context="", trigger_ids=[])
 
     try:
         from src.analysis.context import _embed_texts
         vecs = _embed_texts([user_message], ollama_url)
         if not vecs:
-            return ""
+            return TriggerResult(context="", trigger_ids=[])
         q_vec = vecs[0]
         scores = [(name, _cosine(q_vec, emb)) for name, emb in cluster_embs.items()]
         scores.sort(key=lambda x: -x[1])
-        top = [name for name, score in scores[:3] if score >= threshold]
-        if top:
-            return f"[Relevante Cluster: {', '.join(top)}]"[:max_tokens]
+        top_names = [name for name, score in scores[:3] if score >= threshold]
+        if top_names:
+            trigger_ids_emb = [f"cluster:{name}" for name in top_names]
+            if conn is not None:
+                trigger_ids_emb = [t for t in trigger_ids_emb if _is_trigger_active(t, conn)]
+                top_names = [t.replace("cluster:", "") for t in trigger_ids_emb]
+            if top_names:
+                ctx = f"[Relevante Cluster: {', '.join(top_names)}]"[:max_tokens]
+                return TriggerResult(context=ctx, trigger_ids=trigger_ids_emb)
     except Exception:
         pass
 
-    return ""
+    return TriggerResult(context="", trigger_ids=[])
 
 
 def generate_ambient_snapshot(
@@ -222,6 +244,7 @@ def build_context(
     conn: Any,
     ollama_url: str,
     repo_slug: str = "",
+    _out_trigger_ids: list | None = None,
 ) -> str:
     """Orchestrator: lädt Snapshot + Trigger-Scan → kompakter Kontext-String.
 
@@ -247,7 +270,10 @@ def build_context(
             except Exception:
                 pass
 
-    trigger_hint = trigger_scan(task, keyword_index, cluster_embs, ollama_url)
+    result = trigger_scan(task, keyword_index, cluster_embs, ollama_url, conn=conn)
+    if _out_trigger_ids is not None:
+        _out_trigger_ids.extend(result.trigger_ids)
+    trigger_hint = result.context
 
     parts = [f"## Projekt-Snapshot\n{snapshot}"]
     if trigger_hint:

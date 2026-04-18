@@ -11,6 +11,7 @@ from src.memory.ambient import (
     generate_ambient_snapshot,
     _cosine,
     trigger_scan,
+    _is_trigger_active,
 )
 
 
@@ -173,24 +174,26 @@ def test_trigger_scan_keyword_hit():
     """trigger_scan returns cluster names on keyword match."""
     idx = {"creditservice": ["CreditCluster"], "billing": ["BillingCluster"]}
     result = trigger_scan("What does CreditService do?", idx, {}, "")
-    assert "CreditCluster" in result
+    assert "CreditCluster" in result.context
 
 
 def test_trigger_scan_no_hit_empty_embs():
-    """trigger_scan returns empty string when no keyword hit and empty cluster_embs."""
+    """trigger_scan returns empty context when no keyword hit and empty cluster_embs."""
     result = trigger_scan("completely unrelated query", {}, {}, "http://localhost:11434")
-    assert result == ""
+    assert result.context == ""
+    assert result.trigger_ids == []
 
 
 def test_trigger_scan_no_hit_below_threshold(monkeypatch):
-    """trigger_scan returns empty string when embedding score is below threshold."""
+    """trigger_scan returns empty context when embedding score is below threshold."""
     cluster_embs = {"ClusterA": [1.0, 0.0]}
     monkeypatch.setattr(
         "src.analysis.context._embed_texts",
         lambda texts, url: [[0.5, 0.866]]  # cosine ~0.5 < threshold 0.75
     )
     result = trigger_scan("some query", {}, cluster_embs, "http://localhost:11434", threshold=0.75)
-    assert result == ""
+    assert result.context == ""
+    assert result.trigger_ids == []
 
 
 def test_build_context_no_snapshot():
@@ -325,3 +328,62 @@ def test_context_feedback_dataclass():
     )
     assert fb.was_referenced is True
     assert fb.relevance_score == 0.85
+
+
+# ── Task 2: TriggerResult + inactive trigger skip ────────────────────────────
+
+def test_trigger_scan_returns_trigger_result():
+    from src.memory.ambient import trigger_scan, TriggerResult
+    idx = {"creditservice": ["CreditCluster"]}
+    result = trigger_scan("What does CreditService do?", idx, {}, "")
+    assert isinstance(result, TriggerResult)
+    assert "CreditCluster" in result.context
+    assert any("creditservice" in tid for tid in result.trigger_ids)
+
+
+def test_trigger_scan_skips_inactive_trigger():
+    from src.memory.ambient import trigger_scan, TriggerResult
+    conn = _init_test_db()
+    # Mark keyword as inactive
+    conn.execute(
+        "INSERT INTO trigger_stats (trigger_id, fire_count, ref_count, is_active, last_fired) VALUES (?,?,?,?,?)",
+        ("keyword:creditservice", 50, 0, 0, "2026-01-01")
+    )
+    conn.commit()
+    idx = {"creditservice": ["CreditCluster"]}
+    result = trigger_scan("What does CreditService do?", idx, {}, "", conn=conn)
+    assert result.context == ""
+    assert result.trigger_ids == []
+    conn.close()
+
+
+def test_is_trigger_active_unknown_trigger():
+    from src.memory.ambient import _is_trigger_active
+    conn = _init_test_db()
+    assert _is_trigger_active("keyword:unknown", conn) is True
+    conn.close()
+
+
+def test_build_context_collects_trigger_ids(tmp_path, monkeypatch):
+    import json
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache" / "myrepo_wiki_index.json").write_text(
+        json.dumps({"creditservice": ["CreditCluster"]}), encoding="utf-8"
+    )
+    conn = _init_test_db()
+    source_id = "ambient:myrepo:snapshot"
+    conn.execute(
+        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
+        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
+    )
+    conn.execute(
+        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
+        ("c1", source_id, "Snapshot-Text", "ambient_snapshot", 1, "2026-01-01T00:00:00")
+    )
+    conn.commit()
+    out_ids: list = []
+    build_context("What does CreditService do?", conn, "", "myrepo", _out_trigger_ids=out_ids)
+    assert any("creditservice" in tid for tid in out_ids)
+    conn.close()
