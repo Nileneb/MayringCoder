@@ -254,3 +254,37 @@ def test_build_context_with_trigger_hit(tmp_path, monkeypatch):
     assert "Trigger-Kontext" in result
     assert "CreditCluster" in result
     conn.close()
+
+
+def test_parse_args_generate_ambient():
+    """--generate-ambient flag is parsed correctly."""
+    from src.cli import parse_args
+    import sys
+
+    # Simulate command line args
+    old_argv = sys.argv
+    try:
+        sys.argv = ["cli.py", "--generate-ambient", "--repo", "https://github.com/test/repo"]
+        args = parse_args()
+        assert args.generate_ambient is True
+        assert args.repo == "https://github.com/test/repo"
+    finally:
+        sys.argv = old_argv
+
+
+def test_generate_ambient_flag_in_help(capsys):
+    """--generate-ambient appears in CLI help."""
+    from src.cli import parse_args
+    import sys
+
+    old_argv = sys.argv
+    try:
+        sys.argv = ["cli.py", "--help"]
+        try:
+            parse_args()
+        except SystemExit:
+            pass  # argparse exits after --help
+        captured = capsys.readouterr()
+        assert "generate-ambient" in captured.out
+    finally:
+        sys.argv = old_argv

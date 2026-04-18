@@ -121,6 +121,8 @@ def parse_args() -> argparse.Namespace:
                    help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
     p.add_argument("--generate-wiki", action="store_true",
                    help="Verknüpfungswiki aus Overview-Cache + Memory erzeugen (cache/<slug>_wiki.md)")
+    p.add_argument("--generate-ambient", action="store_true",
+                   help="Ambient-Snapshot regenerieren (cache via SQLite, model required)")
     p.add_argument("--ingest-issues", metavar="REPO",
                    help="GitHub Issues von REPO (owner/name) in Memory laden (benötigt gh CLI). "
                         "z. B. --ingest-issues Nileneb/MayringCoder")
@@ -297,6 +299,17 @@ def main() -> None:
         from src.api.dependencies import get_conn, get_chroma
         from src.memory.wiki import generate_wiki
         generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id)
+        sys.exit(0)
+
+    if args.generate_ambient:
+        from src.api.dependencies import get_conn
+        from src.memory.ambient import generate_ambient_snapshot
+        conn = get_conn()
+        result = generate_ambient_snapshot(conn, ollama_url, model, _repo_slug(repo_url), args.workspace_id)
+        if result:
+            print(f"[ambient] Snapshot generiert ({len(result)} Zeichen)")
+        else:
+            print("[ambient] Kein Snapshot generiert (kein Model oder Fehler)", file=sys.stderr)
         sys.exit(0)
 
     if args.ingest_issues:
