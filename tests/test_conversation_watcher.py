@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch, unload_model, run_post_hook
+from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch, unload_model, run_post_hook, scan_workspace_files
 
 
 def test_state_roundtrip(tmp_path):
@@ -162,3 +162,24 @@ def test_run_post_hook_empty_cmd_skips():
     with patch("tools.conversation_watcher.subprocess.run") as mock_run:
         run_post_hook("", state, hook_interval=0.0)
         mock_run.assert_not_called()
+
+
+def test_scan_workspace_files_empty(tmp_path):
+    result = scan_workspace_files(tmp_path)
+    assert result == []
+
+
+def test_scan_workspace_files_finds_jsonl(tmp_path):
+    ws = tmp_path / "workspace1"
+    ws.mkdir()
+    (ws / "session1.jsonl").write_text("")
+    (ws / "session2.jsonl").write_text("")
+    (ws / "notajsonl.txt").write_text("")
+    result = scan_workspace_files(tmp_path)
+    assert len(result) == 2
+    assert all(p.suffix == ".jsonl" for p in result)
+
+
+def test_scan_workspace_files_nonexistent(tmp_path):
+    result = scan_workspace_files(tmp_path / "doesnotexist")
+    assert result == []

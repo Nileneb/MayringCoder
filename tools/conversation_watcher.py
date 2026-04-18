@@ -233,3 +233,85 @@ def run_post_hook(
         state.last_hook_run = now
     except Exception:
         pass
+
+
+def scan_workspace_files(projects_dir: Path = _PROJECTS_DIR) -> list[Path]:
+    """Return all *.jsonl files under projects_dir (non-recursive first level)."""
+    if not projects_dir.exists():
+        return []
+    result: list[Path] = []
+    for ws_dir in sorted(projects_dir.iterdir()):
+        if ws_dir.is_dir():
+            result.extend(sorted(ws_dir.glob("*.jsonl")))
+    return result
+
+
+def watch_loop(
+    ollama_url: str,
+    model: str,
+    workspace_id: str = "system",
+    poll_interval: float = 30.0,
+    idle_interval: float = 300.0,
+    idle_after: float = 900.0,
+    flush_count: int = 10,
+    flush_interval: float = 120.0,
+    hook_cmd: str = "",
+    hook_interval: float = 300.0,
+    idle_timeout: float = 3600.0,
+    projects_dir: Path = _PROJECTS_DIR,
+) -> None:
+    """Main polling loop. Runs until SIGINT/SIGTERM or idle_timeout exceeded."""
+    from src.api.dependencies import get_conn, get_chroma
+
+    conn = get_conn()
+    chroma = get_chroma()
+    state = load_state()
+    buf = TurnBuffer(flush_count=flush_count, flush_interval=flush_interval)
+
+    stop_flag = {"stop": False}
+
+    def _handle_signal(sig, frame):
+        stop_flag["stop"] = True
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    last_activity = time.time()
+
+    while not stop_flag["stop"]:
+        now = time.time()
+
+        if model and (now - state.last_llm_call) > idle_timeout and state.last_llm_call > 0:
+            unload_model(model)
+            state.last_llm_call = 0.0
+
+        ws_slug = "default"
+        for fpath in scan_workspace_files(projects_dir):
+            key = str(fpath)
+            offset = state.file_offsets.get(key, 0)
+            new_turns, new_offset = read_new_turns(fpath, offset)
+            if new_turns:
+                last_activity = now
+                state.file_offsets[key] = new_offset
+                ws_slug = _slug(fpath.parent)
+                for turn in new_turns:
+                    buf.add(turn)
+
+        for sid in buf.sessions_to_flush():
+            turns = buf.pop(sid)
+            ok = ingest_micro_batch(
+                turns, sid, ws_slug,
+                conn, chroma, ollama_url, model, workspace_id,
+            )
+            if ok:
+                state.last_llm_call = time.time()
+                run_post_hook(hook_cmd, state, hook_interval)
+
+        save_state(state)
+
+        idle = (time.time() - last_activity) > idle_after
+        sleep_time = idle_interval if idle else poll_interval
+        for _ in range(int(sleep_time)):
+            if stop_flag["stop"]:
+                break
+            time.sleep(1)
