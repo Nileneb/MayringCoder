@@ -45,7 +45,6 @@ load_dotenv(_ROOT / ".env")
 
 try:
     from fastapi import Depends, FastAPI, HTTPException, status
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel
 except ImportError:
     raise ImportError("Missing dependency: pip install fastapi uvicorn")
@@ -54,7 +53,7 @@ from src.memory.ingest import get_or_create_chroma_collection, ingest
 from src.memory.retrieval import compress_for_prompt, search
 from src.memory.schema import Source
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
-from src.api.sanctum_auth import validate_sanctum_token_full
+from src.api.auth import get_workspace
 from src.api.training import router as _training_router
 from src.api.job_queue import get_job as _get_job, make_job as _make_job, python_exe as _python_exe, run_checker_job as _run_checker_job, _JOBS
 from src.model_router import ModelRouter as _ModelRouter
@@ -65,42 +64,10 @@ from src.model_router import ModelRouter as _ModelRouter
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 _OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
-_MCP_AUTH_TOKEN = os.getenv("MAYRING_MCP_AUTH_TOKEN", "")
 _router = _ModelRouter(_OLLAMA_URL)
 
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 app.include_router(_training_router)
-_bearer = HTTPBearer(auto_error=False)
-
-# ---------------------------------------------------------------------------
-# Auth dependency
-# ---------------------------------------------------------------------------
-
-async def get_workspace(
-    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> str:
-    if not creds:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer token")
-
-    # Static service-to-service token bypass (for internal Laravel MayringMcpClient)
-    # This path is always allowed — no subscription check needed for the research platform itself
-    if _MCP_AUTH_TOKEN and creds.credentials == _MCP_AUTH_TOKEN:
-        return "system"
-
-    # External Sanctum token (Claude Desktop / Claude Web users)
-    info = validate_sanctum_token_full(creds.credentials)
-    if not info:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-
-    if not info.mayring_active:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="MayringCoder Memory requires an active subscription (€5/month). "
-                   "Subscribe at https://app.linn.games/einstellungen/mayring-abo",
-        )
-
-    return info.workspace_id
-
 
 # ---------------------------------------------------------------------------
 # Request/Response models
