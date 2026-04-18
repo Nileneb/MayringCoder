@@ -324,7 +324,7 @@ async def get_job(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Poll status of a background job."""
-    job = _JOBS.get(job_id)
+    job = _get_job(job_id)
     if not job or job["workspace_id"] != workspace_id:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
