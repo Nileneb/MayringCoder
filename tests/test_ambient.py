@@ -8,6 +8,7 @@ from src.memory.ambient import (
     _load_recent_issues,
     _load_wiki_top_connections,
     load_ambient_snapshot,
+    generate_ambient_snapshot,
 )
 
 
@@ -133,3 +134,24 @@ class TestLoadAmbientSnapshot:
         result = load_ambient_snapshot(conn, "myrepo")
         assert result == "Mein Snapshot-Text"
         conn.close()
+
+
+def test_generate_ambient_snapshot_returns_none_on_empty_model():
+    """generate_ambient_snapshot returns None immediately when model is empty."""
+    conn = _init_test_db()
+    result = generate_ambient_snapshot(conn, "http://localhost:11434", "", "myrepo")
+    assert result is None
+    conn.close()
+
+
+def test_generate_ambient_snapshot_returns_none_on_llm_error(monkeypatch):
+    """generate_ambient_snapshot returns None when LLM raises."""
+    conn = _init_test_db()
+
+    def _fake_generate(*args, **kwargs):
+        raise RuntimeError("Ollama not reachable")
+
+    monkeypatch.setattr("src.analysis.analyzer._ollama_generate", _fake_generate)
+    result = generate_ambient_snapshot(conn, "http://localhost:11434", "llama3", "myrepo")
+    assert result is None
+    conn.close()

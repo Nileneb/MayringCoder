@@ -70,7 +70,7 @@ def _load_wiki_top_connections(repo_slug: str, limit: int = 10) -> str:
     if not wiki_path.exists():
         return "(kein Wiki vorhanden)"
     content = wiki_path.read_text(encoding="utf-8")
-    lines = [l for l in content.splitlines() if l.startswith("- →")]
+    lines = [line for line in content.splitlines() if line.startswith("- →")]
     return "\n".join(lines[:limit]) or "(keine Verbindungen)"
 
 
