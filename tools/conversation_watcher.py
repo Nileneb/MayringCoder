@@ -55,5 +55,5 @@ def load_state(path: Path = _STATE_FILE) -> WatcherState:
             last_hook_run=float(data.get("last_hook_run", 0.0)),
             last_llm_call=float(data.get("last_llm_call", 0.0)),
         )
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         return WatcherState()
