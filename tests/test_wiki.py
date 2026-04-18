@@ -8,7 +8,10 @@ from src.memory.wiki import (
     _build_class_index, _resolve_dep,
     find_import_pairs, find_shared_types, find_call_pairs,
     find_label_overlap, find_event_pairs,
+    find_citation_pairs, find_shared_concepts, find_method_chains,
+    find_keyword_overlap, find_dataset_pairs,
 )
+import pytest
 
 
 def _make_conn():
@@ -146,3 +149,16 @@ def test_find_event_pairs_dispatch_match():
     # If dispatch detected and ShouldQueue detected in same run, edges connect them
     # Rule: dispatchers and listeners connect when class name overlaps
     assert isinstance(edges, list)  # Basic: returns list, no exception
+
+
+def test_paper_rule_stubs_raise():
+    with pytest.raises(NotImplementedError):
+        find_citation_pairs({}, [])
+    with pytest.raises(NotImplementedError):
+        find_shared_concepts([], None, None, "", "")
+    with pytest.raises(NotImplementedError):
+        find_method_chains([], None, None, "", "")
+    with pytest.raises(NotImplementedError):
+        find_keyword_overlap({}, [])
+    with pytest.raises(NotImplementedError):
+        find_dataset_pairs([], None, None, "", "")

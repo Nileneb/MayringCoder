@@ -138,3 +138,27 @@ def find_event_pairs(overview_cache: dict[str, dict]) -> list[WikiEdge]:
                 if df != listen_file:
                     edges.append(WikiEdge(df, listen_file, 0.7, "event_dispatch"))
     return edges
+
+
+# ---------------------------------------------------------------------------
+# Paper rule stubs — implement when paper sources exist in memory
+# ---------------------------------------------------------------------------
+
+def find_citation_pairs(overview_cache: dict, chunks: list) -> list[WikiEdge]:
+    raise NotImplementedError("Paper rules not yet implemented (no paper sources in memory)")
+
+
+def find_shared_concepts(chunks: list, conn: Any, chroma: Any, ollama_url: str, model: str) -> list[WikiEdge]:
+    raise NotImplementedError("Paper rules not yet implemented")
+
+
+def find_method_chains(chunks: list, conn: Any, chroma: Any, ollama_url: str, model: str) -> list[WikiEdge]:
+    raise NotImplementedError("Paper rules not yet implemented")
+
+
+def find_keyword_overlap(overview_cache: dict, chunks: list) -> list[WikiEdge]:
+    raise NotImplementedError("Paper rules not yet implemented")
+
+
+def find_dataset_pairs(chunks: list, conn: Any, chroma: Any, ollama_url: str, model: str) -> list[WikiEdge]:
+    raise NotImplementedError("Paper rules not yet implemented")
