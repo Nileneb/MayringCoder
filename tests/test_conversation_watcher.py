@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch, unload_model, run_post_hook, scan_workspace_files
+from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch, unload_model, run_post_hook, scan_workspace_files, parse_args
 
 
 def test_state_roundtrip(tmp_path):
@@ -183,3 +183,24 @@ def test_scan_workspace_files_finds_jsonl(tmp_path):
 def test_scan_workspace_files_nonexistent(tmp_path):
     result = scan_workspace_files(tmp_path / "doesnotexist")
     assert result == []
+
+
+def test_parse_args_defaults():
+    args = parse_args([])
+    assert args.workspace_id == "system"
+    assert args.poll_interval == 30.0
+    assert args.flush_count == 10
+    assert args.hook_cmd == ""
+
+
+def test_parse_args_custom():
+    args = parse_args([
+        "--workspace-id", "myws",
+        "--poll-interval", "60",
+        "--flush-count", "5",
+        "--hook-cmd", "echo done",
+    ])
+    assert args.workspace_id == "myws"
+    assert args.poll_interval == 60.0
+    assert args.flush_count == 5
+    assert args.hook_cmd == "echo done"

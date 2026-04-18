@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -315,3 +316,69 @@ def watch_loop(
             if stop_flag["stop"]:
                 break
             time.sleep(1)
+
+
+def parse_args(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Incremental Claude conversation watcher — ingests new turns into MCP memory."
+    )
+    ap.add_argument("--ollama-url", default=None,
+                    help="Ollama API URL (default: $OLLAMA_URL or http://localhost:11434)")
+    ap.add_argument("--model", default=None,
+                    help="Ollama model (default: $OLLAMA_MODEL)")
+    ap.add_argument("--workspace-id", default="system",
+                    help="MCP workspace ID (default: system)")
+    ap.add_argument("--poll-interval", type=float, default=30.0,
+                    help="Seconds between polls when active (default: 30)")
+    ap.add_argument("--idle-interval", type=float, default=300.0,
+                    help="Seconds between polls when idle (default: 300)")
+    ap.add_argument("--idle-after", type=float, default=900.0,
+                    help="Seconds of inactivity before switching to idle polling (default: 900)")
+    ap.add_argument("--flush-count", type=int, default=10,
+                    help="Flush session buffer after N turns (default: 10)")
+    ap.add_argument("--flush-interval", type=float, default=120.0,
+                    help="Flush session buffer after N seconds (default: 120)")
+    ap.add_argument("--hook-cmd", default="",
+                    help="Shell command to run after each ingest (post-hook)")
+    ap.add_argument("--hook-interval", type=float, default=300.0,
+                    help="Minimum seconds between post-hook runs (default: 300)")
+    ap.add_argument("--idle-timeout", type=float, default=3600.0,
+                    help="Seconds of LLM inactivity before unloading model (default: 3600)")
+    ap.add_argument("--projects-dir", default=None,
+                    help=f"Claude projects dir (default: {_PROJECTS_DIR})")
+    return ap.parse_args(argv)
+
+
+def main(argv=None) -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    args = parse_args(argv)
+
+    ollama_url = args.ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
+    model = args.model or os.getenv("OLLAMA_MODEL", "")
+    projects_dir = Path(args.projects_dir) if args.projects_dir else _PROJECTS_DIR
+
+    print(f"[watcher] Ollama: {ollama_url} | Model: {model or '(none)'}")
+    print(f"[watcher] Projects dir: {projects_dir}")
+    print(f"[watcher] Poll: {args.poll_interval}s active / {args.idle_interval}s idle")
+
+    watch_loop(
+        ollama_url=ollama_url,
+        model=model,
+        workspace_id=args.workspace_id,
+        poll_interval=args.poll_interval,
+        idle_interval=args.idle_interval,
+        idle_after=args.idle_after,
+        flush_count=args.flush_count,
+        flush_interval=args.flush_interval,
+        hook_cmd=args.hook_cmd,
+        hook_interval=args.hook_interval,
+        idle_timeout=args.idle_timeout,
+        projects_dir=projects_dir,
+    )
+
+
+if __name__ == "__main__":
+    main()
