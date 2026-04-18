@@ -191,3 +191,66 @@ def test_trigger_scan_no_hit_below_threshold(monkeypatch):
     )
     result = trigger_scan("some query", {}, cluster_embs, "http://localhost:11434", threshold=0.75)
     assert result == ""
+
+
+def test_build_context_no_snapshot():
+    """build_context returns empty string when no snapshot in DB."""
+    from src.memory.ambient import build_context
+    conn = _init_test_db()
+    result = build_context("some task", conn, "", "myrepo")
+    assert result == ""
+    conn.close()
+
+
+def test_build_context_snapshot_only(tmp_path, monkeypatch):
+    """build_context returns snapshot section when no index/embs files exist."""
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+
+    conn = _init_test_db()
+    source_id = "ambient:myrepo:snapshot"
+    conn.execute(
+        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
+        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
+    )
+    conn.execute(
+        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
+        ("chunk1", source_id, "Mein Snapshot-Text", "ambient_snapshot", 1, "2026-01-01T00:00:00")
+    )
+    conn.commit()
+
+    result = build_context("some task", conn, "", "myrepo")
+    assert "Projekt-Snapshot" in result
+    assert "Mein Snapshot-Text" in result
+    conn.close()
+
+
+def test_build_context_with_trigger_hit(tmp_path, monkeypatch):
+    """build_context includes trigger context when keyword matches."""
+    import json
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+
+    (tmp_path / "cache" / "myrepo_wiki_index.json").write_text(
+        json.dumps({"creditservice": ["CreditCluster"]}), encoding="utf-8"
+    )
+
+    conn = _init_test_db()
+    source_id = "ambient:myrepo:snapshot"
+    conn.execute(
+        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
+        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
+    )
+    conn.execute(
+        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
+        ("chunk1", source_id, "Snapshot-Text", "ambient_snapshot", 1, "2026-01-01T00:00:00")
+    )
+    conn.commit()
+
+    result = build_context("What does CreditService do?", conn, "", "myrepo")
+    assert "Projekt-Snapshot" in result
+    assert "Trigger-Kontext" in result
+    assert "CreditCluster" in result
+    conn.close()

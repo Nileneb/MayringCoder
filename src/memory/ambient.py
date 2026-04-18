@@ -196,3 +196,41 @@ def load_ambient_snapshot(conn: Any, repo_slug: str = "") -> str | None:
         (source_id,),
     ).fetchone()
     return row[0] if row else None
+
+
+def build_context(
+    task: str,
+    conn: Any,
+    ollama_url: str,
+    repo_slug: str = "",
+) -> str:
+    """Orchestrator: lädt Snapshot + Trigger-Scan → kompakter Kontext-String.
+
+    Leise skippen wenn kein Snapshot vorhanden (kein LLM-Call).
+    """
+    snapshot = load_ambient_snapshot(conn, repo_slug)
+    if not snapshot:
+        return ""
+
+    keyword_index: dict[str, list[str]] = {}
+    cluster_embs: dict[str, list[float]] = {}
+    if repo_slug:
+        idx_path = Path("cache") / f"{repo_slug}_wiki_index.json"
+        emb_path = Path("cache") / f"{repo_slug}_wiki_clusters_emb.json"
+        if idx_path.exists():
+            try:
+                keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        if emb_path.exists():
+            try:
+                cluster_embs = json.loads(emb_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    trigger_hint = trigger_scan(task, keyword_index, cluster_embs, ollama_url)
+
+    parts = [f"## Projekt-Snapshot\n{snapshot}"]
+    if trigger_hint:
+        parts.append(f"## Trigger-Kontext\n{trigger_hint}")
+    return "\n\n".join(parts)
