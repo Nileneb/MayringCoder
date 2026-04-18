@@ -247,3 +247,12 @@ def test_generate_wiki_no_overview_cache(capsys):
     assert result is None
     captured = capsys.readouterr()
     assert "Kein Overview-Cache" in captured.out
+
+
+def test_search_wiki_no_wiki_file(tmp_path, monkeypatch):
+    """Returns fallback string when no wiki file exists."""
+    from src.agents.pi import _execute_search_wiki
+
+    monkeypatch.chdir(tmp_path)
+    result = _execute_search_wiki({"topic": "auth"}, repo_slug_hint="")
+    assert "Kein Wiki" in result
