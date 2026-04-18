@@ -49,7 +49,6 @@ try:
 except ImportError:
     raise ImportError("Missing dependency: pip install fastapi uvicorn")
 
-from src.memory.ingest import get_or_create_chroma_collection
 from src.api.memory_service import run_ingest as _run_ingest, run_search as _run_search
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.auth import get_workspace
