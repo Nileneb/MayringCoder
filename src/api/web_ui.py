@@ -355,7 +355,13 @@ def _scan_compact_files(model: str, ollama_available: bool) -> str:
     chroma = _get_chroma() if ollama_available else None
     ingested, skipped, errors = 0, 0, 0
 
-    for f in md_files:
+    try:
+        from tqdm import tqdm as _tqdm
+    except ImportError:
+        def _tqdm(it, **_kw):  # type: ignore[misc]
+            return it
+
+    for f in _tqdm(md_files, desc="Claude-Dateien scannen", unit="Datei"):
         try:
             content = f.read_text(encoding="utf-8")
             if not content.strip():
@@ -791,7 +797,8 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 ingest_btn = gr.Button("Ingest starten", variant="primary")
                 ingest_output = gr.Code(language="json", label="Ergebnis")
 
-                def _ingest_handler(text, file, path, repo, cat, mode, codebook, model):
+                def _ingest_handler(text, file, path, repo, cat, mode, codebook, model,
+                                    progress=gr.Progress(track_tqdm=True)):
                     return _do_ingest(text, file, path, repo, cat, mode, codebook, model, ollama_available)
 
                 ingest_btn.click(
@@ -828,10 +835,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 conv_output = gr.Code(language="json", label="Ergebnis (manuell)")
                 conv_scan_output = gr.Textbox(label="Auto-Scan Ergebnis", interactive=False)
 
-                def _conv_handler(text, session_id, run_id, model):
+                def _conv_handler(text, session_id, run_id, model,
+                                  progress=gr.Progress(track_tqdm=True)):
                     return _do_ingest_conversation(text, session_id, run_id, model, ollama_available)
 
-                def _scan_handler(model):
+                def _scan_handler(model, progress=gr.Progress(track_tqdm=True)):
                     return _scan_compact_files(model, ollama_available)
 
                 conv_btn.click(
@@ -858,7 +866,51 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             )
 
         # =======================================================================
-        # Tab 3: Analyse — alle Pipeline-Modi + Issues default-an
+        # Tab 3: Training
+        # =======================================================================
+        with gr.Tab("Training"):
+            gr.Markdown("## Trainingspipeline")
+
+            with gr.Accordion("Status", open=True):
+                train_status_md = gr.Markdown(_get_training_status())
+                refresh_status_btn = gr.Button("Aktualisieren", size="sm")
+                refresh_status_btn.click(fn=_get_training_status, outputs=[train_status_md])
+
+            with gr.Accordion("Langdock Annotation", open=True):
+                gr.Markdown(
+                    "Exportiert nicht-annotierte Samples aus den Training-Logs als Batch. "
+                    "Langdock annotiert sie und schickt sie per Webhook zurück "
+                    f"(Endpoint: `POST /api/training/langdock/webhook`)."
+                )
+                export_btn = gr.Button("Batch exportieren → Langdock", variant="secondary")
+                export_out = gr.Markdown("")
+                export_btn.click(fn=_export_training_batch, outputs=[export_out])
+
+            with gr.Accordion("Merge + Fine-tune", open=False):
+                gr.Markdown(
+                    "Merged alle annotierten Batches (Langdock + Haiku) in `cache/finetuning/train.jsonl`. "
+                    "Danach Fine-tuning starten."
+                )
+                merge_btn = gr.Button("Annotierte Batches mergen", variant="secondary")
+                merge_out = gr.Markdown("")
+                merge_btn.click(fn=_merge_training_annotations, outputs=[merge_out])
+
+                gr.Markdown("---")
+                finetune_btn = gr.Button("Fine-tuning starten", variant="primary")
+                finetune_out = gr.Markdown("")
+                finetune_btn.click(fn=_trigger_finetune, outputs=[finetune_out])
+
+                gr.Markdown("### Job-Status")
+                finetune_status_md = gr.Markdown(_get_finetune_status())
+                finetune_timer = gr.Timer(value=5, active=False)
+                finetune_timer.tick(fn=_get_finetune_status, outputs=[finetune_status_md])
+                finetune_btn.click(
+                    fn=lambda: gr.Timer(active=True),
+                    outputs=[finetune_timer],
+                )
+
+        # =======================================================================
+        # Tab 4: Analyse — alle Pipeline-Modi + Issues default-an
         # =======================================================================
         with gr.Tab("Analyse"):
             gr.Markdown(
@@ -900,10 +952,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             analyse_job_id = gr.Textbox(label="Job-ID", interactive=False)
             analyse_poll_btn = gr.Button("Status abfragen")
             analyse_output = gr.Markdown("")
+            analyse_timer = gr.Timer(value=4, active=False)
 
             def _do_analyse(repo, mode, issues, memory, adversarial, llm_mode, token):
                 if not token:
-                    return "", "Erst einloggen."
+                    return "", "Erst einloggen.", gr.Timer(active=False)
                 mode_map = {
                     "Vollanalyse (Fehlersuche)": "analyze",
                     "Inventar (Overview)": "overview",
@@ -919,20 +972,30 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 }
                 r = _api_post(endpoint, payload, token)
                 if "error" in r:
-                    return "", f"Fehler: {r['error']}"
+                    return "", f"Fehler: {r['error']}", gr.Timer(active=False)
                 job_id = r.get("job_id") or r.get("pid", "")
-                return str(job_id), f"Gestartet (Job: {job_id or '?'})"
+                return str(job_id), f"⏳ Gestartet (Job: {job_id or '?'})", gr.Timer(active=True)
+
+            def _poll_and_maybe_stop(job_id, token):
+                result = _poll_job(job_id, token)
+                done = any(k in result for k in ("✅", "❌", "Fehler"))
+                return result, gr.Timer(active=not done)
 
             analyse_btn.click(
                 fn=_do_analyse,
                 inputs=[analyse_repo, analyse_mode, analyse_issues, analyse_memory,
                         analyse_adversarial, analyse_llm, _token_state],
-                outputs=[analyse_job_id, analyse_output],
+                outputs=[analyse_job_id, analyse_output, analyse_timer],
             )
             analyse_poll_btn.click(
                 fn=_poll_job,
                 inputs=[analyse_job_id, _token_state],
                 outputs=[analyse_output],
+            )
+            analyse_timer.tick(
+                fn=_poll_and_maybe_stop,
+                inputs=[analyse_job_id, _token_state],
+                outputs=[analyse_output, analyse_timer],
             )
 
         # =======================================================================
@@ -1079,46 +1142,6 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     inputs=route_inputs,
                     outputs=[routes_out],
                 )
-
-        # =======================================================================
-        # Tab 6: Training
-        # =======================================================================
-        with gr.Tab("Training"):
-            gr.Markdown("## Trainingspipeline")
-
-            with gr.Accordion("Status", open=True):
-                train_status_md = gr.Markdown(_get_training_status())
-                refresh_status_btn = gr.Button("Aktualisieren", size="sm")
-                refresh_status_btn.click(fn=_get_training_status, outputs=[train_status_md])
-
-            with gr.Accordion("Langdock Annotation", open=True):
-                gr.Markdown(
-                    "Exportiert nicht-annotierte Samples aus den Training-Logs als Batch. "
-                    "Langdock annotiert sie und schickt sie per Webhook zurück "
-                    f"(Endpoint: `POST /api/training/langdock/webhook`)."
-                )
-                export_btn = gr.Button("Batch exportieren → Langdock", variant="secondary")
-                export_out = gr.Markdown("")
-                export_btn.click(fn=_export_training_batch, outputs=[export_out])
-
-            with gr.Accordion("Merge + Fine-tune", open=False):
-                gr.Markdown(
-                    "Merged alle annotierten Batches (Langdock + Haiku) in `cache/finetuning/train.jsonl`. "
-                    "Danach Fine-tuning starten."
-                )
-                merge_btn = gr.Button("Annotierte Batches mergen", variant="secondary")
-                merge_out = gr.Markdown("")
-                merge_btn.click(fn=_merge_training_annotations, outputs=[merge_out])
-
-                gr.Markdown("---")
-                finetune_btn = gr.Button("Fine-tuning starten", variant="primary")
-                finetune_out = gr.Markdown("")
-                finetune_btn.click(fn=_trigger_finetune, outputs=[finetune_out])
-
-                gr.Markdown("### Job-Status")
-                finetune_status_md = gr.Markdown(_get_finetune_status())
-                poll_btn = gr.Button("Status aktualisieren", size="sm")
-                poll_btn.click(fn=_get_finetune_status, outputs=[finetune_status_md])
 
     return app
 

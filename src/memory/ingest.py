@@ -31,6 +31,12 @@ except ImportError:
     _HAS_YAML = False
 
 try:
+    from tqdm import tqdm as _tqdm
+except ImportError:
+    def _tqdm(it, **_kw):  # type: ignore[misc]
+        return it
+
+try:
     import chromadb as _chromadb
     _HAS_CHROMADB = True
 except ImportError:
@@ -789,7 +795,7 @@ def ingest(
     deduped_count = 0
     indexed = False
 
-    for chunk in chunks:
+    for chunk in _tqdm(chunks, desc="Chunks embedden", unit="chunk", leave=False):
         # 4a: exact dedup (workspace-scoped)
         canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
         if is_dup:

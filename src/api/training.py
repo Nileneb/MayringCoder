@@ -28,6 +28,12 @@ try:
 except ImportError:
     raise ImportError("FastAPI required: pip install fastapi")
 
+try:
+    from tqdm import tqdm as _tqdm
+except ImportError:
+    def _tqdm(it, **_kw):  # type: ignore[misc]
+        return it
+
 _ROOT = Path(__file__).parent.parent.parent
 _CACHE_DIR = _ROOT / "cache"
 _FINETUNING_DIR = _CACHE_DIR / "finetuning"
@@ -127,7 +133,7 @@ async def export_batch(request: Request) -> dict:
                     pass
 
     new_samples: list[dict] = []
-    for log_file in log_files:
+    for log_file in _tqdm(log_files, desc="Training-Logs scannen", unit="Datei"):
         with log_file.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -241,7 +247,7 @@ async def merge_annotations() -> dict:
     if _LANGDOCK_BATCHES_DIR.exists():
         sources.extend(sorted(_LANGDOCK_BATCHES_DIR.glob("*.jsonl")))
 
-    for source_file in sources:
+    for source_file in _tqdm(sources, desc="Batches mergen", unit="Datei"):
         with source_file.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
