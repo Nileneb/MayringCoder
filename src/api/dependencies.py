@@ -4,6 +4,7 @@ Used by both server.py and mcp.py to avoid code duplication.
 """
 
 from __future__ import annotations
+from typing import Any
 
 import sqlite3
 
@@ -23,7 +24,7 @@ def get_conn() -> sqlite3.Connection:
     return _conn
 
 
-def get_chroma():
+def get_chroma() -> Any:
     """Return the shared ChromaDB 'memory_chunks' collection (lazy singleton)."""
     global _chroma
     if _chroma is None:
