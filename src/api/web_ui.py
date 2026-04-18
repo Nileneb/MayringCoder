@@ -644,6 +644,20 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             outputs=[_token_state, _workspace_state, login_status, login_accordion],
         )
 
+        def _auto_login(request: gr.Request):
+            token = (request.query_params or {}).get("__token", "").strip()
+            if not token:
+                return "", "", "_Nicht eingeloggt._", gr.Accordion(open=True)
+            ok, result = _validate_token(token)
+            if ok:
+                return token, result, "Eingeloggt als Workspace: " + str(result), gr.Accordion(open=False)
+            return "", "", "Fehler: " + str(result), gr.Accordion(open=True)
+
+        app.load(
+            fn=_auto_login,
+            outputs=[_token_state, _workspace_state, login_status, login_accordion],
+        )
+
         with gr.Row():
             gr.HTML(_status_html(ollama_available, ollama_models))
             model_selector = gr.Dropdown(
