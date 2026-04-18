@@ -140,6 +140,107 @@ def find_event_pairs(overview_cache: dict[str, dict]) -> list[WikiEdge]:
     return edges
 
 
+RULE_SETS: dict[str, list[tuple[str, Any, float]]] = {
+    "code": [
+        ("import",             lambda oc, c, conn, ch: find_import_pairs(oc),        1.0),
+        ("shared_type",        lambda oc, c, conn, ch: find_shared_types(oc),         0.8),
+        ("function_call",      lambda oc, c, conn, ch: find_call_pairs(oc),           0.9),
+        ("label_cooccurrence", lambda oc, c, conn, ch: find_label_overlap(conn, oc),  0.5),
+        ("event_dispatch",     lambda oc, c, conn, ch: find_event_pairs(oc),          0.7),
+    ],
+    "paper": [],
+}
+
+
+def build_connection_graph(
+    doc_type: str,
+    overview_cache: dict[str, dict],
+    chunks: list,
+    conn: Any,
+    chroma: Any = None,
+) -> list[WikiEdge]:
+    """Run all rules for doc_type, merge duplicate edges by summing weights."""
+    edges: list[WikiEdge] = []
+    for _rule_name, finder_fn, _weight in RULE_SETS.get(doc_type, []):
+        try:
+            edges.extend(finder_fn(overview_cache, chunks, conn, chroma))
+        except NotImplementedError:
+            pass
+
+    merged: dict[tuple[str, str], WikiEdge] = {}
+    for e in edges:
+        key = (min(e.file_a, e.file_b), max(e.file_a, e.file_b))
+        if key in merged:
+            merged[key].weight = round(merged[key].weight + e.weight, 2)
+            existing_rules = set(merged[key].rule.split(","))
+            if e.rule not in existing_rules:
+                merged[key].rule += f",{e.rule}"
+        else:
+            merged[key] = WikiEdge(key[0], key[1], e.weight, e.rule)
+    return list(merged.values())
+
+
+def cluster_themes(edges: list[WikiEdge], min_files: int = 2) -> list[WikiCluster]:
+    """Group connected files into clusters via Union-Find."""
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        if parent.setdefault(x, x) != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for e in edges:
+        union(e.file_a, e.file_b)
+
+    groups: dict[str, list[str]] = defaultdict(list)
+    for node in parent:
+        groups[find(node)].append(node)
+
+    clusters = []
+    for _root, files in groups.items():
+        if len(files) < min_files:
+            continue
+        cross: dict[str, tuple[float, list[str]]] = {}
+        for e in edges:
+            if e.file_a in files and e.file_b not in files:
+                other_root = find(e.file_b)
+                if other_root not in cross:
+                    cross[other_root] = (0.0, [])
+                w, rules = cross[other_root]
+                rules_new = list(set(rules + e.rule.split(",")))
+                cross[other_root] = (round(w + e.weight, 2), rules_new)
+        cross_list = [(k, v[0], v[1]) for k, v in cross.items()]
+        name = Path(files[0]).stem
+        clusters.append(WikiCluster(name=name, files=sorted(files), labels=[], edges=cross_list))
+    return clusters
+
+
+def generate_wiki_markdown(clusters: list[WikiCluster], repo_slug: str) -> str:
+    """Render clusters as Markdown wiki."""
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        f"# Verknüpfungswiki — {repo_slug}",
+        f"_Stand: {ts} | {len(clusters)} Themen-Cluster_\n",
+    ]
+    for c in sorted(clusters, key=lambda x: len(x.files), reverse=True):
+        lines.append(f"## 🔗 {c.name}")
+        lines.append(f"**Dateien ({len(c.files)}):** {', '.join(Path(f).name for f in c.files)}")
+        if c.labels:
+            lines.append(f"**Labels:** {', '.join(c.labels)}")
+        if c.edges:
+            lines.append("**Querverweise:**")
+            for target, weight, rules in sorted(c.edges, key=lambda x: -x[1])[:5]:
+                lines.append(f"- → {target} (Gewicht {weight}: {', '.join(rules)})")
+        lines.append("")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Paper rule stubs — implement when paper sources exist in memory
 # ---------------------------------------------------------------------------

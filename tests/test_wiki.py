@@ -10,6 +10,7 @@ from src.memory.wiki import (
     find_label_overlap, find_event_pairs,
     find_citation_pairs, find_shared_concepts, find_method_chains,
     find_keyword_overlap, find_dataset_pairs,
+    build_connection_graph, cluster_themes, generate_wiki_markdown, RULE_SETS,
 )
 import pytest
 
@@ -162,3 +163,68 @@ def test_paper_rule_stubs_raise():
         find_keyword_overlap({}, [])
     with pytest.raises(NotImplementedError):
         find_dataset_pairs([], None, None, "", "")
+
+
+def test_build_connection_graph_empty_overview():
+    """Empty overview → no edges."""
+    conn = _make_conn()
+    edges = build_connection_graph("code", {}, [], conn)
+    assert edges == []
+    conn.close()
+
+
+def test_build_connection_graph_merges_duplicates():
+    """Two rules creating the same edge → weight is summed."""
+    oc = {
+        "app/AService.php": {
+            "dependencies": ["App\\BService"],
+            "file_summary": "Uses BService",
+            "functions": [{"name": "run", "calls": ["BService::execute"], "inputs": [], "outputs": []}],
+        },
+        "app/BService.php": {
+            "dependencies": [],
+            "file_summary": "plain service",
+            "functions": [],
+        },
+    }
+    conn = _make_conn()
+    edges = build_connection_graph("code", oc, [], conn)
+    # Both import (1.0) and function_call (0.9) should be merged
+    assert len(edges) == 1
+    assert edges[0].weight > 1.0  # summed weights
+    conn.close()
+
+
+def test_cluster_themes_single_component():
+    """3 files all connected → 1 cluster."""
+    edges = [
+        WikiEdge("a.py", "b.py", 1.0, "import"),
+        WikiEdge("b.py", "c.py", 0.9, "function_call"),
+    ]
+    clusters = cluster_themes(edges, min_files=2)
+    assert len(clusters) == 1
+    assert len(clusters[0].files) == 3
+
+
+def test_cluster_themes_min_files_filter():
+    """Single isolated node should not appear if below min_files=2."""
+    edges = [WikiEdge("a.py", "b.py", 1.0, "import")]
+    clusters = cluster_themes(edges, min_files=3)
+    assert clusters == []
+
+
+def test_generate_wiki_markdown_format():
+    """Output contains required markers."""
+    clusters = [
+        WikiCluster(
+            name="auth",
+            files=["app/AuthService.php", "app/UserModel.php"],
+            labels=["auth"],
+            edges=[],
+        )
+    ]
+    md = generate_wiki_markdown(clusters, "my-repo")
+    assert "Verknüpfungswiki" in md
+    assert "my-repo" in md
+    assert "AuthService.php" in md
+    assert "UserModel.php" in md
