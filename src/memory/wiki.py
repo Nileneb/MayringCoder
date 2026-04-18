@@ -263,3 +263,36 @@ def find_keyword_overlap(overview_cache: dict, chunks: list) -> list[WikiEdge]:
 
 def find_dataset_pairs(chunks: list, conn: Any, chroma: Any, ollama_url: str, model: str) -> list[WikiEdge]:
     raise NotImplementedError("Paper rules not yet implemented")
+
+
+def generate_wiki(
+    conn: Any,
+    chroma: Any,
+    repo_url: str,
+    ollama_url: str = "",
+    model: str = "",
+    workspace_id: str = "default",
+    doc_type: str = "code",
+) -> Path | None:
+    """Orchestrate wiki generation: load overview cache → build graph → cluster → write markdown."""
+    from src.analysis.context import load_overview_cache_raw
+    from src.config import repo_slug as _repo_slug
+
+    slug = _repo_slug(repo_url)
+    overview_cache = load_overview_cache_raw(repo_url) or {}
+    if not overview_cache:
+        print(f"[wiki] Kein Overview-Cache für {slug} — erst --mode overview ausführen")
+        return None
+
+    chunks: list = conn.execute(
+        "SELECT source_id, category_labels FROM chunks WHERE is_active=1"
+    ).fetchall()
+
+    edges = build_connection_graph(doc_type, overview_cache, chunks, conn, chroma)
+    clusters = cluster_themes(edges)
+
+    out = Path("cache") / f"{slug}_wiki.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(generate_wiki_markdown(clusters, slug), encoding="utf-8")
+    print(f"[wiki] {len(clusters)} Cluster → {out}")
+    return out

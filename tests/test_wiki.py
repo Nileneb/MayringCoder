@@ -228,3 +228,22 @@ def test_generate_wiki_markdown_format():
     assert "my-repo" in md
     assert "AuthService.php" in md
     assert "UserModel.php" in md
+
+
+def test_generate_wiki_no_overview_cache(capsys):
+    """Returns None and prints warning when no overview cache exists."""
+    from src.memory.wiki import generate_wiki
+    from unittest.mock import MagicMock, patch
+
+    conn = MagicMock()
+    conn.execute.return_value.fetchall.return_value = []
+    chroma = MagicMock()
+
+    # Mock the entire src.analysis.context module inside the function scope
+    with patch.dict('sys.modules', {'src.analysis.context': MagicMock(load_overview_cache_raw=MagicMock(return_value=None))}), \
+         patch.dict('sys.modules', {'src.config': MagicMock(repo_slug=MagicMock(return_value='test-repo'))}):
+        result = generate_wiki(conn, chroma, "https://github.com/test/repo")
+
+    assert result is None
+    captured = capsys.readouterr()
+    assert "Kein Overview-Cache" in captured.out
