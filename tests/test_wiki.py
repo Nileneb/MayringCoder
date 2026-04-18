@@ -11,6 +11,7 @@ from src.memory.wiki import (
     find_citation_pairs, find_shared_concepts, find_method_chains,
     find_keyword_overlap, find_dataset_pairs,
     build_connection_graph, cluster_themes, generate_wiki_markdown, RULE_SETS,
+    _build_keyword_index, _build_cluster_embeddings,
 )
 import pytest
 
@@ -256,3 +257,59 @@ def test_search_wiki_no_wiki_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = _execute_search_wiki({"topic": "auth"}, repo_slug_hint="")
     assert "Kein Wiki" in result
+
+
+def test_build_keyword_index_extracts_stems():
+    """Keywords include cluster name and file stems."""
+    from src.memory.wiki import _build_keyword_index
+    c = WikiCluster(
+        name="CreditService",
+        files=["app/Services/CreditService.php", "app/Services/BillingService.php"],
+        labels=["payment"],
+        edges=[],
+    )
+    idx = _build_keyword_index([c])
+    assert "creditservice" in idx
+    assert "billingservice" in idx
+    assert idx["creditservice"] == ["CreditService"]
+    assert idx["billingservice"] == ["CreditService"]
+    assert "payment" in idx
+
+
+def test_generate_wiki_creates_index_file(tmp_path, monkeypatch):
+    """generate_wiki() writes _wiki_index.json alongside the wiki markdown."""
+    from unittest.mock import MagicMock, patch
+    from src.memory.wiki import generate_wiki
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+
+    overview = {
+        "app/Services/FooService.php": {
+            "dependencies": ["App\\Services\\BarService"],
+            "functions": [],
+            "file_summary": "",
+            "category": "domain",
+        },
+        "app/Services/BarService.php": {
+            "dependencies": [],
+            "functions": [],
+            "file_summary": "",
+            "category": "domain",
+        },
+    }
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE chunks (chunk_id TEXT, source_id TEXT, content TEXT, chunk_level TEXT, is_active INTEGER, category_labels TEXT)")
+    conn.commit()
+
+    with patch("src.analysis.context.load_overview_cache_raw", return_value=overview), \
+         patch("src.config.repo_slug", return_value="myrepo"):
+        result = generate_wiki(conn, None, "https://github.com/test/myrepo", ollama_url="", model="")
+
+    index_file = tmp_path / "cache" / "myrepo_wiki_index.json"
+    assert index_file.exists(), f"Expected {index_file} to exist"
+    import json
+    idx = json.loads(index_file.read_text())
+    assert isinstance(idx, dict)
+    conn.close()
