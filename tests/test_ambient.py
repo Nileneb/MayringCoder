@@ -293,7 +293,6 @@ def test_generate_ambient_flag_in_help(capsys):
 # ── Task 1: Schema + Dataclasses ──────────────────────────────────────────────
 
 def test_trigger_stats_table_exists():
-    from src.memory.ambient import TriggerResult
     conn = _init_test_db()
     tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     assert "trigger_stats" in tables
