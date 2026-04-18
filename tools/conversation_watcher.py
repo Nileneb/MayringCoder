@@ -59,28 +59,35 @@ def load_state(path: Path = _STATE_FILE) -> WatcherState:
         return WatcherState()
 
 
-def read_new_turns(file_path: str, offset: int = 0) -> list[dict[str, Any]]:
-    """Read new turns from a JSONL file starting from a given byte offset.
-
-    Args:
-        file_path: Path to the JSONL file
-        offset: Byte offset to start reading from (0 = from beginning)
-
-    Returns:
-        List of parsed JSON turn objects
-    """
-    turns = []
+def read_new_turns(path: Path, byte_offset: int) -> tuple[list[dict], int]:
+    """Read turns added after byte_offset. Returns (new_turns, new_offset)."""
     try:
-        with open(file_path, "rb") as f:
-            if offset > 0:
-                f.seek(offset)
-            for line in f:
-                if line.strip():
-                    try:
-                        turn = json.loads(line.decode("utf-8"))
-                        turns.append(turn)
-                    except json.JSONDecodeError:
-                        pass
+        size = path.stat().st_size
     except FileNotFoundError:
-        pass
-    return turns
+        return [], byte_offset
+
+    if size <= byte_offset:
+        return [], byte_offset
+
+    turns: list[dict] = []
+    with path.open("rb") as fh:
+        fh.seek(byte_offset)
+        for raw in fh:
+            try:
+                entry = json.loads(raw.decode("utf-8", errors="replace").strip())
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if entry.get("type") not in ("user", "assistant"):
+                continue
+            msg = entry.get("message", {})
+            text = _extract_text(msg.get("content", "")).strip()
+            if not text:
+                continue
+            sid = entry.get("sessionId") or path.stem
+            turns.append({
+                "role": entry["type"],
+                "content": text[:2000],
+                "timestamp": entry.get("timestamp", ""),
+                "session_id": sid,
+            })
+    return turns, size
