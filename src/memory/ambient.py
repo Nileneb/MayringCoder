@@ -74,6 +74,60 @@ def _load_wiki_top_connections(repo_slug: str, limit: int = 10) -> str:
     return "\n".join(lines[:limit]) or "(keine Verbindungen)"
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Inline cosine similarity. Returns 0.0 on zero-vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na > 0 and nb > 0 else 0.0
+
+
+def trigger_scan(
+    user_message: str,
+    keyword_index: dict[str, list[str]],
+    cluster_embs: dict[str, list[float]],
+    ollama_url: str,
+    threshold: float = 0.75,
+    max_tokens: int = 400,
+) -> str:
+    """Cascaded trigger scan: keyword-first (< 1ms), embedding only on miss.
+
+    Returns a short context string (max_tokens chars) or empty string.
+    """
+    msg_lower = user_message.lower()
+    words = set(w.strip(".,!?;:()[]{}\"'") for w in msg_lower.split() if len(w) > 2)
+
+    # Stage 1: keyword match (< 1ms)
+    matched_clusters: list[str] = []
+    for word in words:
+        if word in keyword_index:
+            matched_clusters.extend(keyword_index[word])
+
+    if matched_clusters:
+        top = list(dict.fromkeys(matched_clusters))[:3]
+        return f"[Relevante Cluster: {', '.join(top)}]"[:max_tokens]
+
+    # Stage 2: embedding cosine (only if no keyword hit)
+    if not cluster_embs or not ollama_url:
+        return ""
+
+    try:
+        from src.analysis.context import _embed_texts
+        vecs = _embed_texts([user_message], ollama_url)
+        if not vecs:
+            return ""
+        q_vec = vecs[0]
+        scores = [(name, _cosine(q_vec, emb)) for name, emb in cluster_embs.items()]
+        scores.sort(key=lambda x: -x[1])
+        top = [name for name, score in scores[:3] if score >= threshold]
+        if top:
+            return f"[Relevante Cluster: {', '.join(top)}]"[:max_tokens]
+    except Exception:
+        pass
+
+    return ""
+
+
 def generate_ambient_snapshot(
     conn: Any,
     ollama_url: str,

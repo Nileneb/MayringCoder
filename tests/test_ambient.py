@@ -9,6 +9,8 @@ from src.memory.ambient import (
     _load_wiki_top_connections,
     load_ambient_snapshot,
     generate_ambient_snapshot,
+    _cosine,
+    trigger_scan,
 )
 
 
@@ -155,3 +157,37 @@ def test_generate_ambient_snapshot_returns_none_on_llm_error(monkeypatch):
     result = generate_ambient_snapshot(conn, "http://localhost:11434", "llama3", "myrepo")
     assert result is None
     conn.close()
+
+
+def test_cosine_identical_vectors():
+    """Cosine similarity of identical vectors is 1.0."""
+    assert abs(_cosine([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) - 1.0) < 1e-9
+
+
+def test_cosine_zero_vector():
+    """Cosine similarity with zero-vector returns 0.0."""
+    assert _cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
+
+
+def test_trigger_scan_keyword_hit():
+    """trigger_scan returns cluster names on keyword match."""
+    idx = {"creditservice": ["CreditCluster"], "billing": ["BillingCluster"]}
+    result = trigger_scan("What does CreditService do?", idx, {}, "")
+    assert "CreditCluster" in result
+
+
+def test_trigger_scan_no_hit_empty_embs():
+    """trigger_scan returns empty string when no keyword hit and empty cluster_embs."""
+    result = trigger_scan("completely unrelated query", {}, {}, "http://localhost:11434")
+    assert result == ""
+
+
+def test_trigger_scan_no_hit_below_threshold(monkeypatch):
+    """trigger_scan returns empty string when embedding score is below threshold."""
+    cluster_embs = {"ClusterA": [1.0, 0.0]}
+    monkeypatch.setattr(
+        "src.analysis.context._embed_texts",
+        lambda texts, url: [[0.5, 0.866]]  # cosine ~0.5 < threshold 0.75
+    )
+    result = trigger_scan("some query", {}, cluster_embs, "http://localhost:11434", threshold=0.75)
+    assert result == ""
