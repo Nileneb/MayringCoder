@@ -23,6 +23,7 @@ def test_build_category_matrix_empty():
     conn = _make_conn()
     result = build_category_matrix(conn)
     assert result == {}
+    conn.close()
 
 
 def test_build_category_matrix_groups_by_label():
@@ -36,6 +37,7 @@ def test_build_category_matrix_groups_by_label():
     assert set(result['api']) == {'src1'}
     assert 'domain' in result
     assert 'src4' not in result.get('api', [])  # inactive excluded
+    conn.close()
 
 
 def test_wiki_edge_dataclass():
