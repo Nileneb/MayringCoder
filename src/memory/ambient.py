@@ -154,17 +154,19 @@ def trigger_scan(
         q_vec = vecs[0]
         scores = [(name, _cosine(q_vec, emb)) for name, emb in cluster_embs.items()]
         scores.sort(key=lambda x: -x[1])
-        top_names = [name for name, score in scores[:3] if score >= threshold]
+        active_pairs = [
+            (name, f"cluster:{name}")
+            for name, _ in [(n, s) for n, s in scores[:3] if s >= threshold]
+            if conn is None or _is_trigger_active(f"cluster:{name}", conn)
+        ]
+        top_names = [n for n, _ in active_pairs]
+        trigger_ids_emb = [t for _, t in active_pairs]
         if top_names:
-            trigger_ids_emb = [f"cluster:{name}" for name in top_names]
-            if conn is not None:
-                trigger_ids_emb = [t for t in trigger_ids_emb if _is_trigger_active(t, conn)]
-                top_names = [t.replace("cluster:", "") for t in trigger_ids_emb]
-            if top_names:
-                ctx = f"[Relevante Cluster: {', '.join(top_names)}]"[:max_tokens]
-                return TriggerResult(context=ctx, trigger_ids=trigger_ids_emb)
-    except Exception:
-        pass
+            ctx = f"[Relevante Cluster: {', '.join(top_names)}]"[:max_tokens]
+            return TriggerResult(context=ctx, trigger_ids=trigger_ids_emb)
+    except Exception as _exc:
+        import warnings
+        warnings.warn(f"trigger_scan embedding failed: {_exc}", stacklevel=2)
 
     return TriggerResult(context="", trigger_ids=[])
 
