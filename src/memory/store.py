@@ -196,6 +196,24 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             created_at   TEXT NOT NULL,
             PRIMARY KEY (source_id, rule_name)
         );
+
+        CREATE TABLE IF NOT EXISTS trigger_stats (
+            trigger_id   TEXT PRIMARY KEY,
+            fire_count   INTEGER NOT NULL DEFAULT 0,
+            ref_count    INTEGER NOT NULL DEFAULT 0,
+            is_active    INTEGER NOT NULL DEFAULT 1,
+            last_fired   TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS context_feedback_log (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_ids      TEXT NOT NULL,
+            context_text     TEXT NOT NULL,
+            was_referenced   INTEGER NOT NULL,
+            led_to_retrieval INTEGER NOT NULL,
+            relevance_score  REAL NOT NULL,
+            captured_at      TEXT NOT NULL
+        );
     """)
 
     # Migration: add missing columns to existing DBs

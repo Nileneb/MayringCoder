@@ -3,9 +3,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+@dataclass
+class TriggerResult:
+    """Result of trigger_scan() — context string + which triggers fired."""
+    context: str
+    trigger_ids: list[str]  # e.g. ["keyword:creditservice", "cluster:CreditCluster"]
+
+
+@dataclass
+class ContextFeedback:
+    """Implicit feedback record for one Pi-Agent interaction."""
+    trigger_ids: list[str]
+    context_text: str
+    was_referenced: bool
+    led_to_retrieval: bool
+    relevance_score: float   # 0.0–1.0
+    captured_at: str
+
 
 _SNAPSHOT_SYSTEM = (
     "Du bist ein präziser Assistent. Erstelle einen kompakten Projekt-Snapshot auf Deutsch. "

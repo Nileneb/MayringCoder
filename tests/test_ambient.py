@@ -288,3 +288,41 @@ def test_generate_ambient_flag_in_help(capsys):
         assert "generate-ambient" in captured.out
     finally:
         sys.argv = old_argv
+
+
+# ── Task 1: Schema + Dataclasses ──────────────────────────────────────────────
+
+def test_trigger_stats_table_exists():
+    from src.memory.ambient import TriggerResult
+    conn = _init_test_db()
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    assert "trigger_stats" in tables
+    conn.close()
+
+
+def test_context_feedback_log_table_exists():
+    conn = _init_test_db()
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    assert "context_feedback_log" in tables
+    conn.close()
+
+
+def test_trigger_result_dataclass():
+    from src.memory.ambient import TriggerResult
+    r = TriggerResult(context="[Relevante Cluster: Foo]", trigger_ids=["keyword:foo"])
+    assert r.context == "[Relevante Cluster: Foo]"
+    assert r.trigger_ids == ["keyword:foo"]
+
+
+def test_context_feedback_dataclass():
+    from src.memory.ambient import ContextFeedback
+    fb = ContextFeedback(
+        trigger_ids=["keyword:foo"],
+        context_text="some context",
+        was_referenced=True,
+        led_to_retrieval=False,
+        relevance_score=0.85,
+        captured_at="2026-01-01T00:00:00",
+    )
+    assert fb.was_referenced is True
+    assert fb.relevance_score == 0.85
