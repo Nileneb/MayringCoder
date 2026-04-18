@@ -119,6 +119,8 @@ def parse_args() -> argparse.Namespace:
                    help="Repo laden und alle Dateien in die Memory-Pipeline ingesten.")
     p.add_argument("--memory-categorize", action="store_true",
                    help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
+    p.add_argument("--generate-wiki", action="store_true",
+                   help="Verknüpfungswiki aus Overview-Cache + Memory erzeugen (cache/<slug>_wiki.md)")
     p.add_argument("--ingest-issues", metavar="REPO",
                    help="GitHub Issues von REPO (owner/name) in Memory laden (benötigt gh CLI). "
                         "z. B. --ingest-issues Nileneb/MayringCoder")
@@ -289,6 +291,12 @@ def main() -> None:
 
     if args.populate_memory:
         run_populate_memory(args, repo_url, ollama_url, model)
+        sys.exit(0)
+
+    if args.generate_wiki:
+        from src.api.dependencies import get_conn, get_chroma
+        from src.memory.wiki import generate_wiki
+        generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id)
         sys.exit(0)
 
     if args.ingest_issues:
