@@ -225,7 +225,7 @@ class _JWTAuthMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-from src.memory.ingest import get_or_create_chroma_collection, ingest
+from src.memory.ingest import ingest
 from src.memory.retrieval import compress_for_prompt, invalidate_query_cache, search
 from src.memory.schema import Chunk, Source, make_memory_key, source_fingerprint
 from src.memory.store import (
@@ -236,10 +236,10 @@ from src.memory.store import (
     get_chunks_by_source,
     get_source,
     get_source_count,
-    init_memory_db,
     kv_get,
     log_ingestion_event,
 )
+from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 
 mcp = FastMCP(
     "memory",
@@ -249,28 +249,6 @@ mcp = FastMCP(
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 _MODEL = os.environ.get("OLLAMA_MODEL", "")
-
-# ---------------------------------------------------------------------------
-# Lazy singletons — initialized on first tool call to avoid startup latency
-# ---------------------------------------------------------------------------
-
-_conn = None
-_chroma = None
-
-
-def _get_conn():
-    global _conn
-    if _conn is None:
-        _conn = init_memory_db()
-    return _conn
-
-
-def _get_chroma():
-    global _chroma
-    if _chroma is None:
-        _chroma = get_or_create_chroma_collection()
-    return _chroma
-
 
 # ---------------------------------------------------------------------------
 # Tool 1: memory.put

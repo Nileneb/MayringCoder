@@ -55,7 +55,7 @@ except ImportError:
 from src.memory.ingest import get_or_create_chroma_collection, ingest
 from src.memory.retrieval import compress_for_prompt, search
 from src.memory.schema import Source
-from src.memory.store import init_memory_db
+from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.sanctum_auth import validate_sanctum_token_full
 from src.api.training import router as _training_router
 from src.model_router import ModelRouter as _ModelRouter
@@ -72,26 +72,6 @@ _router = _ModelRouter(_OLLAMA_URL)
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 app.include_router(_training_router)
 _bearer = HTTPBearer(auto_error=False)
-
-# Lazy singletons
-_conn = None
-_chroma = None
-
-
-def _get_conn():
-    global _conn
-    if _conn is None:
-        _conn = init_memory_db()
-    return _conn
-
-
-def _get_chroma():
-    global _chroma
-    if _chroma is None:
-        from src.memory.store import get_chroma_collection as get_collection
-        _chroma = get_collection()
-    return _chroma
-
 
 # ---------------------------------------------------------------------------
 # Job tracking (in-memory, sufficient for single-instance deployment)
