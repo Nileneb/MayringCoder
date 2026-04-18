@@ -2,10 +2,10 @@ import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch
+from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch, unload_model, run_post_hook
 
 
 def test_state_roundtrip(tmp_path):
@@ -117,3 +117,48 @@ def test_ingest_micro_batch_already_ingested():
     with patch("tools.conversation_watcher._already_ingested", return_value=True):
         result = ingest_micro_batch(turns, "s1", "slug", conn, MagicMock(), "url", "model")
     assert result is False
+
+
+def test_unload_model_calls_ollama():
+    """unload_model calls subprocess.run with ollama stop."""
+    with patch("tools.conversation_watcher.subprocess.run") as mock_run:
+        unload_model("llama3")
+        mock_run.assert_called_once_with(
+            ["ollama", "stop", "llama3"],
+            timeout=10,
+            capture_output=True,
+        )
+
+
+def test_unload_model_empty_skips():
+    """unload_model with empty string does not call subprocess."""
+    with patch("tools.conversation_watcher.subprocess.run") as mock_run:
+        unload_model("")
+        mock_run.assert_not_called()
+
+
+def test_run_post_hook_executes_when_due():
+    """run_post_hook executes shell command when interval has passed."""
+    state = WatcherState(last_hook_run=0.0)
+    with patch("tools.conversation_watcher.subprocess.run") as mock_run, \
+         patch("tools.conversation_watcher.time.time", return_value=1000.0):
+        run_post_hook("echo test", state, hook_interval=60.0)
+        mock_run.assert_called_once()
+        assert state.last_hook_run == 1000.0
+
+
+def test_run_post_hook_skips_when_not_due():
+    """run_post_hook skips execution when interval has not passed."""
+    state = WatcherState(last_hook_run=999.0)
+    with patch("tools.conversation_watcher.subprocess.run") as mock_run, \
+         patch("tools.conversation_watcher.time.time", return_value=1000.0):
+        run_post_hook("echo test", state, hook_interval=60.0)
+        mock_run.assert_not_called()
+
+
+def test_run_post_hook_empty_cmd_skips():
+    """run_post_hook with empty command does not call subprocess."""
+    state = WatcherState(last_hook_run=0.0)
+    with patch("tools.conversation_watcher.subprocess.run") as mock_run:
+        run_post_hook("", state, hook_interval=0.0)
+        mock_run.assert_not_called()

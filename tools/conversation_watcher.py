@@ -201,3 +201,35 @@ def ingest_micro_batch(
     except Exception as exc:
         print(f"  ✗ ingest_micro_batch {session_id[:8]}: {exc}", file=sys.stderr)
         return False
+
+
+def unload_model(model: str) -> None:
+    """Tell Ollama to unload the model from VRAM (fire-and-forget)."""
+    if not model:
+        return
+    try:
+        subprocess.run(
+            ["ollama", "stop", model],
+            timeout=10,
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
+
+def run_post_hook(
+    hook_cmd: str,
+    state: WatcherState,
+    hook_interval: float,
+) -> None:
+    """Run shell post-hook if hook_interval has passed since last run."""
+    if not hook_cmd:
+        return
+    now = time.time()
+    if now - state.last_hook_run < hook_interval:
+        return
+    try:
+        subprocess.run(hook_cmd, shell=True, timeout=30, capture_output=True)
+        state.last_hook_run = now
+    except Exception:
+        pass
