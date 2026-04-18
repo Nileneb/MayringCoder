@@ -112,8 +112,9 @@ def find_label_overlap(conn: Any, overview_cache: dict[str, dict]) -> list[WikiE
         if len(source_ids) < 2:
             continue
         unique = list(dict.fromkeys(source_ids))
-        for i, a in enumerate(unique[:10]):
-            for b in unique[i + 1:10]:
+        capped = unique[:10]
+        for i, a in enumerate(capped):
+            for b in capped[i + 1:]:
                 edges.append(WikiEdge(a, b, 0.5, "label_cooccurrence"))
     return edges
 
@@ -128,7 +129,7 @@ def find_event_pairs(overview_cache: dict[str, dict]) -> list[WikiEdge]:
             for m in _JOB_CLASS_RE.finditer(text):
                 dispatchers[m.group(1)].append(fname)
         if "ShouldQueue" in text or "implements ShouldQueue" in text:
-            for m in _JOB_CLASS_RE.finditer(fname):
+            for m in _JOB_CLASS_RE.finditer(text):
                 listeners[m.group(1)].append(fname)
     edges = []
     for cls, dispatch_files in dispatchers.items():

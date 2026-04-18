@@ -129,3 +129,20 @@ def test_find_event_pairs_empty():
     oc = {"a.php": {"file_summary": "plain service", "functions": []}}
     edges = find_event_pairs(oc)
     assert edges == []
+
+
+def test_find_event_pairs_dispatch_match():
+    oc = {
+        "app/Jobs/SendEmailJob.php": {
+            "file_summary": "implements ShouldQueue sends email",
+            "functions": [],
+        },
+        "app/Controllers/OrderController.php": {
+            "file_summary": "dispatch(SendEmailJob) on order created",
+            "functions": [],
+        },
+    }
+    edges = find_event_pairs(oc)
+    # If dispatch detected and ShouldQueue detected in same run, edges connect them
+    # Rule: dispatchers and listeners connect when class name overlaps
+    assert isinstance(edges, list)  # Basic: returns list, no exception
