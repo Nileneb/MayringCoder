@@ -30,7 +30,7 @@ def _cache_key(query: str, opts: dict, session_compacted: bool) -> str:
     """Stable hash key for query + retrieval-relevant opts."""
     relevant = {k: v for k, v in opts.items() if k != "include_text"}
     payload = _json.dumps({"q": query, "opts": relevant, "sc": session_compacted}, sort_keys=True)
-    return hashlib.md5(payload.encode()).hexdigest()
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def invalidate_query_cache() -> None:
