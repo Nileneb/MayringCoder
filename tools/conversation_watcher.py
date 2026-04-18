@@ -127,3 +127,77 @@ class TurnBuffer:
     def sessions_to_flush(self) -> list[str]:
         """Return list of session_ids that should be flushed now."""
         return [sid for sid in list(self._sessions) if self.should_flush(sid)]
+
+
+def ingest_micro_batch(
+    turns: list[dict],
+    session_id: str,
+    workspace_slug: str,
+    conn: Any,
+    chroma: Any,
+    ollama_url: str,
+    model: str,
+    workspace_id: str = "system",
+) -> bool:
+    """Summarize and ingest a micro-batch of new turns into MCP memory.
+
+    Returns True on success, False on error.
+    """
+    if not turns:
+        return False
+
+    import hashlib
+    from src.memory.ingest import ingest
+    from src.memory.schema import Source
+
+    first_ts = turns[0].get("timestamp", "")[:10]
+    batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp','')}"
+    content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
+    source_id = f"conversation:{workspace_slug}:{session_id[:16]}"
+
+    if _already_ingested(conn, source_id, content_hash):
+        return False
+
+    try:
+        related_context = ""
+        kw = _keywords(turns)
+        if kw:
+            try:
+                from src.memory.retrieval import compress_for_prompt, search
+                related = search(
+                    query=kw,
+                    conn=conn,
+                    chroma_collection=chroma,
+                    ollama_url=ollama_url,
+                    opts={"top_k": 3, "workspace_id": None},
+                )
+                related_context = compress_for_prompt(related, char_budget=800)
+            except Exception:
+                pass
+
+        summary = _summarize(turns, related_context, ollama_url, model)
+
+        content = (
+            f"# Session {first_ts or 'unbekannt'} | {workspace_slug}\n\n"
+            f"{summary}\n"
+        )
+
+        src = Source(
+            source_id=source_id,
+            source_type="conversation_summary",
+            repo=workspace_slug,
+            path=f"{workspace_slug}/incremental",
+            branch="local",
+            commit="",
+            content_hash=content_hash,
+        )
+        ingest(
+            src, content, conn, chroma,
+            ollama_url, model,
+            opts={"categorize": bool(model), "codebook": "social", "mode": "hybrid"},
+            workspace_id=workspace_id,
+        )
+        return True
+    except Exception as exc:
+        print(f"  ✗ ingest_micro_batch {session_id[:8]}: {exc}", file=sys.stderr)
+        return False

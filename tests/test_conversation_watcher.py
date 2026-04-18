@@ -2,9 +2,10 @@ import json
 import sys
 import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer
+from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer, ingest_micro_batch
 
 
 def test_state_roundtrip(tmp_path):
@@ -100,3 +101,19 @@ def test_pop_clears_buffer():
     assert len(turns) == 2
     assert buf._sessions.get("s2") is None
     assert buf.should_flush("s2") is False
+
+
+def test_ingest_micro_batch_empty():
+    """Empty turns returns False immediately."""
+    result = ingest_micro_batch([], "sid", "slug", MagicMock(), MagicMock(), "url", "model")
+    assert result is False
+
+
+def test_ingest_micro_batch_already_ingested():
+    """Already-ingested batch returns False."""
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = ("sha256:abc",)
+    turns = [{"session_id": "s1", "role": "user", "content": "hello", "timestamp": "2026-01-01T00:00:00Z"}]
+    with patch("tools.conversation_watcher._already_ingested", return_value=True):
+        result = ingest_micro_batch(turns, "s1", "slug", conn, MagicMock(), "url", "model")
+    assert result is False
