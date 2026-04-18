@@ -454,3 +454,43 @@ def test_update_trigger_stats_keeps_active_above_threshold():
     ).fetchone()
     assert row[0] == 1
     conn.close()
+
+
+# ── Task 4: Pi-Agent Integration ─────────────────────────────────────────────
+
+def test_build_context_out_trigger_ids_empty_when_no_index(tmp_path, monkeypatch):
+    """No index file → _out_trigger_ids stays empty."""
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    conn = _init_test_db()
+    out_ids: list = []
+    build_context("some task", conn, "", "myrepo", _out_trigger_ids=out_ids)
+    assert out_ids == []
+    conn.close()
+
+
+def test_build_context_out_trigger_ids_populated(tmp_path, monkeypatch):
+    """Index with matching keyword → _out_trigger_ids is populated."""
+    import json
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache" / "myrepo_wiki_index.json").write_text(
+        json.dumps({"creditservice": ["CreditCluster"]}), encoding="utf-8"
+    )
+    conn = _init_test_db()
+    source_id = "ambient:myrepo:snapshot"
+    conn.execute(
+        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
+        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
+    )
+    conn.execute(
+        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
+        ("c1", source_id, "Snapshot", "ambient_snapshot", 1, "2026-01-01T00:00:00")
+    )
+    conn.commit()
+    out_ids: list = []
+    build_context("What does CreditService do?", conn, "", "myrepo", _out_trigger_ids=out_ids)
+    assert any("creditservice" in tid for tid in out_ids)
+    conn.close()
