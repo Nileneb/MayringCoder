@@ -124,18 +124,34 @@ def _execute_search_memory(
 
 
 def _sanitize_repo_slug_for_filename(slug: str) -> str:
-    """Return a filesystem-safe slug for cache wiki filenames."""
-    return re.sub(r"[^A-Za-z0-9._-]", "", slug)
+    """Return a strictly validated filesystem-safe slug for cache wiki filenames."""
+    slug = slug.strip()
+    # Allow only simple filename-safe repo slugs.
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?", slug):
+        return ""
+    if ".." in slug:
+        return ""
+    return slug
 
 
 def _execute_search_wiki(args: dict, repo_slug_hint: str = "") -> str:
     """Execute search_wiki tool call — returns markdown context string."""
     slug = args.get("repo") or repo_slug_hint
     safe_slug = _sanitize_repo_slug_for_filename(str(slug)) if slug else ""
-    wiki_path = Path("cache") / f"{safe_slug}_wiki.md" if safe_slug else None
+    cache_dir = Path("cache")
+    cache_root_resolved = cache_dir.resolve(strict=False)
+    wiki_path: Path | None = None
+    if safe_slug:
+        filename = f"{safe_slug}_wiki.md"
+        candidate = cache_root_resolved / filename
+        try:
+            candidate_resolved = candidate.resolve(strict=False)
+            candidate_resolved.relative_to(cache_root_resolved)
+            wiki_path = candidate_resolved
+        except (ValueError, OSError):
+            wiki_path = None
 
     if not wiki_path or not wiki_path.exists():
-        cache_dir = Path("cache")
         wiki_files = list(cache_dir.glob("*_wiki.md")) if cache_dir.exists() else []
         if not wiki_files:
             return "Kein Wiki vorhanden. Zuerst --generate-wiki ausführen."
