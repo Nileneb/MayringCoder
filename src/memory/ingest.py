@@ -9,13 +9,10 @@ Stages:
 
 from __future__ import annotations
 
-import ast
 import json
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import replace as _dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,6 +50,14 @@ from src.memory.store import (
     kv_put,
     log_ingestion_event,
     upsert_source,
+)
+from src.memory.chunker import (  # noqa: F401
+    _make_file_chunk,
+    _chunk_python,
+    _chunk_js,
+    _chunk_markdown,
+    _chunk_yaml_json,
+    structural_chunk,
 )
 
 MEMORY_CHROMA_DIR: Path = CACHE_DIR / "memory_chroma"
@@ -94,238 +99,6 @@ def _log_memory_event(event: dict) -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# ---------------------------------------------------------------------------
-# Task 2.1 — Structural chunking
-# ---------------------------------------------------------------------------
-
-def _make_file_chunk(text: str, source_id: str, ordinal: int = 0) -> Chunk:
-    """Single file-level fallback chunk."""
-    text_hash = Chunk.compute_text_hash(text)
-    return Chunk(
-        chunk_id=Chunk.make_id(source_id, ordinal, "file"),
-        source_id=source_id,
-        chunk_level="file",
-        ordinal=ordinal,
-        start_offset=0,
-        end_offset=len(text),
-        text=text,
-        text_hash=text_hash,
-        dedup_key=text_hash,
-        created_at=_now_iso(),
-    )
-
-
-def _chunk_python(text: str, source_id: str) -> list[Chunk]:
-    """AST-based chunking for Python: top-level functions and classes."""
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return []
-
-    lines = text.splitlines(keepends=True)
-    # Build cumulative char offsets per line (0-indexed)
-    line_offsets: list[int] = []
-    offset = 0
-    for line in lines:
-        line_offsets.append(offset)
-        offset += len(line)
-
-    chunks: list[Chunk] = []
-    ordinal = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
-        # Only top-level nodes (direct children of module)
-        if node not in tree.body:  # type: ignore[attr-defined]
-            continue
-
-        level = "class" if isinstance(node, ast.ClassDef) else "function"
-        start_line = node.lineno - 1  # 0-indexed
-        end_line = getattr(node, "end_lineno", start_line) - 1  # 0-indexed
-        start_off = line_offsets[start_line] if start_line < len(line_offsets) else 0
-        end_off = (
-            line_offsets[end_line] + len(lines[end_line])
-            if end_line < len(lines)
-            else len(text)
-        )
-        chunk_text = text[start_off:end_off]
-        if not chunk_text.strip():
-            continue
-
-        text_hash = Chunk.compute_text_hash(chunk_text)
-        chunks.append(
-            Chunk(
-                chunk_id=Chunk.make_id(source_id, ordinal, level),
-                source_id=source_id,
-                chunk_level=level,
-                ordinal=ordinal,
-                start_offset=start_off,
-                end_offset=end_off,
-                text=chunk_text,
-                text_hash=text_hash,
-                dedup_key=text_hash,
-                created_at=_now_iso(),
-            )
-        )
-        ordinal += 1
-
-    return chunks
-
-
-def _chunk_js(text: str, source_id: str) -> list[Chunk]:
-    """Regex + brace-depth chunking for JS/TS: functions and classes."""
-    # Match: function X(, async function X(, class X {, const X = (async)? (, export variants
-    pattern = re.compile(
-        r"(?:^|\n)((?:export\s+default\s+|export\s+)?(?:async\s+)?function\s+\w+"
-        r"|(?:export\s+)?class\s+\w+"
-        r"|(?:export\s+)?const\s+\w+\s*=\s*(?:async\s+)?\()",
-        re.MULTILINE,
-    )
-    matches = list(pattern.finditer(text))
-    if not matches:
-        return []
-
-    chunks: list[Chunk] = []
-    ordinal = 0
-    for i, m in enumerate(matches):
-        start = m.start() if text[m.start()] != "\n" else m.start() + 1
-        # Find end by counting braces from the match start
-        brace_depth = 0
-        end = len(text)
-        found_open = False
-        for j in range(start, len(text)):
-            if text[j] == "{":
-                brace_depth += 1
-                found_open = True
-            elif text[j] == "}":
-                brace_depth -= 1
-                if found_open and brace_depth == 0:
-                    end = j + 1
-                    break
-
-        chunk_text = text[start:end].strip()
-        if not chunk_text:
-            continue
-
-        header = m.group(1)
-        level = "class" if "class" in header else "function"
-        text_hash = Chunk.compute_text_hash(chunk_text)
-        chunks.append(
-            Chunk(
-                chunk_id=Chunk.make_id(source_id, ordinal, level),
-                source_id=source_id,
-                chunk_level=level,
-                ordinal=ordinal,
-                start_offset=start,
-                end_offset=end,
-                text=chunk_text,
-                text_hash=text_hash,
-                dedup_key=text_hash,
-                created_at=_now_iso(),
-            )
-        )
-        ordinal += 1
-
-    return chunks
-
-
-def _chunk_markdown(text: str, source_id: str) -> list[Chunk]:
-    """Split Markdown on headings (# / ## / ###)."""
-    heading_re = re.compile(r"^#{1,3}\s+[^\n]+", re.MULTILINE)
-    matches = list(heading_re.finditer(text))
-    if not matches:
-        return []
-
-    chunks: list[Chunk] = []
-    ordinal = 0
-    for i, m in enumerate(matches):
-        start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        chunk_text = text[start:end].strip()
-        if not chunk_text:
-            continue
-        text_hash = Chunk.compute_text_hash(chunk_text)
-        chunks.append(
-            Chunk(
-                chunk_id=Chunk.make_id(source_id, ordinal, "section"),
-                source_id=source_id,
-                chunk_level="section",
-                ordinal=ordinal,
-                start_offset=start,
-                end_offset=end,
-                text=chunk_text,
-                text_hash=text_hash,
-                dedup_key=text_hash,
-                created_at=_now_iso(),
-            )
-        )
-        ordinal += 1
-
-    return chunks
-
-
-def _chunk_yaml_json(text: str, source_id: str, filename: str) -> list[Chunk]:
-    """Chunk YAML/JSON by top-level keys."""
-    _MAX_CHUNK_CHARS = 2000
-    try:
-        if filename.endswith(".json"):
-            data = json.loads(text)
-        elif _HAS_YAML:
-            data = _yaml.safe_load(text)
-        else:
-            return []
-    except Exception:
-        return []
-
-    if not isinstance(data, dict) or not data:
-        return []
-
-    chunks: list[Chunk] = []
-    ordinal = 0
-    for key, value in data.items():
-        chunk_text = json.dumps({key: value}, ensure_ascii=False)[:_MAX_CHUNK_CHARS]
-        text_hash = Chunk.compute_text_hash(chunk_text)
-        chunks.append(
-            Chunk(
-                chunk_id=Chunk.make_id(source_id, ordinal, "block"),
-                source_id=source_id,
-                chunk_level="block",
-                ordinal=ordinal,
-                text=chunk_text,
-                text_hash=text_hash,
-                dedup_key=text_hash,
-                created_at=_now_iso(),
-            )
-        )
-        ordinal += 1
-
-    return chunks
-
-
-def structural_chunk(text: str, source_id: str, filename: str) -> list[Chunk]:
-    """Dispatch to language-specific chunker based on file extension.
-
-    Falls back to a single file-level chunk on parse failure or unknown extension.
-    """
-    if not text.strip():
-        return [_make_file_chunk(text, source_id)]
-
-    ext = Path(filename).suffix.lower()
-
-    if ext == ".py":
-        chunks = _chunk_python(text, source_id)
-    elif ext in (".js", ".ts", ".jsx", ".tsx"):
-        chunks = _chunk_js(text, source_id)
-    elif ext in (".md", ".markdown"):
-        chunks = _chunk_markdown(text, source_id)
-    elif ext in (".yaml", ".yml", ".json"):
-        chunks = _chunk_yaml_json(text, source_id, filename)
-    else:
-        chunks = []
-
-    return chunks if chunks else [_make_file_chunk(text, source_id)]
 
 
 # ---------------------------------------------------------------------------
@@ -1020,7 +793,6 @@ def ingest_conversation_summary(
 # GitHub Issues ingestion (merged from ingest_github_issues.py)
 # ---------------------------------------------------------------------------
 
-_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
 
 
 def fetch_issues(repo: str, state: str = "open", limit: int = 100) -> list[dict]:
@@ -1062,116 +834,4 @@ def issues_to_sources(issues: list[dict], repo: str) -> list[tuple[Source, str]]
         result.append((source, content))
     return result
 
-
-# ---------------------------------------------------------------------------
-# Image ingestion (merged from image_ingest.py)
-# ---------------------------------------------------------------------------
-
-def discover_images(root: Path, max_file_bytes: int = 5 * 1024 * 1024, max_images: int = 50) -> list[Path]:
-    """Walk root recursively, return image files within size and count limits."""
-    found: list[Path] = []
-    for path in sorted(root.rglob("*")):
-        if len(found) >= max_images:
-            break
-        if not path.is_file():
-            continue
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
-            continue
-        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
-            continue
-        try:
-            if path.stat().st_size > max_file_bytes:
-                print(f"[ingest-images] Skip (too large): {path.relative_to(root)}")
-                continue
-        except OSError:
-            continue
-        found.append(path)
-    return found
-
-
-def run_image_ingest(
-    repo_url: str,
-    ollama_url: str,
-    vision_model: str = "qwen2.5vl:3b",
-    embed_model: str = "nomic-embed-text",
-    max_images: int = 50,
-    max_file_bytes: int = 5 * 1024 * 1024,
-    force_reingest: bool = False,
-    workspace_id: str = "default",
-) -> dict:
-    """Shallow-clone repo, caption all images, ingest into memory."""
-    url = repo_url.rstrip("/").removesuffix(".git")
-    parts = url.split("github.com/", 1)
-    repo_owner_name = parts[1] if len(parts) == 2 else url
-    repo_slug = repo_owner_name.replace("/", "-").lower()
-    clone_dir = tempfile.mkdtemp(prefix=f"mayring-{repo_slug}-images-")
-    try:
-        return _run_image_ingest_from_clone(
-            repo_url=url, clone_dir=Path(clone_dir),
-            repo_owner_name=repo_owner_name, ollama_url=ollama_url,
-            vision_model=vision_model, embed_model=embed_model,
-            max_images=max_images, max_file_bytes=max_file_bytes,
-            force_reingest=force_reingest, workspace_id=workspace_id,
-        )
-    finally:
-        shutil.rmtree(clone_dir, ignore_errors=True)
-
-
-def _run_image_ingest_from_clone(
-    repo_url: str, clone_dir: Path, repo_owner_name: str, ollama_url: str,
-    vision_model: str, embed_model: str, max_images: int, max_file_bytes: int,
-    force_reingest: bool, workspace_id: str = "default",
-) -> dict:
-    print(f"[ingest-images] git clone --depth=1 {repo_url} ...")
-    result = subprocess.run(
-        ["git", "clone", "--depth=1", repo_url, str(clone_dir)],
-        capture_output=True, text=True, timeout=120,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
-
-    images = discover_images(clone_dir, max_file_bytes=max_file_bytes, max_images=max_images)
-    print(f"[ingest-images] {len(images)} Bilder gefunden")
-    if not images:
-        return {"images_found": 0, "images_captioned": 0, "images_skipped": 0, "images_failed": 0, "repo": repo_owner_name}
-
-    from src.memory.store import deactivate_chunks_by_source
-    from src.memory.retrieval import invalidate_query_cache
-
-    conn = init_memory_db()
-    chroma = get_or_create_chroma_collection()
-    captioned = skipped = failed = 0
-
-    if force_reingest:
-        for img_path in images:
-            rel = str(img_path.relative_to(clone_dir))
-            deactivate_chunks_by_source(conn, Source.make_id(repo_owner_name, rel))
-        invalidate_query_cache()
-
-    try:
-        for img_path in images:
-            rel = str(img_path.relative_to(clone_dir))
-            source = Source(
-                source_id=Source.make_id(repo_owner_name, rel),
-                source_type="repo_file", repo=repo_owner_name, path=rel,
-            )
-            try:
-                r = ingest_image(
-                    source=source, image_path=img_path, conn=conn,
-                    chroma_collection=chroma, ollama_url=ollama_url,
-                    model=embed_model, vision_model=vision_model, workspace_id=workspace_id,
-                )
-                if r.get("deduped", 0) > 0:
-                    skipped += 1
-                    print(f"[ingest-images] Dedup: {rel}")
-                else:
-                    captioned += 1
-                    print(f"[ingest-images] OK: {rel}")
-            except Exception as exc:
-                failed += 1
-                print(f"[ingest-images] FEHLER {rel}: {exc}")
-    finally:
-        conn.close()
-
-    return {"images_found": len(images), "images_captioned": captioned,
-            "images_skipped": skipped, "images_failed": failed, "repo": repo_owner_name}
+from src.memory.image_ingest import discover_images, run_image_ingest  # noqa: F401
