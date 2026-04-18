@@ -265,6 +265,40 @@ def find_dataset_pairs(chunks: list, conn: Any, chroma: Any, ollama_url: str, mo
     raise NotImplementedError("Paper rules not yet implemented")
 
 
+def _build_keyword_index(clusters: list[WikiCluster]) -> dict[str, list[str]]:
+    """Keyword → [cluster_name, ...] Mapping."""
+    index: dict[str, list[str]] = {}
+    for c in clusters:
+        keywords = set()
+        keywords.add(c.name.lower())
+        for f in c.files:
+            keywords.add(Path(f).stem.lower())
+        for label in c.labels:
+            keywords.update(label.lower().split())
+        for kw in keywords:
+            if len(kw) > 2:
+                index.setdefault(kw, [])
+                if c.name not in index[kw]:
+                    index[kw].append(c.name)
+    return index
+
+
+def _build_cluster_embeddings(
+    clusters: list[WikiCluster],
+    ollama_url: str,
+) -> dict[str, list[float]]:
+    """cluster_name → embedding vector. Skips silently if ollama_url empty."""
+    if not ollama_url or not clusters:
+        return {}
+    from src.analysis.context import _embed_texts
+    texts = [f"{c.name} {' '.join(c.labels)}" for c in clusters]
+    try:
+        vecs = _embed_texts(texts, ollama_url)
+        return {c.name: vec for c, vec in zip(clusters, vecs)}
+    except Exception:
+        return {}
+
+
 def generate_wiki(
     conn: Any,
     chroma: Any,
@@ -295,4 +329,16 @@ def generate_wiki(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(generate_wiki_markdown(clusters, slug), encoding="utf-8")
     print(f"[wiki] {len(clusters)} Cluster → {out}")
+
+    # Keyword-Index
+    idx_path = Path("cache") / f"{slug}_wiki_index.json"
+    idx_path.write_text(json.dumps(_build_keyword_index(clusters), ensure_ascii=False), encoding="utf-8")
+
+    # Cluster-Embeddings (optional, skip if no ollama_url)
+    emb_path = Path("cache") / f"{slug}_wiki_clusters_emb.json"
+    emb = _build_cluster_embeddings(clusters, ollama_url)
+    if emb:
+        emb_path.write_text(json.dumps(emb, ensure_ascii=False), encoding="utf-8")
+
+    print(f"[wiki] index → {idx_path}")
     return out
