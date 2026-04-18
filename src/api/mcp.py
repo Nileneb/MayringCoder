@@ -225,9 +225,9 @@ class _JWTAuthMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-from src.memory.ingest import ingest
-from src.memory.retrieval import compress_for_prompt, invalidate_query_cache, search
+from src.memory.retrieval import invalidate_query_cache
 from src.memory.schema import Chunk, Source, make_memory_key, source_fingerprint
+from src.api.memory_service import run_ingest as _run_ingest, run_search as _run_search
 from src.memory.store import (
     add_feedback,
     deactivate_chunks_by_source,
@@ -280,27 +280,10 @@ def put(
         {source_id, chunk_ids, indexed, deduped, superseded}
     """
     try:
-        src = Source(
-            source_id=source.get("source_id") or Source.make_id(
-                source.get("repo", ""), source.get("path", "")
-            ),
-            source_type=source.get("source_type", "repo_file"),
-            repo=source.get("repo", ""),
-            path=source.get("path", ""),
-            branch=source.get("branch", "main"),
-            commit=source.get("commit", ""),
-            content_hash=source.get("content_hash", ""),
-        )
-        opts = {"categorize": categorize, "log": log}
-        result = ingest(
-            source=src,
-            content=content,
-            conn=_get_conn(),
-            chroma_collection=_get_chroma(),
-            ollama_url=_OLLAMA_URL,
-            model=_MODEL,
-            opts=opts,
-            workspace_id=_effective_workspace_id(workspace_id),
+        result = _run_ingest(
+            source, content, _get_conn(), _get_chroma(),
+            _OLLAMA_URL, _MODEL, {"categorize": categorize, "log": log},
+            _effective_workspace_id(workspace_id),
         )
         invalidate_query_cache()
         return result
@@ -374,19 +357,8 @@ def search_memory(
             "source_affinity": source_affinity,
             "workspace_id": _effective_workspace_id(workspace_id or "default"),
         }
-        results = search(
-            query=query,
-            conn=_get_conn(),
-            chroma_collection=_get_chroma(),
-            ollama_url=_OLLAMA_URL,
-            opts=opts,
-            session_compacted=compacted,
-        )
-        prompt_context = compress_for_prompt(results, char_budget)
-        return {
-            "results": [r.to_dict() for r in results],
-            "prompt_context": prompt_context,
-        }
+        return _run_search(query, _get_conn(), _get_chroma(), _OLLAMA_URL,
+                           opts, char_budget, session_compacted=compacted)
     except Exception as exc:
         return {"error": str(exc), "results": [], "prompt_context": ""}
 

@@ -49,9 +49,8 @@ try:
 except ImportError:
     raise ImportError("Missing dependency: pip install fastapi uvicorn")
 
-from src.memory.ingest import get_or_create_chroma_collection, ingest
-from src.memory.retrieval import compress_for_prompt, search
-from src.memory.schema import Source
+from src.memory.ingest import get_or_create_chroma_collection
+from src.api.memory_service import run_ingest as _run_ingest, run_search as _run_search
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.auth import get_workspace
 from src.api.training import router as _training_router
@@ -210,30 +209,15 @@ async def memory_search(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Search workspace memory."""
-    opts: dict[str, Any] = {
-        "top_k": request.top_k,
-        "workspace_id": workspace_id,
-    }
-    if request.repo:
-        opts["repo"] = request.repo
-    if request.source_type:
-        opts["source_type"] = request.source_type
-
     try:
-        results = search(
-            query=request.query,
-            conn=_get_conn(),
-            chroma_collection=_get_chroma(),
-            ollama_url=_OLLAMA_URL,
-            opts=opts,
-            # TODO(Task 3): Add router=_router once Task 2 (memory_retrieval) merges
-        )
-        prompt_context = compress_for_prompt(results, request.char_budget)
-        return {
-            "workspace_id": workspace_id,
-            "results": [r.to_dict() for r in results],
-            "prompt_context": prompt_context,
-        }
+        opts: dict[str, Any] = {"top_k": request.top_k, "workspace_id": workspace_id}
+        if request.repo:
+            opts["repo"] = request.repo
+        if request.source_type:
+            opts["source_type"] = request.source_type
+        result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
+                             opts, request.char_budget)
+        return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -245,23 +229,11 @@ async def memory_put(
 ) -> dict:
     """Ingest content into workspace memory."""
     try:
-        src = Source(
-            source_id=request.source_id or Source.make_id(request.repo, request.path),
-            source_type=request.source_type,
-            repo=request.repo,
-            path=request.path,
-        )
-        result = ingest(
-            source=src,
-            content=request.content,
-            conn=_get_conn(),
-            chroma_collection=_get_chroma(),
-            ollama_url=_OLLAMA_URL,
-            model=_OLLAMA_MODEL,
-            opts={"categorize": request.categorize},
-            workspace_id=workspace_id,
-            # TODO(Task 3): Add router=_router once Task 2 (memory_ingest) merges
-        )
+        source_dict = {"source_id": request.source_id, "source_type": request.source_type,
+                       "repo": request.repo, "path": request.path}
+        result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
+                             _OLLAMA_URL, _OLLAMA_MODEL, {"categorize": request.categorize},
+                             workspace_id)
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
