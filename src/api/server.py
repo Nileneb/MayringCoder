@@ -35,8 +35,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +56,7 @@ from src.memory.schema import Source
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.sanctum_auth import validate_sanctum_token_full
 from src.api.training import router as _training_router
+from src.api.job_queue import get_job as _get_job, make_job as _make_job, python_exe as _python_exe, run_checker_job as _run_checker_job, _JOBS
 from src.model_router import ModelRouter as _ModelRouter
 
 # ---------------------------------------------------------------------------
@@ -72,47 +71,6 @@ _router = _ModelRouter(_OLLAMA_URL)
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 app.include_router(_training_router)
 _bearer = HTTPBearer(auto_error=False)
-
-# ---------------------------------------------------------------------------
-# Job tracking (in-memory, sufficient for single-instance deployment)
-# ---------------------------------------------------------------------------
-
-_JOBS: dict[str, dict] = {}  # job_id → {status, output, workspace_id, started_at}
-
-
-def _make_job(workspace_id: str) -> str:
-    job_id = str(uuid.uuid4())[:8]
-    _JOBS[job_id] = {
-        "job_id": job_id,
-        "status": "started",
-        "output": "",
-        "workspace_id": workspace_id,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
-    return job_id
-
-
-def _python_exe() -> str:
-    p = str(_ROOT / ".venv" / "bin" / "python")
-    return p if Path(p).exists() else "python"
-
-
-async def _run_checker_job(job_id: str, checker_args: list[str], workspace_id: str) -> None:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            _python_exe(), "-m", "src.pipeline", *checker_args,
-            "--workspace-id", workspace_id,
-            cwd=str(_ROOT),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await proc.communicate()
-        _JOBS[job_id]["status"] = "done" if proc.returncode == 0 else "error"
-        _JOBS[job_id]["output"] = stdout.decode(errors="replace")
-    except Exception as exc:
-        _JOBS[job_id]["status"] = "error"
-        _JOBS[job_id]["output"] = str(exc)
-
 
 # ---------------------------------------------------------------------------
 # Auth dependency
@@ -275,6 +233,9 @@ async def trigger_analysis(
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="src.pipeline or python not found")
 
+    # Note: _JOBS is intentionally not used here — analyze endpoint returns pid directly,
+    # not via job queue (unlike /overview, /turbulence, /benchmark which use job_id)
+
 
 @app.post("/memory/search")
 async def memory_search(
@@ -421,11 +382,15 @@ async def trigger_benchmark(
                 stderr=asyncio.subprocess.STDOUT,
             )
             stdout, _ = await proc.communicate()
-            _JOBS[job_id]["status"] = "done" if proc.returncode == 0 else "error"
-            _JOBS[job_id]["output"] = stdout.decode(errors="replace")
+            job = _get_job(job_id)
+            if job:
+                job["status"] = "done" if proc.returncode == 0 else "error"
+                job["output"] = stdout.decode(errors="replace")
         except Exception as exc:
-            _JOBS[job_id]["status"] = "error"
-            _JOBS[job_id]["output"] = str(exc)
+            job = _get_job(job_id)
+            if job:
+                job["status"] = "error"
+                job["output"] = str(exc)
 
     asyncio.create_task(_run_benchmark(job_id))
     return {"job_id": job_id, "status": "started"}
