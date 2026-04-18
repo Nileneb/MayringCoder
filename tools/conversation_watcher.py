@@ -91,3 +91,39 @@ def read_new_turns(path: Path, byte_offset: int) -> tuple[list[dict], int]:
                 "session_id": sid,
             })
     return turns, size
+
+
+@dataclass
+class TurnBuffer:
+    flush_count: int = 10
+    flush_interval: float = 120.0
+    _sessions: dict[str, list[dict]] = field(default_factory=dict)
+    _first_seen: dict[str, float] = field(default_factory=dict)
+
+    def add(self, turn: dict) -> None:
+        """Add a turn to the buffer. turn must have 'session_id' key."""
+        sid = turn["session_id"]
+        if sid not in self._sessions:
+            self._sessions[sid] = []
+            self._first_seen[sid] = time.time()
+        self._sessions[sid].append(turn)
+
+    def should_flush(self, session_id: str) -> bool:
+        """True if session has enough turns OR has been waiting too long."""
+        turns = self._sessions.get(session_id, [])
+        if not turns:
+            return False
+        if len(turns) >= self.flush_count:
+            return True
+        age = time.time() - self._first_seen.get(session_id, time.time())
+        return age >= self.flush_interval
+
+    def pop(self, session_id: str) -> list[dict]:
+        """Remove and return all buffered turns for session_id."""
+        turns = self._sessions.pop(session_id, [])
+        self._first_seen.pop(session_id, None)
+        return turns
+
+    def sessions_to_flush(self) -> list[str]:
+        """Return list of session_ids that should be flushed now."""
+        return [sid for sid in list(self._sessions) if self.should_flush(sid)]

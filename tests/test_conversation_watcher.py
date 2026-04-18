@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns
+from tools.conversation_watcher import WatcherState, load_state, save_state, read_new_turns, TurnBuffer
 
 
 def test_state_roundtrip(tmp_path):
@@ -69,3 +69,34 @@ def test_read_new_turns_no_growth(tmp_path):
     turns, new_offset = read_new_turns(p, size)
     assert turns == []
     assert new_offset == size
+
+
+def test_flush_by_count():
+    buf = TurnBuffer(flush_count=3, flush_interval=9999.0)
+    for i in range(3):
+        buf.add({"session_id": "s1", "role": "user", "content": f"msg{i}", "timestamp": ""})
+    assert buf.should_flush("s1") is True
+
+
+def test_no_flush_below_count():
+    buf = TurnBuffer(flush_count=5, flush_interval=9999.0)
+    buf.add({"session_id": "s1", "role": "user", "content": "x", "timestamp": ""})
+    assert buf.should_flush("s1") is False
+
+
+def test_flush_by_time(monkeypatch):
+    buf = TurnBuffer(flush_count=100, flush_interval=1.0)
+    buf.add({"session_id": "s1", "role": "user", "content": "x", "timestamp": ""})
+    # simulate time passing — monkeypatch time.time
+    monkeypatch.setattr("tools.conversation_watcher.time.time", lambda: buf._first_seen["s1"] + 2.0)
+    assert buf.should_flush("s1") is True
+
+
+def test_pop_clears_buffer():
+    buf = TurnBuffer(flush_count=2, flush_interval=9999.0)
+    buf.add({"session_id": "s2", "role": "user", "content": "a", "timestamp": ""})
+    buf.add({"session_id": "s2", "role": "assistant", "content": "b", "timestamp": ""})
+    turns = buf.pop("s2")
+    assert len(turns) == 2
+    assert buf._sessions.get("s2") is None
+    assert buf.should_flush("s2") is False
