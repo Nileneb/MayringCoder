@@ -57,3 +57,30 @@ def load_state(path: Path = _STATE_FILE) -> WatcherState:
         )
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         return WatcherState()
+
+
+def read_new_turns(file_path: str, offset: int = 0) -> list[dict[str, Any]]:
+    """Read new turns from a JSONL file starting from a given byte offset.
+
+    Args:
+        file_path: Path to the JSONL file
+        offset: Byte offset to start reading from (0 = from beginning)
+
+    Returns:
+        List of parsed JSON turn objects
+    """
+    turns = []
+    try:
+        with open(file_path, "rb") as f:
+            if offset > 0:
+                f.seek(offset)
+            for line in f:
+                if line.strip():
+                    try:
+                        turn = json.loads(line.decode("utf-8"))
+                        turns.append(turn)
+                    except json.JSONDecodeError:
+                        pass
+    except FileNotFoundError:
+        pass
+    return turns
