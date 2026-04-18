@@ -651,7 +651,28 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
         )
 
         def _auto_login(request: gr.Request):
-            token = (request.query_params or {}).get("__token", "").strip()
+            params = dict(request.query_params) if request.query_params else {}
+
+            # Exchange code flow: code → server-to-server fetch of real token
+            code = params.get("code", "").strip()
+            if code and _HAS_HTTPX:
+                try:
+                    resp = _httpx.get(
+                        "https://app.linn.games/api/mayring/token-exchange",
+                        params={"code": code},
+                        timeout=5.0,
+                    )
+                    if resp.status_code == 200:
+                        token = resp.json().get("token", "").strip()
+                        if token:
+                            ok, result = _validate_token(token)
+                            if ok:
+                                return token, result, "Eingeloggt als Workspace: " + str(result), gr.Accordion(open=False)
+                except Exception:
+                    pass
+
+            # Legacy: direct __token in URL (deprecated, kept for backward compat)
+            token = params.get("__token", "").strip()
             if not token:
                 return "", "", "_Nicht eingeloggt._", gr.Accordion(open=True)
             ok, result = _validate_token(token)
