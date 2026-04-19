@@ -1023,7 +1023,139 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             )
 
         # =======================================================================
-        # Tab 4: Feedback & Qualität
+        # Tab 4: Model-Duell
+        # =======================================================================
+        with gr.Tab("Model-Duell"):
+            gr.Markdown(
+                "### Zwei Modelle vergleichen\n"
+                "Derselbe Task läuft sequenziell auf beiden Modellen. "
+                "Ergebnisse erscheinen side-by-side mit Laufzeit-Metriken."
+            )
+            with gr.Row():
+                duel_model_a = gr.Dropdown(
+                    choices=ollama_models,
+                    value=ollama_models[0] if ollama_models else None,
+                    label="Modell A",
+                    interactive=ollama_available,
+                    scale=1,
+                )
+                duel_model_b = gr.Dropdown(
+                    choices=ollama_models,
+                    value=ollama_models[1] if len(ollama_models) >= 2 else (ollama_models[0] if ollama_models else None),
+                    label="Modell B",
+                    interactive=ollama_available,
+                    scale=1,
+                )
+            duel_repo_slug = gr.Textbox(
+                label="Repo-Slug (optional, für Memory-Scope)",
+                placeholder="z.B. Nileneb/MayringCoder",
+            )
+            duel_task = gr.Textbox(
+                label="Task / Prompt",
+                placeholder="z.B. 'Erkläre die Zusammenhänge zwischen CreditService und PhaseChainService' oder ein Code-Review-Auftrag",
+                lines=6,
+            )
+            duel_btn = gr.Button("Duell starten", variant="primary")
+            duel_status = gr.Markdown("")
+            duel_job_id = gr.Textbox(label="Job-ID", interactive=False, visible=True)
+
+            gr.Markdown("### Ergebnisse")
+            with gr.Row():
+                with gr.Column():
+                    duel_label_a = gr.Markdown("**Modell A** — _noch kein Ergebnis_")
+                    duel_result_a = gr.Markdown("")
+                with gr.Column():
+                    duel_label_b = gr.Markdown("**Modell B** — _noch kein Ergebnis_")
+                    duel_result_b = gr.Markdown("")
+
+            duel_timer = gr.Timer(value=3, active=False)
+
+            def _start_duel(model_a, model_b, task, repo_slug, token):
+                if not token:
+                    return "", "Erst einloggen.", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
+                if not task.strip():
+                    return "", "Task darf nicht leer sein.", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
+                if not model_a or not model_b:
+                    return "", "Beide Modelle auswählen.", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
+                payload = {
+                    "task": task,
+                    "model_a": model_a,
+                    "model_b": model_b,
+                    "repo_slug": repo_slug.strip() or None,
+                }
+                r = _api_post("duel", payload, token)
+                if "error" in r:
+                    return "", f"Fehler: {r['error']}", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
+                job_id = str(r.get("job_id", ""))
+                return (
+                    job_id,
+                    f"Gestartet (Job: `{job_id}`) — Modell A: {model_a} → danach Modell B: {model_b}",
+                    gr.Timer(active=True),
+                    f"**Modell A** · _{model_a}_ · läuft…",
+                    "",
+                    f"**Modell B** · _{model_b}_ · wartet…",
+                    "",
+                )
+
+            def _poll_duel(job_id, token):
+                if not job_id:
+                    return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.Timer(active=False)
+                if not token or not _HAS_HTTPX:
+                    return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.Timer(active=False)
+                try:
+                    resp = _httpx.get(f"{_api_url}/jobs/{job_id}",
+                                       headers={"Authorization": f"Bearer {token}"}, timeout=10.0)
+                    if resp.status_code != 200:
+                        return (f"Fehler beim Polling: {resp.status_code}",
+                                gr.update(), gr.update(), gr.update(), gr.update(), gr.Timer(active=False))
+                    job = resp.json()
+                except Exception as exc:
+                    return f"Polling-Fehler: {exc}", gr.update(), gr.update(), gr.update(), gr.update(), gr.Timer(active=False)
+
+                progress = job.get("progress", "")
+                model_a = job.get("model_a", "Modell A")
+                model_b = job.get("model_b", "Modell B")
+                result_a = job.get("result_a", "")
+                result_b = job.get("result_b", "")
+                time_a = job.get("time_a_ms")
+                time_b = job.get("time_b_ms")
+
+                label_a = f"**Modell A** · _{model_a}_"
+                if time_a is not None:
+                    label_a += f" · {time_a} ms · {len(result_a)} chars"
+                elif progress == "running_a":
+                    label_a += " · läuft…"
+
+                label_b = f"**Modell B** · _{model_b}_"
+                if time_b is not None:
+                    label_b += f" · {time_b} ms · {len(result_b)} chars"
+                elif progress == "running_b":
+                    label_b += " · läuft…"
+                elif progress == "running_a":
+                    label_b += " · wartet…"
+
+                status_line = {
+                    "running_a": f"Modell A läuft ({model_a})…",
+                    "running_b": f"Modell B läuft ({model_b})…",
+                    "done": f"Duell abgeschlossen (A: {time_a}ms, B: {time_b}ms)",
+                }.get(progress, f"Status: {job.get('status', '')}")
+
+                done = progress == "done" or job.get("status") == "finished"
+                return status_line, label_a, result_a or "_(noch kein Output)_", label_b, result_b or "_(noch kein Output)_", gr.Timer(active=not done)
+
+            duel_btn.click(
+                fn=_start_duel,
+                inputs=[duel_model_a, duel_model_b, duel_task, duel_repo_slug, _token_state],
+                outputs=[duel_job_id, duel_status, duel_timer, duel_label_a, duel_result_a, duel_label_b, duel_result_b],
+            )
+            duel_timer.tick(
+                fn=_poll_duel,
+                inputs=[duel_job_id, _token_state],
+                outputs=[duel_status, duel_label_a, duel_result_a, duel_label_b, duel_result_b, duel_timer],
+            )
+
+        # =======================================================================
+        # Tab 5: Feedback & Qualität
         # =======================================================================
         with gr.Tab("Feedback & Qualität"):
 
