@@ -62,8 +62,7 @@ def main() -> None:
     p.add_argument("--ingest-issues", metavar="REPO")
     p.add_argument("--issues-state", choices=["open", "closed", "all"], default="open")
     p.add_argument("--pi-task", metavar="TASK")
-    p.add_argument("--ingest-paper", nargs="+", metavar="ID")
-    p.add_argument("--paper-pdf", action="store_true")
+    p.add_argument("--ingest-papers", metavar="DIR")
     p.add_argument("--workspace-id", default="default")
     p.add_argument("--history", action="store_true")
     p.add_argument("--compare", nargs=2, metavar="RUN_ID")
@@ -129,22 +128,21 @@ def main() -> None:
         print(f"{deleted} alte Runs gelöscht, {args.cleanup} behalten.")
         return
 
-    if args.ingest_paper:
+    if args.ingest_papers:
         from src.pipeline import run_ingest_paper
         from src.model_selector import resolve_model
         ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         env_model = (os.getenv("OLLAMA_MODEL") or "").strip() or None
         model = resolve_model(ollama_url, getattr(args, "model", None), env_model)
         result = run_ingest_paper(
-            arxiv_ids=args.ingest_paper,
+            papers_dir=args.ingest_papers,
             ollama_url=ollama_url,
             model=model,
             repo_slug=repo,
-            include_pdf=getattr(args, "paper_pdf", False),
             force_reingest=bool(args.force_reingest),
             workspace_id=ws,
         )
-        print(f"\n[ingest-paper] Fertig: {result['ingested']} ingested, {result['skipped']} skipped, {result['total']} total.")
+        print(f"\n[ingest-papers] Fertig: {result['ingested']} ingested, {result['skipped']} skipped (unverändert), {result['failed']} failed, {result['total']} total.")
         return
 
     # API calls

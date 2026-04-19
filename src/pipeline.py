@@ -452,68 +452,72 @@ def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | N
 
 
 def run_ingest_paper(
-    arxiv_ids: list[str],
+    papers_dir: str,
     ollama_url: str,
     model: str,
     repo_slug: str = "",
-    include_pdf: bool = False,
     force_reingest: bool = False,
     workspace_id: str = "default",
 ) -> dict:
-    """Fetch ArXiv papers, chunk, ingest into memory. Returns summary dict."""
-    from src.memory.paper_fetcher import fetch_multiple
-    from src.memory.chunker import chunk_paper
-    from src.memory.ingest import ingest
+    """Scan papers_dir for PDF/TXT files and ingest into memory.
+
+    papers_dir is mounted from linn-papers-data volume at /data/papers.
+    Files are named {paper_id}.pdf or {paper_id}.txt by the mcp-paper-search service.
+    """
+    from src.memory.chunker import chunk_paper, extract_pdf_text
+    from src.memory.ingest import ingest, get_or_create_chroma_collection
     from src.memory.store import init_memory_db
-    from src.memory.ingest import get_or_create_chroma_collection
     from src.memory.schema import Source
     import hashlib
+    from pathlib import Path as _Path
 
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()
 
-    papers = fetch_multiple(arxiv_ids, include_pdf=include_pdf)
-    ingested = 0
-    skipped = 0
+    base = _Path(papers_dir)
+    if not base.exists():
+        print(f"  [paper] Verzeichnis nicht gefunden: {papers_dir}")
+        return {"ingested": 0, "skipped": 0, "failed": 0, "total": 0}
 
-    for paper in papers:
-        source_id = f"paper:arxiv:{paper.arxiv_id}"
+    candidates = list(base.glob("*.pdf")) + list(base.glob("*.txt"))
+    ingested = skipped = failed = 0
 
-        if not force_reingest:
-            existing = conn.execute(
-                "SELECT 1 FROM sources WHERE source_id = ?", (source_id,)
-            ).fetchone()
-            if existing:
-                print(f"  [paper] Skip (bereits in Memory): {paper.arxiv_id}")
-                skipped += 1
+    for fpath in sorted(candidates):
+        paper_id = fpath.stem
+        source_id = f"paper:{paper_id}"
+
+        if fpath.suffix == ".pdf":
+            text = extract_pdf_text(str(fpath))
+            if not text:
+                print(f"  [paper] Überspringe (kein Text extrahierbar): {fpath.name}")
+                failed += 1
                 continue
+        else:
+            text = fpath.read_text(encoding="utf-8", errors="replace")
 
-        content = f"# {paper.title}\n\nAuthors: {', '.join(paper.authors)}\nPublished: {paper.published}\nCategories: {', '.join(paper.categories)}\n\n## Abstract\n\n{paper.abstract}"
-        if paper.full_text:
-            content += f"\n\n{paper.full_text}"
-
-        content_hash = "sha256:" + hashlib.sha256(content.encode()).hexdigest()[:16]
-
+        content_hash = "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
         src = Source(
             source_id=source_id,
             source_type="paper",
             repo=repo_slug,
-            path=f"arxiv/{paper.arxiv_id}",
+            path=str(fpath),
             branch="",
             commit="",
             content_hash=content_hash,
         )
-
-        ingest(
-            src, content, conn, chroma,
+        result = ingest(
+            src, text, conn, chroma,
             ollama_url, model,
             opts={"categorize": True, "chunk_level": "paper"},
             workspace_id=workspace_id,
         )
-        print(f"  [paper] Ingested: {paper.arxiv_id} — {paper.title[:60]}")
-        ingested += 1
+        if result.get("skipped"):
+            skipped += 1
+        else:
+            print(f"  [paper] Ingested: {paper_id} ({result.get('chunks', 0)} chunks)")
+            ingested += 1
 
-    return {"ingested": ingested, "skipped": skipped, "total": len(papers)}
+    return {"ingested": ingested, "skipped": skipped, "failed": failed, "total": len(candidates)}
 
 
 def run_pi_task(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:

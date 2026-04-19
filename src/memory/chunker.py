@@ -249,55 +249,41 @@ def structural_chunk(text: str, source_id: str, filename: str) -> list[Chunk]:
     return chunks if chunks else [_make_file_chunk(text, source_id)]
 
 
-def chunk_paper(paper: "ArxivPaper", source_id: str) -> list["Chunk"]:
-    """Chunk an ArxivPaper: abstract chunk + section chunks from full_text."""
-    from src.memory.paper_fetcher import ArxivPaper  # local import, avoids circular
+_SECTION_RE = re.compile(
+    r'^(?:\d+\.?\s+)?(?:Abstract|Introduction|Related Work|Background|'
+    r'Methodology|Methods?|Experiments?|Results?|Discussion|'
+    r'Conclusion|References?|Appendix)\b',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def chunk_paper(text: str, source_id: str) -> list[Chunk]:
+    """Chunk paper text into section-level chunks.
+
+    Splits on standard academic section headers. Falls back to a single
+    file-level chunk if no sections are detected.
+    """
+    if not text.strip():
+        return [_make_file_chunk(text, source_id)]
+
+    splits = list(_SECTION_RE.finditer(text))
+    if not splits:
+        return [_make_file_chunk(text, source_id)]
 
     chunks: list[Chunk] = []
-
-    header = f"# {paper.title}\n\n**Authors:** {', '.join(paper.authors)}\n\n**Published:** {paper.published}\n\n**Categories:** {', '.join(paper.categories)}\n\n## Abstract\n\n{paper.abstract}"
-    chunks.append(_make_file_chunk(header, source_id, ordinal=0))
-    chunks[0] = Chunk(
-        chunk_id=chunks[0].chunk_id,
-        source_id=source_id,
-        chunk_level="abstract",
-        ordinal=0,
-        start_offset=0,
-        end_offset=len(header),
-        text=header,
-        text_hash=chunks[0].text_hash,
-        dedup_key=chunks[0].dedup_key,
-        created_at=chunks[0].created_at,
-    )
-
-    if not paper.full_text:
-        return chunks
-
-    _SECTION_RE = re.compile(
-        r'^(?:\d+\.?\s+)?(?:Abstract|Introduction|Related Work|Background|'
-        r'Methodology|Methods?|Experiments?|Results?|Discussion|'
-        r'Conclusion|References?|Appendix)\b',
-        re.IGNORECASE | re.MULTILINE,
-    )
-
-    splits = list(_SECTION_RE.finditer(paper.full_text))
-    if not splits:
-        chunks.append(_make_file_chunk(paper.full_text, source_id, ordinal=1))
-        return chunks
-
     for i, match in enumerate(splits):
         start = match.start()
-        end = splits[i + 1].start() if i + 1 < len(splits) else len(paper.full_text)
-        section_text = paper.full_text[start:end].strip()
+        end = splits[i + 1].start() if i + 1 < len(splits) else len(text)
+        section_text = text[start:end].strip()
         if not section_text:
             continue
         section_name = match.group(0).strip().lower().split()[0]
         text_hash = Chunk.compute_text_hash(section_text)
         chunks.append(Chunk(
-            chunk_id=Chunk.make_id(source_id, i + 1, section_name),
+            chunk_id=Chunk.make_id(source_id, i, section_name),
             source_id=source_id,
             chunk_level=section_name,
-            ordinal=i + 1,
+            ordinal=i,
             start_offset=start,
             end_offset=end,
             text=section_text,
@@ -306,4 +292,19 @@ def chunk_paper(paper: "ArxivPaper", source_id: str) -> list["Chunk"]:
             created_at=_now_iso(),
         ))
 
-    return chunks
+    return chunks if chunks else [_make_file_chunk(text, source_id)]
+
+
+def extract_pdf_text(pdf_path: str) -> str | None:
+    """Extract text from a PDF file via pypdf. Returns None if pypdf not installed."""
+    try:
+        import pypdf  # type: ignore
+        import io as _io
+        with open(pdf_path, "rb") as f:
+            reader = pypdf.PdfReader(_io.BytesIO(f.read()))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        return "\n\n".join(p for p in pages if p.strip()) or None
+    except ImportError:
+        return None
+    except Exception:
+        return None

@@ -113,9 +113,8 @@ class PopulateRequest(BaseModel):
 
 
 class PaperIngestRequest(BaseModel):
-    arxiv_ids: list[str]
+    papers_dir: str = "/data/papers"
     repo: str = ""
-    include_pdf: bool = False
     force_reingest: bool = False
 
 
@@ -381,15 +380,13 @@ async def trigger_paper_ingest(
 ) -> dict:
     """Fetch ArXiv papers by ID and ingest into workspace memory."""
     job_id = _make_job(workspace_id)
-    args = ["--ingest-paper"] + request.arxiv_ids
+    args = ["--ingest-papers", request.papers_dir]
     if request.repo:
         args += ["--repo", request.repo]
-    if request.include_pdf:
-        args.append("--paper-pdf")
     if request.force_reingest:
         args.append("--force-reingest")
     asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
-    return {"job_id": job_id, "status": "started", "arxiv_ids": request.arxiv_ids}
+    return {"job_id": job_id, "status": "started", "papers_dir": request.papers_dir}
 
 
 @app.get("/reports")
