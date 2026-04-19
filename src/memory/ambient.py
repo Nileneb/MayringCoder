@@ -329,14 +329,10 @@ def load_ambient_snapshot(conn: Any, repo_slug: str = "") -> str | None:
 
 
 def _safe_repo_slug(repo_slug: str) -> str:
-    """Return a filesystem-safe repo slug for cache filenames, else empty string."""
+    """Return a deterministic filesystem-safe cache key for repo_slug, else empty string."""
     if not repo_slug:
         return ""
-    if ".." in repo_slug or "/" in repo_slug or "\\" in repo_slug:
-        return ""
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", repo_slug):
-        return ""
-    return repo_slug
+    return hashlib.sha256(repo_slug.encode("utf-8")).hexdigest()
 
 
 def _safe_cache_file(cache_dir: Path, repo_slug: str, suffix: str) -> Path | None:
