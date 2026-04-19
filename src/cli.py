@@ -121,6 +121,8 @@ def parse_args() -> argparse.Namespace:
                    help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
     p.add_argument("--generate-wiki", action="store_true",
                    help="Verknüpfungswiki aus Overview-Cache + Memory erzeugen (cache/<slug>_wiki.md)")
+    p.add_argument("--wiki-type", choices=["code", "paper"], default="code",
+                   help="Wiki-Modus: code (Import/Call-Graph) oder paper (Paper-Verknüpfungen)")
     p.add_argument("--generate-ambient", action="store_true",
                    help="Ambient-Snapshot regenerieren (cache via SQLite, model required)")
     p.add_argument("--ingest-issues", metavar="REPO",
@@ -298,7 +300,7 @@ def main() -> None:
     if args.generate_wiki:
         from src.api.dependencies import get_conn, get_chroma
         from src.memory.wiki import generate_wiki
-        generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id)
+        generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id, doc_type=args.wiki_type)
         sys.exit(0)
 
     if args.generate_ambient:

@@ -295,7 +295,7 @@ def test_generate_wiki_creates_index_file(tmp_path, monkeypatch):
     }
 
     conn = sqlite3.connect(":memory:")
-    conn.execute("CREATE TABLE chunks (chunk_id TEXT, source_id TEXT, content TEXT, chunk_level TEXT, is_active INTEGER, category_labels TEXT)")
+    conn.execute("CREATE TABLE chunks (chunk_id TEXT, source_id TEXT, content TEXT, chunk_level TEXT, is_active INTEGER, category_labels TEXT, text TEXT)")
     conn.commit()
 
     with patch("src.analysis.context.load_overview_cache_raw", return_value=overview), \
@@ -308,3 +308,23 @@ def test_generate_wiki_creates_index_file(tmp_path, monkeypatch):
     idx = json.loads(index_file.read_text())
     assert isinstance(idx, dict)
     conn.close()
+
+
+def test_paper_rules_registered():
+    """All 5 paper rules must be in RULE_SETS['paper']."""
+    from src.memory.wiki import RULE_SETS
+    names = {name for name, _fn, _w in RULE_SETS["paper"]}
+    assert names == {"citation", "keyword_overlap", "shared_concept", "method_chain", "dataset_coupling"}
+
+
+def test_wiki_paper_cache_roundtrip(tmp_path):
+    """_cache_get after _cache_put returns identical JSON."""
+    import sqlite3
+    from src.memory.store import init_memory_db
+    from src.memory.wiki import _cache_get, _cache_put
+    db = tmp_path / "test.db"
+    conn = init_memory_db(db)
+    _cache_put(conn, "paper:arxiv:1234.5678", "method_chain", ["bert", "gpt"])
+    result = _cache_get(conn, "paper:arxiv:1234.5678", "method_chain")
+    assert result == ["bert", "gpt"]
+    assert _cache_get(conn, "paper:arxiv:0000.0000", "method_chain") is None
