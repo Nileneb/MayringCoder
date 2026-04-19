@@ -339,6 +339,19 @@ def _safe_repo_slug(repo_slug: str) -> str:
     return repo_slug
 
 
+def _safe_cache_file(cache_dir: Path, repo_slug: str, suffix: str) -> Path | None:
+    """Build a cache file path under cache_dir from repo_slug, else return None."""
+    safe_slug = _safe_repo_slug(repo_slug)
+    if not safe_slug:
+        return None
+    candidate = (cache_dir / f"{safe_slug}_{suffix}").resolve()
+    try:
+        candidate.relative_to(cache_dir)
+    except Exception:
+        return None
+    return candidate
+
+
 def build_context(
     task: str,
     conn: Any,
@@ -356,25 +369,19 @@ def build_context(
 
     keyword_index: dict[str, list[str]] = {}
     cluster_embs: dict[str, list[float]] = {}
-    safe_repo_slug = _safe_repo_slug(repo_slug)
     cache_dir = Path("cache").resolve()
-    if safe_repo_slug:
-        idx_path = cache_dir / f"{safe_repo_slug}_wiki_index.json"
-        emb_path = cache_dir / f"{safe_repo_slug}_wiki_clusters_emb.json"
-        if idx_path.exists():
-            try:
-                resolved_idx = idx_path.resolve()
-                resolved_idx.relative_to(cache_dir)
-                keyword_index = json.loads(resolved_idx.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        if emb_path.exists():
-            try:
-                resolved_emb = emb_path.resolve()
-                resolved_emb.relative_to(cache_dir)
-                cluster_embs = json.loads(resolved_emb.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+    idx_path = _safe_cache_file(cache_dir, repo_slug, "wiki_index.json")
+    emb_path = _safe_cache_file(cache_dir, repo_slug, "wiki_clusters_emb.json")
+    if idx_path and idx_path.exists():
+        try:
+            keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    if emb_path and emb_path.exists():
+        try:
+            cluster_embs = json.loads(emb_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
 
     result = trigger_scan(task, keyword_index, cluster_embs, ollama_url, conn=conn)
     if _out_trigger_ids is not None:
