@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -54,10 +55,73 @@ Erstelle einen Projekt-Snapshot im Format:
 **Wichtige Zusammenhänge:** <max. 5 Datei/Modul-Paare mit Erklärung warum sie zusammengehören>
 """
 
-def _load_recent_conversations(conn: Any, repo_slug: str, limit: int = 5) -> list[str]:
+_STICKY_RE = re.compile(r'\[sticky\]', re.IGNORECASE)
+
+
+def _score_entry(
+    entry_text: str,
+    captured_at_iso: str,
+    conn: Any,
+    half_life_days: float = 14.0,
+) -> float:
+    """Score a snapshot entry on [0.0, ~1.5] range.
+
+    Components:
+    - Sticky items get minimum score 0.9 regardless of age
+    - Base score 0.5 + recency_boost (first 24h: +0.3)
+    - Decay by exp(-age_days / half_life)
+    - Feedback boost: +0.2 per feedback_log row matching a 40-char prefix of entry
+    """
+    is_sticky = bool(_STICKY_RE.search(entry_text))
+    base = 0.9 if is_sticky else 0.5
+
+    age_days = 365.0
+    if captured_at_iso:
+        try:
+            ts = datetime.fromisoformat(captured_at_iso.rstrip("Z"))
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
+            age_seconds = (datetime.utcnow() - ts).total_seconds()
+            age_days = max(age_seconds / 86400.0, 0.0)
+        except (ValueError, TypeError):
+            pass
+
+    recency_boost = 0.3 if age_days < 1.0 else 0.0
+    decay = math.exp(-age_days / half_life_days)
+
+    score = (base + recency_boost) * decay
+    if is_sticky:
+        score = max(score, 0.9)
+
+    prefix = entry_text.strip()[:40]
+    if conn is not None and prefix:
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM context_feedback_log WHERE context_text LIKE ? AND was_referenced = 1",
+                (prefix + "%",),
+            ).fetchone()
+            if row:
+                score += 0.2 * min(int(row[0]), 3)
+        except Exception:
+            pass
+
+    return round(score, 4)
+
+
+def _score_snapshot_entries(
+    conn: Any,
+    entries: list[tuple[str, str]],
+) -> list[tuple[str, float]]:
+    """Return entries ranked by score descending. Ties broken by original order."""
+    indexed = [(i, text, _score_entry(text, ts, conn)) for i, (text, ts) in enumerate(entries)]
+    indexed.sort(key=lambda x: (-x[2], x[0]))
+    return [(text, score) for _, text, score in indexed]
+
+
+def _load_recent_conversations(conn: Any, repo_slug: str, limit: int = 5) -> list[tuple[str, str]]:
     """Lade die letzten N Conversation-Summaries aus SQLite."""
     rows = conn.execute(
-        """SELECT c.text FROM chunks c
+        """SELECT c.text, s.captured_at FROM chunks c
            JOIN sources s ON c.source_id = s.source_id
            WHERE s.source_type = 'conversation_summary'
              AND (s.repo = ? OR ? = '')
@@ -66,13 +130,13 @@ def _load_recent_conversations(conn: Any, repo_slug: str, limit: int = 5) -> lis
            LIMIT ?""",
         (repo_slug, repo_slug, limit),
     ).fetchall()
-    return [r[0][:500] for r in rows]
+    return [(r[0][:500], r[1] or "") for r in rows]
 
 
-def _load_recent_issues(conn: Any, repo_slug: str, limit: int = 10) -> list[str]:
+def _load_recent_issues(conn: Any, repo_slug: str, limit: int = 10) -> list[tuple[str, str]]:
     """Lade die letzten N Issue-Summaries aus SQLite."""
     rows = conn.execute(
-        """SELECT c.text FROM chunks c
+        """SELECT c.text, s.captured_at FROM chunks c
            JOIN sources s ON c.source_id = s.source_id
            WHERE s.source_type = 'github_issue'
              AND (s.repo = ? OR ? = '')
@@ -81,7 +145,7 @@ def _load_recent_issues(conn: Any, repo_slug: str, limit: int = 10) -> list[str]
            LIMIT ?""",
         (repo_slug, repo_slug, limit),
     ).fetchall()
-    return [r[0][:300] for r in rows]
+    return [(r[0][:300], r[1] or "") for r in rows]
 
 
 def _load_wiki_top_connections(repo_slug: str, limit: int = 10) -> str:
@@ -276,8 +340,12 @@ def generate_ambient_snapshot(
     from src.memory.schema import Source
     from src.memory.ingest import ingest
 
-    convs = _load_recent_conversations(conn, repo_slug)
-    issues = _load_recent_issues(conn, repo_slug)
+    convs_tuples = _load_recent_conversations(conn, repo_slug)
+    issues_tuples = _load_recent_issues(conn, repo_slug)
+    convs_scored = _score_snapshot_entries(conn, convs_tuples)
+    issues_scored = _score_snapshot_entries(conn, issues_tuples)
+    convs = [t for t, _s in convs_scored]
+    issues = [t for t, _s in issues_scored]
     wiki_top = _load_wiki_top_connections(repo_slug)
 
     prompt = _SNAPSHOT_PROMPT.format(
@@ -391,6 +459,18 @@ def build_context(
         _out_trigger_ids.extend(result.trigger_ids)
     trigger_hint = result.context
 
+    # Dynamic budget — compress snapshot when triggers are rich
+    trigger_len = len(trigger_hint)
+    if trigger_len > 300:
+        snapshot_budget = 1600
+        retrieval_budget = 1200
+    else:
+        snapshot_budget = 3200
+        retrieval_budget = 2400
+
+    if len(snapshot) > snapshot_budget:
+        snapshot = snapshot[:snapshot_budget] + "…"
+
     retrieval_section = ""
     if chroma_collection is not None:
         try:
@@ -399,7 +479,7 @@ def build_context(
                 task, conn, chroma_collection, ollama_url,
                 opts={"top_k": 5, "repo": safe_repo_slug or None},
             )
-            retrieval_section = compress_for_prompt(hits, char_budget=2400)
+            retrieval_section = compress_for_prompt(hits, char_budget=retrieval_budget)
         except Exception:
             pass
 

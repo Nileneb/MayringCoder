@@ -62,7 +62,7 @@ class TestLoadRecentConversations:
 
         result = _load_recent_conversations(conn, "myrepo")
         assert len(result) == 1
-        assert "conversation 1" in result[0]
+        assert "conversation 1" in result[0][0]
         conn.close()
 
 
@@ -92,7 +92,7 @@ class TestLoadRecentIssues:
 
         result = _load_recent_issues(conn, "myrepo")
         assert len(result) == 1
-        assert "login bug" in result[0]
+        assert "login bug" in result[0][0]
         conn.close()
 
 
