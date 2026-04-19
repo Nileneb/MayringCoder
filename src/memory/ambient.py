@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -327,6 +328,17 @@ def load_ambient_snapshot(conn: Any, repo_slug: str = "") -> str | None:
     return row[0] if row else None
 
 
+def _safe_repo_slug(repo_slug: str) -> str:
+    """Return a filesystem-safe repo slug for cache filenames, else empty string."""
+    if not repo_slug:
+        return ""
+    if ".." in repo_slug or "/" in repo_slug or "\\" in repo_slug:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", repo_slug):
+        return ""
+    return repo_slug
+
+
 def build_context(
     task: str,
     conn: Any,
@@ -344,9 +356,10 @@ def build_context(
 
     keyword_index: dict[str, list[str]] = {}
     cluster_embs: dict[str, list[float]] = {}
-    if repo_slug:
-        idx_path = Path("cache") / f"{repo_slug}_wiki_index.json"
-        emb_path = Path("cache") / f"{repo_slug}_wiki_clusters_emb.json"
+    safe_repo_slug = _safe_repo_slug(repo_slug)
+    if safe_repo_slug:
+        idx_path = Path("cache") / f"{safe_repo_slug}_wiki_index.json"
+        emb_path = Path("cache") / f"{safe_repo_slug}_wiki_clusters_emb.json"
         if idx_path.exists():
             try:
                 keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
