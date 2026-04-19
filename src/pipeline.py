@@ -451,6 +451,71 @@ def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | N
     )
 
 
+def run_ingest_paper(
+    arxiv_ids: list[str],
+    ollama_url: str,
+    model: str,
+    repo_slug: str = "",
+    include_pdf: bool = False,
+    force_reingest: bool = False,
+    workspace_id: str = "default",
+) -> dict:
+    """Fetch ArXiv papers, chunk, ingest into memory. Returns summary dict."""
+    from src.memory.paper_fetcher import fetch_multiple
+    from src.memory.chunker import chunk_paper
+    from src.memory.ingest import ingest
+    from src.memory.store import init_memory_db
+    from src.memory.ingest import get_or_create_chroma_collection
+    from src.memory.schema import Source
+    import hashlib
+
+    conn = init_memory_db()
+    chroma = get_or_create_chroma_collection()
+
+    papers = fetch_multiple(arxiv_ids, include_pdf=include_pdf)
+    ingested = 0
+    skipped = 0
+
+    for paper in papers:
+        source_id = f"paper:arxiv:{paper.arxiv_id}"
+
+        if not force_reingest:
+            existing = conn.execute(
+                "SELECT 1 FROM sources WHERE source_id = ?", (source_id,)
+            ).fetchone()
+            if existing:
+                print(f"  [paper] Skip (bereits in Memory): {paper.arxiv_id}")
+                skipped += 1
+                continue
+
+        content = f"# {paper.title}\n\nAuthors: {', '.join(paper.authors)}\nPublished: {paper.published}\nCategories: {', '.join(paper.categories)}\n\n## Abstract\n\n{paper.abstract}"
+        if paper.full_text:
+            content += f"\n\n{paper.full_text}"
+
+        content_hash = "sha256:" + hashlib.sha256(content.encode()).hexdigest()[:16]
+
+        src = Source(
+            source_id=source_id,
+            source_type="paper",
+            repo=repo_slug,
+            path=f"arxiv/{paper.arxiv_id}",
+            branch="",
+            commit="",
+            content_hash=content_hash,
+        )
+
+        ingest(
+            src, content, conn, chroma,
+            ollama_url, model,
+            opts={"categorize": True, "chunk_level": "paper"},
+            workspace_id=workspace_id,
+        )
+        print(f"  [paper] Ingested: {paper.arxiv_id} — {paper.title[:60]}")
+        ingested += 1
+
+    return {"ingested": ingested, "skipped": skipped, "total": len(papers)}
+
+
 def run_pi_task(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
     # Model-Auflösung über Router, falls verfügbar
     if router is not None and not model:
