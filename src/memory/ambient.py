@@ -340,11 +340,15 @@ def _safe_cache_file(cache_dir: Path, repo_slug: str, suffix: str) -> Path | Non
     safe_slug = _safe_repo_slug(repo_slug)
     if not safe_slug:
         return None
-    candidate = (cache_dir / f"{safe_slug}_{suffix}").resolve()
+
+    base_dir = cache_dir.resolve()
+    candidate = (base_dir / f"{safe_slug}_{suffix}").resolve()
+
     try:
-        candidate.relative_to(cache_dir)
+        candidate.relative_to(base_dir)
     except Exception:
         return None
+
     return candidate
 
 
