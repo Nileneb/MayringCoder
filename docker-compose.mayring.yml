@@ -1,7 +1,7 @@
 name: mayring
 
 # Standalone MayringCoder Stack — unabhängig vom app.linn.games Stack.
-# Image wird in CI gebaut und nach Docker Hub gepusht (nileneb/mayring:latest).
+# Image wird lokal gebaut und nach Docker Hub gepusht (nileneb/mayring:latest).
 # Verbindet sich über externes linn-shared Netzwerk mit Laravel (web) und Postgres.
 #
 # Einmalig auf dem Server:
@@ -12,6 +12,16 @@ name: mayring
 #   ./deploy-mayring.sh
 
 services:
+  mayring-nginx:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:${MAYRING_PORT:-6480}:80"
+    volumes:
+      - ./docker/nginx/mcp.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    networks: [mayring-internal, linn-shared]
+    depends_on: [mayring-mcp, mayring-webui]
+
   mayring-api:
     image: nileneb/mayring:latest
     command: python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8090
@@ -27,7 +37,7 @@ services:
       - linn-mayring-cache:/app/cache
       - ./reports:/app/reports
     restart: unless-stopped
-    networks: [linn-shared]
+    networks: [mayring-internal, linn-shared]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
@@ -37,8 +47,6 @@ services:
   mayring-mcp:
     image: nileneb/mayring:latest
     command: python -m src.mcp_server
-    ports:
-      - "127.0.0.1:8092:8092"
     env_file: .env.production
     environment:
       MCP_TRANSPORT: http
@@ -47,33 +55,32 @@ services:
     volumes:
       - linn-mayring-cache:/app/cache:ro
     restart: unless-stopped
-    networks: [linn-shared]
+    networks: [mayring-internal]
 
   mayring-pi:
     image: nileneb/mayring:latest
     command: python -m src.agents.pi_server
-    ports:
-      - "127.0.0.1:8091:8091"
     env_file: .env.production
     volumes:
       - linn-mayring-cache:/app/cache:ro
     restart: unless-stopped
-    networks: [linn-shared]
+    networks: [mayring-internal]
 
   mayring-webui:
     image: nileneb/mayring:latest
     command: python -m src.api.web_ui
-    ports:
-      - "127.0.0.1:7860:7860"
     env_file: .env.production
     environment:
       LARAVEL_INTERNAL_URL: "http://web"
+      GRADIO_ROOT_PATH: /ui
+      GRADIO_SERVER_NAME: "0.0.0.0"
     volumes:
       - linn-mayring-cache:/app/cache:ro
     restart: unless-stopped
-    networks: [linn-shared]
+    networks: [mayring-internal]
 
 networks:
+  mayring-internal: {}
   linn-shared:
     external: true
 
