@@ -359,15 +359,16 @@ def build_context(
 
     Leise skippen wenn kein Snapshot vorhanden (kein LLM-Call).
     """
-    snapshot = load_ambient_snapshot(conn, repo_slug)
+    safe_repo_slug = _safe_repo_slug(repo_slug)
+    snapshot = load_ambient_snapshot(conn, safe_repo_slug)
     if not snapshot:
         return ""
 
     keyword_index: dict[str, list[str]] = {}
     cluster_embs: dict[str, list[float]] = {}
     cache_dir = Path("cache").resolve()
-    idx_path = _safe_cache_file(cache_dir, repo_slug, "wiki_index.json")
-    emb_path = _safe_cache_file(cache_dir, repo_slug, "wiki_clusters_emb.json")
+    idx_path = _safe_cache_file(cache_dir, safe_repo_slug, "wiki_index.json")
+    emb_path = _safe_cache_file(cache_dir, safe_repo_slug, "wiki_clusters_emb.json")
     if idx_path and idx_path.exists():
         try:
             keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
