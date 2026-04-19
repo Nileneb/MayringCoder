@@ -15,6 +15,7 @@ Endpoints (authenticated via Bearer <sanctum_token>):
     POST /benchmark        — retrieval benchmark (returns job_id)
     POST /issues/ingest    — GitHub issues → memory (returns job_id)
     POST /populate         — repo source files → memory (returns job_id)
+    POST /papers/ingest    — ArXiv papers → memory (returns job_id)
     GET  /jobs/{job_id}    — poll job status and output
     POST /memory/search    — search workspace memory
     POST /memory/put       — ingest into workspace memory
@@ -108,6 +109,13 @@ class IssuesIngestRequest(BaseModel):
 
 class PopulateRequest(BaseModel):
     repo: str
+    force_reingest: bool = False
+
+
+class PaperIngestRequest(BaseModel):
+    arxiv_ids: list[str]
+    repo: str = ""
+    include_pdf: bool = False
     force_reingest: bool = False
 
 
@@ -364,6 +372,24 @@ async def trigger_populate(
         args.append("--force-reingest")
     asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
     return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+@app.post("/papers/ingest")
+async def trigger_paper_ingest(
+    request: PaperIngestRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Fetch ArXiv papers by ID and ingest into workspace memory."""
+    job_id = _make_job(workspace_id)
+    args = ["--ingest-paper"] + request.arxiv_ids
+    if request.repo:
+        args += ["--repo", request.repo]
+    if request.include_pdf:
+        args.append("--paper-pdf")
+    if request.force_reingest:
+        args.append("--force-reingest")
+    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    return {"job_id": job_id, "status": "started", "arxiv_ids": request.arxiv_ids}
 
 
 @app.get("/reports")
