@@ -266,6 +266,7 @@ _INGEST_DEFAULTS: dict[str, dict] = {
     "session_knowledge":    {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
     "session_note":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
     "image":                {"categorize": False, "codebook": "auto",   "mode": "hybrid", "multiview": False},
+    "paper":                {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
 }
 _INGEST_DEFAULT_FALLBACK: dict = {"categorize": True, "codebook": "auto", "mode": "hybrid", "multiview": False}
 

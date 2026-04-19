@@ -247,3 +247,63 @@ def structural_chunk(text: str, source_id: str, filename: str) -> list[Chunk]:
         chunks = []
 
     return chunks if chunks else [_make_file_chunk(text, source_id)]
+
+
+def chunk_paper(paper: "ArxivPaper", source_id: str) -> list["Chunk"]:
+    """Chunk an ArxivPaper: abstract chunk + section chunks from full_text."""
+    from src.memory.paper_fetcher import ArxivPaper  # local import, avoids circular
+
+    chunks: list[Chunk] = []
+
+    header = f"# {paper.title}\n\n**Authors:** {', '.join(paper.authors)}\n\n**Published:** {paper.published}\n\n**Categories:** {', '.join(paper.categories)}\n\n## Abstract\n\n{paper.abstract}"
+    chunks.append(_make_file_chunk(header, source_id, ordinal=0))
+    chunks[0] = Chunk(
+        chunk_id=chunks[0].chunk_id,
+        source_id=source_id,
+        chunk_level="abstract",
+        ordinal=0,
+        start_offset=0,
+        end_offset=len(header),
+        text=header,
+        text_hash=chunks[0].text_hash,
+        dedup_key=chunks[0].dedup_key,
+        created_at=chunks[0].created_at,
+    )
+
+    if not paper.full_text:
+        return chunks
+
+    _SECTION_RE = re.compile(
+        r'^(?:\d+\.?\s+)?(?:Abstract|Introduction|Related Work|Background|'
+        r'Methodology|Methods?|Experiments?|Results?|Discussion|'
+        r'Conclusion|References?|Appendix)\b',
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+    splits = list(_SECTION_RE.finditer(paper.full_text))
+    if not splits:
+        chunks.append(_make_file_chunk(paper.full_text, source_id, ordinal=1))
+        return chunks
+
+    for i, match in enumerate(splits):
+        start = match.start()
+        end = splits[i + 1].start() if i + 1 < len(splits) else len(paper.full_text)
+        section_text = paper.full_text[start:end].strip()
+        if not section_text:
+            continue
+        section_name = match.group(0).strip().lower().split()[0]
+        text_hash = Chunk.compute_text_hash(section_text)
+        chunks.append(Chunk(
+            chunk_id=Chunk.make_id(source_id, i + 1, section_name),
+            source_id=source_id,
+            chunk_level=section_name,
+            ordinal=i + 1,
+            start_offset=start,
+            end_offset=end,
+            text=section_text,
+            text_hash=text_hash,
+            dedup_key=text_hash,
+            created_at=_now_iso(),
+        ))
+
+    return chunks
