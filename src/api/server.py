@@ -18,8 +18,14 @@ Endpoints (authenticated via Bearer <sanctum_token>):
     POST /papers/ingest    — ArXiv papers → memory (returns job_id)
     POST /duel             — run same task on two models, compare results (returns job_id)
     GET  /jobs/{job_id}    — poll job status and output
-    POST /memory/search    — search workspace memory
-    POST /memory/put       — ingest into workspace memory
+    POST /memory/search          — search workspace memory
+    POST /memory/put             — ingest into workspace memory
+    GET  /memory/chunk/{id}      — retrieve chunk by ID
+    POST /memory/invalidate      — deactivate all chunks for a source
+    GET  /memory/chunks/{src_id} — list chunks for a source
+    GET  /memory/explain/{id}    — explain a chunk (key, scores, origin)
+    POST /memory/reindex         — re-embed and re-upsert chunks to ChromaDB
+    POST /memory/feedback        — record usage signal for a chunk
     GET  /reports          — list reports
     GET  /health           — health check (no auth)
 
@@ -145,6 +151,20 @@ class DuelRequest(BaseModel):
     timeout: float = 180.0
 
 
+class MemoryInvalidateRequest(BaseModel):
+    source_id: str
+
+
+class MemoryReindexRequest(BaseModel):
+    source_id: str | None = None
+
+
+class MemoryFeedbackRequest(BaseModel):
+    chunk_id: str
+    signal: str
+    metadata: dict | None = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -253,6 +273,149 @@ async def memory_put(
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/memory/chunk/{chunk_id}")
+async def memory_get_chunk(
+    chunk_id: str,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    from src.memory.store import kv_get, get_chunk
+    cached = kv_get(chunk_id)
+    if cached is not None:
+        return {"workspace_id": workspace_id, "chunk": cached}
+    chunk = get_chunk(_get_conn(), chunk_id)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="chunk not found")
+    return {"workspace_id": workspace_id, "chunk": chunk.to_dict()}
+
+
+@app.post("/memory/invalidate")
+async def memory_invalidate(
+    request: MemoryInvalidateRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    from src.memory.store import deactivate_chunks_by_source, log_ingestion_event
+    from src.memory.retrieval import invalidate_query_cache
+    conn = _get_conn()
+    count = deactivate_chunks_by_source(conn, request.source_id)
+    log_ingestion_event(conn, request.source_id, "invalidated", {"count": count})
+    invalidate_query_cache()
+    return {"workspace_id": workspace_id, "source_id": request.source_id, "deactivated_count": count}
+
+
+@app.get("/memory/chunks/{source_id}")
+async def memory_list_by_source(
+    source_id: str,
+    active_only: bool = True,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    from src.memory.store import get_chunks_by_source
+    chunks = get_chunks_by_source(_get_conn(), source_id, active_only=active_only)
+    return {
+        "workspace_id": workspace_id,
+        "source_id": source_id,
+        "count": len(chunks),
+        "chunks": [c.to_dict() for c in chunks],
+    }
+
+
+@app.get("/memory/explain/{chunk_id}")
+async def memory_explain(
+    chunk_id: str,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    from src.memory.store import get_chunk, get_source
+    from src.memory.schema import make_memory_key, source_fingerprint
+    chunk = get_chunk(_get_conn(), chunk_id)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="chunk not found")
+    cats = chunk.category_labels[0] if chunk.category_labels else "uncategorized"
+    fp = source_fingerprint(chunk.source_id)
+    hash_prefix = chunk.text_hash.replace("sha256:", "")[:8]
+    memory_key = make_memory_key("repo", cats, fp, hash_prefix)
+    source = get_source(_get_conn(), chunk.source_id)
+    return {
+        "workspace_id": workspace_id,
+        "chunk_id": chunk_id,
+        "memory_key": memory_key,
+        "source_id": chunk.source_id,
+        "category_labels": chunk.category_labels,
+        "chunk_level": chunk.chunk_level,
+        "ordinal": chunk.ordinal,
+        "created_at": chunk.created_at,
+        "is_active": chunk.is_active,
+        "superseded_by": chunk.superseded_by,
+        "quality_score": chunk.quality_score,
+        "source": source.to_dict() if source else {},
+    }
+
+
+@app.post("/memory/reindex")
+async def memory_reindex(
+    request: MemoryReindexRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    try:
+        from src.analysis.context import _embed_texts
+        from src.memory.store import get_chunks_by_source, get_chunk
+        from src.memory.retrieval import invalidate_query_cache
+
+        chroma = _get_chroma()
+        conn = _get_conn()
+
+        if request.source_id:
+            chunks = get_chunks_by_source(conn, request.source_id, active_only=True)
+        else:
+            rows = conn.execute(
+                "SELECT chunk_id FROM chunks WHERE is_active = 1"
+            ).fetchall()
+            chunk_ids = [r[0] for r in rows]
+            chunks = [c for cid in chunk_ids if (c := get_chunk(conn, cid)) is not None]
+
+        reindexed = 0
+        errors = 0
+
+        for chunk in chunks:
+            try:
+                emb = _embed_texts([chunk.text[:500]], _OLLAMA_URL)[0]
+                if chroma is not None:
+                    _ws_row = conn.execute(
+                        "SELECT workspace_id FROM chunks WHERE chunk_id = ?", (chunk.chunk_id,)
+                    ).fetchone()
+                    _ws_id = _ws_row[0] if _ws_row else "default"
+                    chroma.upsert(
+                        ids=[chunk.chunk_id],
+                        documents=[chunk.text[:500]],
+                        embeddings=[emb],
+                        metadatas=[{
+                            "workspace_id": _ws_id,
+                            "source_id": chunk.source_id,
+                            "chunk_level": chunk.chunk_level,
+                            "category_labels": ",".join(chunk.category_labels),
+                            "is_active": 1,
+                        }],
+                    )
+                reindexed += 1
+            except Exception:
+                errors += 1
+
+        invalidate_query_cache()
+        return {"workspace_id": workspace_id, "reindexed_count": reindexed, "errors": errors}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/memory/feedback")
+async def memory_feedback(
+    request: MemoryFeedbackRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    if request.signal not in ("positive", "negative", "neutral"):
+        raise HTTPException(status_code=400, detail="signal must be positive|negative|neutral")
+    from src.memory.store import add_feedback
+    add_feedback(_get_conn(), request.chunk_id, request.signal, request.metadata or {})
+    return {"workspace_id": workspace_id, "chunk_id": request.chunk_id, "recorded": True}
 
 
 @app.post("/search")
