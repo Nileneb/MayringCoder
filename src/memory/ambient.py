@@ -408,4 +408,23 @@ def build_context(
         parts.append(f"## Trigger-Kontext\n{trigger_hint}")
     if retrieval_section:
         parts.append(f"## Relevante Erinnerungen\n{retrieval_section}")
+
+    # Predictive topic hook (silent if no transitions persisted yet)
+    try:
+        from src.memory.predictive import load_transitions, predict_next_topics
+        matrix = load_transitions(conn)
+        if matrix and result.trigger_ids:
+            current = None
+            for tid in result.trigger_ids:
+                if tid.startswith("cluster:"):
+                    current = tid.split(":", 1)[1]
+                    break
+            if current:
+                preds = predict_next_topics(current, matrix, top_k=3)
+                if preds:
+                    pred_lines = [f"- {p.to_topic} (p={p.probability:.2f})" for p in preds]
+                    parts.append("## Wahrscheinlich relevant\n" + "\n".join(pred_lines))
+    except Exception:
+        pass
+
     return "\n\n".join(parts)

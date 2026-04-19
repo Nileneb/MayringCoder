@@ -121,6 +121,8 @@ def parse_args() -> argparse.Namespace:
                    help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
     p.add_argument("--generate-wiki", action="store_true",
                    help="Verknüpfungswiki aus Overview-Cache + Memory erzeugen (cache/<slug>_wiki.md)")
+    p.add_argument("--rebuild-transitions", action="store_true",
+                   help="Scan conversation-summaries + rebuild Markov topic-transition matrix")
     p.add_argument("--wiki-type", choices=["code", "paper"], default="code",
                    help="Wiki-Modus: code (Import/Call-Graph) oder paper (Paper-Verknüpfungen)")
     p.add_argument("--generate-ambient", action="store_true",
@@ -301,6 +303,17 @@ def main() -> None:
         from src.api.dependencies import get_conn, get_chroma
         from src.memory.wiki import generate_wiki
         generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id, doc_type=args.wiki_type)
+        sys.exit(0)
+
+    if args.rebuild_transitions:
+        from src.api.dependencies import get_conn
+        from src.memory.predictive import build_transition_matrix, persist_transitions
+        conn = get_conn()
+        slug = _repo_slug(repo_url) if repo_url else ""
+        matrix = build_transition_matrix(conn, repo_slug=slug)
+        persist_transitions(matrix, conn)
+        edges = sum(len(v) for v in matrix.values())
+        print(f"[transitions] {len(matrix)} from-topics, {edges} edges → topic_transitions")
         sys.exit(0)
 
     if args.generate_ambient:
