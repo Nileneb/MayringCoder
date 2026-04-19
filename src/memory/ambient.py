@@ -345,8 +345,8 @@ def _safe_cache_file(cache_dir: Path, repo_slug: str, suffix: str) -> Path | Non
     candidate = (base_dir / f"{safe_slug}_{suffix}").resolve()
 
     try:
-        candidate.relative_to(base_dir)
-    except Exception:
+        candidate.relative_to(cache_dir)
+    except ValueError:
         return None
 
     return candidate
