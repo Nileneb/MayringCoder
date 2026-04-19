@@ -1144,7 +1144,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             for task in (ModelRouter.TASKS if _router_available else []):
                 current_model = _active_router.resolve(task) if _active_router else ""
                 with gr.Row():
-                    gr.Markdown(f"**{task_labels.get(task, task)}**", scale=2)
+                    gr.Markdown(f"**{task_labels.get(task, task)}**")
                     inp = gr.Textbox(
                         value=current_model,
                         placeholder="model:tag oder leer (= ENV)",
