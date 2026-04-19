@@ -357,17 +357,22 @@ def build_context(
     keyword_index: dict[str, list[str]] = {}
     cluster_embs: dict[str, list[float]] = {}
     safe_repo_slug = _safe_repo_slug(repo_slug)
+    cache_dir = Path("cache").resolve()
     if safe_repo_slug:
-        idx_path = Path("cache") / f"{safe_repo_slug}_wiki_index.json"
-        emb_path = Path("cache") / f"{safe_repo_slug}_wiki_clusters_emb.json"
+        idx_path = cache_dir / f"{safe_repo_slug}_wiki_index.json"
+        emb_path = cache_dir / f"{safe_repo_slug}_wiki_clusters_emb.json"
         if idx_path.exists():
             try:
-                keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
+                resolved_idx = idx_path.resolve()
+                resolved_idx.relative_to(cache_dir)
+                keyword_index = json.loads(resolved_idx.read_text(encoding="utf-8"))
             except Exception:
                 pass
         if emb_path.exists():
             try:
-                cluster_embs = json.loads(emb_path.read_text(encoding="utf-8"))
+                resolved_emb = emb_path.resolve()
+                resolved_emb.relative_to(cache_dir)
+                cluster_embs = json.loads(resolved_emb.read_text(encoding="utf-8"))
             except Exception:
                 pass
 
