@@ -148,8 +148,31 @@ RULE_SETS: dict[str, list[tuple[str, Any, float]]] = {
         ("label_cooccurrence", lambda oc, c, conn, ch: find_label_overlap(conn, oc),  0.5),
         ("event_dispatch",     lambda oc, c, conn, ch: find_event_pairs(oc),          0.7),
     ],
-    "paper": [],
+    "paper": [
+        ("citation",          lambda oc, c, conn, ch: find_citation_pairs(oc, c),                1.0),
+        ("keyword_overlap",   lambda oc, c, conn, ch: find_keyword_overlap(oc, c),               0.5),
+        ("shared_concept",    lambda oc, c, conn, ch: find_shared_concepts(c, conn, ch, "", ""), 0.8),
+        ("method_chain",      lambda oc, c, conn, ch: find_method_chains(c, conn, ch, "", ""),   0.7),
+        ("dataset_coupling",  lambda oc, c, conn, ch: find_dataset_pairs(c, conn, ch, "", ""),   0.8),
+    ],
 }
+
+
+def _cache_get(conn: Any, source_id: str, rule_name: str) -> list | None:
+    row = conn.execute(
+        "SELECT extracted FROM wiki_paper_cache WHERE source_id=? AND rule_name=?",
+        (source_id, rule_name),
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def _cache_put(conn: Any, source_id: str, rule_name: str, extracted: list) -> None:
+    from datetime import datetime
+    conn.execute(
+        "INSERT OR REPLACE INTO wiki_paper_cache(source_id, rule_name, extracted, created_at) VALUES(?,?,?,?)",
+        (source_id, rule_name, json.dumps(extracted), datetime.utcnow().isoformat()),
+    )
+    conn.commit()
 
 
 def build_connection_graph(
@@ -348,6 +371,19 @@ def find_shared_concepts(chunks: list, conn: Any, chroma: Any, ollama_url: str, 
     return edges
 
 
+def _extract_methods_from_chunks(paper_sid: str, chunks: list) -> list[str]:
+    found = []
+    for c in chunks:
+        sid = c.source_id if hasattr(c, "source_id") else c.get("source_id", "")
+        if sid != paper_sid:
+            continue
+        text = _chunk_text(c).lower()
+        for method in _KNOWN_METHODS:
+            if method not in found and re.search(r'\b' + re.escape(method) + r'\b', text):
+                found.append(method)
+    return found
+
+
 def find_method_chains(chunks: list, conn: Any, chroma: Any, ollama_url: str, model: str) -> list[WikiEdge]:
     """Papers using the same ML method → weight 0.7."""
     paper_ids = _paper_source_ids(chunks)
@@ -355,15 +391,17 @@ def find_method_chains(chunks: list, conn: Any, chroma: Any, ollama_url: str, mo
         return []
 
     method_papers: dict[str, list[str]] = defaultdict(list)
-    for c in chunks:
-        sid = c.source_id if hasattr(c, "source_id") else c.get("source_id", "")
-        if not sid.startswith("paper:arxiv:"):
-            continue
-        text = _chunk_text(c).lower()
-        for method in _KNOWN_METHODS:
-            if re.search(r'\b' + re.escape(method) + r'\b', text):
-                if sid not in method_papers[method]:
-                    method_papers[method].append(sid)
+    for paper_sid in paper_ids:
+        cached = _cache_get(conn, paper_sid, "method_chain") if conn else None
+        if cached is not None:
+            methods_for_paper = cached
+        else:
+            methods_for_paper = _extract_methods_from_chunks(paper_sid, chunks)
+            if conn:
+                _cache_put(conn, paper_sid, "method_chain", methods_for_paper)
+        for method in methods_for_paper:
+            if paper_sid not in method_papers[method]:
+                method_papers[method].append(paper_sid)
 
     edges = []
     for method, sids in method_papers.items():
@@ -410,6 +448,19 @@ def find_keyword_overlap(overview_cache: dict, chunks: list) -> list[WikiEdge]:
     return edges
 
 
+def _extract_datasets_from_chunks(paper_sid: str, chunks: list) -> list[str]:
+    found = []
+    for c in chunks:
+        sid = c.source_id if hasattr(c, "source_id") else c.get("source_id", "")
+        if sid != paper_sid:
+            continue
+        text = _chunk_text(c).lower()
+        for ds in _KNOWN_DATASETS:
+            if ds not in found and re.search(r'\b' + re.escape(ds) + r'\b', text):
+                found.append(ds)
+    return found
+
+
 def find_dataset_pairs(chunks: list, conn: Any, chroma: Any, ollama_url: str, model: str) -> list[WikiEdge]:
     """Papers using the same dataset → weight 0.8."""
     paper_ids = _paper_source_ids(chunks)
@@ -417,15 +468,17 @@ def find_dataset_pairs(chunks: list, conn: Any, chroma: Any, ollama_url: str, mo
         return []
 
     dataset_papers: dict[str, list[str]] = defaultdict(list)
-    for c in chunks:
-        sid = c.source_id if hasattr(c, "source_id") else c.get("source_id", "")
-        if not sid.startswith("paper:arxiv:"):
-            continue
-        text = _chunk_text(c).lower()
-        for ds in _KNOWN_DATASETS:
-            if re.search(r'\b' + re.escape(ds) + r'\b', text):
-                if sid not in dataset_papers[ds]:
-                    dataset_papers[ds].append(sid)
+    for paper_sid in paper_ids:
+        cached = _cache_get(conn, paper_sid, "dataset_coupling") if conn else None
+        if cached is not None:
+            datasets_for_paper = cached
+        else:
+            datasets_for_paper = _extract_datasets_from_chunks(paper_sid, chunks)
+            if conn:
+                _cache_put(conn, paper_sid, "dataset_coupling", datasets_for_paper)
+        for ds in datasets_for_paper:
+            if paper_sid not in dataset_papers[ds]:
+                dataset_papers[ds].append(paper_sid)
 
     edges = []
     for ds, sids in dataset_papers.items():
@@ -489,9 +542,13 @@ def generate_wiki(
         print(f"[wiki] Kein Overview-Cache für {slug} — erst --mode overview ausführen")
         return None
 
-    chunks: list = conn.execute(
-        "SELECT source_id, category_labels FROM chunks WHERE is_active=1"
+    rows = conn.execute(
+        "SELECT source_id, category_labels, text FROM chunks WHERE is_active=1"
     ).fetchall()
+    chunks: list = [
+        {"source_id": r[0], "category_labels": r[1], "text": r[2]}
+        for r in rows
+    ]
 
     edges = build_connection_graph(doc_type, overview_cache, chunks, conn, chroma)
     clusters = cluster_themes(edges)
