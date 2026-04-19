@@ -10,7 +10,9 @@ appLinnGames.txt
 .mcp.json
 unsloth_compiled_cache/
 .superpowers/
-.claude/
+.claude/*
 AgentTemplates/
 .env.telegram
 .env.production
+*/.claude
+/docs
