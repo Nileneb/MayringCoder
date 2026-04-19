@@ -17,6 +17,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
+from src.ollama_client import generate as _ollama_generate
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -127,29 +129,22 @@ Code ({file}, Zeile {start}-{end}):
 
 
 def categorize_chunk_llm(chunk: Chunk, model: str | None = None) -> Chunk:
-    import urllib.request
     _model = model or _MODEL
     prompt = _CATEGORIZE_PROMPT.format(
         file=Path(chunk.file).name, start=chunk.start_line,
         end=chunk.end_line, code=chunk.code[:2000],
     )
-    payload = json.dumps({
-        "model": _model, "prompt": prompt, "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 100},
-    }).encode()
-    req = urllib.request.Request(
-        f"{_OLLAMA_URL}/api/generate", data=payload,
-        headers={"Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            text = json.loads(resp.read()).get("response", "")
-            m = re.search(r'\{[^}]+\}', text)
-            if m:
-                data = json.loads(m.group())
-                chunk.category = data.get("category", "Logik")
-                chunk.functional_name = data.get("functional_name", "unbekannt")
-                return chunk
+        text = _ollama_generate(
+            _OLLAMA_URL, _model, prompt,
+            stream=False, timeout=30.0,
+        )
+        m = re.search(r'\{[^}]+\}', text)
+        if m:
+            data = json.loads(m.group())
+            chunk.category = data.get("category", "Logik")
+            chunk.functional_name = data.get("functional_name", "unbekannt")
+            return chunk
     except Exception:
         pass
     chunk.category = "Logik"
@@ -288,7 +283,6 @@ def deep_analyze_hotzone(
             "severity": "high" if score > 0.7 else "medium",
             "confidence": "high",
         }
-    import urllib.request
     _model = model or _MODEL
     lines = Path(filepath).read_text(encoding="utf-8", errors="replace").splitlines()
     code = "\n".join(lines[max(0, start - 1):end])
@@ -296,20 +290,14 @@ def deep_analyze_hotzone(
         konventionen=_LARAVEL_KONTEXT, file=Path(filepath).name,
         start=start, end=end, score=f"{score:.0%}", code=code[:3000],
     )
-    payload = json.dumps({
-        "model": _model, "prompt": prompt, "stream": False,
-        "options": {"temperature": 0.2, "num_predict": 200},
-    }).encode()
-    req = urllib.request.Request(
-        f"{_OLLAMA_URL}/api/generate", data=payload,
-        headers={"Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            text = json.loads(resp.read()).get("response", "")
-            m = re.search(r'\{[^}]+\}', text)
-            if m:
-                return json.loads(m.group())
+        text = _ollama_generate(
+            _OLLAMA_URL, _model, prompt,
+            stream=False, timeout=60.0,
+        )
+        m = re.search(r'\{[^}]+\}', text)
+        if m:
+            return json.loads(m.group())
     except Exception:
         pass
     return None
