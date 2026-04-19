@@ -10,7 +10,7 @@ import anyio
 import jwt
 import pytest
 
-SECRET = "test-secret-key-for-jwt"
+SECRET = "test-secret-key-for-jwt-testing-only-32b"
 
 
 def _make_token(workspace_id="default", scope="repo", exp_offset=3600):
@@ -123,7 +123,7 @@ class TestJWTMiddleware:
         # Sign with a different secret
         bad_token = jwt.encode(
             {"workspace_id": "ws_evil", "exp": int(time.time()) + 3600},
-            "wrong-secret",
+            "wrong-secret-key-for-testing-only-32b",
             algorithm="HS256",
         )
 
