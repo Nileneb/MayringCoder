@@ -274,80 +274,49 @@ class TestSearchFallbackSymbolic:
 # ---------------------------------------------------------------------------
 
 class TestFeedbackWrite:
-    """_do_feedback() calls add_feedback() with correct arguments."""
+    """_do_feedback() delegates to HTTP endpoint."""
 
-    def test_feedback_positive(self):
-        """Positive signal without label → add_feedback called with empty metadata."""
+    def test_feedback_no_token(self):
+        """No token → login prompt."""
         import src.api.web_ui as web_ui
+        result = web_ui._do_feedback("chk_aabbccdd", "positive", "", "")
+        assert "einloggen" in result.lower()
 
-        fake_conn = MagicMock(spec=sqlite3.Connection)
+    def test_feedback_empty_chunk_id(self):
+        """Empty chunk_id → error without HTTP call."""
+        import src.api.web_ui as web_ui
+        result = web_ui._do_feedback("", "positive", "", "sometoken")
+        assert "chunk" in result.lower() or "id" in result.lower()
 
-        with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
-        ):
-            result = web_ui._do_feedback(
-                chunk_id="chk_aabbccdd",
-                signal="positive",
-                label="",
-            )
-
-        mock_add_feedback.assert_called_once_with(
-            fake_conn, "chk_aabbccdd", "positive", {}
+    def test_feedback_positive_via_http(self):
+        """Positive signal → _api_post called with correct payload."""
+        import src.api.web_ui as web_ui
+        with patch("src.api.web_ui._api_post", return_value={"recorded": True}) as mock_post:
+            result = web_ui._do_feedback("chk_aabbccdd", "positive", "", "tok")
+        mock_post.assert_called_once_with(
+            "memory/feedback",
+            {"chunk_id": "chk_aabbccdd", "signal": "positive"},
+            "tok",
         )
         assert "gespeichert" in result.lower()
 
-    def test_feedback_with_label(self):
-        """Label is passed in metadata dict."""
+    def test_feedback_with_label_via_http(self):
+        """Label is passed in metadata."""
         import src.api.web_ui as web_ui
-
-        fake_conn = MagicMock(spec=sqlite3.Connection)
-
-        with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
-        ):
-            web_ui._do_feedback(
-                chunk_id="chk_test",
-                signal="negative",
-                label="irrelevant duplicate",
-            )
-
-        mock_add_feedback.assert_called_once_with(
-            fake_conn, "chk_test", "negative", {"label": "irrelevant duplicate"}
+        with patch("src.api.web_ui._api_post", return_value={"recorded": True}) as mock_post:
+            web_ui._do_feedback("chk_test", "negative", "irrelevant duplicate", "tok")
+        mock_post.assert_called_once_with(
+            "memory/feedback",
+            {"chunk_id": "chk_test", "signal": "negative", "metadata": {"label": "irrelevant duplicate"}},
+            "tok",
         )
 
-    def test_feedback_empty_chunk_id(self):
-        """Empty chunk_id → error message without calling add_feedback."""
+    def test_feedback_api_error(self):
+        """API error → error message forwarded."""
         import src.api.web_ui as web_ui
-
-        with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
-        ):
-            result = web_ui._do_feedback(
-                chunk_id="",
-                signal="positive",
-                label="",
-            )
-
-        mock_add_feedback.assert_not_called()
-        assert "chunk" in result.lower() or "id" in result.lower()
-
-    def test_feedback_memory_not_ready(self):
-        """_MEMORY_READY=False → error message."""
-        import src.api.web_ui as web_ui
-
-        with (
-            patch.object(web_ui, "_MEMORY_READY", False),
-            patch("src.api.web_ui.add_feedback") as mock_add_feedback,
-        ):
-            result = web_ui._do_feedback("chk_x", "positive", "")
-
-        mock_add_feedback.assert_not_called()
-        assert "nicht geladen" in result.lower() or "memory" in result.lower()
+        with patch("src.api.web_ui._api_post", return_value={"error": "server exploded"}):
+            result = web_ui._do_feedback("chk_x", "neutral", "", "tok")
+        assert "fehler" in result.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -477,14 +446,13 @@ class TestE2EAnalysisFlow:
 
     def test_feedback_after_search(self):
         import src.api.web_ui as web_ui
-        fake_conn = MagicMock(spec=sqlite3.Connection)
-        with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui.add_feedback") as mock_fb,
-        ):
-            result = web_ui._do_feedback("chk_e2e001", "positive", "relevant")
-        mock_fb.assert_called_once_with(fake_conn, "chk_e2e001", "positive", {"label": "relevant"})
+        with patch("src.api.web_ui._api_post", return_value={"recorded": True}) as mock_fb:
+            result = web_ui._do_feedback("chk_e2e001", "positive", "relevant", "tok")
+        mock_fb.assert_called_once_with(
+            "memory/feedback",
+            {"chunk_id": "chk_e2e001", "signal": "positive", "metadata": {"label": "relevant"}},
+            "tok",
+        )
         assert "gespeichert" in result.lower()
 
 
@@ -539,6 +507,5 @@ class TestE2EErrorCases:
 
     def test_feedback_on_empty_chunk_id(self):
         import src.api.web_ui as web_ui
-        with patch.object(web_ui, "_MEMORY_READY", True):
-            result = web_ui._do_feedback("", "positive", "")
+        result = web_ui._do_feedback("", "positive", "", "sometoken")
         assert "chunk" in result.lower() or "id" in result.lower()

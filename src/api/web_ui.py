@@ -405,25 +405,18 @@ def _scan_compact_files(model: str, ollama_available: bool) -> str:
 # Feedback
 # ---------------------------------------------------------------------------
 
-def _do_feedback(chunk_id: str, signal: str, label: str) -> str:
-    if not _MEMORY_READY:
-        return f"Memory-Module nicht geladen: {_IMPORT_ERROR}"
+def _do_feedback(chunk_id: str, signal: str, label: str, token: str) -> str:
+    if not token:
+        return "Erst einloggen."
     if not chunk_id.strip():
-        return "Bitte Chunk-ID eingeben."
-
-    conn = _get_conn()
-    if conn is None:
-        return "SQLite-Datenbank nicht verfugbar."
-
-    metadata: dict = {}
+        return "Chunk-ID fehlt."
+    payload: dict = {"chunk_id": chunk_id.strip(), "signal": signal}
     if label.strip():
-        metadata["label"] = label.strip()
-
-    try:
-        add_feedback(conn, chunk_id.strip(), signal, metadata)
-        return f"Feedback gespeichert: chunk_id={chunk_id.strip()}, signal={signal}"
-    except Exception as exc:
-        return f"Fehler beim Speichern: {exc}"
+        payload["metadata"] = {"label": label.strip()}
+    r = _api_post("memory/feedback", payload, token)
+    if "error" in r:
+        return f"Fehler: {r['error']}"
+    return f"Feedback gespeichert: chunk_id={chunk_id.strip()}, signal={signal}"
 
 
 # ---------------------------------------------------------------------------
@@ -1179,7 +1172,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
 
                 feedback_btn.click(
                     fn=_do_feedback,
-                    inputs=[feedback_chunk_id, feedback_signal, feedback_label],
+                    inputs=[feedback_chunk_id, feedback_signal, feedback_label, _token_state],
                     outputs=[feedback_status],
                 )
 
@@ -1212,6 +1205,157 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     fn=_poll_job,
                     inputs=[bench_job_id, _token_state],
                     outputs=[bench_output],
+                )
+
+            with gr.Accordion("Chunk-Inspector", open=False):
+                gr.Markdown(
+                    "Chunk-Details anzeigen — nutzt `GET /memory/explain/{id}` und `GET /memory/chunks/{source_id}`. "
+                    "Kein Black-Box-Feeling: du siehst genau was, woher und wie es bewertet wurde."
+                )
+                with gr.Row():
+                    inspect_chunk_id = gr.Textbox(label="Chunk-ID", scale=3)
+                    inspect_btn = gr.Button("Details laden", scale=1)
+                inspect_output = gr.Markdown("")
+
+                with gr.Row():
+                    inspect_source_id = gr.Textbox(label="Source-ID (alternativ: alle Chunks einer Quelle)", scale=3)
+                    inspect_source_btn = gr.Button("Chunks der Quelle", scale=1)
+                inspect_source_table = gr.Dataframe(
+                    headers=["chunk_id", "chunk_level", "ordinal", "is_active", "vorschau"],
+                    datatype=["str"] * 5,
+                    interactive=False,
+                )
+
+                with gr.Row():
+                    reindex_source_id = gr.Textbox(
+                        label="Source-ID (leer = alle Chunks) — ACHTUNG: kann lange dauern",
+                        scale=3,
+                    )
+                    reindex_btn = gr.Button("Reindex starten", variant="secondary", scale=1)
+                reindex_status = gr.Markdown("")
+
+                with gr.Row():
+                    invalidate_source_id = gr.Textbox(label="Source-ID (Chunks deaktivieren)", scale=3)
+                    invalidate_btn = gr.Button("Invalidieren", variant="secondary", scale=1)
+                invalidate_status = gr.Markdown("")
+
+                def _do_inspect_chunk(chunk_id, token):
+                    if not token:
+                        return "Erst einloggen."
+                    if not chunk_id.strip():
+                        return "Chunk-ID fehlt."
+                    if not _HAS_HTTPX:
+                        return "httpx nicht verfügbar."
+                    try:
+                        resp = _httpx.get(
+                            f"{_api_url}/memory/explain/{chunk_id.strip()}",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=10.0,
+                        )
+                        if resp.status_code == 404:
+                            return "Chunk nicht gefunden."
+                        if resp.status_code != 200:
+                            return f"Fehler: HTTP {resp.status_code}"
+                        data = resp.json()
+                    except Exception as exc:
+                        return f"Fehler: {exc}"
+                    lines = [
+                        f"**Chunk:** `{data.get('chunk_id')}`",
+                        f"**Memory-Key:** `{data.get('memory_key')}`",
+                        f"**Source-ID:** `{data.get('source_id')}`",
+                        f"**Level / Ordinal:** `{data.get('chunk_level')}` / `{data.get('ordinal')}`",
+                        f"**Kategorien:** `{', '.join(data.get('category_labels', [])) or '—'}`",
+                        f"**Aktiv:** `{data.get('is_active')}`",
+                        f"**Erstellt:** `{data.get('created_at')}`",
+                        f"**Quality-Score:** `{data.get('quality_score')}`",
+                    ]
+                    src = data.get("source", {})
+                    if src:
+                        lines.append(
+                            f"\n**Source:** `{src.get('path')}` @ `{src.get('branch') or '-'}` · "
+                            f"`{src.get('commit') or '-'}` · `{src.get('content_hash', '')[:20]}`"
+                        )
+                    return "\n\n".join(lines)
+
+                def _do_list_chunks(source_id, token):
+                    if not token or not source_id.strip() or not _HAS_HTTPX:
+                        return []
+                    try:
+                        resp = _httpx.get(
+                            f"{_api_url}/memory/chunks/{source_id.strip()}",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=10.0,
+                        )
+                        if resp.status_code != 200:
+                            return []
+                        data = resp.json()
+                    except Exception:
+                        return []
+                    return [
+                        [
+                            c.get("chunk_id", ""),
+                            c.get("chunk_level", ""),
+                            str(c.get("ordinal", "")),
+                            str(c.get("is_active", "")),
+                            (c.get("text", "") or "")[:120],
+                        ]
+                        for c in data.get("chunks", [])
+                    ]
+
+                def _do_reindex(source_id, token):
+                    if not token or not _HAS_HTTPX:
+                        return "Erst einloggen oder httpx fehlt."
+                    payload: dict = {"source_id": source_id.strip() or None}
+                    try:
+                        resp = _httpx.post(
+                            f"{_api_url}/memory/reindex",
+                            json=payload,
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=600.0,
+                        )
+                        data = resp.json()
+                    except Exception as exc:
+                        return f"Fehler: {exc}"
+                    if resp.status_code != 200 or "error" in data:
+                        return f"Fehler: {data.get('error') or resp.status_code}"
+                    return f"Reindexed: {data.get('reindexed_count')} chunks, {data.get('errors')} errors"
+
+                def _do_invalidate(source_id, token):
+                    if not token or not _HAS_HTTPX or not source_id.strip():
+                        return "Erst einloggen oder Source-ID fehlt."
+                    try:
+                        resp = _httpx.post(
+                            f"{_api_url}/memory/invalidate",
+                            json={"source_id": source_id.strip()},
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=10.0,
+                        )
+                        data = resp.json()
+                    except Exception as exc:
+                        return f"Fehler: {exc}"
+                    if resp.status_code != 200 or "error" in data:
+                        return f"Fehler: {data.get('error') or resp.status_code}"
+                    return f"Deaktiviert: {data.get('deactivated_count')} chunks fur `{data.get('source_id')}`"
+
+                inspect_btn.click(
+                    fn=_do_inspect_chunk,
+                    inputs=[inspect_chunk_id, _token_state],
+                    outputs=[inspect_output],
+                )
+                inspect_source_btn.click(
+                    fn=_do_list_chunks,
+                    inputs=[inspect_source_id, _token_state],
+                    outputs=[inspect_source_table],
+                )
+                reindex_btn.click(
+                    fn=_do_reindex,
+                    inputs=[reindex_source_id, _token_state],
+                    outputs=[reindex_status],
+                )
+                invalidate_btn.click(
+                    fn=_do_invalidate,
+                    inputs=[invalidate_source_id, _token_state],
+                    outputs=[invalidate_status],
                 )
 
             with gr.Accordion("Training Data Export", open=False):
