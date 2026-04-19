@@ -153,17 +153,12 @@ def test_find_event_pairs_dispatch_match():
     assert isinstance(edges, list)  # Basic: returns list, no exception
 
 
-def test_paper_rule_stubs_raise():
-    with pytest.raises(NotImplementedError):
-        find_citation_pairs({}, [])
-    with pytest.raises(NotImplementedError):
-        find_shared_concepts([], None, None, "", "")
-    with pytest.raises(NotImplementedError):
-        find_method_chains([], None, None, "", "")
-    with pytest.raises(NotImplementedError):
-        find_keyword_overlap({}, [])
-    with pytest.raises(NotImplementedError):
-        find_dataset_pairs([], None, None, "", "")
+def test_paper_rules_return_empty_for_no_papers():
+    assert find_citation_pairs({}, []) == []
+    assert find_shared_concepts([], None, None, "", "") == []
+    assert find_method_chains([], None, None, "", "") == []
+    assert find_keyword_overlap({}, []) == []
+    assert find_dataset_pairs([], None, None, "", "") == []
 
 
 def test_build_connection_graph_empty_overview():
