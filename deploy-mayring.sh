@@ -13,7 +13,7 @@ echo "==> Ensuring linn-mayring-cache volume exists..."
 docker volume inspect linn-mayring-cache &>/dev/null || docker volume create linn-mayring-cache
 
 echo "==> Pulling latest image from GHCR..."
-docker pull ghcr.io/nileneb/mayring:latest
+docker pull nileneb/mayring:latest
 
 echo "==> Starting MayringCoder stack..."
 docker compose -f docker-compose.mayring.yml up -d

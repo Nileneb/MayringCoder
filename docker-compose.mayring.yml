@@ -1,7 +1,7 @@
 name: mayring
 
 # Standalone MayringCoder Stack — unabhängig vom app.linn.games Stack.
-# Image wird in CI gebaut und nach GHCR gepusht (ghcr.io/nileneb/mayring:latest).
+# Image wird in CI gebaut und nach Docker Hub gepusht (nileneb/mayring:latest).
 # Verbindet sich über externes linn-shared Netzwerk mit Laravel (web) und Postgres.
 #
 # Einmalig auf dem Server:
@@ -13,7 +13,7 @@ name: mayring
 
 services:
   mayring-api:
-    image: ghcr.io/nileneb/mayring:latest
+    image: nileneb/mayring:latest
     command: python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8090
     ports:
       - "127.0.0.1:8090:8090"
@@ -35,7 +35,7 @@ services:
       retries: 3
 
   mayring-mcp:
-    image: ghcr.io/nileneb/mayring:latest
+    image: nileneb/mayring:latest
     command: python -m src.mcp_server
     ports:
       - "127.0.0.1:8092:8092"
@@ -50,7 +50,7 @@ services:
     networks: [linn-shared]
 
   mayring-pi:
-    image: ghcr.io/nileneb/mayring:latest
+    image: nileneb/mayring:latest
     command: python -m src.agents.pi_server
     ports:
       - "127.0.0.1:8091:8091"
@@ -61,7 +61,7 @@ services:
     networks: [linn-shared]
 
   mayring-webui:
-    image: ghcr.io/nileneb/mayring:latest
+    image: nileneb/mayring:latest
     command: python -m src.api.web_ui
     ports:
       - "127.0.0.1:7860:7860"
