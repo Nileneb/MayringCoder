@@ -358,10 +358,12 @@ def build_context(
     ollama_url: str,
     repo_slug: str = "",
     _out_trigger_ids: list | None = None,
+    chroma_collection: Any = None,
 ) -> str:
-    """Orchestrator: lädt Snapshot + Trigger-Scan → kompakter Kontext-String.
+    """Orchestrator: lädt Snapshot + Trigger-Scan + Hybrid-Retrieval → kompakter Kontext-String.
 
     Leise skippen wenn kein Snapshot vorhanden (kein LLM-Call).
+    chroma_collection=None deaktiviert den Retrieval-Block (rückwärtskompatibel).
     """
     safe_repo_slug = _safe_repo_slug(repo_slug)
     snapshot = load_ambient_snapshot(conn, safe_repo_slug)
@@ -389,7 +391,21 @@ def build_context(
         _out_trigger_ids.extend(result.trigger_ids)
     trigger_hint = result.context
 
+    retrieval_section = ""
+    if chroma_collection is not None:
+        try:
+            from src.memory.retrieval import search, compress_for_prompt
+            hits = search(
+                task, conn, chroma_collection, ollama_url,
+                opts={"top_k": 5, "repo": safe_repo_slug or None},
+            )
+            retrieval_section = compress_for_prompt(hits, char_budget=2400)
+        except Exception:
+            pass
+
     parts = [f"## Projekt-Snapshot\n{snapshot}"]
     if trigger_hint:
         parts.append(f"## Trigger-Kontext\n{trigger_hint}")
+    if retrieval_section:
+        parts.append(f"## Relevante Erinnerungen\n{retrieval_section}")
     return "\n\n".join(parts)

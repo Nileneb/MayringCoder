@@ -205,6 +205,27 @@ def test_build_context_no_snapshot():
     conn.close()
 
 
+def _safe_slug(repo: str) -> str:
+    import hashlib
+    return hashlib.sha256(repo.encode("utf-8")).hexdigest()
+
+
+def _insert_snapshot_for_repo(conn, repo: str, text: str = "Snapshot-Text", chunk_id: str = "chunk1") -> str:
+    """Insert an ambient snapshot using the correct hashed source_id."""
+    safe = _safe_slug(repo)
+    source_id = f"ambient:{safe}:snapshot"
+    conn.execute(
+        "INSERT OR IGNORE INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
+        (source_id, "ambient_snapshot", repo, "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00"),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
+        (chunk_id, source_id, text, "ambient_snapshot", 1, "2026-01-01T00:00:00"),
+    )
+    conn.commit()
+    return safe
+
+
 def test_build_context_snapshot_only(tmp_path, monkeypatch):
     """build_context returns snapshot section when no index/embs files exist."""
     from src.memory.ambient import build_context
@@ -212,21 +233,17 @@ def test_build_context_snapshot_only(tmp_path, monkeypatch):
     (tmp_path / "cache").mkdir()
 
     conn = _init_test_db()
-    source_id = "ambient:myrepo:snapshot"
-    conn.execute(
-        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
-        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
-    )
-    conn.execute(
-        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
-        ("chunk1", source_id, "Mein Snapshot-Text", "ambient_snapshot", 1, "2026-01-01T00:00:00")
-    )
-    conn.commit()
+    _insert_snapshot_for_repo(conn, "myrepo", "Mein Snapshot-Text")
 
     result = build_context("some task", conn, "", "myrepo")
     assert "Projekt-Snapshot" in result
     assert "Mein Snapshot-Text" in result
     conn.close()
+
+
+def _wiki_cache_slug(repo: str) -> str:
+    """Return the double-hashed slug used by _safe_cache_file for wiki index files."""
+    return _safe_slug(_safe_slug(repo))
 
 
 def test_build_context_with_trigger_hit(tmp_path, monkeypatch):
@@ -236,21 +253,13 @@ def test_build_context_with_trigger_hit(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
 
-    (tmp_path / "cache" / "myrepo_wiki_index.json").write_text(
+    safe = _wiki_cache_slug("myrepo")
+    (tmp_path / "cache" / f"{safe}_wiki_index.json").write_text(
         json.dumps({"creditservice": ["CreditCluster"]}), encoding="utf-8"
     )
 
     conn = _init_test_db()
-    source_id = "ambient:myrepo:snapshot"
-    conn.execute(
-        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
-        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
-    )
-    conn.execute(
-        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
-        ("chunk1", source_id, "Snapshot-Text", "ambient_snapshot", 1, "2026-01-01T00:00:00")
-    )
-    conn.commit()
+    _insert_snapshot_for_repo(conn, "myrepo")
 
     result = build_context("What does CreditService do?", conn, "", "myrepo")
     assert "Projekt-Snapshot" in result
@@ -369,20 +378,12 @@ def test_build_context_collects_trigger_ids(tmp_path, monkeypatch):
     from src.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
-    (tmp_path / "cache" / "myrepo_wiki_index.json").write_text(
+    safe = _wiki_cache_slug("myrepo")
+    (tmp_path / "cache" / f"{safe}_wiki_index.json").write_text(
         json.dumps({"creditservice": ["CreditCluster"]}), encoding="utf-8"
     )
     conn = _init_test_db()
-    source_id = "ambient:myrepo:snapshot"
-    conn.execute(
-        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
-        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
-    )
-    conn.execute(
-        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
-        ("c1", source_id, "Snapshot-Text", "ambient_snapshot", 1, "2026-01-01T00:00:00")
-    )
-    conn.commit()
+    _insert_snapshot_for_repo(conn, "myrepo", chunk_id="c1")
     out_ids: list = []
     build_context("What does CreditService do?", conn, "", "myrepo", _out_trigger_ids=out_ids)
     assert any("creditservice" in tid for tid in out_ids)
@@ -476,21 +477,82 @@ def test_build_context_out_trigger_ids_populated(tmp_path, monkeypatch):
     from src.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
-    (tmp_path / "cache" / "myrepo_wiki_index.json").write_text(
+    safe = _wiki_cache_slug("myrepo")
+    (tmp_path / "cache" / f"{safe}_wiki_index.json").write_text(
         json.dumps({"creditservice": ["CreditCluster"]}), encoding="utf-8"
     )
     conn = _init_test_db()
-    source_id = "ambient:myrepo:snapshot"
-    conn.execute(
-        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\", content_hash, captured_at) VALUES (?,?,?,?,?,?,?,?)",
-        (source_id, "ambient_snapshot", "myrepo", "ambient/snapshot", "local", "", "sha256:abc", "2026-01-01T00:00:00")
-    )
-    conn.execute(
-        "INSERT INTO chunks (chunk_id, source_id, text, chunk_level, is_active, created_at) VALUES (?,?,?,?,?,?)",
-        ("c1", source_id, "Snapshot", "ambient_snapshot", 1, "2026-01-01T00:00:00")
-    )
-    conn.commit()
+    _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="c1")
     out_ids: list = []
     build_context("What does CreditService do?", conn, "", "myrepo", _out_trigger_ids=out_ids)
     assert any("creditservice" in tid for tid in out_ids)
+    conn.close()
+
+
+# ── Retrieval integration tests ───────────────────────────────────────────────
+
+def test_build_context_skips_retrieval_when_no_chroma(tmp_path, monkeypatch):
+    """chroma_collection=None (default) → no crash, no Relevante Erinnerungen section."""
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    conn = _init_test_db()
+    _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="snap1")
+    result = build_context("analyse this", conn, "", "myrepo", chroma_collection=None)
+    assert "## Projekt-Snapshot" in result
+    assert "## Relevante Erinnerungen" not in result
+    conn.close()
+
+
+def test_build_context_skips_empty_retrieval(tmp_path, monkeypatch):
+    """search() returns empty list → Relevante Erinnerungen block not added."""
+    from unittest.mock import patch, MagicMock
+    from src.memory.ambient import build_context
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    conn = _init_test_db()
+    _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="snap2")
+    fake_chroma = MagicMock()
+    with patch("src.memory.retrieval.search", return_value=[]):
+        result = build_context("analyse this", conn, "", "myrepo", chroma_collection=fake_chroma)
+    assert "## Relevante Erinnerungen" not in result
+    conn.close()
+
+
+def test_build_context_includes_retrieval_section(tmp_path, monkeypatch):
+    """search() returns results → ## Relevante Erinnerungen section present."""
+    from unittest.mock import patch, MagicMock
+    from src.memory.ambient import build_context
+    from src.memory.schema import RetrievalRecord
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    conn = _init_test_db()
+    _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="snap3")
+    fake_chroma = MagicMock()
+    fake_record = RetrievalRecord(
+        chunk_id="c1", source_id="src1", text="Memory chunk about payments",
+        score_final=0.9, category_labels=["domain"],
+    )
+    with patch("src.memory.retrieval.search", return_value=[fake_record]):
+        result = build_context("analyse payments", conn, "", "myrepo", chroma_collection=fake_chroma)
+    assert "## Relevante Erinnerungen" in result
+    assert "payments" in result
+    conn.close()
+
+
+def test_build_context_retrieval_respects_char_budget(tmp_path, monkeypatch):
+    """compress_for_prompt is called with char_budget=2400."""
+    from unittest.mock import patch, MagicMock
+    from src.memory.ambient import build_context
+    from src.memory.schema import RetrievalRecord
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cache").mkdir()
+    conn = _init_test_db()
+    _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="snap4")
+    fake_chroma = MagicMock()
+    fake_record = RetrievalRecord(chunk_id="c1", source_id="s1", text="x", score_final=0.8)
+    with patch("src.memory.retrieval.search", return_value=[fake_record]), \
+         patch("src.memory.retrieval.compress_for_prompt", return_value="compressed") as mock_cfp:
+        build_context("task", conn, "", "myrepo", chroma_collection=fake_chroma)
+    mock_cfp.assert_called_once_with([fake_record], char_budget=2400)
     conn.close()
