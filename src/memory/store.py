@@ -214,6 +214,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             relevance_score  REAL NOT NULL,
             captured_at      TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS topic_transitions (
+            from_topic  TEXT NOT NULL,
+            to_topic    TEXT NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 1,
+            last_seen   TEXT NOT NULL,
+            PRIMARY KEY (from_topic, to_topic)
+        );
     """)
 
     # Migration: add missing columns to existing DBs
