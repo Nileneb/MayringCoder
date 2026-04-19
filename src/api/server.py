@@ -16,6 +16,7 @@ Endpoints (authenticated via Bearer <sanctum_token>):
     POST /issues/ingest    — GitHub issues → memory (returns job_id)
     POST /populate         — repo source files → memory (returns job_id)
     POST /papers/ingest    — ArXiv papers → memory (returns job_id)
+    POST /duel             — run same task on two models, compare results (returns job_id)
     GET  /jobs/{job_id}    — poll job status and output
     POST /memory/search    — search workspace memory
     POST /memory/put       — ingest into workspace memory
@@ -133,6 +134,15 @@ class MemoryPutRequest(BaseModel):
     path: str = ""
     content: str
     categorize: bool = False
+
+
+class DuelRequest(BaseModel):
+    task: str
+    model_a: str
+    model_b: str
+    repo_slug: str | None = None
+    system_prompt: str | None = None
+    timeout: float = 180.0
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +397,63 @@ async def trigger_paper_ingest(
         args.append("--force-reingest")
     asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
     return {"job_id": job_id, "status": "started", "papers_dir": request.papers_dir}
+
+
+@app.post("/duel")
+async def trigger_duel(
+    request: DuelRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Run the same task on two models sequentially. Poll /jobs/{id} for results."""
+    if not request.task.strip():
+        raise HTTPException(status_code=400, detail="task required")
+    if not request.model_a or not request.model_b:
+        raise HTTPException(status_code=400, detail="model_a and model_b required")
+    job_id = _make_job(workspace_id)
+    asyncio.create_task(_run_duel(job_id, request, workspace_id))
+    return {"job_id": job_id, "status": "started", "model_a": request.model_a, "model_b": request.model_b}
+
+
+async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> None:
+    """Sequential execution of Pi-task on both models."""
+    import time
+    from src.agents.pi import run_task_with_memory
+    _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
+    loop = asyncio.get_event_loop()
+
+    def _run_one(model: str) -> tuple[str, float]:
+        t0 = time.monotonic()
+        try:
+            out = run_task_with_memory(
+                task=request.task,
+                ollama_url=_OLLAMA_URL,
+                model=model,
+                repo_slug=_repo_slug,
+                system_prompt=request.system_prompt,
+                timeout=request.timeout,
+            )
+        except Exception as exc:
+            out = f"[Fehler] {exc}"
+        return out, round((time.monotonic() - t0) * 1000, 1)
+
+    job = _JOBS.get(job_id)
+    if not job:
+        return
+    job["progress"] = "running_a"
+    job["model_a"] = request.model_a
+    job["model_b"] = request.model_b
+
+    result_a, time_a = await loop.run_in_executor(None, _run_one, request.model_a)
+    job["result_a"] = result_a
+    job["time_a_ms"] = time_a
+    job["progress"] = "running_b"
+
+    result_b, time_b = await loop.run_in_executor(None, _run_one, request.model_b)
+    job["result_b"] = result_b
+    job["time_b_ms"] = time_b
+    job["progress"] = "done"
+    job["status"] = "finished"
+    job["output"] = f"Duell fertig — A: {time_a}ms, B: {time_b}ms"
 
 
 @app.get("/reports")
