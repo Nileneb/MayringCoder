@@ -329,14 +329,27 @@ def load_ambient_snapshot(conn: Any, repo_slug: str = "") -> str | None:
 
 
 def _safe_repo_slug(repo_slug: str) -> str:
-    """Return a filesystem-safe repo slug for cache filenames, else empty string."""
+    """Return a deterministic filesystem-safe cache key for repo_slug, else empty string."""
     if not repo_slug:
         return ""
-    if ".." in repo_slug or "/" in repo_slug or "\\" in repo_slug:
-        return ""
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", repo_slug):
-        return ""
-    return repo_slug
+    return hashlib.sha256(repo_slug.encode("utf-8")).hexdigest()
+
+
+def _safe_cache_file(cache_dir: Path, repo_slug: str, suffix: str) -> Path | None:
+    """Build a cache file path under cache_dir from repo_slug, else return None."""
+    safe_slug = _safe_repo_slug(repo_slug)
+    if not safe_slug:
+        return None
+
+    base_dir = cache_dir.resolve()
+    candidate = (base_dir / f"{safe_slug}_{suffix}").resolve()
+
+    try:
+        candidate.relative_to(cache_dir)
+    except ValueError:
+        return None
+
+    return candidate
 
 
 def build_context(
@@ -350,26 +363,26 @@ def build_context(
 
     Leise skippen wenn kein Snapshot vorhanden (kein LLM-Call).
     """
-    snapshot = load_ambient_snapshot(conn, repo_slug)
+    safe_repo_slug = _safe_repo_slug(repo_slug)
+    snapshot = load_ambient_snapshot(conn, safe_repo_slug)
     if not snapshot:
         return ""
 
     keyword_index: dict[str, list[str]] = {}
     cluster_embs: dict[str, list[float]] = {}
-    safe_repo_slug = _safe_repo_slug(repo_slug)
-    if safe_repo_slug:
-        idx_path = Path("cache") / f"{safe_repo_slug}_wiki_index.json"
-        emb_path = Path("cache") / f"{safe_repo_slug}_wiki_clusters_emb.json"
-        if idx_path.exists():
-            try:
-                keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        if emb_path.exists():
-            try:
-                cluster_embs = json.loads(emb_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+    cache_dir = Path("cache").resolve()
+    idx_path = _safe_cache_file(cache_dir, safe_repo_slug, "wiki_index.json")
+    emb_path = _safe_cache_file(cache_dir, safe_repo_slug, "wiki_clusters_emb.json")
+    if idx_path and idx_path.exists():
+        try:
+            keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    if emb_path and emb_path.exists():
+        try:
+            cluster_embs = json.loads(emb_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
 
     result = trigger_scan(task, keyword_index, cluster_embs, ollama_url, conn=conn)
     if _out_trigger_ids is not None:
