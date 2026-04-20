@@ -31,7 +31,8 @@ MayringCoder verifiziert sie nur mit dem Public-Key. Pflicht-Claims:
 | `aud`          | `mayringcoder`                | muss exakt stimmen                        |
 | `exp`          | UNIX-Timestamp                | PyJWT prüft automatisch                   |
 | `workspace_id` | nicht-leerer String           | **fehlend → 401** (kein Default-Fallback) |
-| `scope`        | `[]` oder `["admin"]` (opt.)  | `admin` bypasst den Tenant-Filter         |
+| `scope`        | enthält `"mcp:memory"`        | **fehlend → 401** (Schutz vor fremden JWTs, z.B. paper-search) |
+| `scope[+admin]`| zusätzlich `"admin"` (optional)| `admin` bypasst den Tenant-Filter |
 
 **Env-Vars:**
 - `MCP_TRANSPORT=http` — aktiviert HTTP-Modus

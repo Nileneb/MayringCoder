@@ -42,7 +42,11 @@ def configured_env(rsa_keys, tmp_path: Path, monkeypatch):
     jwt_auth.reset_public_key_cache()
 
 
+_MCP_SCOPE = ["mcp:memory"]
+
+
 def _sign(private_pem: str, **claims) -> str:
+    claims.setdefault("scope", _MCP_SCOPE)
     return pyjwt.encode(claims, private_pem, algorithm="RS256")
 
 
@@ -71,11 +75,23 @@ def test_admin_scope_list(configured_env):
         aud="mayringcoder",
         exp=int(time.time()) + 300,
         workspace_id="bene-workspace",
-        scope=["admin"],
+        scope=["mcp:memory", "admin"],
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
     assert info.is_admin is True
+
+
+def test_missing_mcp_memory_scope_rejected(configured_env):
+    token = _sign(
+        configured_env,
+        iss="https://app.linn.games",
+        aud="mayringcoder",
+        exp=int(time.time()) + 300,
+        workspace_id="bene-workspace",
+        scope=["paper-search:read"],
+    )
+    assert jwt_auth.validate_jwt_token(token) is None
 
 
 def test_admin_scope_space_string(configured_env):
@@ -85,7 +101,7 @@ def test_admin_scope_space_string(configured_env):
         aud="mayringcoder",
         exp=int(time.time()) + 300,
         workspace_id="bene-workspace",
-        scope="admin read",
+        scope="mcp:memory admin read",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None

@@ -1,15 +1,17 @@
 """RS256 JWT validation — only auth method for MayringCoder.
 
 Public key is held locally; app.linn.games holds the matching private key and
-issues tokens. Claims validated: exp, iss, aud, workspace_id (required).
+issues tokens via app/Services/JwtIssuer.php (commit 8dfa1c0). Required
+claims: exp, iss, aud, workspace_id, scope ∋ "mcp:memory".
 
 Required .env:
     JWT_PUBLIC_KEY_PATH   Path to RS256 public key PEM file
     JWT_ISSUER            Expected "iss" claim (e.g. "https://app.linn.games")
     JWT_AUDIENCE          Expected "aud" claim (e.g. "mayringcoder")
 
-A token with `scope: ["admin"]` gets cross-workspace (system) access. A token
-without a `workspace_id` claim is rejected outright — no silent fallback.
+A token with scope containing "admin" gets cross-workspace (system) access.
+Every token must carry scope "mcp:memory" — a JWT issued for another service
+(e.g. paper-search) is rejected here even if iss/aud match.
 """
 from __future__ import annotations
 
@@ -77,7 +79,10 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
         return None
 
     workspace_id = payload.get("workspace_id")
-    if not isinstance(workspace_id, str) or not workspace_id.strip():
+    if workspace_id is None:
+        return None
+    workspace_id = str(workspace_id).strip()
+    if not workspace_id:
         return None
 
     raw_scopes = payload.get("scope", [])
@@ -88,7 +93,12 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     else:
         scopes = ()
 
-    return TokenInfo(workspace_id=workspace_id.strip(), scopes=scopes)
+    # Every MayringCoder JWT must carry the mcp:memory scope, so tokens minted
+    # for a different service (e.g. paper-search) don't silently work here.
+    if "mcp:memory" not in scopes:
+        return None
+
+    return TokenInfo(workspace_id=workspace_id, scopes=scopes)
 
 
 def reset_public_key_cache() -> None:

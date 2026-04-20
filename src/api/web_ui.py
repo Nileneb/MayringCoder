@@ -454,18 +454,69 @@ def _validate_token(token: str) -> tuple[bool, str]:
         return False, f"Auth-Fehler: {exc}"
 
 
+def _laravel_base() -> str:
+    return os.environ.get("LARAVEL_INTERNAL_URL", "https://app.linn.games").rstrip("/")
+
+
+def _laravel_headers() -> dict[str, str]:
+    base = _laravel_base()
+    return {"Host": "app.linn.games"} if base.startswith("http://") else {}
+
+
+def refresh_jwt(old_token: str) -> str | None:
+    """Best-effort JWT refresh via app.linn.games.
+
+    Sends POST /api/mayring/refresh-token with the old JWT as Bearer. If
+    Laravel accepts that (either via Sanctum bridge or dedicated middleware),
+    a fresh JWT comes back. If not, we return None and the caller redirects
+    the user to the mayring-dashboard login for a new handoff code.
+    """
+    if not _HAS_HTTPX or not old_token:
+        return None
+    try:
+        resp = _httpx.post(
+            f"{_laravel_base()}/api/mayring/refresh-token",
+            headers={
+                "Authorization": f"Bearer {old_token}",
+                **_laravel_headers(),
+            },
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            fresh = (resp.json() or {}).get("token", "").strip()
+            return fresh or None
+    except Exception:
+        pass
+    return None
+
+
 def _api_post(endpoint: str, payload: dict, token: str) -> dict:
     if not _HAS_HTTPX:
         return {"error": "httpx nicht installiert"}
     if not token:
         return {"error": "Nicht eingeloggt."}
+    url = f"{_api_url}/{endpoint.lstrip('/')}"
     try:
         r = _httpx.post(
-            f"{_api_url}/{endpoint.lstrip('/')}",
+            url,
             json=payload,
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
         )
+        if r.status_code == 401:
+            fresh = refresh_jwt(token)
+            if fresh:
+                r = _httpx.post(
+                    url, json=payload,
+                    headers={"Authorization": f"Bearer {fresh}"},
+                    timeout=10.0,
+                )
+                if r.status_code == 200:
+                    out = r.json()
+                    if isinstance(out, dict):
+                        out["_refreshed_token"] = fresh
+                    return out
+            return {"error": "Session abgelaufen. Bitte neu einloggen via app.linn.games/mayring/dashboard."}
         return r.json()
     except Exception as exc:
         return {"error": str(exc)}
