@@ -3,9 +3,9 @@
 Each workspace can point at its own backend — own local Ollama (LAN/Tailscale),
 own Anthropic/OpenAI API key, or fall through to platform-managed default.
 
-Laravel side serves GET /mcp-service/llm-endpoint/{workspace_id} (auth via
-MCP_SERVICE_TOKEN). See docs/laravel_llm_endpoints_spec.md for the Laravel
-implementation contract.
+Laravel side serves GET /api/mcp-service/llm-endpoint/{workspace_id} (auth
+via MCP_SERVICE_TOKEN). See docs/laravel_llm_endpoints_spec.md for the
+Laravel implementation contract.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def fetch_endpoint(workspace_id: str, *, timeout: float = 3.0) -> LLMEndpoint | 
     token = _service_token()
     if not token or not workspace_id:
         return None
-    url = f"{_service_base_url()}/mcp-service/llm-endpoint/{workspace_id}"
+    url = f"{_service_base_url()}/api/mcp-service/llm-endpoint/{workspace_id}"
     try:
         resp = httpx.get(
             url,

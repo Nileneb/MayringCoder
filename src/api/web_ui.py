@@ -667,11 +667,17 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
         _workspace_state = gr.State("")
 
         # --- Header: Login + Status ---
-        with gr.Accordion("Einloggen (Sanctum Token)", open=True) as login_accordion:
+        with gr.Accordion("Einloggen", open=True) as login_accordion:
+            gr.Markdown(
+                "Normalerweise kommst du via "
+                "[app.linn.games/mayring/dashboard](https://app.linn.games/mayring/dashboard) "
+                "hier an — der Login passiert dann automatisch. "
+                "Falls du einen JWT manuell einfügen willst, unten rein."
+            )
             with gr.Row():
                 login_token_input = gr.Textbox(
-                    label="Personal Access Token (aus app.linn.games)",
-                    placeholder="1|abc123...",
+                    label="JWT (optional, manuelles Login)",
+                    placeholder="eyJhbGciOiJSUzI1NiIs…",
                     type="password",
                     scale=4,
                 )

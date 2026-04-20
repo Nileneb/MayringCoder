@@ -139,6 +139,23 @@ def test_cache_ttl_expiry(configured, monkeypatch):
     assert True
 
 
+def test_fetch_uses_api_prefix(configured, monkeypatch):
+    """Regression: Laravel serves at /api/mcp-service/... not /mcp-service/..."""
+    captured = {}
+
+    def _get(url, headers=None, timeout=None):
+        captured["url"] = url
+        import json
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, content=json.dumps({
+            "provider": "ollama", "base_url": "http://x:11434", "model": "m",
+        }).encode(), request=req)
+    monkeypatch.setattr(httpx, "get", _get)
+
+    get_llm_endpoint("bene-workspace")
+    assert captured["url"] == "http://laravel-test/api/mcp-service/llm-endpoint/bene-workspace"
+
+
 def test_invalidate_one_workspace(configured, monkeypatch):
     import json
 
