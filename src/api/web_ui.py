@@ -666,76 +666,48 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
         _token_state = gr.State("")
         _workspace_state = gr.State("")
 
-        # --- Header: Login + Status ---
-        with gr.Accordion("Einloggen", open=True) as login_accordion:
-            gr.Markdown(
-                "Normalerweise kommst du via "
-                "[app.linn.games/mayring/dashboard](https://app.linn.games/mayring/dashboard) "
-                "hier an — der Login passiert dann automatisch. "
-                "Falls du einen JWT manuell einfügen willst, unten rein."
-            )
-            with gr.Row():
-                login_token_input = gr.Textbox(
-                    label="JWT (optional, manuelles Login)",
-                    placeholder="eyJhbGciOiJSUzI1NiIs…",
-                    type="password",
-                    scale=4,
-                )
-                login_btn = gr.Button("Einloggen", variant="primary", scale=1)
-            login_status = gr.Markdown("_Nicht eingeloggt._")
-
-        def _login(token):
-            ok, result = _validate_token(token)
-            if ok:
-                return (
-                    token, result,
-                    f"Eingeloggt als Workspace: `{result}`",
-                    gr.Accordion(open=False),
-                )
-            return "", "", f"Fehler: {result}", gr.Accordion(open=True)
-
-        login_btn.click(
-            fn=_login,
-            inputs=[login_token_input],
-            outputs=[_token_state, _workspace_state, login_status, login_accordion],
+        # --- Header: Login-Status (JWT-only, via app.linn.games auto-login) ---
+        _LOGGED_OUT_MD = (
+            "🔒 **Nicht eingeloggt.** "
+            "&nbsp;[→ Jetzt via app.linn.games einloggen]"
+            "(https://app.linn.games/mayring/dashboard)"
         )
+        login_status = gr.Markdown(_LOGGED_OUT_MD)
 
         def _auto_login(request: gr.Request):
+            """Auto-login: ?code=<uuid> → Laravel token-exchange → JWT.
+
+            Der einzige unterstützte Login-Pfad. Kein manuelles Token-Paste mehr.
+            """
             params = dict(request.query_params) if request.query_params else {}
-
-            # Exchange code flow: code → server-to-server fetch of real token
             code = params.get("code", "").strip()
-            if code and _HAS_HTTPX:
-                try:
-                    base = os.environ.get("LARAVEL_INTERNAL_URL", "https://app.linn.games").rstrip("/")
-                    headers = {"Host": "app.linn.games"} if base.startswith("http://") else {}
-                    resp = _httpx.get(
-                        f"{base}/api/mayring/token-exchange",
-                        params={"code": code},
-                        headers=headers,
-                        timeout=5.0,
-                    )
-                    if resp.status_code == 200:
-                        token = resp.json().get("token", "").strip()
-                        if token:
-                            ok, result = _validate_token(token)
-                            if ok:
-                                return token, result, "Eingeloggt als Workspace: " + str(result), gr.Accordion(open=False)
-                except Exception:
-                    pass
+            if not code or not _HAS_HTTPX:
+                return "", "", _LOGGED_OUT_MD
 
-            # Legacy: direct __token in URL (deprecated, kept for backward compat)
-            token = params.get("__token", "").strip()
-            if not token:
-                return "", "", "_Nicht eingeloggt._", gr.Accordion(open=True)
-            ok, result = _validate_token(token)
-            if ok:
-                return token, result, "Eingeloggt als Workspace: " + str(result), gr.Accordion(open=False)
-            return "", "", "Fehler: " + str(result), gr.Accordion(open=True)
+            try:
+                base = os.environ.get("LARAVEL_INTERNAL_URL", "https://app.linn.games").rstrip("/")
+                headers = {"Host": "app.linn.games"} if base.startswith("http://") else {}
+                resp = _httpx.get(
+                    f"{base}/api/mayring/token-exchange",
+                    params={"code": code},
+                    headers=headers,
+                    timeout=5.0,
+                )
+                if resp.status_code == 200:
+                    token = resp.json().get("token", "").strip()
+                    if token:
+                        ok, result = _validate_token(token)
+                        if ok:
+                            return token, result, f"✅ Eingeloggt als Workspace `{result}`"
+                        return "", "", f"⚠️ Token ungültig: {result}. {_LOGGED_OUT_MD}"
+            except Exception as exc:
+                return "", "", f"⚠️ Login-Fehler: {exc}. {_LOGGED_OUT_MD}"
+
+            return "", "", _LOGGED_OUT_MD
 
         app.load(
             fn=_auto_login,
-            outputs=[_token_state, _workspace_state, login_status, login_accordion],
+            outputs=[_token_state, _workspace_state, login_status],
         )
 
         with gr.Row():
