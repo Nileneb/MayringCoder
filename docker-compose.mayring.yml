@@ -36,6 +36,7 @@ services:
     volumes:
       - linn-mayring-cache:/app/cache
       - ./reports:/app/reports
+      - ./secrets:/secrets:ro
     restart: unless-stopped
     networks: [mayring-internal, linn-shared]
     healthcheck:
@@ -54,6 +55,7 @@ services:
       MCP_HTTP_PORT: "8092"
     volumes:
       - linn-mayring-cache:/app/cache:ro
+      - ./secrets:/secrets:ro
     restart: unless-stopped
     networks: [mayring-internal]
 
@@ -63,6 +65,7 @@ services:
     env_file: .env.production
     volumes:
       - linn-mayring-cache:/app/cache:ro
+      - ./secrets:/secrets:ro
     restart: unless-stopped
     networks: [mayring-internal]
 
@@ -76,6 +79,7 @@ services:
       GRADIO_SERVER_NAME: "0.0.0.0"
     volumes:
       - linn-mayring-cache:/app/cache:ro
+      - ./secrets:/secrets:ro
     restart: unless-stopped
     networks: [mayring-internal]
 
