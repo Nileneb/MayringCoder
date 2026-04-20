@@ -9,19 +9,52 @@ Wire names follow the pattern `mcp__memory__<tool_name>`.
 Für Remote-Zugriff (z. B. von app.linn.games oder unterwegs):
 
 ```bash
-# Starten
-MCP_TRANSPORT=http MCP_AUTH_TOKEN=<secret> docker compose --profile http up -d
+MCP_TRANSPORT=http MCP_AUTH_ENABLED=true \
+JWT_PUBLIC_KEY_PATH=/secrets/jwt_public.pem \
+JWT_ISSUER=https://app.linn.games \
+JWT_AUDIENCE=mayringcoder \
+docker compose --profile http up -d
 ```
 
-**Auth-Header:** `X-Auth-Token: <secret>` (kein Bearer — proxy-kompatibel)
+**Auth-Header:** `Authorization: Bearer <rs256-jwt>` (oder `X-Auth-Token: <jwt>`)
 
 **Endpunkt:** `POST http://<host>:8000/mcp`
 
+### RS256 JWT contract
+
+app.linn.games hält den RSA-Private-Key und stellt JWTs für eingeloggte User aus.
+MayringCoder verifiziert sie nur mit dem Public-Key. Pflicht-Claims:
+
+| Claim          | Wert                          | Notes                                    |
+|----------------|-------------------------------|------------------------------------------|
+| `iss`          | `https://app.linn.games`      | muss exakt stimmen                        |
+| `aud`          | `mayringcoder`                | muss exakt stimmen                        |
+| `exp`          | UNIX-Timestamp                | PyJWT prüft automatisch                   |
+| `workspace_id` | nicht-leerer String           | **fehlend → 401** (kein Default-Fallback) |
+| `scope`        | `[]` oder `["admin"]` (opt.)  | `admin` bypasst den Tenant-Filter         |
+
 **Env-Vars:**
 - `MCP_TRANSPORT=http` — aktiviert HTTP-Modus
-- `MCP_AUTH_TOKEN=` — Shared Secret (leer = kein Auth, nur lokal)
-- `MCP_HTTP_PORT=8000` — Port (Standard: 8000)
-- `MCP_HTTP_HOST=0.0.0.0` — Bind-Adresse
+- `MCP_AUTH_ENABLED=true` — Auth scharf schalten
+- `JWT_PUBLIC_KEY_PATH` — PEM-Datei des RS256-Public-Keys
+- `JWT_ISSUER` — erwarteter `iss`-Claim
+- `JWT_AUDIENCE` — erwarteter `aud`-Claim
+- `MCP_SERVICE_TOKEN` — **getrennter** Shared Secret nur für `POST /authorize/register-code` (app.linn.games → MCP OAuth-Code-Register). Kein User-Token.
+- `MCP_HTTP_PORT=8000`, `MCP_HTTP_HOST=0.0.0.0`
+
+### OAuth-Flow (Claude Web / Langdock)
+
+```
+Client → MCP /authorize (GET)
+       → 302 Redirect to https://app.linn.games/mcp/authorize?...
+User logs in at app.linn.games, backend POSTs /authorize/register-code with:
+       { code, token=<RS256-JWT>, workspace_id, code_challenge, redirect_uri, state }
+       Auth-Header: Bearer <MCP_SERVICE_TOKEN>
+User's browser → Client callback ?code=<code>&state=<state>
+Client → MCP /token (POST, grant_type=authorization_code, PKCE verifier)
+       → { access_token=<RS256-JWT>, token_type="bearer", workspace_id }
+Client → MCP /mcp with Authorization: Bearer <RS256-JWT>
+```
 
 ---
 

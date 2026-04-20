@@ -65,65 +65,55 @@ load_dotenv(_ROOT / ".env")
 # HTTP transport configuration (read before FastMCP is instantiated)
 # ---------------------------------------------------------------------------
 
-_TRANSPORT    = os.getenv("MCP_TRANSPORT", "stdio")
-_AUTH_ENABLED = os.getenv("MCP_AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
-_AUTH_MODE    = os.getenv("MCP_AUTH_MODE", "auto")   # "sanctum" | "jwt" | "static" | "none" | "auto"
-_AUTH_SECRET  = os.getenv("MCP_AUTH_SECRET", "")
-_AUTH_TOKEN   = os.getenv("MCP_AUTH_TOKEN", "")      # legacy static token
-_HTTP_PORT    = int(os.getenv("MCP_HTTP_PORT", "8000"))
-_HTTP_HOST    = os.getenv("MCP_HTTP_HOST", "0.0.0.0")
+_TRANSPORT       = os.getenv("MCP_TRANSPORT", "stdio")
+_AUTH_ENABLED    = os.getenv("MCP_AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+_HTTP_PORT       = int(os.getenv("MCP_HTTP_PORT", "8000"))
+_HTTP_HOST       = os.getenv("MCP_HTTP_HOST", "0.0.0.0")
+# Shared secret for service-to-service calls (app.linn.games → MayringCoder),
+# used only by POST /authorize/register-code. NOT a user auth token.
+_SERVICE_TOKEN   = os.getenv("MCP_SERVICE_TOKEN", "")
 
-# Per-request context: workspace_id derived from Bearer token in HTTP mode.
-# Empty string → stdio mode → tools fall back to their caller-supplied default.
-_WORKSPACE_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("workspace_id", default="")
+from src.api.jwt_auth import TokenInfo, validate_jwt_token
+
+# Per-request context: TokenInfo derived from Bearer JWT in HTTP mode.
+# None → stdio mode → tools fall back to their caller-supplied default.
+_TOKEN_CTX: contextvars.ContextVar["TokenInfo | None"] = contextvars.ContextVar(
+    "token_info", default=None
+)
+
+
+def _current_token_info() -> "TokenInfo | None":
+    return _TOKEN_CTX.get(None)
 
 
 def _effective_workspace_id(caller_default: str = "default") -> str:
-    """Return workspace_id from token context (HTTP) or caller default (stdio)."""
-    ctx = _WORKSPACE_CTX.get("")
-    return ctx if ctx else (caller_default or "default")
+    """Return workspace_id from JWT context (HTTP) or caller default (stdio)."""
+    info = _TOKEN_CTX.get(None)
+    if info is None:
+        return caller_default or "default"
+    return info.workspace_id
 
 
-class _XAuthMiddleware:
-    """Rejects HTTP requests missing a valid X-Auth-Token header.
-    Skips auth if MCP_AUTH_TOKEN is empty (local/dev mode).
-    Kept for backward compatibility — new code should use _JWTAuthMiddleware.
+def _enforce_tenant(requested: str | None) -> str | None:
+    """For workspace-scoped tools: resolve the effective workspace_id for a request.
+
+    - admin JWT (scope: ["admin"]): may request any workspace or None (cross-workspace).
+    - tenant JWT: locked to its own workspace_id; returns that regardless of request.
+    - stdio mode: falls through to requested (or None).
     """
-
-    def __init__(self, app: Any) -> None:
-        self._app = app
-
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and _AUTH_TOKEN:
-            headers = dict(scope.get("headers", []))
-            token = headers.get(b"x-auth-token", b"").decode()
-            if token != _AUTH_TOKEN:
-                body = b"Unauthorized"
-                await send({
-                    "type": "http.response.start",
-                    "status": 401,
-                    "headers": [
-                        [b"content-type", b"text/plain; charset=utf-8"],
-                        [b"content-length", str(len(body)).encode()],
-                    ],
-                })
-                await send({"type": "http.response.body", "body": body})
-                return
-        await self._app(scope, receive, send)
+    info = _TOKEN_CTX.get(None)
+    if info is None:
+        return requested
+    if info.is_admin:
+        return requested
+    return info.workspace_id
 
 
 class _JWTAuthMiddleware:
-    """Unified auth middleware for MCP HTTP transport.
+    """RS256 JWT auth for MCP HTTP transport.
 
-    Auth modes (MCP_AUTH_MODE env var):
-    - "sanctum"  — Laravel Sanctum token "{id}|{plaintext}" validated against
-                   app.linn.games PostgreSQL. workspace_id from workspaces table.
-    - "jwt"      — HS256 JWT with MCP_AUTH_SECRET; workspace_id from payload.
-    - "static"   — compare against MCP_AUTH_TOKEN; workspace_id="default".
-    - "none"     — no auth (dev/local only).
-    - "auto"     — detect by token format: Sanctum if contains "|", else JWT/static.
-
-    Token via: Authorization: Bearer <token>  or  X-Auth-Token: <token>
+    Token via: Authorization: Bearer <jwt>  or  X-Auth-Token: <jwt>
+    Admin access: JWT claim `scope: ["admin"]`.
     """
 
     def __init__(self, app: Any) -> None:
@@ -134,9 +124,8 @@ class _JWTAuthMiddleware:
             await self._app(scope, receive, send)
             return
 
-        if not _AUTH_ENABLED or _AUTH_MODE == "none":
-            _WORKSPACE_CTX.set("")
-            scope["workspace_id"] = "default"
+        if not _AUTH_ENABLED:
+            _TOKEN_CTX.set(None)
             await self._app(scope, receive, send)
             return
 
@@ -154,71 +143,20 @@ class _JWTAuthMiddleware:
             await self._send_401(send, "Missing authentication token")
             return
 
-        workspace_id = await self._validate_token(token, send)
-        if workspace_id is None:
-            return  # _validate_token already sent 401
+        info = validate_jwt_token(token)
+        if info is None:
+            await self._send_401(send, "Invalid or expired token")
+            return
 
-        _WORKSPACE_CTX.set(workspace_id)
-        scope["workspace_id"] = workspace_id
+        _TOKEN_CTX.set(info)
+        scope["workspace_id"] = info.workspace_id
         await self._app(scope, receive, send)
-
-    async def _validate_token(self, token: str, send: Any) -> str | None:
-        """Validate token and return workspace_id, or None after sending 401."""
-        use_sanctum = (
-            _AUTH_MODE == "sanctum"
-            or (_AUTH_MODE == "auto" and "|" in token)
-        )
-
-        if use_sanctum:
-            from src.api.sanctum_auth import validate_sanctum_token_full
-            info = validate_sanctum_token_full(token)
-            if not info:
-                await self._send_401(send, "Invalid or expired token")
-                return None
-            if not info.mayring_active:
-                await self._send_402(send,
-                    "MayringCoder Memory requires an active subscription. "
-                    "Subscribe at https://app.linn.games/einstellungen/mayring-abo"
-                )
-                return None
-            return info.workspace_id
-
-        if _AUTH_MODE in ("jwt", "auto") and _AUTH_SECRET:
-            import jwt  # type: ignore[import]
-            try:
-                payload = jwt.decode(token, _AUTH_SECRET, algorithms=["HS256"])
-                return payload.get("workspace_id", "default")
-            except jwt.ExpiredSignatureError:
-                await self._send_401(send, "Token expired")
-                return None
-            except jwt.InvalidTokenError:
-                await self._send_401(send, "Invalid token")
-                return None
-
-        if _AUTH_TOKEN:
-            if not secrets.compare_digest(token, _AUTH_TOKEN):
-                await self._send_401(send, "Unauthorized")
-                return None
-            return "system"
-
-        await self._send_401(send, "No auth method configured")
-        return None
 
     @staticmethod
     async def _send_401(send: Any, message: str) -> None:
         body = message.encode()
         await send({
             "type": "http.response.start", "status": 401,
-            "headers": [[b"content-type", b"text/plain; charset=utf-8"],
-                        [b"content-length", str(len(body)).encode()]],
-        })
-        await send({"type": "http.response.body", "body": body})
-
-    @staticmethod
-    async def _send_402(send: Any, message: str) -> None:
-        body = message.encode()
-        await send({
-            "type": "http.response.start", "status": 402,
             "headers": [[b"content-type", b"text/plain; charset=utf-8"],
                         [b"content-length", str(len(body)).encode()]],
         })
@@ -280,10 +218,12 @@ def put(
         {source_id, chunk_ids, indexed, deduped, superseded}
     """
     try:
+        # Tenant tokens are locked to their own workspace_id; admin tokens may override.
+        ws = _enforce_tenant(workspace_id) or workspace_id
         result = _run_ingest(
             source, content, _get_conn(), _get_chroma(),
             _OLLAMA_URL, _MODEL, {"categorize": categorize, "log": log},
-            _effective_workspace_id(workspace_id),
+            ws,
         )
         invalidate_query_cache()
         return result
@@ -348,6 +288,9 @@ def search_memory(
         {results: list[RetrievalRecord], prompt_context: str}
     """
     try:
+        # Tenant tokens: workspace_id is forced to the tenant's own workspace.
+        # Admin tokens: workspace_id stays as requested (None → cross-workspace).
+        ws = _enforce_tenant(workspace_id)
         opts = {
             "repo": repo,
             "categories": categories,
@@ -355,7 +298,7 @@ def search_memory(
             "top_k": top_k,
             "include_text": include_text,
             "source_affinity": source_affinity,
-            "workspace_id": _effective_workspace_id(workspace_id or "default"),
+            "workspace_id": ws,
         }
         return _run_search(query, _get_conn(), _get_chroma(), _OLLAMA_URL,
                            opts, char_budget, session_compacted=compacted)
@@ -593,10 +536,10 @@ async def _oauth_register_code(request: Any) -> Any:
     from starlette.responses import JSONResponse
     req: Request = request
 
-    # Verify static service-to-service token
+    # Verify shared service-to-service token (app.linn.games → MayringCoder)
     auth_header = req.headers.get("authorization", "")
     token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
-    if not _AUTH_TOKEN or not secrets.compare_digest(token, _AUTH_TOKEN):
+    if not _SERVICE_TOKEN or not secrets.compare_digest(token, _SERVICE_TOKEN):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     try:
@@ -699,13 +642,7 @@ def main() -> None:
         _mcp_asgi = _PathNormMiddleware(_mcp_http_app)
         _inner = _JWTAuthMiddleware(_mcp_asgi)
 
-        _auth_label = (
-            "sanctum" if (_AUTH_ENABLED and _AUTH_MODE == "sanctum") else
-            "auto-detect" if (_AUTH_ENABLED and _AUTH_MODE == "auto") else
-            "jwt" if (_AUTH_ENABLED and _AUTH_SECRET) else
-            "static" if (_AUTH_ENABLED and _AUTH_TOKEN) else
-            "disabled"
-        )
+        _auth_label = "rs256-jwt" if _AUTH_ENABLED else "disabled"
         print(
             f"[mcp-memory] HTTP/streamable on {_HTTP_HOST}:{_HTTP_PORT}"
             f" | auth={_auth_label}"

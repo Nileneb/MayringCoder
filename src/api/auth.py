@@ -1,36 +1,32 @@
-"""FastAPI auth dependency — workspace_id resolution via Sanctum tokens."""
+"""FastAPI auth dependency — RS256 JWT only."""
 from __future__ import annotations
-
-import os
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.api.sanctum_auth import validate_sanctum_token_full
+from src.api.jwt_auth import TokenInfo, validate_jwt_token
 
 _bearer = HTTPBearer(auto_error=False)
-_MCP_AUTH_TOKEN = os.getenv("MAYRING_MCP_AUTH_TOKEN", "")
 
 
-async def get_workspace(
+async def get_token_info(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> str:
-    """Validate Bearer token and return workspace_id."""
+) -> TokenInfo:
+    """Validate Bearer JWT and return TokenInfo (workspace_id + scopes)."""
     if not creds:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Bearer token")
-
-    if _MCP_AUTH_TOKEN and creds.credentials == _MCP_AUTH_TOKEN:
-        return "system"
-
-    info = validate_sanctum_token_full(creds.credentials)
-    if not info:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-
-    if not info.mayring_active:
         raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="MayringCoder Memory requires an active subscription (€5/month). "
-                   "Subscribe at https://app.linn.games/einstellungen/mayring-abo",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token",
         )
+    info = validate_jwt_token(creds.credentials)
+    if not info:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    return info
 
+
+async def get_workspace(info: TokenInfo = Depends(get_token_info)) -> str:
+    """Return workspace_id from validated JWT."""
     return info.workspace_id
