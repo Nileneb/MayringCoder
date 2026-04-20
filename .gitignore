@@ -17,3 +17,4 @@ AgentTemplates/
 .env.production
 */.claude
 /docs
+Todo-research.md
