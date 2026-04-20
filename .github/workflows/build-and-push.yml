@@ -18,5 +18,5 @@ jobs:
       - name: Pull image and restart stack
         run: |
           docker pull nileneb/mayring:${{ inputs.tag || 'latest' }}
-          cd ~/app.linn.games/MayringCoder
+          cd ~/app.linn.games
           docker compose -f docker-compose.mayring.yml up -d
