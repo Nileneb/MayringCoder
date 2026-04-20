@@ -15,6 +15,39 @@ jobs:
     runs-on: [self-hosted, u-server]
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write .env.production
+        env:
+          OLLAMA_URL: ${{ vars.OLLAMA_URL }}
+          OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
+          PI_REPO_SLUG: ${{ vars.PI_REPO_SLUG }}
+          MCP_AUTH_ENABLED: ${{ vars.MCP_AUTH_ENABLED }}
+          JWT_PUBLIC_KEY_PATH: ${{ vars.JWT_PUBLIC_KEY_PATH }}
+          JWT_ISSUER: ${{ vars.JWT_ISSUER }}
+          JWT_AUDIENCE: ${{ vars.JWT_AUDIENCE }}
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+          MAYRING_API_URL: ${{ vars.MAYRING_API_URL }}
+          LARAVEL_NETWORK: ${{ vars.LARAVEL_NETWORK }}
+          MAYRING_PORT: ${{ vars.MAYRING_PORT }}
+          MCP_SERVICE_TOKEN: ${{ secrets.MCP_SERVICE_TOKEN }}
+        run: |
+          cat > ~/app.linn.games/.env.production <<EOF
+          OLLAMA_URL=${OLLAMA_URL}
+          OLLAMA_MODEL=${OLLAMA_MODEL}
+          PI_REPO_SLUG=${PI_REPO_SLUG}
+          MCP_AUTH_ENABLED=${MCP_AUTH_ENABLED}
+          JWT_PUBLIC_KEY_PATH=${JWT_PUBLIC_KEY_PATH}
+          JWT_ISSUER=${JWT_ISSUER}
+          JWT_AUDIENCE=${JWT_AUDIENCE}
+          APP_BASE_URL=${APP_BASE_URL}
+          MAYRING_API_URL=${MAYRING_API_URL}
+          LARAVEL_NETWORK=${LARAVEL_NETWORK}
+          MAYRING_PORT=${MAYRING_PORT}
+          MCP_SERVICE_TOKEN=${MCP_SERVICE_TOKEN}
+          EOF
+
       - name: Pull image and restart stack
         run: |
           docker pull nileneb/mayring:${{ inputs.tag || 'latest' }}
