@@ -614,8 +614,33 @@ async def _oauth_register(request: Any) -> Any:
 # Path normalizer — Claude Web sends POST / after OAuth, FastMCP expects /mcp
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Public landing page (GET /)
+# ---------------------------------------------------------------------------
+
+_LANDING_HTML_PATH = Path(__file__).parent / "templates" / "landing.html"
+
+
+async def _landing_page(request: Any) -> Any:
+    from starlette.responses import HTMLResponse
+    try:
+        html = _LANDING_HTML_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return HTMLResponse("<h1>MayringCoder</h1>", status_code=200)
+    return HTMLResponse(
+        html,
+        status_code=200,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
 class _PathNormMiddleware:
-    """Rewrite / and /sse → /mcp so the streamable_http_app Route('/mcp') matches."""
+    """Rewrite / and /sse → /mcp so the streamable_http_app Route('/mcp') matches.
+
+    GET / is routed to the landing page before this middleware runs (via an
+    explicit Starlette Route), so only non-GET requests to / end up rewritten
+    here — that's what Claude Web's MCP POST calls need.
+    """
 
     _REWRITE = frozenset(("/", "/sse", ""))
 
@@ -623,7 +648,11 @@ class _PathNormMiddleware:
         self._app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope.get("type") == "http" and scope.get("path", "/") in self._REWRITE:
+        if (
+            scope.get("type") == "http"
+            and scope.get("path", "/") in self._REWRITE
+            and scope.get("method", "") != "GET"
+        ):
             scope = {**scope, "path": "/mcp", "raw_path": b"/mcp"}
         await self._app(scope, receive, send)
 
@@ -658,6 +687,7 @@ def main() -> None:
                 Route("/authorize", _oauth_authorize, methods=["GET"]),
                 Route("/authorize/register-code", _oauth_register_code, methods=["POST"]),
                 Route("/token", _oauth_token, methods=["POST"]),
+                Route("/", _landing_page, methods=["GET"]),
                 Mount("/", app=_inner),
             ],
             lifespan=_mcp_http_app.router.lifespan_context,
