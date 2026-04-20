@@ -443,12 +443,12 @@ def _validate_token(token: str) -> tuple[bool, str]:
                 return False, "Token ungültig oder abgelaufen."
         except Exception:
             pass  # API unreachable — fall through to local validation
-    # Fallback: direct DB validation (works when DB env vars are present)
+    # Fallback: validate JWT locally (public key must be configured)
     try:
-        from src.api.sanctum_auth import validate_sanctum_token
-        ws = validate_sanctum_token(token.strip())
-        if ws:
-            return True, ws
+        from src.api.jwt_auth import validate_jwt_token
+        info = validate_jwt_token(token.strip())
+        if info:
+            return True, info.workspace_id
         return False, "Token ungültig oder abgelaufen."
     except Exception as exc:
         return False, f"Auth-Fehler: {exc}"
