@@ -20,12 +20,12 @@ def test_populate_memory_calls_ingest_per_file(tmp_path):
     ]
     args = _make_args()
     with (
-        patch("src.pipeline.fetch_repo", return_value=("slug", "commit", "content")),
-        patch("src.pipeline.split_into_files", return_value=files),
-        patch("src.pipeline.filter_excluded_files", return_value=(files, [])),
-        patch("src.pipeline.load_codebook", return_value={}),
-        patch("src.pipeline.load_exclude_patterns", return_value=[]),
-        patch("src.pipeline.load_mayringignore", return_value=[]),
+        patch("src.workflows.memory_ingest.fetch_repo", return_value=("slug", "commit", "content")),
+        patch("src.workflows.memory_ingest.split_into_files", return_value=files),
+        patch("src.workflows.memory_ingest.filter_excluded_files", return_value=(files, [])),
+        patch("src.workflows.memory_ingest.load_codebook", return_value={}),
+        patch("src.workflows.memory_ingest.load_exclude_patterns", return_value=[]),
+        patch("src.workflows.memory_ingest.load_mayringignore", return_value=[]),
         patch("src.memory.store.init_memory_db", return_value=MagicMock()),
         patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
         patch("src.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
@@ -45,12 +45,12 @@ def test_populate_memory_source_metadata():
         return {"chunk_ids": ["c1"], "deduped": 0}
 
     with (
-        patch("src.pipeline.fetch_repo", return_value=("slug", "commit", "content")),
-        patch("src.pipeline.split_into_files", return_value=files),
-        patch("src.pipeline.filter_excluded_files", return_value=(files, [])),
-        patch("src.pipeline.load_codebook", return_value={}),
-        patch("src.pipeline.load_exclude_patterns", return_value=[]),
-        patch("src.pipeline.load_mayringignore", return_value=[]),
+        patch("src.workflows.memory_ingest.fetch_repo", return_value=("slug", "commit", "content")),
+        patch("src.workflows.memory_ingest.split_into_files", return_value=files),
+        patch("src.workflows.memory_ingest.filter_excluded_files", return_value=(files, [])),
+        patch("src.workflows.memory_ingest.load_codebook", return_value={}),
+        patch("src.workflows.memory_ingest.load_exclude_patterns", return_value=[]),
+        patch("src.workflows.memory_ingest.load_mayringignore", return_value=[]),
         patch("src.memory.store.init_memory_db", return_value=MagicMock()),
         patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
         patch("src.memory.ingest.ingest", side_effect=capture_ingest),
@@ -80,12 +80,12 @@ def test_populate_memory_error_resilience():
         return {"chunk_ids": ["c1"], "deduped": 0}
 
     with (
-        patch("src.pipeline.fetch_repo", return_value=("slug", "commit", "content")),
-        patch("src.pipeline.split_into_files", return_value=files),
-        patch("src.pipeline.filter_excluded_files", return_value=(files, [])),
-        patch("src.pipeline.load_codebook", return_value={}),
-        patch("src.pipeline.load_exclude_patterns", return_value=[]),
-        patch("src.pipeline.load_mayringignore", return_value=[]),
+        patch("src.workflows.memory_ingest.fetch_repo", return_value=("slug", "commit", "content")),
+        patch("src.workflows.memory_ingest.split_into_files", return_value=files),
+        patch("src.workflows.memory_ingest.filter_excluded_files", return_value=(files, [])),
+        patch("src.workflows.memory_ingest.load_codebook", return_value={}),
+        patch("src.workflows.memory_ingest.load_exclude_patterns", return_value=[]),
+        patch("src.workflows.memory_ingest.load_mayringignore", return_value=[]),
         patch("src.memory.store.init_memory_db", return_value=MagicMock()),
         patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
         patch("src.memory.ingest.ingest", side_effect=flaky_ingest),

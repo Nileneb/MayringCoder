@@ -85,7 +85,7 @@ class TestLoadTurbulenceCache:
     def test_returns_hot_zone_map_and_tier_map(self, turb_cache):
         from src.pipeline import load_turbulence_cache
 
-        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+        with patch("src.workflows._common.CACHE_DIR", turb_cache["cache_dir"]):
             hz_map, tier_map = load_turbulence_cache(turb_cache["repo_url"])
 
         assert hz_map is not None
@@ -94,7 +94,7 @@ class TestLoadTurbulenceCache:
     def test_tier_map_has_correct_tiers(self, turb_cache):
         from src.pipeline import load_turbulence_cache
 
-        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+        with patch("src.workflows._common.CACHE_DIR", turb_cache["cache_dir"]):
             _, tier_map = load_turbulence_cache(turb_cache["repo_url"])
 
         assert tier_map["app/Services/PaymentService.php"] == "deep"
@@ -104,7 +104,7 @@ class TestLoadTurbulenceCache:
     def test_hot_zone_context_includes_line_info(self, turb_cache):
         from src.pipeline import load_turbulence_cache
 
-        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+        with patch("src.workflows._common.CACHE_DIR", turb_cache["cache_dir"]):
             hz_map, _ = load_turbulence_cache(turb_cache["repo_url"])
 
         ctx = hz_map.get("app/Services/PaymentService.php", "")
@@ -115,7 +115,7 @@ class TestLoadTurbulenceCache:
     def test_hot_zone_context_includes_affected_functions(self, turb_cache):
         from src.pipeline import load_turbulence_cache
 
-        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+        with patch("src.workflows._common.CACHE_DIR", turb_cache["cache_dir"]):
             hz_map, _ = load_turbulence_cache(turb_cache["repo_url"])
 
         ctx = hz_map.get("app/Services/PaymentService.php", "")
@@ -125,7 +125,7 @@ class TestLoadTurbulenceCache:
     def test_files_without_hot_zones_have_no_context(self, turb_cache):
         from src.pipeline import load_turbulence_cache
 
-        with patch("src.pipeline.CACHE_DIR", turb_cache["cache_dir"]):
+        with patch("src.workflows._common.CACHE_DIR", turb_cache["cache_dir"]):
             hz_map, _ = load_turbulence_cache(turb_cache["repo_url"])
 
         assert "app/Http/Controllers/UserController.php" not in hz_map or \
@@ -134,7 +134,7 @@ class TestLoadTurbulenceCache:
     def test_nonexistent_cache_returns_none(self, tmp_path):
         from src.pipeline import load_turbulence_cache
 
-        with patch("src.pipeline.CACHE_DIR", tmp_path / "nonexistent"):
+        with patch("src.workflows._common.CACHE_DIR", tmp_path / "nonexistent"):
             result = load_turbulence_cache("https://example.com/no/repo.git")
         assert result == (None, None)
 
