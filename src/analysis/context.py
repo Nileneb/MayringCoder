@@ -40,6 +40,7 @@ try:
     import chromadb
     _HAS_CHROMADB = True
 except ImportError:
+    chromadb = None  # type: ignore[assignment]  # patchable module attribute even without install
     _HAS_CHROMADB = False
 
 

@@ -88,11 +88,14 @@ class TestModelRouterAvailability:
         # httpx.get should only be called once
         assert mock_get.call_count == 1
 
-    def test_is_available_false_for_empty_model(self):
+    def test_is_available_false_for_empty_model(self, monkeypatch):
+        # Test-Isolation: verhindert dass eine lokale .env (via load_dotenv in
+        # src.api.server) OLLAMA_MODEL pollutet — is_available würde sonst das
+        # echte lokale Ollama abfragen und True zurückgeben.
+        monkeypatch.delenv("OLLAMA_MODEL", raising=False)
         with patch("src.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
-        # analysis task has empty model by default
         router._routes["analysis"].model = ""
         assert router.is_available("analysis") is False
 
