@@ -177,8 +177,8 @@ class TestIngestMultiviewIntegration:
         mock_chunks = []  # generate_multiview_chunks returns empty → ingest returns 0 chunks
 
         with (
-            patch("src.memory.ingest.generate_multiview_chunks", return_value=mock_chunks) as mock_gen,
-            patch("src.memory.ingest.structural_chunk") as mock_struct,
+            patch("src.memory.ingestion.core.generate_multiview_chunks", return_value=mock_chunks) as mock_gen,
+            patch("src.memory.ingestion.core.structural_chunk") as mock_struct,
         ):
             ingest(source, SAMPLE_ISSUE, conn, None, "http://localhost:11434", "mistral",
                    opts={"multiview": True})
@@ -202,8 +202,8 @@ class TestIngestMultiviewIntegration:
         )
 
         with (
-            patch("src.memory.ingest.generate_multiview_chunks") as mock_gen,
-            patch("src.memory.ingest.structural_chunk", return_value=[]) as mock_struct,
+            patch("src.memory.ingestion.core.generate_multiview_chunks") as mock_gen,
+            patch("src.memory.ingestion.core.structural_chunk", return_value=[]) as mock_struct,
         ):
             ingest(source, SAMPLE_ISSUE, conn, None, "http://localhost:11434", "mistral",
                    opts={"multiview": False})

@@ -48,7 +48,7 @@ class TestIngestVisualPipeline:
             "superseded": 0,
         }
 
-        with patch("src.memory.ingest.ingest_image", return_value=fake_image_result) as mock_img:
+        with patch("src.memory.ingestion.core.ingest_image", return_value=fake_image_result) as mock_img:
             result = ingest(
                 source=source,
                 content="<binary>",
@@ -74,7 +74,7 @@ class TestIngestVisualPipeline:
         source = _make_source("docs/arch.png")
 
         with (
-            patch("src.memory.ingest.ingest_image") as mock_img,
+            patch("src.memory.ingestion.core.ingest_image") as mock_img,
             patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
         ):
             result = ingest(
@@ -101,7 +101,7 @@ class TestIngestVisualPipeline:
         source = _make_source("src/app.py")
 
         with (
-            patch("src.memory.ingest.ingest_image") as mock_img,
+            patch("src.memory.ingestion.core.ingest_image") as mock_img,
             patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
             patch("src.analysis.analyzer._ollama_generate", return_value="domain"),
         ):
@@ -161,7 +161,7 @@ class TestIngestVisualPipeline:
                 "superseded": 0,
             }
 
-        with patch("src.memory.ingest.ingest_image", side_effect=fake_ingest_image):
+        with patch("src.memory.ingestion.core.ingest_image", side_effect=fake_ingest_image):
             ingest(
                 source=source,
                 content="<binary>",

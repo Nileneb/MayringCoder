@@ -192,14 +192,14 @@ class TestIngest:
         source = _make_source()
 
         configure_memory_log.__module__  # ensure importable
-        import src.memory.ingest as mi
+        import src.memory.ingestion.utils as miu
         log_path = tmp_path / "test_memory_log.jsonl"
-        mi._MEMORY_LOG_PATH = log_path
+        miu._MEMORY_LOG_PATH = log_path
 
         with patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4]):
             ingest(source, "def bar(): pass\n", conn, None, "http://localhost:11434", "", {"log": True})
 
-        mi._MEMORY_LOG_PATH = None  # reset
+        miu._MEMORY_LOG_PATH = None  # reset
         assert log_path.exists()
         line = _json.loads(log_path.read_text().strip().splitlines()[-1])
         assert line["event"] == "ingest"
