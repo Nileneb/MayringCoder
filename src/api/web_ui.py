@@ -47,6 +47,7 @@ try:
     from src.memory.ingest import ingest, get_or_create_chroma_collection, ingest_conversation_summary
     from src.memory.retrieval import search
     from src.memory.schema import Source, Chunk
+    from src.github import parse_github_input, GitHubInputError
     from src.config import CACHE_DIR
     import hashlib
     from datetime import datetime, timezone
@@ -242,6 +243,20 @@ def _do_ingest(
         except Exception as exc:
             return json.dumps({"error": f"Datei konnte nicht gelesen werden: {exc}"}, indent=2)
     elif text_input.strip():
+        # Guard against users pasting a GitHub URL into the free-text field —
+        # offer a precise hint instead of silently storing the URL as a note.
+        try:
+            gh_hint = parse_github_input(text_input.strip())
+        except GitHubInputError:
+            gh_hint = None
+        if gh_hint is not None:
+            return json.dumps({
+                "error": (
+                    f"Das sieht nach einem GitHub-Repo aus ({gh_hint.slug}). "
+                    f"Bitte die Quelle 'GitHub-Repo' wählen, dort werden Sources + Issues "
+                    f"als Job ingested."
+                )
+            }, indent=2)
         content = text_input.strip()
     else:
         return json.dumps({"error": "Kein Inhalt angegeben (Text oder Datei)."}, indent=2)
@@ -797,7 +812,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             gr.Markdown("### Inhalt in Memory aufnehmen")
 
             ingest_mode_radio = gr.Radio(
-                choices=["Text / Datei", "Conversation (/compact)"],
+                choices=["Text / Datei", "GitHub-Repo", "Conversation (/compact)"],
                 value="Text / Datei",
                 label="Quelle",
             )
@@ -854,7 +869,94 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     outputs=[ingest_output],
                 )
 
-            # -- Panel B: Conversation --
+            # -- Panel B: GitHub-Repo --
+            with gr.Column(visible=False) as panel_github:
+                gr.Markdown(
+                    "Repository als Datenquelle in Memory ingesten — Sources "
+                    "(via `gitingest`) und optional GitHub Issues. Läuft als "
+                    "Hintergrund-Job, Poll-Button für Status."
+                )
+                gh_repo_input = gr.Textbox(
+                    label="Repo",
+                    placeholder="owner/repo oder https://github.com/owner/repo",
+                )
+                with gr.Row():
+                    gh_include_issues = gr.Checkbox(
+                        label="Issues miterfassen",
+                        value=False,
+                        info="Ingest GitHub Issues via gh CLI + multiview chunking.",
+                    )
+                    gh_force = gr.Checkbox(
+                        label="Force re-ingest",
+                        value=False,
+                        info="Überschreibt bestehende Chunks für diese Sources.",
+                    )
+                with gr.Row():
+                    gh_ingest_btn = gr.Button("GitHub-Repo ingesten", variant="primary", scale=2)
+                    gh_poll_btn = gr.Button("Status abfragen", scale=1)
+                gh_status = gr.Markdown("")
+                gh_job_id = gr.Textbox(label="Job-ID (Sources)", interactive=False)
+                gh_issues_job_id = gr.Textbox(label="Job-ID (Issues)", interactive=False, visible=False)
+                gh_timer = gr.Timer(value=4, active=False)
+
+                def _do_github_ingest(raw: str, include_issues: bool, force: bool, token: str):
+                    if not token:
+                        return "", "", "Erst via app.linn.games/mayring/dashboard einloggen.", gr.Timer(active=False)
+                    try:
+                        gh = parse_github_input(raw)
+                    except GitHubInputError as exc:
+                        return "", "", f"❌ {exc}", gr.Timer(active=False)
+
+                    payload = {"repo": gh.url, "force_reingest": force}
+                    r = _api_post("populate", payload, token)
+                    if "error" in r:
+                        return "", "", f"❌ /populate: {r['error']}", gr.Timer(active=False)
+                    job = str(r.get("job_id") or "")
+                    status = f"⏳ Sources-Ingest ({gh.slug}) gestartet · Job `{job}`"
+
+                    issue_job = ""
+                    if include_issues:
+                        r2 = _api_post("issues/ingest", {"repo": gh.slug, "force_reingest": force}, token)
+                        if "error" in r2:
+                            status += f"\n⚠️ /issues/ingest: {r2['error']}"
+                        else:
+                            issue_job = str(r2.get("job_id") or "")
+                            status += f"\n⏳ Issues-Ingest Job `{issue_job}`"
+
+                    return job, issue_job, status, gr.Timer(active=bool(job))
+
+                def _poll_github(job_id: str, issues_job_id: str, token: str):
+                    if not token:
+                        return gr.update(), gr.Timer(active=False)
+                    parts: list[str] = []
+                    done_flags: list[bool] = []
+                    for label, jid in [("Sources", job_id), ("Issues", issues_job_id)]:
+                        if not jid:
+                            continue
+                        txt = _poll_job(jid, token)
+                        parts.append(f"### {label} — Job `{jid}`\n{txt}")
+                        done_flags.append(any(mark in txt for mark in ("✅", "❌", "finished", "failed")))
+                    if not parts:
+                        return "Keine aktive Ingestion.", gr.Timer(active=False)
+                    return "\n\n".join(parts), gr.Timer(active=not all(done_flags))
+
+                gh_ingest_btn.click(
+                    fn=_do_github_ingest,
+                    inputs=[gh_repo_input, gh_include_issues, gh_force, _token_state],
+                    outputs=[gh_job_id, gh_issues_job_id, gh_status, gh_timer],
+                )
+                gh_poll_btn.click(
+                    fn=_poll_github,
+                    inputs=[gh_job_id, gh_issues_job_id, _token_state],
+                    outputs=[gh_status, gh_timer],
+                )
+                gh_timer.tick(
+                    fn=_poll_github,
+                    inputs=[gh_job_id, gh_issues_job_id, _token_state],
+                    outputs=[gh_status, gh_timer],
+                )
+
+            # -- Panel C: Conversation --
             with gr.Column(visible=False) as panel_conv:
                 gr.Markdown(
                     "Füge den Output von `/compact` ein **oder** scanne automatisch alle "
@@ -902,13 +1004,14 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             def _switch_panel(choice):
                 return (
                     gr.Column(visible=(choice == "Text / Datei")),
+                    gr.Column(visible=(choice == "GitHub-Repo")),
                     gr.Column(visible=(choice == "Conversation (/compact)")),
                 )
 
             ingest_mode_radio.change(
                 fn=_switch_panel,
                 inputs=[ingest_mode_radio],
-                outputs=[panel_file, panel_conv],
+                outputs=[panel_file, panel_github, panel_conv],
             )
 
         # =======================================================================
@@ -1003,6 +1106,10 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             def _do_analyse(repo, mode, issues, memory, adversarial, llm_mode, token):
                 if not token:
                     return "", "Erst einloggen.", gr.Timer(active=False)
+                try:
+                    gh = parse_github_input(repo)
+                except GitHubInputError as exc:
+                    return "", f"❌ {exc}", gr.Timer(active=False)
                 mode_map = {
                     "Vollanalyse (Fehlersuche)": "analyze",
                     "Inventar (Overview)": "overview",
@@ -1010,7 +1117,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 }
                 endpoint = mode_map.get(mode, "analyze")
                 payload: dict = {
-                    "repo": repo,
+                    "repo": gh.url,
                     "adversarial": adversarial,
                     "populate_memory": memory,
                     "ingest_issues": issues,
@@ -1099,11 +1206,17 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     return "", "Task darf nicht leer sein.", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
                 if not model_a or not model_b:
                     return "", "Beide Modelle auswählen.", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
+                normalized_slug: str | None = None
+                if repo_slug.strip():
+                    try:
+                        normalized_slug = parse_github_input(repo_slug).slug
+                    except GitHubInputError as exc:
+                        return "", f"❌ {exc}", gr.Timer(active=False), "**Modell A**", "", "**Modell B**", ""
                 payload = {
                     "task": task,
                     "model_a": model_a,
                     "model_b": model_b,
-                    "repo_slug": repo_slug.strip() or None,
+                    "repo_slug": normalized_slug,
                 }
                 r = _api_post("duel", payload, token)
                 if "error" in r:
