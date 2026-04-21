@@ -81,9 +81,19 @@ _TOKEN_CTX: contextvars.ContextVar["TokenInfo | None"] = contextvars.ContextVar(
     "token_info", default=None
 )
 
+# Raw JWT-String wird für den Key-Callback gebraucht (signiert identifiziert
+# den User gegenüber app.linn.games). Nur in HTTP-Mode gesetzt.
+_RAW_JWT_CTX: contextvars.ContextVar["str | None"] = contextvars.ContextVar(
+    "raw_jwt", default=None
+)
+
 
 def _current_token_info() -> "TokenInfo | None":
     return _TOKEN_CTX.get(None)
+
+
+def _current_raw_jwt() -> "str | None":
+    return _RAW_JWT_CTX.get(None)
 
 
 def _effective_workspace_id(caller_default: str = "default") -> str:
@@ -126,6 +136,7 @@ class _JWTAuthMiddleware:
 
         if not _AUTH_ENABLED:
             _TOKEN_CTX.set(None)
+            _RAW_JWT_CTX.set(None)
             await self._app(scope, receive, send)
             return
 
@@ -149,6 +160,7 @@ class _JWTAuthMiddleware:
             return
 
         _TOKEN_CTX.set(info)
+        _RAW_JWT_CTX.set(token)
         scope["workspace_id"] = info.workspace_id
         await self._app(scope, receive, send)
 

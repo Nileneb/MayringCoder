@@ -25,10 +25,22 @@ from pathlib import Path
 class TokenInfo:
     workspace_id: str
     scopes: tuple[str, ...] = field(default_factory=tuple)
+    # Provider-Claims für per-User BYO-LLM-Routing (app.linn.games JwtIssuer).
+    # llm_provider: "platform" | "anthropic-byo" | "openai-compatible"
+    llm_provider: str = "platform"
+    llm_model: str | None = None
+    llm_endpoint: str | None = None   # nur für openai-compatible gesetzt
+    llm_requires_key: bool = False    # True → Worker muss Key via Callback holen
+    sub: str | None = None            # User-ID, wird für Key-Cache genutzt
+    iat: int | None = None            # Issued-at, Teil des Key-Cache-Keys
 
     @property
     def is_admin(self) -> bool:
         return "admin" in self.scopes
+
+    @property
+    def uses_custom_provider(self) -> bool:
+        return self.llm_provider != "platform"
 
 
 @lru_cache(maxsize=1)
@@ -98,7 +110,23 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     if "mcp:memory" not in scopes:
         return None
 
-    return TokenInfo(workspace_id=workspace_id, scopes=scopes)
+    llm_provider = str(payload.get("llm_provider") or "platform").strip() or "platform"
+    llm_model = payload.get("llm_model")
+    llm_endpoint = payload.get("llm_endpoint")
+    raw_requires_key = payload.get("llm_requires_key", False)
+    sub_raw = payload.get("sub")
+    iat_raw = payload.get("iat")
+
+    return TokenInfo(
+        workspace_id=workspace_id,
+        scopes=scopes,
+        llm_provider=llm_provider,
+        llm_model=str(llm_model) if isinstance(llm_model, str) and llm_model else None,
+        llm_endpoint=str(llm_endpoint) if isinstance(llm_endpoint, str) and llm_endpoint else None,
+        llm_requires_key=bool(raw_requires_key),
+        sub=str(sub_raw) if sub_raw is not None else None,
+        iat=int(iat_raw) if isinstance(iat_raw, (int, float)) else None,
+    )
 
 
 def reset_public_key_cache() -> None:

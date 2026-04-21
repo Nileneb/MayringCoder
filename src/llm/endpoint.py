@@ -13,11 +13,21 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+if TYPE_CHECKING:
+    from src.api.jwt_auth import TokenInfo
+
 Provider = Literal["ollama", "anthropic", "openai", "platform"]
+
+# JWT llm_provider-Claim → dispatcher provider mapping.
+_JWT_PROVIDER_MAP: dict[str, Provider] = {
+    "platform": "platform",
+    "anthropic-byo": "anthropic",
+    "openai-compatible": "openai",
+}
 
 
 @dataclass(frozen=True)
@@ -122,3 +132,67 @@ def invalidate_cache(workspace_id: str | None = None) -> None:
             _cache.clear()
         else:
             _cache.pop(workspace_id, None)
+
+
+def _endpoint_from_claims(
+    token_info: "TokenInfo",
+    user_jwt: str | None,
+) -> LLMEndpoint:
+    """Build an LLMEndpoint from JWT provider-claims. May call key_callback."""
+    from src.llm.key_callback import LlmKeyUnavailableError, fetch_user_key
+
+    provider = _JWT_PROVIDER_MAP.get(token_info.llm_provider, "platform")
+    model = (token_info.llm_model or os.getenv("OLLAMA_MODEL", "")).strip()
+    base_url = (token_info.llm_endpoint or "").strip().rstrip("/")
+
+    api_key: str | None = None
+    if token_info.llm_requires_key:
+        if not user_jwt or token_info.sub is None or token_info.iat is None:
+            raise LlmKeyUnavailableError(
+                "JWT declares llm_requires_key=true but sub/iat/raw-jwt are missing."
+            )
+        api_key = fetch_user_key(token_info.sub, token_info.iat, user_jwt)
+        if not api_key:
+            raise LlmKeyUnavailableError(
+                f"User {token_info.sub} has no api_key configured — "
+                "set one in /settings/ai-model or switch provider back to platform."
+            )
+
+    # anthropic-byo has no user-supplied base_url → fall back to api.anthropic.com.
+    if provider == "anthropic" and not base_url:
+        base_url = "https://api.anthropic.com"
+    # openai-compatible requires an endpoint — without one, we can't route anywhere.
+    if provider == "openai" and not base_url:
+        raise LlmKeyUnavailableError(
+            "openai-compatible provider requires llm_endpoint in JWT but none set."
+        )
+
+    if not model:
+        raise LlmKeyUnavailableError(
+            f"No model configured for provider={provider}. "
+            "Set llm_custom_model in /settings/ai-model."
+        )
+
+    return LLMEndpoint(provider=provider, base_url=base_url, model=model, api_key=api_key)
+
+
+def get_endpoint_for_request(
+    token_info: "TokenInfo | None",
+    workspace_id: str | None,
+    user_jwt: str | None = None,
+) -> LLMEndpoint:
+    """Resolve the right LLMEndpoint for a request.
+
+    Precedence:
+      1. User-JWT-Claims (per-User BYO-Provider via /settings/ai-model)
+      2. Workspace-LLM-Endpoints (Admin-Override via /einstellungen/llm-endpoints)
+      3. Platform default (OLLAMA_URL + OLLAMA_MODEL)
+
+    Raises:
+      LlmKeyUnavailableError — wenn der User einen Key hinterlegen müsste, aber
+      keiner geliefert werden kann. Hardfail statt Silent-Fallback (Entscheidung
+      des Produktteams 2026-04-21: silent billing-fallback ist kontraintuitiv).
+    """
+    if token_info is not None and token_info.uses_custom_provider:
+        return _endpoint_from_claims(token_info, user_jwt)
+    return get_llm_endpoint(workspace_id)
