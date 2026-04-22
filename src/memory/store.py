@@ -85,6 +85,11 @@ def init_memory_db(db_path: Path | None = None) -> sqlite3.Connection:
     und mcp.py über Gradio/FastMCP-Worker-Threads hinweg benutzt wird. WAL-Mode
     schützt vor Korruption bei konkurrierenden Readern; Writes sind im MayringCoder-
     Stack immer sequenziell (ein Ingest nach dem anderen), kein Lock nötig.
+
+    ``busy_timeout=10000`` verhindert SQLITE_BUSY, wenn mehrere Prozesse
+    (mayring-api, mayring-pi, mayring-mcp) gleichzeitig auf die DB zugreifen
+    — SQLite wartet dann bis zu 10 s auf eine Writer-Lock statt sofort zu
+    failen (Default 5 s war knapp bei parallelen Ingest+Retrieval-Calls).
     """
     path = db_path or MEMORY_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +97,7 @@ def init_memory_db(db_path: Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     _init_schema(conn)
     return conn
 

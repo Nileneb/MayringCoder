@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from src.memory.schema import Chunk, RetrievalRecord
 from src.memory.store import get_chunk, kv_get
@@ -348,8 +351,8 @@ def search(
                 dist_list = results.get("distances", [[]])[0]
                 candidate_set = {c.chunk_id for c in candidates}
                 vector_scores = _normalize_vector_scores(ids_list, dist_list, candidate_set)
-        except Exception:
-            pass  # Vector retrieval is best-effort
+        except Exception as exc:
+            _log.warning("vector retrieval failed (best-effort skip): %s", exc)
 
     # Build source_type lookup for session_compacted boost
     source_type_map: dict[str, str] = {}

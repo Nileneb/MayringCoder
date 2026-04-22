@@ -1,9 +1,12 @@
 """Core ingestion orchestrator: chunking → dedup → embed → store → log."""
 from __future__ import annotations
 
+import logging
 from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.model_router import ModelRouter
@@ -181,7 +184,8 @@ def ingest(
 
         try:
             emb = _embed_texts([chunk.text[:500]], ollama_url)[0]
-        except Exception:
+        except Exception as exc:
+            _log.warning("embed failed for %s: %s", chunk.chunk_id[:12], exc)
             emb = None
 
         if chroma_collection is not None and emb is not None:
@@ -201,8 +205,9 @@ def ingest(
                     }],
                 )
                 indexed = True
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("chroma upsert failed for %s: %s",
+                             chunk.chunk_id[:12], exc)
 
         kv_put(chunk.chunk_id, chunk.to_dict())
         new_chunk_ids.append(chunk.chunk_id)

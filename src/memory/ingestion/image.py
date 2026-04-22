@@ -1,8 +1,11 @@
 """Image ingestion — vision captioning for single image files."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from src.memory.schema import Chunk, Source
 from src.memory.store import (
@@ -93,7 +96,8 @@ def ingest_image(
 
         try:
             emb = _embed_texts([chunk.text[:500]], ollama_url)[0]
-        except Exception:
+        except Exception as exc:
+            _log.warning("image embed failed: %s", exc)
             emb = None
 
         if chroma_collection is not None and emb is not None:
@@ -113,8 +117,9 @@ def ingest_image(
                     }],
                 )
                 indexed = True
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("chroma upsert failed (image %s): %s",
+                             chunk.chunk_id[:12], exc)
 
         kv_put(chunk.chunk_id, chunk.to_dict())
         new_chunk_ids.append(chunk.chunk_id)
