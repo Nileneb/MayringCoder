@@ -18,7 +18,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
 _STATE_FILE = Path.home() / ".cache" / "mayryngcoder" / "watcher_state.json"
-_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+# Overridable via env so the Docker service (Issue #52) can mount a different
+# host path at /host_claude without patching the default.
+_PROJECTS_DIR = (
+    Path(os.environ["CLAUDE_PROJECTS_DIR"])
+    if os.environ.get("CLAUDE_PROJECTS_DIR")
+    else Path.home() / ".claude" / "projects"
+)
 
 from ingest_conversations import (
     _already_ingested,

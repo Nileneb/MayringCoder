@@ -83,6 +83,34 @@ services:
     restart: unless-stopped
     networks: [mayring-internal]
 
+  # Optional: incremental Claude-conversation ingestor (Issue #52).
+  # Activate only on dev machines that have ~/.claude/projects:
+  #   docker compose --profile watcher up -d mayring-watcher
+  # Post-hook triggers /wiki/generate on the api so v2.0 layers stay fresh
+  # without bouncing mayring-api.
+  mayring-watcher:
+    image: nileneb/mayring:latest
+    profiles: ["watcher"]
+    command:
+      - python
+      - -m
+      - tools.conversation_watcher
+      - --workspace-id
+      - "system"
+      - --hook-cmd
+      - "curl -fsS -X POST -H 'Authorization: Bearer ${MCP_SERVICE_TOKEN}' -H 'Content-Type: application/json' -d '{\"repo\":\"${WATCHER_REPO:-}\"}' http://mayring-api:8090/wiki/generate >/dev/null"
+      - --hook-interval
+      - "1800"
+    env_file: .env.production
+    environment:
+      CLAUDE_PROJECTS_DIR: "/host_claude"
+    volumes:
+      - linn-mayring-cache:/app/cache
+      - ${CLAUDE_PROJECTS_DIR:-~/.claude/projects}:/host_claude:ro
+    restart: unless-stopped
+    networks: [mayring-internal]
+    depends_on: [mayring-api]
+
 networks:
   mayring-internal: {}
   linn-shared:

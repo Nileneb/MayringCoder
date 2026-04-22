@@ -514,6 +514,34 @@ async def trigger_benchmark(
     return {"job_id": job_id, "status": "started"}
 
 
+async def _run_with_v2_postingest(
+    job_id: str,
+    args: list[str],
+    workspace_id: str,
+    repo: str,
+) -> None:
+    """Run a pipeline job and, on success, fire the v2.0 refresh chain
+    (wiki index → ambient snapshot → predictive transitions) as background jobs.
+
+    v2.0 jobs are tracked under ``_JOBS[job_id]["v2_jobs"]`` so callers can
+    poll their status without a separate lookup.
+    """
+    await _run_checker_job(job_id, args, workspace_id)
+    if _JOBS.get(job_id, {}).get("status") != "done" or not repo:
+        return
+
+    v2_jobs: dict[str, str] = {}
+    for flag, label in (
+        ("--generate-wiki", "wiki"),
+        ("--generate-ambient", "ambient"),
+        ("--rebuild-transitions", "predictive"),
+    ):
+        v2_id = _make_job(workspace_id)
+        v2_jobs[label] = v2_id
+        asyncio.create_task(_run_checker_job(v2_id, ["--repo", repo, flag], workspace_id))
+    _JOBS[job_id]["v2_jobs"] = v2_jobs
+
+
 @app.post("/issues/ingest")
 async def trigger_issues_ingest(
     request: IssuesIngestRequest,
@@ -528,7 +556,7 @@ async def trigger_issues_ingest(
     ]
     if request.force_reingest:
         args.append("--force-reingest")
-    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
     return {"job_id": job_id, "status": "started", "repo": request.repo}
 
 
@@ -537,13 +565,74 @@ async def trigger_populate(
     request: PopulateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    """Ingest repository source files into workspace memory."""
+    """Ingest repository source files into workspace memory.
+
+    On success, also refreshes the v2.0 layer for this repo
+    (wiki index, ambient snapshot, predictive transitions) as background jobs.
+    The child job ids are returned under ``v2_jobs`` when polled via GET /jobs/{id}.
+    """
     job_id = _make_job(workspace_id)
     args = ["--repo", request.repo, "--populate-memory", "--multiview"]
     if request.force_reingest:
         args.append("--force-reingest")
+    asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
+    return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+# ---------------------------------------------------------------------------
+# v2.0 layer — can also be triggered manually without a preceding ingest.
+# Each endpoint spawns a background job so the running mayring-api stays up.
+# ---------------------------------------------------------------------------
+
+class WikiGenerateRequest(BaseModel):
+    repo: str
+    wiki_type: str = "code"
+
+
+class AmbientSnapshotRequest(BaseModel):
+    repo: str
+
+
+class PredictiveRebuildRequest(BaseModel):
+    repo: str | None = None
+
+
+@app.post("/wiki/generate")
+async def trigger_wiki_generate(
+    request: WikiGenerateRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Rebuild the wiki index (_wiki_index.json + _wiki_clusters_emb.json)."""
+    job_id = _make_job(workspace_id)
+    args = ["--repo", request.repo, "--generate-wiki", "--wiki-type", request.wiki_type]
     asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
     return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+@app.post("/ambient/snapshot")
+async def trigger_ambient_snapshot(
+    request: AmbientSnapshotRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Generate a fresh ambient-context snapshot for the given repo."""
+    job_id = _make_job(workspace_id)
+    args = ["--repo", request.repo, "--generate-ambient"]
+    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    return {"job_id": job_id, "status": "started", "repo": request.repo}
+
+
+@app.post("/predictive/rebuild-transitions")
+async def trigger_predictive_rebuild(
+    request: PredictiveRebuildRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Rebuild the Markov transition matrix feeding the predictive layer."""
+    job_id = _make_job(workspace_id)
+    args = ["--rebuild-transitions"]
+    if request.repo:
+        args = ["--repo", request.repo] + args
+    asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
+    return {"job_id": job_id, "status": "started", "repo": request.repo or ""}
 
 
 @app.post("/papers/ingest")
