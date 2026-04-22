@@ -520,8 +520,15 @@ async def _run_with_v2_postingest(
     workspace_id: str,
     repo: str,
 ) -> None:
-    """Run a pipeline job and, on success, fire the v2.0 refresh chain
-    (wiki index → ambient snapshot → predictive transitions) as background jobs.
+    """Run a pipeline job and, on success, fire the v2.0 refresh chain.
+
+    Chain layout (discovered during the first prod smoke-test):
+
+      overview ─▶ wiki         (sequential — wiki aborts with
+                                "Kein Overview-Cache für <slug>"
+                                when no previous --mode overview ran)
+      ambient               (parallel — reads chunks directly)
+      predictive            (parallel — reads topic_transitions)
 
     v2.0 jobs are tracked under ``_JOBS[job_id]["v2_jobs"]`` so callers can
     poll their status without a separate lookup.
@@ -531,15 +538,32 @@ async def _run_with_v2_postingest(
         return
 
     v2_jobs: dict[str, str] = {}
+
+    # Ambient + Predictive don't depend on the overview cache → fire now.
     for flag, label in (
-        ("--generate-wiki", "wiki"),
         ("--generate-ambient", "ambient"),
         ("--rebuild-transitions", "predictive"),
     ):
-        v2_id = _make_job(workspace_id)
-        v2_jobs[label] = v2_id
-        asyncio.create_task(_run_checker_job(v2_id, ["--repo", repo, flag], workspace_id))
+        vid = _make_job(workspace_id)
+        v2_jobs[label] = vid
+        asyncio.create_task(_run_checker_job(vid, ["--repo", repo, flag], workspace_id))
+
+    # Overview → Wiki chain (sequential).
+    overview_id = _make_job(workspace_id)
+    wiki_id = _make_job(workspace_id)
+    v2_jobs["overview"] = overview_id
+    v2_jobs["wiki"] = wiki_id
     _JOBS[job_id]["v2_jobs"] = v2_jobs
+
+    async def _overview_then_wiki() -> None:
+        await _run_checker_job(overview_id, ["--repo", repo, "--mode", "overview"], workspace_id)
+        if _JOBS.get(overview_id, {}).get("status") == "done":
+            await _run_checker_job(wiki_id, ["--repo", repo, "--generate-wiki"], workspace_id)
+        else:
+            _JOBS[wiki_id]["status"] = "error"
+            _JOBS[wiki_id]["output"] = "skipped — overview job failed"
+
+    asyncio.create_task(_overview_then_wiki())
 
 
 @app.post("/issues/ingest")

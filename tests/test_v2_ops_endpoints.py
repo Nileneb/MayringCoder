@@ -72,10 +72,13 @@ class TestV2Endpoints:
 
 
 class TestPostIngestV2Chain:
-    def test_populate_fires_wiki_ambient_predictive_on_success(self, client):
+    def test_populate_fires_full_v2_chain_on_success(self, client):
         from src.api import server as srv
 
+        calls: list[list[str]] = []
+
         async def _fake_checker(job_id, args, workspace_id):
+            calls.append(list(args))
             srv._JOBS[job_id]["status"] = "done"
 
         with patch("src.api.server._run_checker_job", side_effect=_fake_checker):
@@ -83,11 +86,34 @@ class TestPostIngestV2Chain:
         assert r.status_code == 200
         job_id = r.json()["job_id"]
 
-        # The post-ingest chain sets _JOBS[job_id]['v2_jobs'] with 3 entries
-        assert set(srv._JOBS[job_id]["v2_jobs"].keys()) == {"wiki", "ambient", "predictive"}
-        # all three v2 job ids exist in the registry
+        # Chain now has overview + wiki + ambient + predictive
+        assert set(srv._JOBS[job_id]["v2_jobs"].keys()) == {
+            "overview", "wiki", "ambient", "predictive",
+        }
         for v2_id in srv._JOBS[job_id]["v2_jobs"].values():
             assert v2_id in srv._JOBS
+
+        assert any("--generate-ambient" in a for a in calls)
+        assert any("--rebuild-transitions" in a for a in calls)
+        assert any("overview" in a and "--mode" in a for a in calls)
+        assert any("--generate-wiki" in a for a in calls)
+
+    def test_wiki_skipped_when_overview_fails(self, client):
+        from src.api import server as srv
+
+        async def _fake_checker(job_id, args, workspace_id):
+            if "overview" in args:
+                srv._JOBS[job_id]["status"] = "error"
+            else:
+                srv._JOBS[job_id]["status"] = "done"
+
+        with patch("src.api.server._run_checker_job", side_effect=_fake_checker):
+            r = _call(client, "/populate", {"repo": "https://github.com/a/b"})
+        assert r.status_code == 200
+        job_id = r.json()["job_id"]
+        wiki_id = srv._JOBS[job_id]["v2_jobs"]["wiki"]
+        assert srv._JOBS[wiki_id]["status"] == "error"
+        assert "overview" in srv._JOBS[wiki_id]["output"]
 
     def test_populate_skips_v2_chain_on_failure(self, client):
         from src.api import server as srv
