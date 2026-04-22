@@ -100,8 +100,18 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         print(f"[populate-memory] --force-reingest: {len(old_chunk_ids)} "
               f"alte Chunks invalidiert.")
 
+    # File-Level tqdm — wird vom API-Server als Live-Progress-Signal
+    # geparsed (siehe src/api/job_queue.py::_parse_progress_line). Der
+    # import ist defensiv, damit ein fehlendes tqdm nicht das Populate
+    # bricht (passiert in manchen Dev-Envs ohne das Extra).
     try:
-        for f in files:
+        from tqdm import tqdm as _tqdm
+    except ImportError:  # pragma: no cover
+        def _tqdm(it, **_kw):
+            return it
+
+    try:
+        for f in _tqdm(files, desc="populate-memory", unit="file", total=len(files)):
             content_hash = _content_hash(f["content"])
             source = Source(
                 source_id=f"repo:{repo_url}:{f['filename']}",
