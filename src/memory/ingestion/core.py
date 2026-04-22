@@ -40,6 +40,7 @@ from src.memory.ingestion.utils import log_memory_event, now_iso
 from src.memory.schema import Chunk, Source
 from src.memory.store import (
     add_source_ref,
+    batch_context,
     find_by_text_hash,
     get_source,
     insert_chunk,
@@ -151,73 +152,79 @@ def ingest(
                 "deduped": 0, "superseded": 0, "skipped": True,
             }
 
-    upsert_source(conn, source, workspace_id=workspace_id)
-    log_ingestion_event(conn, source.source_id, "ingest_start", {"path": source.path})
+    # Ganze Pipeline (upsert_source + alle insert_chunk + log_events) läuft
+    # unter einem Commit. Das eliminiert bei einem typischen Populate
+    # (500 Files × 5 Chunks) ca. 2500 einzelne Commits und spart messbar
+    # Zeit ohne Transaktionssemantik zu brechen — Rollback bei Exception
+    # ist in batch_context enthalten.
+    with batch_context(conn):
+        upsert_source(conn, source, workspace_id=workspace_id)
+        log_ingestion_event(conn, source.source_id, "ingest_start", {"path": source.path})
 
-    if do_multiview and source.source_type == "github_issue" and model:
-        chunks = generate_multiview_chunks(source.source_id, content, ollama_url, model)
-    else:
-        chunks = structural_chunk(content, source.source_id, source.path)
+        if do_multiview and source.source_type == "github_issue" and model:
+            chunks = generate_multiview_chunks(source.source_id, content, ollama_url, model)
+        else:
+            chunks = structural_chunk(content, source.source_id, source.path)
 
-    if do_categorize and model:
-        chunks = mayring_categorize(
-            chunks, ollama_url, model,
-            mode=mode, codebook=codebook_choice,
-            source_type=source.source_type,
-            conn=conn,
-            router=router,
-        )
+        if do_categorize and model:
+            chunks = mayring_categorize(
+                chunks, ollama_url, model,
+                mode=mode, codebook=codebook_choice,
+                source_type=source.source_type,
+                conn=conn,
+                router=router,
+            )
 
-    new_chunk_ids: list[str] = []
-    deduped_count = 0
-    indexed = False
+        new_chunk_ids: list[str] = []
+        deduped_count = 0
+        indexed = False
 
-    for chunk in _tqdm(chunks, desc="Chunks embedden", unit="chunk", leave=False):
-        canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
-        if is_dup:
-            deduped_count += 1
-            add_source_ref(conn, canonical.chunk_id, source.source_id, workspace_id)
-            continue
+        for chunk in _tqdm(chunks, desc="Chunks embedden", unit="chunk", leave=False):
+            canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
+            if is_dup:
+                deduped_count += 1
+                add_source_ref(conn, canonical.chunk_id, source.source_id, workspace_id)
+                continue
 
-        insert_chunk(conn, chunk, workspace_id=workspace_id)
-        add_source_ref(conn, chunk.chunk_id, source.source_id, workspace_id)
+            insert_chunk(conn, chunk, workspace_id=workspace_id)
+            add_source_ref(conn, chunk.chunk_id, source.source_id, workspace_id)
 
-        try:
-            emb = _embed_texts([chunk.text[:500]], ollama_url)[0]
-        except Exception as exc:
-            _log.warning("embed failed for %s: %s", chunk.chunk_id[:12], exc)
-            emb = None
-
-        if chroma_collection is not None and emb is not None:
             try:
-                chroma_collection.upsert(
-                    ids=[chunk.chunk_id],
-                    documents=[chunk.text[:500]],
-                    embeddings=[emb],
-                    metadatas=[{
-                        "workspace_id": workspace_id,
-                        "source_id": chunk.source_id,
-                        "chunk_level": chunk.chunk_level,
-                        "category_labels": ",".join(chunk.category_labels),
-                        "category_source": chunk.category_source,
-                        "category_confidence": chunk.category_confidence,
-                        "is_active": 1,
-                    }],
-                )
-                indexed = True
+                emb = _embed_texts([chunk.text[:500]], ollama_url)[0]
             except Exception as exc:
-                _log.warning("chroma upsert failed for %s: %s",
-                             chunk.chunk_id[:12], exc)
+                _log.warning("embed failed for %s: %s", chunk.chunk_id[:12], exc)
+                emb = None
 
-        kv_put(chunk.chunk_id, chunk.to_dict())
-        new_chunk_ids.append(chunk.chunk_id)
+            if chroma_collection is not None and emb is not None:
+                try:
+                    chroma_collection.upsert(
+                        ids=[chunk.chunk_id],
+                        documents=[chunk.text[:500]],
+                        embeddings=[emb],
+                        metadatas=[{
+                            "workspace_id": workspace_id,
+                            "source_id": chunk.source_id,
+                            "chunk_level": chunk.chunk_level,
+                            "category_labels": ",".join(chunk.category_labels),
+                            "category_source": chunk.category_source,
+                            "category_confidence": chunk.category_confidence,
+                            "is_active": 1,
+                        }],
+                    )
+                    indexed = True
+                except Exception as exc:
+                    _log.warning("chroma upsert failed for %s: %s",
+                                 chunk.chunk_id[:12], exc)
 
-    log_ingestion_event(
-        conn,
-        source.source_id,
-        "ingest_done",
-        {"chunks": len(new_chunk_ids), "deduped": deduped_count},
-    )
+            kv_put(chunk.chunk_id, chunk.to_dict())
+            new_chunk_ids.append(chunk.chunk_id)
+
+        log_ingestion_event(
+            conn,
+            source.source_id,
+            "ingest_done",
+            {"chunks": len(new_chunk_ids), "deduped": deduped_count},
+        )
 
     result = {
         "source_id": source.source_id,

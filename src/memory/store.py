@@ -11,11 +11,76 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from src.config import CACHE_DIR
+
+
+# ---------------------------------------------------------------------------
+# Batch-commit support (#68)
+# ---------------------------------------------------------------------------
+# Default-Verhalten: jede Write-Funktion committet sofort. Das kostet bei
+# Batch-Ingests (z.B. 500 Files × 5 Chunks = 2500 Commits) messbar Zeit.
+# Mit `with batch_context(conn): ...` wird der commit bis zum Ende des
+# Blocks aufgeschoben; bei Exception rollback. Nested batches sind erlaubt —
+# nur der äußerste Wrapper committed.
+#
+# sqlite3.Connection ist ein C-Typ ohne dict-slot, deshalb tracken wir die
+# Batch-Tiefe thread-lokal mit einem dict keyed via id(conn). Das ist safe
+# für den üblichen Stack (ein Thread hat meistens eine Connection) und für
+# den Gradio-Multi-Thread-Fall, wo jeder Worker einen eigenen Scope hat.
+
+import threading as _threading
+
+_batch_local = _threading.local()
+
+
+def _batch_depth(conn: sqlite3.Connection) -> int:
+    reg = getattr(_batch_local, "depth_map", None)
+    if reg is None:
+        return 0
+    return reg.get(id(conn), 0)
+
+
+def _batch_bump(conn: sqlite3.Connection, delta: int) -> int:
+    reg = getattr(_batch_local, "depth_map", None)
+    if reg is None:
+        reg = {}
+        _batch_local.depth_map = reg
+    reg[id(conn)] = reg.get(id(conn), 0) + delta
+    new_depth = reg[id(conn)]
+    if new_depth <= 0:
+        reg.pop(id(conn), None)
+    return new_depth
+
+
+@contextmanager
+def batch_context(conn: sqlite3.Connection):
+    """Bündelt alle Commits der Write-Funktionen bis zum Block-Ende.
+    Bei Exception rollback statt halb-gespeicherter Transaktion.
+    Nested Calls sind safe — nur der äußerste committed.
+    """
+    is_outer = _batch_depth(conn) == 0
+    _batch_bump(conn, +1)
+    try:
+        yield conn
+        if is_outer:
+            conn.commit()
+    except Exception:
+        if is_outer:
+            conn.rollback()
+        raise
+    finally:
+        _batch_bump(conn, -1)
+
+
+def _maybe_commit(conn: sqlite3.Connection) -> None:
+    """Commit nur außerhalb von batch_context()."""
+    if _batch_depth(conn) == 0:
+        conn.commit()
 
 # ---------------------------------------------------------------------------
 # ChromaDB process-scoped singleton (replaces chroma_factory.py)
@@ -279,7 +344,7 @@ def upsert_source(
             workspace_id,
         ),
     )
-    conn.commit()
+    _maybe_commit(conn)
 
 
 def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
@@ -337,7 +402,7 @@ def insert_chunk(
             chunk.created_at, chunk.superseded_by, int(chunk.is_active), workspace_id,
         ),
     )
-    conn.commit()
+    _maybe_commit(conn)
 
 
 def get_chunk(conn: sqlite3.Connection, chunk_id: str, active_only: bool = True) -> Chunk | None:
@@ -381,7 +446,7 @@ def supersede_chunk(
         "UPDATE chunks SET is_active = 0, superseded_by = ? WHERE chunk_id = ?",
         (new_chunk_id, old_chunk_id),
     )
-    conn.commit()
+    _maybe_commit(conn)
 
 
 def deactivate_chunks_by_source(
@@ -392,7 +457,7 @@ def deactivate_chunks_by_source(
         "UPDATE chunks SET is_active = 0 WHERE source_id = ? AND is_active = 1",
         (source_id,),
     )
-    conn.commit()
+    _maybe_commit(conn)
     return conn.execute("SELECT changes()").fetchone()[0]
 
 
@@ -413,7 +478,7 @@ def add_feedback(
         """,
         (chunk_id, signal, json.dumps(metadata or {}), _now_iso()),
     )
-    conn.commit()
+    _maybe_commit(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +498,7 @@ def log_ingestion_event(
         """,
         (source_id, event_type, json.dumps(payload), _now_iso()),
     )
-    conn.commit()
+    _maybe_commit(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +534,7 @@ def add_source_ref(
         """,
         (canonical_chunk_id, source_id, workspace_id, _now_iso()),
     )
-    conn.commit()
+    _maybe_commit(conn)
 
 
 def get_source_refs(
