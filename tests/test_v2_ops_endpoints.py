@@ -97,6 +97,9 @@ class TestPostIngestV2Chain:
         assert any("--rebuild-transitions" in a for a in calls)
         assert any("overview" in a and "--mode" in a for a in calls)
         assert any("--generate-wiki" in a for a in calls)
+        # Regression: populate must carry --memory-categorize so chunks get labels
+        populate_call = next(a for a in calls if "--populate-memory" in a)
+        assert "--memory-categorize" in populate_call
 
     def test_wiki_skipped_when_overview_fails(self, client):
         from src.api import server as srv

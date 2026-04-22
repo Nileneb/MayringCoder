@@ -596,7 +596,13 @@ async def trigger_populate(
     The child job ids are returned under ``v2_jobs`` when polled via GET /jobs/{id}.
     """
     job_id = _make_job(workspace_id)
-    args = ["--repo", request.repo, "--populate-memory", "--multiview"]
+    # --memory-categorize: ohne diesen Flag setzt run_populate_memory() in
+    # _opts ein `categorize=False`, wodurch ingest() mayring_categorize
+    # komplett überspringt und alle chunks ohne category_labels landen.
+    # Das war der Befund aus dem ersten Prod-Smoke (d5023372): 1128 Chunks,
+    # 0 mit Labels. Standard-Weg aus dem UI muss Mayring aktiv haben.
+    args = ["--repo", request.repo, "--populate-memory", "--multiview",
+            "--memory-categorize"]
     if request.force_reingest:
         args.append("--force-reingest")
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
