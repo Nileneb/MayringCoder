@@ -130,12 +130,16 @@ def ingest(
     do_categorize: bool = bool(effective.get("categorize", True)) and bool(model)
     do_log:        bool = bool(effective.get("log", False))
     do_multiview:  bool = bool(effective.get("multiview", False))
+    do_force:      bool = bool(effective.get("force", False))
     mode:          str  = effective.get("mode", "hybrid")
     codebook_choice: str = effective.get("codebook", "auto")
 
     from src.analysis.context import _embed_texts
 
-    if source.content_hash:
+    # Skip re-ingestion unless caller passes opts={"force": True} — that lifts
+    # the cache completely (used by /populate?force_reingest=true so
+    # re-runs actually re-chunk, re-categorize, re-embed).
+    if source.content_hash and not do_force:
         existing_src = get_source(conn, source.source_id)
         if existing_src and existing_src.content_hash == source.content_hash:
             return {

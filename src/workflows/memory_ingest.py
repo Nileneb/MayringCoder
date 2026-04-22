@@ -79,6 +79,27 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     error_count = 0
     dedup_count = 0
 
+    do_force = bool(getattr(args, "force_reingest", False))
+    if do_force:
+        print("[populate-memory] --force-reingest: alte Chunks werden invalidiert "
+              "und Kategorisierung/Embedding läuft komplett neu.")
+        from src.memory.retrieval import invalidate_query_cache
+        from src.memory.store import deactivate_chunks_by_source, get_chunks_by_source
+        old_chunk_ids: list[str] = []
+        for f in files:
+            src_id = f"repo:{repo_url}:{f['filename']}"
+            old = get_chunks_by_source(conn, src_id, active_only=False)
+            old_chunk_ids.extend(c.chunk_id for c in old)
+            deactivate_chunks_by_source(conn, src_id)
+        if old_chunk_ids and chroma is not None:
+            try:
+                chroma.delete(ids=old_chunk_ids)
+            except Exception:
+                pass
+        invalidate_query_cache()
+        print(f"[populate-memory] --force-reingest: {len(old_chunk_ids)} "
+              f"alte Chunks invalidiert.")
+
     try:
         for f in files:
             content_hash = _content_hash(f["content"])
@@ -93,11 +114,16 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
             )
             try:
                 _opts: dict = {}
-                if not args.memory_categorize:
+                # Mayring-Kategorisierung ist default an (siehe cli.py); Opt-Out
+                # nur wenn ein Caller args.memory_categorize explizit auf False
+                # setzt. Kein "silent off" mehr.
+                if getattr(args, "memory_categorize", True) is False:
                     _opts["categorize"] = False
                 codebook_profile = getattr(args, "codebook_profile", None)
                 if codebook_profile:
                     _opts["codebook"] = codebook_profile
+                if do_force:
+                    _opts["force"] = True
                 result = ingest(
                     source,
                     f["content"],

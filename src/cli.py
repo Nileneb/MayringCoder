@@ -117,8 +117,16 @@ def parse_args() -> argparse.Namespace:
                         "Vektor-DB (benötigt vorherigen --mode overview Lauf).")
     p.add_argument("--populate-memory", action="store_true",
                    help="Repo laden und alle Dateien in die Memory-Pipeline ingesten.")
-    p.add_argument("--memory-categorize", action="store_true",
-                   help="Mayring-Kategorisierung während Memory-Ingestion aktivieren.")
+    # Mayring-Kategorisierung ist default an — sie IST die Pipeline, nicht ein
+    # Zusatz. Wer Rohingestion ohne Labels will, muss explizit opt-out.
+    p.add_argument("--no-memory-categorize", dest="memory_categorize",
+                   action="store_false",
+                   help="Mayring-Kategorisierung während Memory-Ingest deaktivieren "
+                        "(Default ist an).")
+    p.add_argument("--memory-categorize", dest="memory_categorize",
+                   action="store_true",
+                   help=argparse.SUPPRESS)  # BC — altes Opt-In bleibt funktional
+    p.set_defaults(memory_categorize=True)
     p.add_argument("--generate-wiki", action="store_true",
                    help="Verknüpfungswiki aus Overview-Cache + Memory erzeugen (cache/<slug>_wiki.md)")
     p.add_argument("--rebuild-transitions", action="store_true",
