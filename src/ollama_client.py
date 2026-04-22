@@ -36,14 +36,23 @@ def generate(
     max_retries: int = _GENERATE_MAX_RETRIES,
     retry_delays: tuple[int, ...] = _GENERATE_RETRY_DELAYS,
     label: str = "",
+    think: bool = False,
 ) -> str:
     """POST to /api/generate and return the complete response text.
 
     Uses stream=True by default to prevent read-timeout hangs on large models.
     Pass stream=False (e.g. for image captioning) to get a single-shot response.
+
+    ``think=False`` disables chain-of-thought for thinking models (qwen3,
+    deepseek-r1, …). Those models emit their reasoning into a separate
+    ``thinking`` field and only write the answer to ``response`` once
+    ``</think>`` is reached — at Ollama's default num_predict=128 that's
+    often never, which is why categorization came back with empty labels
+    in the first production smoke-test. Callers that explicitly want the
+    reasoning stream can pass ``think=True``.
     """
     base = url.rstrip("/")
-    body: dict[str, Any] = {"model": model, "prompt": prompt, "stream": stream}
+    body: dict[str, Any] = {"model": model, "prompt": prompt, "stream": stream, "think": think}
     if system:
         body["system"] = system
     if images:
