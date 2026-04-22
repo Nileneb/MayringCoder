@@ -1,0 +1,45 @@
+name: mayring-watcher
+
+# Stand-alone Compose für den User-Laptop: tailt dessen lokalen
+# ~/.claude/projects/-Ordner und pushed fertige Summaries via HTTPS an
+# mcp.linn.games (RemoteHttpSink). Läuft NICHT auf dem Prod-Server.
+#
+# Voraussetzungen auf dem Laptop:
+#   * Docker Desktop (oder engine-compat)
+#   * JWT aus https://app.linn.games/mcp/authorize (oder Dashboard)
+#
+# Start:
+#   CLAUDE_PROJECTS_DIR=~/.claude/projects \
+#     MAYRING_API_URL=https://mcp.linn.games \
+#     MAYRING_JWT=eyJhbGciOi... \
+#     docker compose -f docker-compose.watcher.yml up -d
+#
+# Logs:
+#   docker compose -f docker-compose.watcher.yml logs -f
+
+services:
+  conversation-watcher:
+    image: nileneb/mayring:latest
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - tools.conversation_watcher
+      - --workspace-id
+      - "system"
+      - --poll-interval
+      - "30"
+      - --idle-interval
+      - "300"
+      - --flush-count
+      - "8"
+    environment:
+      CLAUDE_PROJECTS_DIR: "/host_claude"
+      MAYRING_API_URL: "${MAYRING_API_URL:?MAYRING_API_URL ist Pflicht — z.B. https://mcp.linn.games}"
+      MAYRING_JWT: "${MAYRING_JWT:?MAYRING_JWT ist Pflicht — über /mcp/authorize holen}"
+    volumes:
+      - ${CLAUDE_PROJECTS_DIR:-~/.claude/projects}:/host_claude:ro
+      - mayring-watcher-state:/root/.cache/mayryngcoder
+
+volumes:
+  mayring-watcher-state:

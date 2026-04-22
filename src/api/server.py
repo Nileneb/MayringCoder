@@ -174,6 +174,21 @@ class MemoryFeedbackRequest(BaseModel):
     metadata: dict | None = None
 
 
+class ConversationTurnModel(BaseModel):
+    role: str
+    content: str
+    timestamp: str | None = None
+
+
+class ConversationMicroBatchRequest(BaseModel):
+    turns: list[ConversationTurnModel]
+    session_id: str
+    workspace_slug: str = "default"
+    # Optional: caller can pre-summarize (local-watcher mode). When absent,
+    # the server produces the summary via its own Ollama.
+    presumarized: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -280,6 +295,63 @@ async def memory_put(
                              _OLLAMA_URL, _OLLAMA_MODEL, {"categorize": request.categorize},
                              workspace_id)
         return {"workspace_id": workspace_id, **result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/conversation/micro-batch")
+async def conversation_micro_batch(
+    request: ConversationMicroBatchRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Accept a batch of raw Claude turns from a remote conversation watcher,
+    produce a summary on the server side (so the user doesn't need their own
+    Ollama), and ingest as a ``conversation_summary`` source.
+
+    This is the endpoint the per-user `tools/conversation_watcher.py` in
+    RemoteHttpSink-Modus calls. Dedup: the source_id is deterministic
+    (``conversation:<workspace_slug>:<session_id>``); when the same content
+    is re-posted, ingest() detects it via content_hash and skips.
+    """
+    try:
+        import hashlib
+        from tools.ingest_conversations import _summarize as _summarize_turns
+
+        turns_dicts = [t.model_dump() for t in request.turns]
+        if not turns_dicts:
+            raise HTTPException(status_code=400, detail="turns must not be empty")
+
+        first_ts = turns_dicts[0].get("timestamp", "")[:10]
+        batch_key = f"{request.session_id}:{len(turns_dicts)}:{turns_dicts[-1].get('timestamp', '')}"
+        content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
+        source_id = f"conversation:{request.workspace_slug}:{request.session_id[:16]}"
+
+        summary = (
+            request.presumarized
+            or _summarize_turns(turns_dicts, "", _OLLAMA_URL, _OLLAMA_MODEL)
+        )
+        content = (
+            f"# Session {first_ts or 'unbekannt'} | {request.workspace_slug}\n\n"
+            f"{summary}\n"
+        )
+        source_dict = {
+            "source_id": source_id,
+            "source_type": "conversation_summary",
+            "repo": request.workspace_slug,
+            "path": f"{request.workspace_slug}/incremental",
+            "branch": "local",
+            "commit": "",
+            "content_hash": content_hash,
+        }
+        result = _run_ingest(
+            source_dict, content, _get_conn(), _get_chroma(),
+            _OLLAMA_URL, _OLLAMA_MODEL,
+            {"categorize": True, "codebook": "social", "mode": "hybrid"},
+            workspace_id,
+        )
+        return {"workspace_id": workspace_id, "source_id": source_id, **result}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

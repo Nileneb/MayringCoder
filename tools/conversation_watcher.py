@@ -136,6 +136,135 @@ class TurnBuffer:
         return [sid for sid in list(self._sessions) if self.should_flush(sid)]
 
 
+# ---------------------------------------------------------------------------
+# Sinks — local-DB (legacy) vs remote-HTTP (SaaS deploy)
+# ---------------------------------------------------------------------------
+
+class WatcherSink:
+    """Abstract sink. Implementations push a summarized micro-batch somewhere."""
+
+    def ingest(
+        self,
+        turns: list[dict],
+        session_id: str,
+        workspace_slug: str,
+        ollama_url: str,
+        model: str,
+        workspace_id: str,
+    ) -> bool:  # pragma: no cover — interface
+        raise NotImplementedError
+
+
+class LocalDBSink(WatcherSink):
+    """Legacy: writes directly into the local SQLite + ChromaDB via src.memory.ingest.
+
+    Only usable when the watcher runs inside or alongside the mayring-api
+    process (same host, shared cache volume). For a normal SaaS user whose
+    Claude chats live on their own laptop, use RemoteHttpSink instead.
+    """
+
+    def __init__(self) -> None:
+        from src.api.dependencies import get_chroma, get_conn
+        self._conn = get_conn()
+        self._chroma = get_chroma()
+
+    def ingest(self, turns, session_id, workspace_slug, ollama_url, model, workspace_id):
+        if not turns:
+            return False
+        import hashlib
+        from src.memory.ingest import ingest
+        from src.memory.schema import Source
+        first_ts = turns[0].get("timestamp", "")[:10]
+        batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp','')}"
+        content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
+        source_id = f"conversation:{workspace_slug}:{session_id[:16]}"
+        if _already_ingested(self._conn, source_id, content_hash):
+            return False
+        try:
+            summary = _summarize(turns, "", ollama_url, model)
+            content = (
+                f"# Session {first_ts or 'unbekannt'} | {workspace_slug}\n\n"
+                f"{summary}\n"
+            )
+            src = Source(
+                source_id=source_id,
+                source_type="conversation_summary",
+                repo=workspace_slug,
+                path=f"{workspace_slug}/incremental",
+                branch="local",
+                commit="",
+                content_hash=content_hash,
+            )
+            ingest(
+                src, content, self._conn, self._chroma,
+                ollama_url, model,
+                opts={"categorize": bool(model), "codebook": "social", "mode": "hybrid"},
+                workspace_id=workspace_id,
+            )
+            return True
+        except Exception as exc:
+            print(f"  ✗ local-ingest {session_id[:8]}: {exc}", file=sys.stderr)
+            return False
+
+
+class RemoteHttpSink(WatcherSink):
+    """Standard deployment mode: watcher runs on the user's own machine
+    (where ~/.claude/projects lives), turns get POSTed to the central
+    mayring-api /conversation/micro-batch endpoint. The server produces
+    the summary and ingests into the user's workspace. No local Ollama,
+    no local SQLite — only requirements are Python, httpx, and a JWT.
+
+    Env / CLI-configurable:
+      MAYRING_API_URL  (default: http://localhost:8090)
+      MAYRING_JWT      (required; obtained from /mcp/authorize flow)
+    """
+
+    def __init__(self, api_url: str, jwt: str) -> None:
+        import httpx
+        if not api_url:
+            raise ValueError("RemoteHttpSink needs api_url")
+        if not jwt:
+            raise ValueError("RemoteHttpSink needs JWT (env MAYRING_JWT)")
+        self._base = api_url.rstrip("/")
+        self._jwt = jwt
+        self._client = httpx.Client(
+            timeout=60.0,
+            headers={"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"},
+        )
+        # Client-side dedup so we don't re-POST identical batches on crash-recovery.
+        self._seen: set[tuple[str, str]] = set()
+
+    def ingest(self, turns, session_id, workspace_slug, ollama_url, model, workspace_id):
+        if not turns:
+            return False
+        import hashlib
+        batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp','')}"
+        content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
+        cache_key = (session_id, content_hash)
+        if cache_key in self._seen:
+            return False
+        payload = {
+            "turns": [
+                {"role": t.get("role", ""), "content": t.get("content", ""),
+                 "timestamp": t.get("timestamp", "")}
+                for t in turns
+            ],
+            "session_id": session_id,
+            "workspace_slug": workspace_slug,
+        }
+        try:
+            r = self._client.post(f"{self._base}/conversation/micro-batch", json=payload)
+            if r.status_code != 200:
+                print(f"  ✗ remote-ingest {session_id[:8]}: HTTP {r.status_code} {r.text[:200]}",
+                      file=sys.stderr)
+                return False
+            self._seen.add(cache_key)
+            return True
+        except Exception as exc:
+            print(f"  ✗ remote-ingest {session_id[:8]}: {exc}", file=sys.stderr)
+            return False
+
+
 def ingest_micro_batch(
     turns: list[dict],
     session_id: str,
@@ -146,68 +275,26 @@ def ingest_micro_batch(
     model: str,
     workspace_id: str = "system",
 ) -> bool:
-    """Summarize and ingest a micro-batch of new turns into MCP memory.
-
-    Returns True on success, False on error.
+    """Backward-compat wrapper around LocalDBSink for older callers/tests
+    that still pass conn+chroma directly. New code should build a sink
+    via ``build_sink()`` and call ``sink.ingest(...)``.
     """
-    if not turns:
-        return False
+    sink = LocalDBSink.__new__(LocalDBSink)
+    sink._conn = conn
+    sink._chroma = chroma
+    return sink.ingest(turns, session_id, workspace_slug, ollama_url, model, workspace_id)
 
-    import hashlib
-    from src.memory.ingest import ingest
-    from src.memory.schema import Source
 
-    first_ts = turns[0].get("timestamp", "")[:10]
-    batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp','')}"
-    content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
-    source_id = f"conversation:{workspace_slug}:{session_id[:16]}"
-
-    if _already_ingested(conn, source_id, content_hash):
-        return False
-
-    try:
-        related_context = ""
-        kw = _keywords(turns)
-        if kw:
-            try:
-                from src.memory.retrieval import compress_for_prompt, search
-                related = search(
-                    query=kw,
-                    conn=conn,
-                    chroma_collection=chroma,
-                    ollama_url=ollama_url,
-                    opts={"top_k": 3, "workspace_id": None},
-                )
-                related_context = compress_for_prompt(related, char_budget=800)
-            except Exception:
-                pass
-
-        summary = _summarize(turns, related_context, ollama_url, model)
-
-        content = (
-            f"# Session {first_ts or 'unbekannt'} | {workspace_slug}\n\n"
-            f"{summary}\n"
-        )
-
-        src = Source(
-            source_id=source_id,
-            source_type="conversation_summary",
-            repo=workspace_slug,
-            path=f"{workspace_slug}/incremental",
-            branch="local",
-            commit="",
-            content_hash=content_hash,
-        )
-        ingest(
-            src, content, conn, chroma,
-            ollama_url, model,
-            opts={"categorize": bool(model), "codebook": "social", "mode": "hybrid"},
-            workspace_id=workspace_id,
-        )
-        return True
-    except Exception as exc:
-        print(f"  ✗ ingest_micro_batch {session_id[:8]}: {exc}", file=sys.stderr)
-        return False
+def build_sink(api_url: str, jwt: str) -> WatcherSink:
+    """Pick RemoteHttpSink whenever api_url is set (SaaS default), else
+    fall back to LocalDBSink for devs who run watcher+server on the same
+    host with shared cache volume.
+    """
+    if api_url:
+        return RemoteHttpSink(api_url, jwt)
+    print("[watcher] No MAYRING_API_URL — falling back to local DB sink.",
+          file=sys.stderr)
+    return LocalDBSink()
 
 
 def unload_model(model: str) -> None:
@@ -254,6 +341,7 @@ def scan_workspace_files(projects_dir: Path = _PROJECTS_DIR) -> list[Path]:
 
 
 def watch_loop(
+    sink: WatcherSink,
     ollama_url: str,
     model: str,
     workspace_id: str = "system",
@@ -268,10 +356,6 @@ def watch_loop(
     projects_dir: Path = _PROJECTS_DIR,
 ) -> None:
     """Main polling loop. Runs until SIGINT/SIGTERM or idle_timeout exceeded."""
-    from src.api.dependencies import get_conn, get_chroma
-
-    conn = get_conn()
-    chroma = get_chroma()
     state = load_state()
     buf = TurnBuffer(flush_count=flush_count, flush_interval=flush_interval)
 
@@ -306,10 +390,7 @@ def watch_loop(
 
         for sid in buf.sessions_to_flush():
             turns = buf.pop(sid)
-            ok = ingest_micro_batch(
-                turns, sid, ws_slug,
-                conn, chroma, ollama_url, model, workspace_id,
-            )
+            ok = sink.ingest(turns, sid, ws_slug, ollama_url, model, workspace_id)
             if ok:
                 state.last_llm_call = time.time()
                 run_post_hook(hook_cmd, state, hook_interval)
@@ -353,6 +434,13 @@ def parse_args(argv=None):
                     help="Seconds of LLM inactivity before unloading model (default: 3600)")
     ap.add_argument("--projects-dir", default=None,
                     help=f"Claude projects dir (default: {_PROJECTS_DIR})")
+    ap.add_argument("--api-url", default=None,
+                    help="MayringCoder API base URL (default: $MAYRING_API_URL). "
+                         "Leer lassen nur für den Legacy-Local-DB-Modus, wenn der "
+                         "Watcher zusammen mit mayring-api im gleichen Cache-Volume läuft.")
+    ap.add_argument("--jwt", default=None,
+                    help="RS256-JWT für die API (default: $MAYRING_JWT). Nur nötig "
+                         "wenn --api-url gesetzt ist.")
     return ap.parse_args(argv)
 
 
@@ -365,12 +453,22 @@ def main(argv=None) -> None:
     ollama_url = args.ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
     model = args.model or os.getenv("OLLAMA_MODEL", "")
     projects_dir = Path(args.projects_dir) if args.projects_dir else _PROJECTS_DIR
+    api_url = args.api_url or os.getenv("MAYRING_API_URL", "")
+    jwt = args.jwt or os.getenv("MAYRING_JWT", "")
 
-    print(f"[watcher] Ollama: {ollama_url} | Model: {model or '(none)'}")
+    sink = build_sink(api_url, jwt)
+    mode_label = "remote-http" if isinstance(sink, RemoteHttpSink) else "local-db"
+
+    print(f"[watcher] Mode: {mode_label}")
+    if isinstance(sink, RemoteHttpSink):
+        print(f"[watcher] API: {api_url}")
+    else:
+        print(f"[watcher] Ollama: {ollama_url} | Model: {model or '(none)'}")
     print(f"[watcher] Projects dir: {projects_dir}")
     print(f"[watcher] Poll: {args.poll_interval}s active / {args.idle_interval}s idle")
 
     watch_loop(
+        sink=sink,
         ollama_url=ollama_url,
         model=model,
         workspace_id=args.workspace_id,
