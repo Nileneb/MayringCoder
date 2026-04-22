@@ -9,6 +9,8 @@ on:
       - 'requirements.txt'
       - 'prompts/**'
       - 'codebooks/**'
+      - 'tools/**'
+      - 'checker.py'
   workflow_dispatch:
 
 permissions:
