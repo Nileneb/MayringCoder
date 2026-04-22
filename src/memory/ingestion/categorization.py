@@ -122,6 +122,26 @@ def _path_fallback_category(path: str) -> list[str]:
     return []
 
 
+_LABEL_LINE_PREFIX = re.compile(
+    r"^\s*(?:kategorien|categories|labels|kategorie|category)\s*[:\-]\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_label_line(response: str) -> str:
+    """Pull the comma-separated label line out of a structured LLM response.
+
+    The hybrid prompt asks the model to think in three steps but emit only
+    ``Kategorien: a, b, c``. If we find that line we use only its payload;
+    otherwise we fall back to the full response (covers older prompts that
+    just return a bare comma list).
+    """
+    match = _LABEL_LINE_PREFIX.search(response or "")
+    if match:
+        return match.group(1).strip()
+    return response or ""
+
+
 def _load_mayring_template(mode: str) -> str:
     """Load prompt template for the given mode. Falls back to inline default."""
     filename = _MODE_TO_TEMPLATE.get(mode, "mayring_hybrid") + ".md"
@@ -183,8 +203,12 @@ def mayring_categorize(
                 label=f"mayring:{chunk.chunk_id[:8]}",
                 system_prompt=system_prompt,
             )
+            # The hybrid prompt asks for `Kategorien: a, b, c` — extract that
+            # line if present, otherwise treat the full response as a raw list
+            # (backwards-compat with older deductive/inductive templates).
+            payload = _extract_label_line(response)
             raw = [re.sub(r"^[-•*]\s*", "", p).strip()
-                   for p in re.split(r"[,\n]", response)]
+                   for p in re.split(r"[,\n]", payload)]
 
             validated: list[str] = []
             for lbl in raw:
