@@ -1,41 +1,50 @@
 """MayringCoder Multi-Tenant API Server.
 
-FastAPI HTTP layer with Laravel Sanctum token auth.
+FastAPI HTTP layer. Auth: **RS256-JWT** (2026-04 umgestellt von Sanctum).
 
-Auth: Bearer tokens from app.linn.games (Sanctum format: "{id}|{plaintext}")
-are validated directly against the shared MySQL DB.
+JWTs werden von app.linn.games' JwtIssuer ausgestellt und tragen
+``workspace_id``, ``sub``, ``scope`` sowie BYO-Provider-Claims. Dieser
+Server validiert sie **offline** gegen den Public-Key unter
+JWT_PUBLIC_KEY_PATH — keine Laravel-DB-Roundtrip mehr nötig.
 
 Start:
-    .venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8080
+    .venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8090
 
-Endpoints (authenticated via Bearer <sanctum_token>):
+Endpoints (alle außer /health benötigen Bearer <RS256-JWT>):
     POST /analyze          — submit analysis job (returns pid)
     POST /overview         — overview map of a repo (returns job_id)
     POST /turbulence       — turbulence analysis (returns job_id)
     POST /benchmark        — retrieval benchmark (returns job_id)
     POST /issues/ingest    — GitHub issues → memory (returns job_id)
-    POST /populate         — repo source files → memory (returns job_id)
+    POST /populate         — repo source files → memory (returns job_id,
+                              fires v2-chain after success)
     POST /papers/ingest    — ArXiv papers → memory (returns job_id)
-    POST /duel             — run same task on two models, compare results (returns job_id)
-    GET  /jobs/{job_id}    — poll job status and output
+    POST /duel             — run same task on two models (returns job_id)
+    POST /wiki/generate    — rebuild wiki index + clusters (returns job_id)
+    POST /ambient/snapshot — regenerate ambient snapshot (returns job_id)
+    POST /predictive/rebuild-transitions — Markov matrix (returns job_id)
+    GET  /jobs/{job_id}    — poll job status; v2-chain child job IDs
+                              unter ``v2_jobs`` dictionary
     POST /memory/search          — search workspace memory
-    POST /memory/put             — ingest into workspace memory
+    POST /memory/put             — ingest content into workspace memory
     GET  /memory/chunk/{id}      — retrieve chunk by ID
     POST /memory/invalidate      — deactivate all chunks for a source
     GET  /memory/chunks/{src_id} — list chunks for a source
-    GET  /memory/explain/{id}    — explain a chunk (key, scores, origin)
-    POST /memory/reindex         — re-embed and re-upsert chunks to ChromaDB
+    GET  /memory/explain/{id}    — explain chunk (key, scores, origin)
+    POST /memory/reindex         — re-embed + re-upsert to ChromaDB
     POST /memory/feedback        — record usage signal for a chunk
     GET  /reports          — list reports
     GET  /health           — health check (no auth)
 
-Required .env:
-    LARAVEL_DB_HOST=mysql      (default: mysql — Docker service name)
-    LARAVEL_DB_PORT=3306
-    LARAVEL_DB_USER=...
-    LARAVEL_DB_PASSWORD=...
-    LARAVEL_DB_NAME=...
-    APP_BASE_URL=https://your-server
+Required env:
+    JWT_PUBLIC_KEY_PATH   — path to RS256 public key (PEM)
+    JWT_ISSUER            — expected `iss` claim (default: https://app.linn.games)
+    JWT_AUDIENCE          — expected `aud` claim (default: mayringcoder)
+    OLLAMA_URL            — Ollama endpoint (default three.linn.games)
+    OLLAMA_MODEL          — default model (e.g. gemma4:e4b)
+    MCP_SERVICE_TOKEN     — shared secret for the /authorize/register-code
+                             service-to-service handshake (MCP-HTTP, not this
+                             server)
 """
 
 from __future__ import annotations
