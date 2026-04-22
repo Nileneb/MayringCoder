@@ -73,13 +73,28 @@ def find_import_pairs(overview_cache: dict[str, dict]) -> list[WikiEdge]:
     return edges
 
 
+def _fn_field(fn, key: str) -> list:
+    """Tolerant reader für overview_cache-Einträge.
+
+    Ältere Caches speichern `functions` als liste von String-Namen, neuere
+    als dicts mit `inputs`/`outputs`/`calls`. Beide Formen unterstützen,
+    damit ein cachekompatibler Wiki-Build nicht an Formatdrift scheitert.
+    """
+    if isinstance(fn, dict):
+        v = fn.get(key, [])
+        return v if isinstance(v, list) else []
+    return []
+
+
 def find_shared_types(overview_cache: dict[str, dict]) -> list[WikiEdge]:
     """Rule 2: Files sharing same class types in signatures → weight 0.8."""
     type_files: dict[str, list[str]] = defaultdict(list)
     for fname, entry in overview_cache.items():
         text = entry.get("file_summary", "")
         for fn in entry.get("functions", []):
-            text += " ".join(fn.get("inputs", [])) + " " + " ".join(fn.get("outputs", []))
+            text += " ".join(_fn_field(fn, "inputs")) + " " + " ".join(_fn_field(fn, "outputs"))
+            if isinstance(fn, str):
+                text += " " + fn  # bare name is better than nothing
         for m in _TYPE_RE.finditer(text):
             type_files[m.group(1)].append(fname)
     edges = []
@@ -97,7 +112,7 @@ def find_call_pairs(overview_cache: dict[str, dict]) -> list[WikiEdge]:
     edges = []
     for fname, entry in overview_cache.items():
         for fn in entry.get("functions", []):
-            for call in fn.get("calls", []):
+            for call in _fn_field(fn, "calls"):
                 target = _resolve_dep(call, index)
                 if target and target != fname:
                     edges.append(WikiEdge(fname, target, 0.9, "function_call"))
