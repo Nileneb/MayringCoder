@@ -224,7 +224,7 @@ class RemoteHttpSink(WatcherSink):
         if not api_url:
             raise ValueError("RemoteHttpSink needs api_url")
         if not jwt:
-            raise ValueError("RemoteHttpSink needs JWT (env MAYRING_JWT)")
+            raise ValueError("RemoteHttpSink needs auth token (env MAYRING_JWT or MCP_SERVICE_TOKEN)")
         self._base = api_url.rstrip("/")
         self._jwt = jwt
         self._client = httpx.Client(
@@ -454,7 +454,8 @@ def main(argv=None) -> None:
     model = args.model or os.getenv("OLLAMA_MODEL", "")
     projects_dir = Path(args.projects_dir) if args.projects_dir else _PROJECTS_DIR
     api_url = args.api_url or os.getenv("MAYRING_API_URL", "")
-    jwt = args.jwt or os.getenv("MAYRING_JWT", "")
+    # MAYRING_JWT for user laptops; MCP_SERVICE_TOKEN fallback for server daemons.
+    jwt = args.jwt or os.getenv("MAYRING_JWT", "") or os.getenv("MCP_SERVICE_TOKEN", "")
 
     sink = build_sink(api_url, jwt)
     mode_label = "remote-http" if isinstance(sink, RemoteHttpSink) else "local-db"

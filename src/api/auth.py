@@ -1,5 +1,7 @@
-"""FastAPI auth dependency — RS256 JWT only."""
+"""FastAPI auth dependency — RS256 JWT or MCP_SERVICE_TOKEN."""
 from __future__ import annotations
+
+import os
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -8,17 +10,28 @@ from src.api.jwt_auth import TokenInfo, validate_jwt_token
 
 _bearer = HTTPBearer(auto_error=False)
 
+# Service-to-service token: loaded once at startup.
+# On the server this is set in .env.production; on laptops it's empty,
+# so users always need a proper RS256 JWT.
+_SERVICE_TOKEN = os.getenv("MCP_SERVICE_TOKEN", "")
+
 
 async def get_token_info(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> TokenInfo:
-    """Validate Bearer JWT and return TokenInfo (workspace_id + scopes)."""
+    """Validate Bearer token — accepts RS256 JWT (users) or MCP_SERVICE_TOKEN (server daemons).
+
+    Service token → workspace_id 'system', scope '*'.
+    """
     if not creds:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Bearer token",
         )
-    info = validate_jwt_token(creds.credentials)
+    token = creds.credentials
+    if _SERVICE_TOKEN and token == _SERVICE_TOKEN:
+        return TokenInfo(workspace_id="system", scopes=("*",))
+    info = validate_jwt_token(token)
     if not info:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
