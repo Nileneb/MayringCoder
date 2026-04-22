@@ -127,6 +127,17 @@ _LABEL_LINE_PREFIX = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+_TEST_PATH_PATTERN = re.compile(
+    r"(?:^|/)(?:tests?|spec|__tests__)/|test_[^/]+\.py|[^/]+_test\.(py|js|ts)|"
+    r"[^/]+\.(?:test|spec)\.[a-z0-9]+|conftest",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_test_path(path: str) -> bool:
+    """True if path looks like a test-file (pytest, jest, rspec, …)."""
+    return bool(_TEST_PATH_PATTERN.search(path or ""))
+
 
 def _extract_label_line(response: str) -> str:
     """Pull the comma-separated label line out of a structured LLM response.
@@ -217,9 +228,22 @@ def mayring_categorize(
                 if mode == "inductive":
                     validated.append(lbl)
                 elif mode == "hybrid" and lbl.lower().startswith("[neu]"):
-                    validated.append(lbl)
+                    # Anti-[neu]-Missbrauch: Wenn das Modell "[neu]X" emittiert
+                    # aber X bereits im Anker-Set ist, normalisieren wir auf X.
+                    inner = lbl[len("[neu]"):].strip().lower()
+                    if inner in valid_set:
+                        validated.append(inner)
+                    else:
+                        validated.append(lbl)
                 elif lbl.lower() in valid_set:
                     validated.append(lbl.lower())
+
+            # Pfad-basierter Override: Test-Files MÜSSEN als tests erkennbar
+            # bleiben, auch wenn das Modell "nur" inhaltlich kategorisiert hat
+            # (z.B. test_user.py → "data_access" statt "tests, data_access").
+            if _looks_like_test_path(chunk.source_id or "") and "tests" in valid_set \
+                    and "tests" not in validated and "[neu]tests" not in validated:
+                validated.append("tests")
 
             chunk.category_labels = validated[:5]
             chunk.category_source = mode

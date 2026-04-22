@@ -1,5 +1,12 @@
 name: temp_dummy
-description: Temporärer Code, Dummy-Implementierungen, Placeholder
+description: >
+  Temporärer Code der NICHT in Produktion gehört: explizite Dummies,
+  Stubs mit TODO/FIXME-Marker, Backup-Kopien (.bak, _old.*), auskommen-
+  tierte Skelette, noch-nicht-implementiert-Placeholder.
+  NICHT hierhin: normale Tests, Fixtures, fertige Utility-Funktionen,
+  fertige Implementierungen die nur einen generischen Namen tragen.
+  Wähle diese Kategorie NUR, wenn der Code-Inhalt klar temporär oder
+  provisorisch ist — nie allein wegen eines Dateinamens.
 risk_level: low
 languages: [php, python, js]
 patterns:
