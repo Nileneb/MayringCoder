@@ -47,7 +47,7 @@ services:
 
   mayring-mcp:
     image: nileneb/mayring:latest
-    command: python -m src.mcp_server
+    command: python -m src.api.mcp
     env_file: .env.production
     environment:
       MCP_TRANSPORT: http
