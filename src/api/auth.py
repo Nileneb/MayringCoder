@@ -1,6 +1,7 @@
 """FastAPI auth dependency — RS256 JWT or MCP_SERVICE_TOKEN."""
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import Depends, HTTPException, status
@@ -29,7 +30,10 @@ async def get_token_info(
             detail="Missing Bearer token",
         )
     token = creds.credentials
-    if _SERVICE_TOKEN and token == _SERVICE_TOKEN:
+    if _SERVICE_TOKEN and hmac.compare_digest(
+        token.encode() if isinstance(token, str) else token,
+        _SERVICE_TOKEN.encode() if isinstance(_SERVICE_TOKEN, str) else _SERVICE_TOKEN,
+    ):
         return TokenInfo(workspace_id="system", scopes=("*",))
     info = validate_jwt_token(token)
     if not info:
