@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
-"""MayringCoder CLI — thin HTTP client for the MayringCoder API service.
+"""MayringCoder CLI — **HTTP-Client** an den laufenden mayring-api-Server.
 
-For direct local execution without API server, use:
-    python -m src.pipeline [args]
+Rollen-Abgrenzung (siehe Issue #66 Phase 5):
+  - `checker.py`          — REMOTE-CLIENT. Feuert POST /populate, /analyze,
+                            /pi-task etc. an den API-Server und poll-t dann
+                            /jobs/{id}. Kein direkter Zugriff auf memory.db
+                            oder Ollama. Muss sich gegen den Server
+                            authentifizieren (env SANCTUM_TOKEN).
+  - `src/pipeline.py`     — Shim (re-export) für src/workflows/.
+  - `python -m src.cli`   — LOCAL-EXECUTOR, läuft direkt als subprocess im
+                            Server-Container (run_checker_job), greift
+                            direkt auf memory.db, chromadb, ollama zu.
+
+Wenn du lokal ohne Server ingesten willst → `python -m src.cli --repo ...`.
+Wenn du remote gegen mcp.linn.games arbeiten willst → `checker.py --repo ...`.
 """
 from __future__ import annotations
 
