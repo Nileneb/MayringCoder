@@ -167,10 +167,15 @@ class _JWTAuthMiddleware:
     @staticmethod
     async def _send_401(send: Any, message: str) -> None:
         body = message.encode()
+        metadata_url = f"{_OAUTH_BASE_URL}/.well-known/oauth-authorization-server"
+        www_auth = f'Bearer realm="{_OAUTH_BASE_URL}", resource_metadata="{metadata_url}"'
         await send({
             "type": "http.response.start", "status": 401,
-            "headers": [[b"content-type", b"text/plain; charset=utf-8"],
-                        [b"content-length", str(len(body)).encode()]],
+            "headers": [
+                [b"content-type", b"text/plain; charset=utf-8"],
+                [b"content-length", str(len(body)).encode()],
+                [b"www-authenticate", www_auth.encode()],
+            ],
         })
         await send({"type": "http.response.body", "body": body})
 
