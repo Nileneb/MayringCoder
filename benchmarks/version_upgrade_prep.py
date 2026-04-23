@@ -24,7 +24,7 @@ from benchmarks.version_upgrade_utils import clone_at_tag, get_gt_diff_files, su
 
 UPGRADE_PAIRS = [
     {"repo": "psf/requests",      "old_tag": "v1.2.3",  "new_tag": "v2.0.0"},
-    {"repo": "pallets/flask",     "old_tag": "0.12.1",  "new_tag": "1.0.0"},
+    {"repo": "pallets/flask",     "old_tag": "0.12.1",  "new_tag": "1.0"},
     {"repo": "pytest-dev/pytest", "old_tag": "3.10.1",  "new_tag": "4.0.0"},
 ]
 
