@@ -44,6 +44,7 @@ def main() -> None:
     contexts = load_contexts(args.context_dir)
 
     rows = []
+    has_findable = False
     for entry in haiku_results:
         repo = entry["repo"]
         suggested = filter_python_files(entry.get("suggested_files", []))
@@ -52,8 +53,11 @@ def main() -> None:
             print(f"WARNING: no context for {repo}")
             continue
         gt = set(ctx["gt_files"])
-        m = compute_metrics(gt, suggested)
-        rows.append({
+        shown_files = ctx.get("shown_files")
+        if shown_files:
+            has_findable = True
+        m = compute_metrics(gt, suggested, shown_files=shown_files)
+        row = {
             "repo": repo,
             "old_tag": ctx["old_tag"],
             "new_tag": ctx["new_tag"],
@@ -65,25 +69,49 @@ def main() -> None:
             "f1": m["f1"],
             "gt_files": ",".join(sorted(gt)),
             "suggested_files": ",".join(sorted(suggested)),
-        })
+        }
+        if shown_files is not None:
+            row.update({
+                "findable_gt_count": m.get("findable_gt_count", 0),
+                "findable_tp": m.get("findable_tp", 0),
+                "findable_recall": m.get("findable_recall", 0.0),
+                "findable_f1": m.get("findable_f1", 0.0),
+            })
+        rows.append(row)
 
-    print(f"\n{'repo':<30} {'old→new':<20} {'recall':>7} {'prec':>7} {'f1':>7} {'tp/gt':>7}")
-    print("-" * 80)
+    if has_findable:
+        print(f"\n{'repo':<30} {'old→new':<20} {'recall':>7} {'prec':>7} {'f1':>7} {'find_rec':>9} {'find_f1':>8} {'tp/gt':>7}")
+        print("-" * 97)
+    else:
+        print(f"\n{'repo':<30} {'old→new':<20} {'recall':>7} {'prec':>7} {'f1':>7} {'tp/gt':>7}")
+        print("-" * 80)
     for r in rows:
         version = f"{r['old_tag']}→{r['new_tag']}"
-        print(f"{r['repo']:<30} {version:<20} {r['recall']:>7.3f} {r['precision']:>7.3f} {r['f1']:>7.3f} {r['tp']}/{r['gt_count']}")
-    print("-" * 80)
+        if has_findable:
+            fr = r.get("findable_recall", float("nan"))
+            ff = r.get("findable_f1", float("nan"))
+            print(f"{r['repo']:<30} {version:<20} {r['recall']:>7.3f} {r['precision']:>7.3f} {r['f1']:>7.3f} {fr:>9.3f} {ff:>8.3f} {r['tp']}/{r['gt_count']}")
+        else:
+            print(f"{r['repo']:<30} {version:<20} {r['recall']:>7.3f} {r['precision']:>7.3f} {r['f1']:>7.3f} {r['tp']}/{r['gt_count']}")
+    print("-" * (97 if has_findable else 80))
     if rows:
         avg_recall = sum(r["recall"] for r in rows) / len(rows)
         avg_f1 = sum(r["f1"] for r in rows) / len(rows)
-        print(f"{'AVERAGE':<30} {'':<20} {avg_recall:>7.3f} {'':>7} {avg_f1:>7.3f}")
+        if has_findable:
+            avg_fr = sum(r.get("findable_recall", 0.0) for r in rows) / len(rows)
+            avg_ff = sum(r.get("findable_f1", 0.0) for r in rows) / len(rows)
+            print(f"{'AVERAGE':<30} {'':<20} {avg_recall:>7.3f} {'':>7} {avg_f1:>7.3f} {avg_fr:>9.3f} {avg_ff:>8.3f}")
+        else:
+            print(f"{'AVERAGE':<30} {'':<20} {avg_recall:>7.3f} {'':>7} {avg_f1:>7.3f}")
 
     csv_path = args.output_csv or str(
         Path(args.context_dir) / f"metrics_{Path(args.haiku_output).stem}.csv"
     )
     if rows:
+        # Union of all keys across rows (findable_* may be absent in legacy rows)
+        all_keys: list[str] = list(dict.fromkeys(k for r in rows for k in r))
         with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(rows)
         print(f"\nCSV: {csv_path}")

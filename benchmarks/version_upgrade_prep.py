@@ -20,7 +20,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from benchmarks.version_upgrade_runner import run_mayringcoder_on_version
-from benchmarks.version_upgrade_utils import clone_at_tag, get_gt_diff_files, summarize_run_for_prompt
+from benchmarks.version_upgrade_utils import clone_at_tag, get_gt_diff_files, get_shown_files, summarize_run_for_prompt
 
 UPGRADE_PAIRS = [
     {"repo": "psf/requests",      "old_tag": "v1.2.3",  "new_tag": "v2.0.0"},
@@ -57,13 +57,15 @@ def prepare_one(pair: dict, workspace_id: str, budget: int, time_budget: int, mo
     print(f"  Analysis done ({runtime:.0f}s), {len(run_data.get('results', []))} files analyzed")
 
     print(f"  [3/3] Building prompt summary...")
-    prompt_summary = summarize_run_for_prompt(run_data, max_files=40)
+    prompt_summary = summarize_run_for_prompt(run_data)
+    shown_files = get_shown_files(run_data)
 
     return {
         "repo": repo,
         "old_tag": old_tag,
         "new_tag": new_tag,
         "gt_files": sorted(gt_files),
+        "shown_files": shown_files,
         "prompt_summary": prompt_summary,
         "files_analyzed": len(run_data.get("results", [])),
         "runtime_s": round(runtime, 1),
@@ -78,6 +80,9 @@ def main() -> None:
     parser.add_argument("--budget", type=int, default=100)
     parser.add_argument("--time-budget", type=int, default=600)
     parser.add_argument("--model", default=None)
+    parser.add_argument("--workspace-id", default=None,
+                        help="Workspace-ID überschreiben (z.B. python_ecosystem_oracle). "
+                             "Default: version_upgrade_{timestamp}")
     args = parser.parse_args()
 
     pairs = UPGRADE_PAIRS
@@ -87,7 +92,7 @@ def main() -> None:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    workspace_id = f"version_upgrade_{run_ts}"
+    workspace_id = args.workspace_id or f"version_upgrade_{run_ts}"
 
     contexts = []
     for pair in pairs:

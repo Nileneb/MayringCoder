@@ -6,7 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 from benchmarks.version_upgrade_utils import (
-    filter_python_files, summarize_run_for_prompt, compute_metrics
+    filter_python_files, summarize_run_for_prompt, compute_metrics, get_shown_files
 )
 
 
@@ -69,6 +69,49 @@ def test_compute_metrics_zero_recall():
 def test_compute_metrics_empty_gt():
     m = compute_metrics(set(), {"requests/models.py"})
     assert m["recall"] == 0.0
+
+
+def test_get_shown_files_respects_max_files():
+    run_data = {"results": [
+        {"filename": f"src/file{i}.py", "category": "logic",
+         "file_summary": f"S{i}", "potential_smells": []}
+        for i in range(50)
+    ]}
+    shown = get_shown_files(run_data, max_files=5)
+    assert len(shown) == 5
+    assert shown[0] == "src/file0.py"
+
+
+def test_get_shown_files_excludes_skip_dirs():
+    run_data = {"results": [
+        {"filename": "src/main.py", "category": "core", "file_summary": "", "potential_smells": []},
+        {"filename": "docs/conf.py", "category": "docs", "file_summary": "", "potential_smells": []},
+    ]}
+    shown = get_shown_files(run_data)
+    assert shown == ["src/main.py"]
+
+
+def test_compute_metrics_with_shown_files():
+    gt = {"a/b.py", "a/c.py", "a/d.py"}
+    suggested = {"a/b.py", "a/c.py"}
+    shown = ["a/b.py", "a/c.py"]  # a/d.py war nicht im Prompt
+    m = compute_metrics(gt, suggested, shown_files=shown)
+    assert m["recall"] == round(2/3, 4)
+    assert m["findable_recall"] == 1.0
+    assert m["findable_gt_count"] == 2
+    assert m["findable_tp"] == 2
+    assert "findable_f1" in m
+
+
+def test_compute_metrics_no_shown_files_backward_compat():
+    m = compute_metrics({"a/b.py"}, {"a/b.py"})
+    assert "findable_recall" not in m
+
+
+def test_compute_metrics_empty_gt_with_shown():
+    m = compute_metrics(set(), {"a/b.py"}, shown_files=["a/b.py"])
+    assert m["recall"] == 0.0
+    assert m["findable_recall"] == 0.0
 
 
 def test_load_contexts(tmp_path):

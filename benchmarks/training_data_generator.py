@@ -90,43 +90,70 @@ def generate_upgrade_predict_pairs(contexts: dict[str, dict]) -> list[dict]:
     return pairs
 
 
+def _extract_snippet_for_file(fname: str, prompt_summary: str) -> str:
+    for line in prompt_summary.split("\n"):
+        if line.startswith(f"- {fname} ["):
+            return line[2:]
+    return fname
+
+
 def generate_file_importance_pairs(contexts: dict[str, dict]) -> list[dict]:
     """Per-file training pairs: given file summary → importance verdict.
 
-    GT files = "should be improved" (1), non-GT = "acceptable quality" (0).
-    Teaches the model to rate individual files during analysis.
+    Uses shown_files (files that actually appeared in the Haiku prompt) when available,
+    so labels only cover files the model could have seen — avoiding noise from
+    GT files that were never shown.
     """
     pairs = []
     for repo, ctx in contexts.items():
         gt_set = set(ctx.get("gt_files", []))
         prompt_summary = ctx.get("prompt_summary", "")
+        shown_files = ctx.get("shown_files")
+
         if not prompt_summary:
             continue
 
-        for line in prompt_summary.split("\n"):
-            if not line.startswith("- "):
-                continue
-            try:
-                fname = line[2:line.index(" [")]
-            except ValueError:
-                continue
-            is_gt = fname in gt_set
-            label = "high" if is_gt else "low"
-            snippet = line[2:]  # "filename [cat]: summary"
-
-            pairs.append({
-                "type": "file_importance",
-                "repo": repo,
-                "old_tag": ctx["old_tag"],
-                "filename": fname,
-                "prompt": (
-                    f"Bewerte die Verbesserungsnotwendigkeit dieser Datei in `{repo}` "
-                    f"Version `{ctx['old_tag']}`:\n{snippet}\n\n"
-                    f"Antworte mit: high | medium | low"
-                ),
-                "completion": label,
-                "is_gt": is_gt,
-            })
+        if shown_files is not None:
+            # Accurate path: iterate exactly the files that appeared in the prompt
+            for fname in shown_files:
+                is_gt = fname in gt_set
+                snippet = _extract_snippet_for_file(fname, prompt_summary)
+                pairs.append({
+                    "type": "file_importance",
+                    "repo": repo,
+                    "old_tag": ctx["old_tag"],
+                    "filename": fname,
+                    "prompt": (
+                        f"Bewerte die Verbesserungsnotwendigkeit dieser Datei in `{repo}` "
+                        f"Version `{ctx['old_tag']}`:\n{snippet}\n\n"
+                        f"Antworte mit: high | medium | low"
+                    ),
+                    "completion": "high" if is_gt else "low",
+                    "is_gt": is_gt,
+                })
+        else:
+            # Legacy fallback: parse prompt_summary lines directly
+            for line in prompt_summary.split("\n"):
+                if not line.startswith("- "):
+                    continue
+                try:
+                    fname = line[2:line.index(" [")]
+                except ValueError:
+                    continue
+                is_gt = fname in gt_set
+                pairs.append({
+                    "type": "file_importance",
+                    "repo": repo,
+                    "old_tag": ctx["old_tag"],
+                    "filename": fname,
+                    "prompt": (
+                        f"Bewerte die Verbesserungsnotwendigkeit dieser Datei in `{repo}` "
+                        f"Version `{ctx['old_tag']}`:\n{line[2:]}\n\n"
+                        f"Antworte mit: high | medium | low"
+                    ),
+                    "completion": "high" if is_gt else "low",
+                    "is_gt": is_gt,
+                })
     return pairs
 
 
