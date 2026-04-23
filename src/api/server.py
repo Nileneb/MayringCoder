@@ -1033,6 +1033,70 @@ async def list_reports(
     return {"workspace_id": safe_workspace_id, "reports": reports, "count": len(reports)}
 
 
+@app.get("/wiki/graph")
+async def wiki_graph(slug: str = "", workspace_id: str = Depends(get_workspace)) -> dict:
+    """Return wiki cluster graph + recent Pi-agent search activations for Brain visualization."""
+    import json as _json
+    import time as _time_g
+    from src.config import CACHE_DIR
+    from src.api.memory_service import _RECENT_ACTIVATIONS
+
+    cluster_path = CACHE_DIR / f"{slug}_wiki_clusters_emb.json"
+    index_path = CACHE_DIR / f"{slug}_wiki_index.json"
+
+    clusters: list[dict] = []
+    raw: list[dict] = []
+    if cluster_path.exists():
+        raw = _json.loads(cluster_path.read_text())
+        clusters = [
+            {
+                "name": c["name"],
+                "files": c.get("files", []),
+                "labels": c.get("labels", []),
+                "size": max(1, len(c.get("files", []))),
+            }
+            for c in raw
+        ]
+    elif index_path.exists():
+        idx = _json.loads(index_path.read_text())
+        clusters = [{"name": k, "files": [], "labels": [], "size": 1} for k in idx]
+
+    edges: list[dict] = []
+    for c in raw:
+        for edge in c.get("edges", []):
+            # edges stored as [target_name, weight, rules_list]
+            if isinstance(edge, (list, tuple)) and len(edge) >= 2:
+                edges.append({
+                    "source": c["name"],
+                    "target": edge[0],
+                    "weight": edge[1],
+                    "rules": edge[2] if len(edge) > 2 else [],
+                })
+
+    now = _time_g.time()
+    activations: list[dict] = []
+    for ev in _RECENT_ACTIVATIONS:
+        if ev["workspace_id"] != workspace_id or now - ev["ts"] > 60:
+            continue
+        hit: set[str] = set()
+        for sid in ev["source_ids"]:
+            # source_id: "repo:owner/name:path" or "paper:arxiv:id:title"
+            path = sid.split(":")[-1]
+            for c in clusters:
+                if any(
+                    path == f or path.endswith("/" + f) or f.endswith("/" + path) or path == f.split("/")[-1]
+                    for f in c["files"]
+                ):
+                    hit.add(c["name"])
+        activations.append({
+            "query": ev["query"][:80],
+            "clusters": list(hit),
+            "age_s": round(now - ev["ts"], 1),
+        })
+
+    return {"clusters": clusters, "edges": edges, "activations": activations}
+
+
 def main() -> None:
     import uvicorn
     import os

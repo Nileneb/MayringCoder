@@ -1,11 +1,16 @@
 """Shared memory search and ingest logic used by server.py and mcp.py."""
 from __future__ import annotations
 
+import time as _time
+from collections import deque
 from typing import Any
 
 from src.memory.ingest import ingest
 from src.memory.retrieval import compress_for_prompt, search
 from src.memory.schema import Source
+
+# Brain visualization: recent search activations (ring buffer, shared in-process)
+_RECENT_ACTIVATIONS: deque[dict] = deque(maxlen=200)
 
 
 def run_search(
@@ -26,6 +31,13 @@ def run_search(
         opts=opts,
         session_compacted=session_compacted,
     )
+    workspace_id = opts.get("workspace_id", "default")
+    _RECENT_ACTIVATIONS.append({
+        "workspace_id": workspace_id,
+        "query": query,
+        "source_ids": [r.source_id for r in results],
+        "ts": _time.time(),
+    })
     return {
         "results": [r.to_dict() for r in results],
         "prompt_context": compress_for_prompt(results, char_budget),
