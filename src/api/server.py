@@ -692,6 +692,7 @@ async def trigger_populate(
 class WikiGenerateRequest(BaseModel):
     repo: str = ""
     wiki_type: str = "code"
+    workspace_id: str = ""
 
 
 class AmbientSnapshotRequest(BaseModel):
@@ -707,13 +708,17 @@ async def trigger_wiki_generate(
     request: WikiGenerateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    """Rebuild the wiki index (_wiki_index.json + _wiki_clusters_emb.json)."""
+    """Rebuild wiki for a workspace_id (all repos + conversations) or a single repo."""
     job_id = _make_job(workspace_id)
-    args = ["--generate-wiki", "--wiki-type", request.wiki_type]
-    if request.repo:
-        args = ["--repo", request.repo] + args
+    wid = request.workspace_id or workspace_id
+    if wid and not request.repo:
+        args = ["--generate-wiki", "--workspace-id", wid]
+    else:
+        args = ["--generate-wiki", "--wiki-type", request.wiki_type]
+        if request.repo:
+            args = ["--repo", request.repo] + args
     asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
-    return {"job_id": job_id, "status": "started", "repo": request.repo}
+    return {"job_id": job_id, "status": "started", "workspace_id": wid, "repo": request.repo}
 
 
 @app.post("/ambient/snapshot")

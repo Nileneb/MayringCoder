@@ -598,3 +598,70 @@ def generate_wiki(
 
     print(f"[wiki] index → {idx_path} | clusters → {clusters_path}")
     return out
+
+
+def generate_wiki_for_workspace(
+    conn: Any,
+    chroma: Any,
+    workspace_id: str,
+    ollama_url: str = "",
+    model: str = "",
+) -> Path | None:
+    """Workspace-spanning wiki: covers ALL repos + conversations for this workspace_id."""
+    from src.analysis.context import load_overview_cache_raw
+
+    rows = conn.execute(
+        "SELECT source_id, category_labels, text FROM chunks WHERE is_active=1 AND workspace_id=?",
+        (workspace_id,),
+    ).fetchall()
+
+    if not rows:
+        print(f"[wiki] Keine Chunks für workspace={workspace_id}")
+        return None
+
+    chunks = [{"source_id": r[0], "category_labels": r[1], "text": r[2]} for r in rows]
+
+    repo_urls: set[str] = set()
+    for r in rows:
+        sid = r[0]
+        if sid.startswith("repo:"):
+            parts = sid.split(":", 2)
+            if len(parts) >= 2:
+                repo_urls.add(parts[1])
+
+    merged_overview: dict[str, dict] = {}
+    for url in repo_urls:
+        cache = load_overview_cache_raw(url) or {}
+        merged_overview.update(cache)
+
+    edges = build_connection_graph("code", merged_overview, chunks, conn, chroma)
+    clusters = cluster_themes(edges)
+
+    slug = workspace_id
+    out = Path("cache") / f"{slug}_wiki.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(generate_wiki_markdown(clusters, slug), encoding="utf-8")
+    print(f"[wiki] workspace={workspace_id} → {len(clusters)} Cluster → {out}")
+
+    idx_path = Path("cache") / f"{slug}_wiki_index.json"
+    idx_path.write_text(json.dumps(_build_keyword_index(clusters), ensure_ascii=False), encoding="utf-8")
+
+    clusters_path = Path("cache") / f"{slug}_wiki_clusters.json"
+    clusters_data = [
+        {
+            "name": c.name,
+            "files": c.files,
+            "labels": c.labels,
+            "edges": [(e[0], e[1], e[2] if len(e) > 2 else []) for e in c.edges],
+        }
+        for c in clusters
+    ]
+    clusters_path.write_text(json.dumps(clusters_data, ensure_ascii=False), encoding="utf-8")
+
+    emb_path = Path("cache") / f"{slug}_wiki_clusters_emb.json"
+    emb = _build_cluster_embeddings(clusters, ollama_url)
+    if emb:
+        emb_path.write_text(json.dumps(emb, ensure_ascii=False), encoding="utf-8")
+
+    print(f"[wiki] index → {idx_path} | clusters → {clusters_path}")
+    return out
