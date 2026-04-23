@@ -24,7 +24,7 @@ from benchmarks.version_upgrade_utils import compute_metrics, filter_python_file
 
 def load_contexts(context_dir: str) -> dict[str, dict]:
     contexts = {}
-    for f in Path(context_dir).glob("context_*.json"):
+    for f in sorted(Path(context_dir).glob("context_*.json")):  # sorted → newest timestamp wins
         try:
             ctx = json.loads(f.read_text())
             contexts[ctx["repo"]] = ctx
