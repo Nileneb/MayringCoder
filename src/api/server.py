@@ -690,7 +690,7 @@ async def trigger_populate(
 # ---------------------------------------------------------------------------
 
 class WikiGenerateRequest(BaseModel):
-    repo: str
+    repo: str = ""
     wiki_type: str = "code"
 
 
@@ -709,7 +709,9 @@ async def trigger_wiki_generate(
 ) -> dict:
     """Rebuild the wiki index (_wiki_index.json + _wiki_clusters_emb.json)."""
     job_id = _make_job(workspace_id)
-    args = ["--repo", request.repo, "--generate-wiki", "--wiki-type", request.wiki_type]
+    args = ["--generate-wiki", "--wiki-type", request.wiki_type]
+    if request.repo:
+        args = ["--repo", request.repo] + args
     asyncio.create_task(_run_checker_job(job_id, args, workspace_id))
     return {"job_id": job_id, "status": "started", "repo": request.repo}
 
