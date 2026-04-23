@@ -12,6 +12,19 @@ def extract_findings(run_data: dict) -> set[str]:
     return {r["filename"] for r in run_data.get("results", []) if r.get("potential_smells")}
 
 
+def ingest_repo(repo_path: str, workspace_id: str = "python_ecosystem") -> bool:
+    result = subprocess.run(
+        [sys.executable, "-m", "src.cli",
+         "--repo", repo_path,
+         "--populate-memory",
+         "--workspace-id", workspace_id,
+         "--no-limit"],
+        cwd=Path(__file__).parent.parent,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def run_mayringcoder(
     repo_path: str,
     run_id: str,

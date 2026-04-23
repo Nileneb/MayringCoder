@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from benchmarks.swebench_runner import extract_findings, run_mayringcoder
+from benchmarks.swebench_runner import extract_findings, ingest_repo, run_mayringcoder
 
 
 def test_extract_findings_returns_filenames():
@@ -45,3 +45,15 @@ def test_run_mayringcoder_returns_filenames_set(tmp_path):
         )
 
     assert result == {"src/auth.py"}
+
+
+def test_ingest_repo_returns_true_on_success(tmp_path):
+    with patch("benchmarks.swebench_runner.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        assert ingest_repo(str(tmp_path), "python_ecosystem") is True
+
+
+def test_ingest_repo_returns_false_on_failure(tmp_path):
+    with patch("benchmarks.swebench_runner.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1)
+        assert ingest_repo(str(tmp_path), "python_ecosystem") is False

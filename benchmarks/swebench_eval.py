@@ -12,7 +12,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from benchmarks.swebench_output import print_summary, write_csv, write_json
-from benchmarks.swebench_runner import run_mayringcoder
+from benchmarks.swebench_runner import ingest_repo, run_mayringcoder
 from benchmarks.swebench_utils import clone_at_commit, determine_match, load_instances, patched_files
 
 
@@ -32,6 +32,8 @@ def main() -> None:
     parser.add_argument("--budget", type=int, default=50, help="LLM call budget per instance (default: 50)")
     parser.add_argument("--output-dir", type=str, default=str(ROOT / "benchmarks" / "swebench_results"))
     parser.add_argument("--repos", type=str, default=None, help="Komma-getrennte Repo-Filter, z.B. pallets/flask,psf/requests")
+    parser.add_argument("--ingest-memory", action="store_true", help="Repos in Ecosystem-Workspace ingesten (side-effect)")
+    parser.add_argument("--ecosystem-workspace", default="python_ecosystem", help="Workspace für Ecosystem-Ingestion (default: python_ecosystem)")
     args = parser.parse_args()
 
     check_mayringcoder_available()
@@ -72,6 +74,10 @@ def main() -> None:
                 print(f"  SKIP — clone failed: {e}")
                 rows.append(_make_row(instance_id, repo, commit, gt, set(), "FN", 0, 0.0))
                 continue
+
+            if args.ingest_memory:
+                print(f"  → Ingesting into '{args.ecosystem_workspace}'...")
+                ingest_repo(tmp, args.ecosystem_workspace)
 
             mc_files = run_mayringcoder(
                 repo_path=tmp,
