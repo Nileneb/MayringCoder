@@ -12,8 +12,9 @@ from benchmarks.swebench_runner import extract_findings, run_mayringcoder
 def test_extract_findings_returns_filenames():
     run_data = {
         "results": [
-            {"filename": "django/views/base.py", "category": "bug"},
-            {"filename": "django/utils/http.py", "category": "bug"},
+            {"filename": "django/views/base.py", "potential_smells": ["null check missing"]},
+            {"filename": "django/utils/http.py", "potential_smells": ["unsafe redirect"]},
+            {"filename": "django/conf/locale/de.py", "potential_smells": []},
         ]
     }
     result = extract_findings(run_data)
@@ -28,9 +29,9 @@ def test_extract_findings_empty_results():
 def test_run_mayringcoder_returns_filenames_set(tmp_path):
     workspace_id = "swebench_test"
     run_id = "bench_test_instance"
-    run_data = {"results": [{"filename": "src/auth.py"}]}
+    run_data = {"results": [{"filename": "src/auth.py", "potential_smells": ["bug found"]}]}
 
-    cache_path = tmp_path / workspace_id / "runs"
+    cache_path = tmp_path / workspace_id / "tmp-tmpXXXXX" / "runs"
     cache_path.mkdir(parents=True)
     (cache_path / f"{run_id}.json").write_text(json.dumps(run_data))
 

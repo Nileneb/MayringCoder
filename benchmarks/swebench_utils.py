@@ -13,13 +13,14 @@ def determine_match(mc_files: set[str], gt_files: set[str]) -> str:
     return "TP" if mc_files & gt_files else "FN"
 
 
-def load_instances(n: int = 10, seed: int = 42) -> list[dict]:
+def load_instances(n: int = 10, seed: int = 42, repo_filter: set[str] | None = None) -> list[dict]:
     from datasets import load_dataset
     import random
     ds = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
+    pool = [inst for inst in ds if repo_filter is None or inst["repo"] in repo_filter]
     rng = random.Random(seed)
-    indices = rng.sample(range(len(ds)), min(n, len(ds)))
-    return [ds[i] for i in sorted(indices)]
+    selected = rng.sample(pool, min(n, len(pool)))
+    return sorted(selected, key=lambda x: x["instance_id"])
 
 
 def clone_at_commit(repo: str, commit: str, dest: str) -> None:

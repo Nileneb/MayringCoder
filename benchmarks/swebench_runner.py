@@ -9,7 +9,7 @@ CACHE_DIR = str(Path(__file__).parent.parent / "cache")
 
 
 def extract_findings(run_data: dict) -> set[str]:
-    return {r["filename"] for r in run_data.get("results", [])}
+    return {r["filename"] for r in run_data.get("results", []) if r.get("potential_smells")}
 
 
 def run_mayringcoder(
@@ -35,9 +35,9 @@ def run_mayringcoder(
 
     subprocess.run(cmd, check=False, cwd=Path(__file__).parent.parent)
 
-    run_file = Path(CACHE_DIR) / workspace_id / "runs" / f"{run_id}.json"
-    if not run_file.exists():
+    matches = list(Path(CACHE_DIR).glob(f"{workspace_id}/**/runs/{run_id}.json"))
+    if not matches:
         return set()
 
-    data = json.loads(run_file.read_text())
+    data = json.loads(matches[0].read_text())
     return extract_findings(data)

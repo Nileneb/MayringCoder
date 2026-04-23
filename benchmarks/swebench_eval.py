@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--time-budget", type=int, default=120, help="Seconds per instance (default: 120)")
     parser.add_argument("--budget", type=int, default=50, help="LLM call budget per instance (default: 50)")
     parser.add_argument("--output-dir", type=str, default=str(ROOT / "benchmarks" / "swebench_results"))
+    parser.add_argument("--repos", type=str, default=None, help="Komma-getrennte Repo-Filter, z.B. pallets/flask,psf/requests")
     args = parser.parse_args()
 
     check_mayringcoder_available()
@@ -43,8 +44,10 @@ def main() -> None:
     json_path = output_dir / f"run_{run_ts}_details.json"
     workspace_id = f"swebench_{run_ts}"
 
-    print(f"Loading {args.n} SWEbench-Lite instances (seed={args.seed})...")
-    instances = load_instances(n=args.n, seed=args.seed)
+    repo_filter = set(args.repos.split(",")) if args.repos else None
+
+    print(f"Loading SWEbench-Lite instances (n={args.n}, seed={args.seed}" + (f", repos={args.repos}" if repo_filter else "") + ")...")
+    instances = load_instances(n=args.n, seed=args.seed, repo_filter=repo_filter)
     print(f"Loaded {len(instances)} instances.\n")
 
     rows: list[dict] = []
