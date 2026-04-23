@@ -1,0 +1,46 @@
+tasks:
+  # --- Context Injection: prüft ob Memory-Kontext korrekt injiziert wird ---
+  - id: context_injection_01
+    category: context_injection
+    task: "Was weißt du über den WATCHER-TEST vom 23.04.2026? Beschreibe konkret, was getestet wurde."
+    expected_keywords: ["Watcher", "JSONL", "Docker", "Volume", "session"]
+    requires_memory: true
+
+  - id: context_injection_02
+    category: context_injection
+    task: "Welche Architektur verwendet MayringCoder für das Memory-System?"
+    expected_keywords: ["SQLite", "ChromaDB", "hybrid", "retrieval"]
+    requires_memory: true
+
+  # --- PICO: strukturierte Suchstring-Generierung ---
+  - id: pico_01
+    category: pico
+    task: "Erstelle einen vollständigen PICO-Suchstring für: Wirkt kognitive Verhaltenstherapie (CBT) bei Erwachsenen mit sozialer Angststörung?"
+    expected_keywords: ["CBT", "kognitive", "Angststörung", "Population", "Intervention"]
+    requires_memory: false
+
+  - id: pico_02
+    category: pico
+    task: "PICO für: Reduziert Mindfulness-Training chronischen Stress bei Pflegepersonal?"
+    expected_keywords: ["Mindfulness", "Stress", "Pflegepersonal", "Intervention", "Outcome"]
+    requires_memory: false
+
+  # --- Code Review: Qualität der Code-Analyse ---
+  - id: code_review_01
+    category: code_review
+    task: "Analysiere dieses PHP-Pattern auf mögliche Probleme:\n\npublic function store(Request $request) {\n  $data = $request->all();\n  DB::table('users')->insert($data);\n  return redirect('/dashboard');\n}"
+    expected_keywords: ["Validierung", "SQL", "Sicherheit", "Mass Assignment", "fillable"]
+    requires_memory: false
+
+  - id: code_review_02
+    category: code_review
+    task: "Was sind die Hauptprobleme bei diesem Python-Code:\n\ndef get_user(id):\n  conn = sqlite3.connect('app.db')\n  result = conn.execute(f'SELECT * FROM users WHERE id={id}').fetchone()\n  return result"
+    expected_keywords: ["SQL Injection", "f-string", "Connection", "parametrized", "close"]
+    requires_memory: false
+
+  # --- Conversation Summary: Zusammenfassung einer fiktiven Session ---
+  - id: conv_summary_01
+    category: conversation_summary
+    task: "Fasse diese Entwicklungs-Session zusammen: Ein Entwickler hat einen Docker-Container für einen Conversation-Watcher konfiguriert. Dabei wurde ein ModuleNotFoundError behoben indem tools/__init__.py erstellt wurde. Außerdem wurde keep_alive='0' gesetzt damit Ollama nach der Zusammenfassung aus dem VRAM entladen wird."
+    expected_keywords: ["Docker", "ModuleNotFoundError", "keep_alive", "VRAM", "__init__"]
+    requires_memory: false

@@ -658,6 +658,117 @@ def analyze(
         return {"error": str(exc)}
 
 
+@mcp.tool()
+def duel(
+    task: str,
+    model_a: str,
+    model_b: str,
+    repo_slug: str | None = None,
+    judge: bool = True,
+    judge_model: str | None = None,
+    no_memory_baseline: bool = False,
+    timeout: float = 180.0,
+    workspace_id: str | None = None,
+) -> dict:
+    """Run the same task on two models and get an automatic verdict.
+
+    Both models run through the Pi-Agent with full memory injection.
+    An auto-judge LLM rates both answers (0-10) and picks a winner.
+
+    Args:
+        task: The task/question both models should answer
+        model_a: First model name (e.g. "gemma4:e4b")
+        model_b: Second model name (e.g. "qwen3:2b")
+        repo_slug: Optional repo scope for memory search
+        judge: Whether to auto-judge both answers (default True)
+        judge_model: Model for judging (default: server OLLAMA_MODEL)
+        no_memory_baseline: Also run both models WITHOUT memory for comparison
+        timeout: Per-model timeout in seconds
+        workspace_id: Tenant namespace (default: from JWT)
+
+    Returns:
+        Job dict with job_id — poll /jobs/{id} for result_a, result_b, verdict
+    """
+    import httpx
+    ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+    _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
+    _jwt = _current_raw_jwt()
+    headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
+    try:
+        resp = httpx.post(
+            f"{_api}/duel",
+            json={
+                "task": task,
+                "model_a": model_a,
+                "model_b": model_b,
+                "repo_slug": repo_slug,
+                "judge": judge,
+                "judge_model": judge_model,
+                "no_memory_baseline": no_memory_baseline,
+                "timeout": timeout,
+            },
+            headers=headers,
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return {**resp.json(), "workspace_id": ws}
+    except Exception as exc:
+        return {"error": str(exc), "workspace_id": ws}
+
+
+@mcp.tool()
+def benchmark_tasks(
+    model_a: str,
+    model_b: str,
+    category: str | None = None,
+    repo_slug: str | None = None,
+    judge_model: str | None = None,
+    timeout: float = 180.0,
+    workspace_id: str | None = None,
+) -> dict:
+    """Run the predefined task suite on two models and get a quality comparison.
+
+    Tasks are defined in benchmarks/task_suite.yaml (categories: context_injection,
+    pico, code_review, conversation_summary). Each task is scored by keyword hits
+    and an auto-judge LLM.
+
+    Args:
+        model_a: First model name
+        model_b: Second model name
+        category: Filter by category (None = all tasks)
+        repo_slug: Optional repo scope for memory search
+        judge_model: Model used for judging (default: server OLLAMA_MODEL)
+        timeout: Per-task per-model timeout in seconds
+        workspace_id: Tenant namespace (default: from JWT)
+
+    Returns:
+        Report with wins_a, wins_b, avg_score_a, avg_score_b, per-task results
+    """
+    import httpx
+    ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+    _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
+    _jwt = _current_raw_jwt()
+    headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
+    try:
+        resp = httpx.post(
+            f"{_api}/benchmark/tasks",
+            json={
+                "model_a": model_a,
+                "model_b": model_b,
+                "category": category,
+                "repo_slug": repo_slug,
+                "judge_model": judge_model,
+                "timeout": timeout,
+            },
+            headers=headers,
+            timeout=600.0,
+        )
+        resp.raise_for_status()
+        return {**resp.json(), "workspace_id": ws}
+    except Exception as exc:
+        return {"error": str(exc), "workspace_id": ws}
+
+
 # ---------------------------------------------------------------------------
 # OAuth 2.0 / PKCE — for Claude Web MCP connector
 # ---------------------------------------------------------------------------
