@@ -1691,25 +1691,26 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
             gr.HTML(_BRAIN_HTML)
 
-            def _generate_wiki_for_workspace(workspace_id: str) -> str:
+            def _generate_wiki_for_workspace(workspace_id: str, token: str) -> str:
                 if not workspace_id:
                     return "Nicht eingeloggt — bitte zuerst JWT-Token eingeben."
-                conn = _get_conn()
-                chroma = _get_chroma()
-                if not conn:
-                    return "Fehler: Keine DB-Verbindung."
                 try:
-                    from src.memory.wiki import generate_wiki
-                    out = generate_wiki(conn, chroma, "", _ollama_url, workspace_id=workspace_id)
-                    if out:
-                        return f"✅ Wiki generiert: {out}"
-                    return "⚠️ Keine Chunks für diesen Workspace gefunden. Erst Repo analysieren oder Conversations ingestieren."
+                    r = _httpx.post(
+                        f"{_api_url}/wiki/generate",
+                        json={"workspace_id": workspace_id},
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=10.0,
+                    )
+                    if r.status_code == 200:
+                        job_id = r.json().get("job_id", "?")
+                        return f"✅ Wiki-Job gestartet (job_id={job_id}) — läuft im Hintergrund."
+                    return f"❌ API-Fehler {r.status_code}: {r.text[:200]}"
                 except Exception as exc:
                     return f"❌ Fehler: {exc}"
 
             brain_wiki_btn.click(
                 fn=_generate_wiki_for_workspace,
-                inputs=[_workspace_state],
+                inputs=[_workspace_state, _token_state],
                 outputs=[brain_status],
             )
 
