@@ -1038,9 +1038,9 @@ async def wiki_slugs() -> dict:
     """List available wiki slugs (public — only exposes slug names, no content)."""
     from src.config import CACHE_DIR
     slugs = sorted({
-        p.name.replace("_wiki_clusters_emb.json", "").replace("_wiki_index.json", "")
+        p.name.replace("_wiki_clusters.json", "").replace("_wiki_index.json", "")
         for p in CACHE_DIR.glob("*_wiki_*.json")
-        if "_wiki_clusters_emb" in p.name or "_wiki_index" in p.name
+        if "_wiki_clusters.json" in p.name or "_wiki_index" in p.name
     })
     return {"slugs": slugs}
 
@@ -1059,7 +1059,9 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
     if not slug:
         return {"clusters": [], "edges": [], "activations": [], "error": "slug required"}
 
-    cluster_path = CACHE_DIR / f"{slug}_wiki_clusters_emb.json"
+    # Primary: full cluster data (written by generate_wiki since 2026-04-23)
+    cluster_path = CACHE_DIR / f"{slug}_wiki_clusters.json"
+    # Fallback: keyword index (older wikis)
     index_path = CACHE_DIR / f"{slug}_wiki_index.json"
 
     clusters: list[dict] = []

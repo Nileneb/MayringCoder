@@ -92,7 +92,7 @@ def find_shared_types(overview_cache: dict[str, dict]) -> list[WikiEdge]:
     for fname, entry in overview_cache.items():
         text = entry.get("file_summary", "")
         for fn in entry.get("functions", []):
-            text += " ".join(_fn_field(fn, "inputs")) + " " + " ".join(_fn_field(fn, "outputs"))
+            text += " ".join(str(x) for x in _fn_field(fn, "inputs") if x is not None) + " " + " ".join(str(x) for x in _fn_field(fn, "outputs") if x is not None)
             if isinstance(fn, str):
                 text += " " + fn  # bare name is better than nothing
         for m in _TYPE_RE.finditer(text):
@@ -577,11 +577,24 @@ def generate_wiki(
     idx_path = Path("cache") / f"{slug}_wiki_index.json"
     idx_path.write_text(json.dumps(_build_keyword_index(clusters), ensure_ascii=False), encoding="utf-8")
 
+    # Full cluster data for Brain visualization (always written)
+    clusters_path = Path("cache") / f"{slug}_wiki_clusters.json"
+    clusters_data = [
+        {
+            "name": c.name,
+            "files": c.files,
+            "labels": c.labels,
+            "edges": [(e[0], e[1], e[2] if len(e) > 2 else []) for e in c.edges],
+        }
+        for c in clusters
+    ]
+    clusters_path.write_text(json.dumps(clusters_data, ensure_ascii=False), encoding="utf-8")
+
     # Cluster-Embeddings (optional, skip if no ollama_url)
     emb_path = Path("cache") / f"{slug}_wiki_clusters_emb.json"
     emb = _build_cluster_embeddings(clusters, ollama_url)
     if emb:
         emb_path.write_text(json.dumps(emb, ensure_ascii=False), encoding="utf-8")
 
-    print(f"[wiki] index → {idx_path}")
+    print(f"[wiki] index → {idx_path} | clusters → {clusters_path}")
     return out
