@@ -1686,7 +1686,37 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
         # Tab: Brain — 3D Wiki-Cluster Visualizer
         # =======================================================================
         with gr.Tab("🧠 Brain"):
+            with gr.Row():
+                brain_workspace_input = gr.Textbox(
+                    label="Workspace ID",
+                    placeholder="z.B. nileneb-mayringcoder oder deine Workspace-ID",
+                    scale=4,
+                )
+                brain_wiki_btn = gr.Button("🔄 Wiki generieren", variant="primary", scale=1)
+            brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
             gr.HTML(_BRAIN_HTML)
+
+            def _generate_wiki_for_workspace(workspace_id: str) -> str:
+                if not workspace_id.strip():
+                    return "Bitte Workspace ID eingeben."
+                conn = _get_conn()
+                chroma = _get_chroma()
+                if not conn:
+                    return "Fehler: Keine DB-Verbindung."
+                try:
+                    from src.memory.wiki import generate_wiki_for_workspace
+                    out = generate_wiki_for_workspace(conn, chroma, workspace_id.strip(), _ollama_url)
+                    if out:
+                        return f"✅ Wiki generiert: {out}"
+                    return "⚠️ Keine Chunks für diesen Workspace gefunden. Erst Repo analysieren oder Conversations ingestieren."
+                except Exception as exc:
+                    return f"❌ Fehler: {exc}"
+
+            brain_wiki_btn.click(
+                fn=_generate_wiki_for_workspace,
+                inputs=[brain_workspace_input],
+                outputs=[brain_status],
+            )
 
         # =======================================================================
         # Tab 5: Einstellungen (Model Router)
