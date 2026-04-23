@@ -102,6 +102,7 @@ class AnalyzeRequest(BaseModel):
     adversarial: bool = False
     no_pi: bool = False
     budget: int | None = None
+    second_opinion: str | None = None
 
 
 class RepoRequest(BaseModel):
@@ -242,6 +243,8 @@ async def trigger_analysis(
         args.append("--no-pi")
     if request.budget is not None:
         args.extend(["--budget", str(request.budget)])
+    if request.second_opinion:
+        args.extend(["--second-opinion", request.second_opinion])
 
     job_id = _make_job(workspace_id)
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))

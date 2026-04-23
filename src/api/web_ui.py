@@ -707,22 +707,32 @@ _BRAIN_HTML = """
 
   let meshes={},lines=[],clusters=[],t=0,currentSlug='';
 
-  // Populate slug dropdown
-  fetch(API+'/wiki/slugs').then(r=>r.json()).then(d=>{
-    const slugs=d.slugs||[];
-    if(slugs.length===0){
-      info.textContent='Kein Wiki vorhanden — zuerst POST /wiki/generate ausführen';
-      return;
-    }
-    slugs.forEach(s=>{
-      const o=document.createElement('option');
-      o.value=s; o.textContent=s; sel.appendChild(o);
-    });
-    // Auto-load first slug
-    sel.value=slugs[0];
-    currentSlug=slugs[0];
-    poll();
-  }).catch(()=>{info.textContent='API nicht erreichbar ('+API+')';});
+  // Populate slug dropdown — prefer slug matching logged-in workspace_id
+  function getWorkspaceId(){
+    const el=document.getElementById('brain_workspace_id');
+    if(el) return (el.querySelector('textarea')||el).value||'';
+    return '';
+  }
+  function loadSlugs(){
+    fetch(API+'/wiki/slugs').then(r=>r.json()).then(d=>{
+      const slugs=d.slugs||[];
+      if(slugs.length===0){
+        info.textContent='Kein Wiki — "Wiki generieren" klicken';
+        return;
+      }
+      sel.innerHTML='';
+      slugs.forEach(s=>{
+        const o=document.createElement('option');
+        o.value=s; o.textContent=s; sel.appendChild(o);
+      });
+      const wid=getWorkspaceId();
+      const best=slugs.find(s=>s===wid)||slugs[0];
+      sel.value=best; currentSlug=best; clusters=[]; poll();
+    }).catch(()=>{info.textContent='API nicht erreichbar ('+API+')';});
+  }
+  loadSlugs();
+  // Re-load slugs every 30s (picks up newly generated wikis)
+  setInterval(loadSlugs, 30000);
 
   function fib(n,r){
     const p=[],g=Math.PI*(3-Math.sqrt(5));
@@ -1248,6 +1258,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     label="LLM-Modus (nur Hot-Zones)",
                     value=False,
                 )
+                analyse_second_opinion = gr.Textbox(
+                    label="Second Opinion (Modell, optional)",
+                    placeholder="z.B. claude-haiku-4-5-20251001",
+                    value="",
+                )
 
             analyse_btn = gr.Button("Analyse starten", variant="primary")
             analyse_job_id = gr.Textbox(label="Job-ID", interactive=False)
@@ -1255,7 +1270,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             analyse_output = gr.Markdown("")
             analyse_timer = gr.Timer(value=4, active=False)
 
-            def _do_analyse(repo, mode, issues, memory, adversarial, llm_mode, token):
+            def _do_analyse(repo, mode, issues, memory, adversarial, llm_mode, second_opinion, token):
                 if not token:
                     return "", "Erst einloggen.", gr.Timer(active=False)
                 try:
@@ -1275,6 +1290,8 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                     "ingest_issues": issues,
                     "llm": llm_mode,
                 }
+                if second_opinion.strip():
+                    payload["second_opinion"] = second_opinion.strip()
                 r = _api_post(endpoint, payload, token)
                 if "error" in r:
                     return "", f"Fehler: {r['error']}", gr.Timer(active=False)
@@ -1289,7 +1306,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             analyse_btn.click(
                 fn=_do_analyse,
                 inputs=[analyse_repo, analyse_mode, analyse_issues, analyse_memory,
-                        analyse_adversarial, analyse_llm, _token_state],
+                        analyse_adversarial, analyse_llm, analyse_second_opinion, _token_state],
                 outputs=[analyse_job_id, analyse_output, analyse_timer],
             )
             analyse_poll_btn.click(
@@ -1689,6 +1706,8 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             with gr.Row():
                 brain_wiki_btn = gr.Button("🔄 Wiki generieren", variant="primary")
             brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
+            # Hidden textbox: workspace_id → JS reads data-workspace attr to auto-select slug
+            brain_workspace_hidden = gr.Textbox(visible=False, elem_id="brain_workspace_id")
             gr.HTML(_BRAIN_HTML)
 
             def _generate_wiki_for_workspace(workspace_id: str, token: str) -> str:
@@ -1712,6 +1731,12 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 fn=_generate_wiki_for_workspace,
                 inputs=[_workspace_state, _token_state],
                 outputs=[brain_status],
+            )
+            # Push workspace_id into hidden element so Brain JS can auto-select the right slug
+            _workspace_state.change(
+                fn=lambda wid: wid,
+                inputs=[_workspace_state],
+                outputs=[brain_workspace_hidden],
             )
 
         # =======================================================================
