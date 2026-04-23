@@ -324,12 +324,8 @@ def main() -> None:
 
     if args.generate_wiki:
         from src.api.dependencies import get_conn, get_chroma
-        from src.memory.wiki import generate_wiki, generate_wiki_for_workspace
-        wid = args.workspace_id
-        if wid and wid not in ("default",) and not repo_url:
-            generate_wiki_for_workspace(get_conn(), get_chroma(), wid, ollama_url, model)
-        else:
-            generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, wid, doc_type=args.wiki_type)
+        from src.memory.wiki import generate_wiki
+        generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id, doc_type=args.wiki_type)
         sys.exit(0)
 
     if args.rebuild_transitions:

@@ -1699,8 +1699,8 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 if not conn:
                     return "Fehler: Keine DB-Verbindung."
                 try:
-                    from src.memory.wiki import generate_wiki_for_workspace
-                    out = generate_wiki_for_workspace(conn, chroma, workspace_id, _ollama_url)
+                    from src.memory.wiki import generate_wiki
+                    out = generate_wiki(conn, chroma, "", _ollama_url, workspace_id=workspace_id)
                     if out:
                         return f"✅ Wiki generiert: {out}"
                     return "⚠️ Keine Chunks für diesen Workspace gefunden. Erst Repo analysieren oder Conversations ingestieren."
