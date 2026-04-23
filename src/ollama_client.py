@@ -39,6 +39,7 @@ def generate(
     think: bool | None = None,
     num_predict: int = 4096,
     options: dict | None = None,
+    keep_alive: str | None = None,
 ) -> str:
     """POST to /api/generate and return the complete response text.
 
@@ -63,6 +64,8 @@ def generate(
         body["system"] = system
     if images:
         body["images"] = images
+    if keep_alive is not None:
+        body["keep_alive"] = keep_alive
 
     merged_options: dict[str, Any] = {"num_predict": num_predict}
     if options:
@@ -169,6 +172,7 @@ def chat(
     options: dict | None = None,
     stream: bool = False,
     timeout: float = 120.0,
+    keep_alive: str | None = None,
 ) -> dict:
     """POST to /api/chat and return the parsed JSON response dict.
 
@@ -186,6 +190,8 @@ def chat(
         body["tools"] = tools
     if options is not None:
         body["options"] = options
+    if keep_alive is not None:
+        body["keep_alive"] = keep_alive
 
     resp = httpx.post(f"{url.rstrip('/')}/api/chat", json=body, timeout=timeout)
     resp.raise_for_status()

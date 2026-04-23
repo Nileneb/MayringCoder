@@ -153,6 +153,7 @@ def _summarize(
         return _ollama_generate(
             prompt, ollama_url, model, "conv_summary",
             system_prompt=_SUMMARIZE_SYSTEM,
+            keep_alive="0",
         )
     except Exception as exc:
         return f"**Thema:** Zusammenfassung fehlgeschlagen ({exc})\n\n{_turns_excerpt(turns, 500)}"

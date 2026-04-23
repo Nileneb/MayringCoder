@@ -185,6 +185,7 @@ def _ollama_generate(
     label: str,
     *,
     system_prompt: str | None = None,
+    keep_alive: str | None = None,
 ) -> str:
     """Send a prompt to Ollama and collect the streamed response."""
     from src.ollama_client import generate as _oc_generate
@@ -196,6 +197,7 @@ def _ollama_generate(
         max_retries=_MAX_RETRIES,
         retry_delays=_RETRY_DELAYS,
         label=label,
+        keep_alive=keep_alive,
     )
 
 
