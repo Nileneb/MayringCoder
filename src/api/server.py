@@ -232,39 +232,20 @@ async def trigger_analysis(
     request: AnalyzeRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    """Submit a code analysis job. Runs src.pipeline in a subprocess.
-
-    Returns immediately with job metadata; analysis output goes to reports/.
-    """
-    cmd = [_python_exe(), "-m", "src.pipeline", "--repo", request.repo, "--workspace-id", workspace_id]
+    """Submit a code analysis job. Returns job_id; fires v2-chain (wiki/ambient/images) on success."""
+    args = ["--repo", request.repo, "--rag-enrichment"]
     if request.full:
-        cmd.append("--full")
+        args.append("--full")
     if request.adversarial:
-        cmd.append("--adversarial")
+        args.append("--adversarial")
     if request.no_pi:
-        cmd.append("--no-pi")
+        args.append("--no-pi")
     if request.budget is not None:
-        cmd.extend(["--budget", str(request.budget)])
+        args.extend(["--budget", str(request.budget)])
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(_ROOT),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        # Don't await — return job info immediately
-        return {
-            "status": "started",
-            "workspace_id": workspace_id,
-            "repo": request.repo,
-            "pid": proc.pid,
-        }
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="src.pipeline or python not found")
-
-    # Note: _JOBS is intentionally not used here — analyze endpoint returns pid directly,
-    # not via job queue (unlike /overview, /turbulence, /benchmark which use job_id)
+    job_id = _make_job(workspace_id)
+    asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
+    return {"job_id": job_id, "status": "started", "workspace_id": workspace_id, "repo": request.repo}
 
 
 @app.post("/memory/search")
@@ -632,6 +613,15 @@ async def _run_with_v2_postingest(
         vid = _make_job(workspace_id)
         v2_jobs[label] = vid
         asyncio.create_task(_run_checker_job(vid, ["--repo", repo, flag], workspace_id))
+
+    # Image ingest — fire in parallel (independent of overview/wiki)
+    img_id = _make_job(workspace_id)
+    v2_jobs["images"] = img_id
+    asyncio.create_task(_run_checker_job(
+        img_id,
+        ["--ingest-images", repo, "--no-limit"],
+        workspace_id,
+    ))
 
     # Overview → Wiki chain (sequential).
     overview_id = _make_job(workspace_id)
