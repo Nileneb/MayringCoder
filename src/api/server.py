@@ -1033,13 +1033,31 @@ async def list_reports(
     return {"workspace_id": safe_workspace_id, "reports": reports, "count": len(reports)}
 
 
+@app.get("/wiki/slugs")
+async def wiki_slugs() -> dict:
+    """List available wiki slugs (public — only exposes slug names, no content)."""
+    from src.config import CACHE_DIR
+    slugs = sorted({
+        p.name.replace("_wiki_clusters_emb.json", "").replace("_wiki_index.json", "")
+        for p in CACHE_DIR.glob("*_wiki_*.json")
+        if "_wiki_clusters_emb" in p.name or "_wiki_index" in p.name
+    })
+    return {"slugs": slugs}
+
+
 @app.get("/wiki/graph")
-async def wiki_graph(slug: str = "", workspace_id: str = Depends(get_workspace)) -> dict:
-    """Return wiki cluster graph + recent Pi-agent search activations for Brain visualization."""
+async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
+    """Return wiki cluster graph + recent Pi-agent search activations for Brain visualization.
+
+    No auth required — exposes only structural cluster metadata (no chunk content).
+    """
     import json as _json
     import time as _time_g
     from src.config import CACHE_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
+
+    if not slug:
+        return {"clusters": [], "edges": [], "activations": [], "error": "slug required"}
 
     cluster_path = CACHE_DIR / f"{slug}_wiki_clusters_emb.json"
     index_path = CACHE_DIR / f"{slug}_wiki_index.json"
@@ -1060,11 +1078,13 @@ async def wiki_graph(slug: str = "", workspace_id: str = Depends(get_workspace))
     elif index_path.exists():
         idx = _json.loads(index_path.read_text())
         clusters = [{"name": k, "files": [], "labels": [], "size": 1} for k in idx]
+    else:
+        return {"clusters": [], "edges": [], "activations": [],
+                "error": f"No wiki found for slug '{slug}'. Run POST /wiki/generate first."}
 
     edges: list[dict] = []
     for c in raw:
         for edge in c.get("edges", []):
-            # edges stored as [target_name, weight, rules_list]
             if isinstance(edge, (list, tuple)) and len(edge) >= 2:
                 edges.append({
                     "source": c["name"],
@@ -1074,17 +1094,17 @@ async def wiki_graph(slug: str = "", workspace_id: str = Depends(get_workspace))
                 })
 
     now = _time_g.time()
+    wid = workspace_id or slug
     activations: list[dict] = []
     for ev in _RECENT_ACTIVATIONS:
-        if ev["workspace_id"] != workspace_id or now - ev["ts"] > 60:
+        if ev["workspace_id"] != wid or now - ev["ts"] > 60:
             continue
         hit: set[str] = set()
         for sid in ev["source_ids"]:
-            # source_id: "repo:owner/name:path" or "paper:arxiv:id:title"
             path = sid.split(":")[-1]
             for c in clusters:
                 if any(
-                    path == f or path.endswith("/" + f) or f.endswith("/" + path) or path == f.split("/")[-1]
+                    path == f or path.endswith("/" + f) or f.endswith("/" + path)
                     for f in c["files"]
                 ):
                     hit.add(c["name"])

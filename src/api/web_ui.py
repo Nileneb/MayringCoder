@@ -672,28 +672,57 @@ def _save_router_config(*model_values) -> str:
 _BRAIN_HTML = """
 <div style="width:100%;height:780px;background:#06080f;border-radius:8px;overflow:hidden;position:relative;">
   <canvas id="bc" style="width:100%;height:100%;display:block;"></canvas>
-  <div id="bi" style="position:absolute;top:12px;left:12px;color:#556;font:11px monospace;">Slug eingeben →</div>
+  <div id="bi" style="position:absolute;top:12px;left:12px;color:#667;font:11px monospace;max-width:60%;">Lade Slugs...</div>
   <div id="bt" style="position:absolute;display:none;background:rgba(0,0,0,.85);color:#eee;padding:5px 9px;border-radius:4px;font:11px monospace;pointer-events:none;max-width:220px;"></div>
-  <input id="bs" placeholder="workspace-slug" style="position:absolute;top:12px;right:12px;background:#0d1117;color:#aaa;border:1px solid #223;padding:4px 8px;border-radius:4px;font:11px monospace;" value="">
+  <select id="bs" style="position:absolute;top:12px;right:12px;background:#0d1117;color:#aaa;border:1px solid #223;padding:4px 8px;border-radius:4px;font:11px monospace;min-width:180px;">
+    <option value="">-- Slug wählen --</option>
+  </select>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function(){
+  // Determine API base — works both locally and behind nginx reverse proxy
+  const API = window.location.origin;
+
   const cv=document.getElementById('bc'),info=document.getElementById('bi'),
-        tt=document.getElementById('bt'),si=document.getElementById('bs');
-  const W=cv.parentElement.clientWidth||900,H=cv.parentElement.clientHeight||780;
+        tt=document.getElementById('bt'),sel=document.getElementById('bs');
+
+  // Resize canvas to actual container
+  function resize(){
+    const W=cv.parentElement.clientWidth,H=cv.parentElement.clientHeight;
+    renderer.setSize(W,H,false);
+    cam.aspect=W/H; cam.updateProjectionMatrix();
+  }
+  window.addEventListener('resize',resize);
+
   const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
-  renderer.setPixelRatio(window.devicePixelRatio||1);
-  renderer.setSize(W,H);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   const scene=new THREE.Scene();
-  const cam=new THREE.PerspectiveCamera(55,W/H,.1,2000);
+  const cam=new THREE.PerspectiveCamera(55,1,.1,2000);
   cam.position.z=130;
   scene.add(new THREE.AmbientLight(0x223355,2.5));
   const dl=new THREE.DirectionalLight(0x6688ff,2);
-  dl.position.set(60,60,60);
-  scene.add(dl);
+  dl.position.set(60,60,60); scene.add(dl);
+  resize();
 
-  let meshes={},lines=[],clusters=[],t=0;
+  let meshes={},lines=[],clusters=[],t=0,currentSlug='';
+
+  // Populate slug dropdown
+  fetch(API+'/wiki/slugs').then(r=>r.json()).then(d=>{
+    const slugs=d.slugs||[];
+    if(slugs.length===0){
+      info.textContent='Kein Wiki vorhanden — zuerst POST /wiki/generate ausführen';
+      return;
+    }
+    slugs.forEach(s=>{
+      const o=document.createElement('option');
+      o.value=s; o.textContent=s; sel.appendChild(o);
+    });
+    // Auto-load first slug
+    sel.value=slugs[0];
+    currentSlug=slugs[0];
+    poll();
+  }).catch(()=>{info.textContent='API nicht erreichbar ('+API+')';});
 
   function fib(n,r){
     const p=[],g=Math.PI*(3-Math.sqrt(5));
@@ -714,29 +743,26 @@ _BRAIN_HTML = """
       const sz=Math.max(2,Math.min(9,Math.sqrt(c.size)*1.6));
       const m=new THREE.Mesh(
         new THREE.SphereGeometry(sz,20,20),
-        new THREE.MeshStandardMaterial({color:0x1a3a7a,emissive:0x081840,roughness:.45,metalness:.3})
+        new THREE.MeshStandardMaterial({color:0x1a3a7a,emissive:0x081840,emissiveIntensity:1,roughness:.45,metalness:.3})
       );
       m.position.set(...pos[i]);
       m.userData={name:c.name,files:c.files||[],labels:c.labels||[],_pulse:0};
-      scene.add(m);
-      meshes[c.name]=m;
+      scene.add(m); meshes[c.name]=m;
     });
     data.edges.forEach(e=>{
-      const a=pm[e.source],b=pm[e.target];
-      if(!a||!b)return;
+      const a=pm[e.source],b=pm[e.target]; if(!a||!b)return;
       const g=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]);
       const l=new THREE.Line(g,new THREE.LineBasicMaterial({color:0x1a2a44,transparent:true,opacity:Math.min(.7,(e.weight||0.5)*.9)}));
-      scene.add(l);lines.push(l);
+      scene.add(l); lines.push(l);
     });
-    info.textContent=clusters.length+' Cluster · '+data.edges.length+' Kanten';
+    info.textContent=clusters.length+' Cluster · '+data.edges.length+' Kanten · '+currentSlug;
   }
 
   function applyActivations(data){
     (data.activations||[]).forEach(act=>{
       (act.clusters||[]).forEach(name=>{
-        const m=meshes[name];
-        if(!m)return;
-        m.userData._pulse=Math.max(m.userData._pulse,1-act.age_s/60);
+        const m=meshes[name]; if(!m)return;
+        m.userData._pulse=Math.max(m.userData._pulse||0,1-act.age_s/60);
         m.material.color.setHex(0xffcc44);
         m.material.emissive.setHex(0xff8800);
       });
@@ -744,26 +770,21 @@ _BRAIN_HTML = """
   }
 
   async function poll(){
-    const slug=si.value.trim();
-    if(!slug)return;
+    const slug=sel.value; if(!slug)return;
     try{
-      const r=await fetch('/wiki/graph?slug='+encodeURIComponent(slug)+'&workspace_id='+encodeURIComponent(slug));
-      if(!r.ok){info.textContent='API-Fehler '+r.status;return;}
+      const r=await fetch(API+'/wiki/graph?slug='+encodeURIComponent(slug)+'&workspace_id='+encodeURIComponent(slug));
+      if(!r.ok){info.textContent='API-Fehler '+r.status+(r.status===401?' (Auth)':'');return;}
       const d=await r.json();
-      if(d.clusters.length!==clusters.length||clusters.length===0)build(d);
-      Object.values(meshes).forEach(m=>{
-        if(m.userData._pulse<.02){
-          m.material.color.setHex(0x1a3a7a);
-          m.material.emissive.setHex(0x081840);
-        }
-      });
+      if(d.error){info.textContent=d.error;return;}
+      if(d.clusters.length!==clusters.length||clusters.length===0){build(d);}
+      Object.values(meshes).forEach(m=>{if((m.userData._pulse||0)<.02){m.material.color.setHex(0x1a3a7a);m.material.emissive.setHex(0x081840);}});
       applyActivations(d);
-    }catch(e){info.textContent='Verbindungsfehler';}
+    }catch(e){info.textContent='Fetch-Fehler: '+e.message;}
   }
   setInterval(poll,2000);
-  si.addEventListener('change',()=>{clusters=[];poll();});
-  si.addEventListener('keydown',e=>{if(e.key==='Enter'){clusters=[];poll();}});
+  sel.addEventListener('change',()=>{clusters=[];currentSlug=sel.value;poll();});
 
+  // Raycaster tooltip
   const ray=new THREE.Raycaster(),mo=new THREE.Vector2();
   cv.addEventListener('mousemove',e=>{
     const rc=cv.getBoundingClientRect();
@@ -777,27 +798,17 @@ _BRAIN_HTML = """
       tt.style.left=(e.clientX-rc.left+14)+'px';
       tt.style.top=(e.clientY-rc.top-18)+'px';
       tt.innerHTML='<b>'+d.name+'</b><br>'+d.files.length+' Dateien<br>'+(d.labels||[]).slice(0,3).join(', ');
-    }else{
-      tt.style.display='none';
-    }
+    }else{tt.style.display='none';}
   });
 
   function animate(){
     requestAnimationFrame(animate);
     t+=.0025;
-    cam.position.x=Math.sin(t)*130;
-    cam.position.z=Math.cos(t)*130;
-    cam.lookAt(0,0,0);
+    cam.position.x=Math.sin(t)*130; cam.position.z=Math.cos(t)*130; cam.lookAt(0,0,0);
     Object.values(meshes).forEach(m=>{
-      if(m.userData._pulse>.02){
-        m.userData._pulse*=.993;
-        m.material.emissiveIntensity=m.userData._pulse;
-      }else{
-        m.userData._pulse=0;
-        m.material.color.setHex(0x1a3a7a);
-        m.material.emissive.setHex(0x081840);
-        m.material.emissiveIntensity=1;
-      }
+      const p=m.userData._pulse||0;
+      if(p>.02){m.userData._pulse=p*.993;m.material.emissiveIntensity=m.userData._pulse;}
+      else{m.userData._pulse=0;m.material.color.setHex(0x1a3a7a);m.material.emissive.setHex(0x081840);m.material.emissiveIntensity=1;}
     });
     renderer.render(scene,cam);
   }
