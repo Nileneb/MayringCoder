@@ -1,6 +1,6 @@
 """MCP Memory Server for Claude Code.
 
-Provides persistent, local memory via 8 MCP tools over stdio transport.
+Provides persistent, local memory via MCP tools over stdio/HTTP transport.
 
 Add to Claude Code MCP settings (.claude/settings.json or user settings):
 
@@ -32,14 +32,17 @@ Build Docker image: docker build -t mayrингcoder-mcp .
 Or with compose:  docker-compose up -d mcp-memory
 
 Tools exposed (wire name = mcp__memory__<name>):
-    put              — ingest content into memory
-    get              — retrieve chunk by ID
-    search           — hybrid 4-stage memory search
-    invalidate       — deactivate all chunks for a source
-    list_by_source   — list chunks for a source
-    explain          — explain a chunk (key, scores, reasons)
-    reindex          — re-embed and re-upsert chunks to ChromaDB
-    feedback         — record usage signal for a chunk
+    put                  — ingest content into memory
+    get                  — retrieve chunk by ID
+    search_memory        — hybrid 4-stage memory search
+    invalidate           — deactivate all chunks for a source
+    list_by_source       — list chunks for a source
+    explain              — explain a chunk (key, scores, reasons)
+    reindex              — re-embed and re-upsert chunks to ChromaDB
+    feedback             — record usage signal for a chunk
+    pi_task              — memory-augmented reasoning (Pi-Agent mit Tool-Calling)
+    conversation_ingest  — store conversation turns as summarized memory
+    analyze              — start full code analysis pipeline (async, fire-and-forget)
 """
 
 from __future__ import annotations
@@ -496,6 +499,161 @@ def feedback(
     try:
         add_feedback(_get_conn(), chunk_id, signal, metadata or {})
         return {"chunk_id": chunk_id, "recorded": True}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Tool 9: memory.pi_task
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def pi_task(
+    task: str,
+    repo_slug: str | None = None,
+    system_prompt: str | None = None,
+    timeout: float = 180.0,
+    workspace_id: str | None = None,
+) -> dict:
+    """Run a free-form task using the Pi-Agent with memory-augmented reasoning.
+
+    The Pi-Agent searches workspace memory for relevant context, injects it
+    into the system prompt (ambient context), and can issue up to 5
+    search_memory tool calls during reasoning. Requires Ollama to be reachable.
+
+    Args:
+        task: Free-form task or question, e.g. "Welche Forschungsmethoden sind bekannt?"
+        repo_slug: Repository slug to scope memory retrieval (e.g. "app.linn.games")
+        system_prompt: Custom system prompt (default: Pi-Agent task prompt)
+        timeout: Per-request HTTP timeout in seconds (default: 180)
+        workspace_id: Tenant namespace for memory scope (default: from JWT)
+
+    Returns:
+        {result: str, workspace_id: str} or {error: str}
+    """
+    try:
+        from src.agents.pi import run_task_with_memory
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        result = run_task_with_memory(
+            task=task,
+            ollama_url=_OLLAMA_URL,
+            model=_MODEL,
+            repo_slug=repo_slug,
+            system_prompt=system_prompt,
+            timeout=timeout,
+        )
+        return {"result": result, "workspace_id": ws}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Tool 10: memory.conversation_ingest
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def conversation_ingest(
+    turns: list[dict],
+    session_id: str,
+    workspace_slug: str = "default",
+    presumarized: str | None = None,
+) -> dict:
+    """Ingest a batch of conversation turns into workspace memory.
+
+    Summarizes (via Ollama) and stores as a conversation_summary source.
+    Dedup: same session_id + same content is skipped automatically.
+
+    Args:
+        turns: List of {"role": "user"|"assistant", "content": str, "timestamp": str}
+        session_id: Unique session identifier (used for dedup)
+        workspace_slug: Workspace namespace (default: "default")
+        presumarized: Pre-written summary to skip Ollama summarization
+
+    Returns:
+        {workspace_id, source_id, chunk_ids, indexed, deduped, skipped}
+    """
+    try:
+        import hashlib
+        from tools.ingest_conversations import _summarize as _summarize_turns
+
+        if not turns:
+            return {"error": "turns must not be empty"}
+
+        ws = _enforce_tenant(workspace_slug) or workspace_slug
+        batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp', '')}"
+        content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
+        source_id = f"conversation:{workspace_slug}:{session_id[:16]}"
+
+        summary = presumarized or _summarize_turns(turns, "", _OLLAMA_URL, _MODEL)
+
+        if not summary or not summary.strip():
+            return {"workspace_id": ws, "source_id": source_id,
+                    "chunk_ids": [], "indexed": False, "skipped": True}
+
+        first_ts = (turns[0].get("timestamp") or "")[:10]
+        source_dict = {
+            "source_id": source_id,
+            "source_type": "conversation_summary",
+            "repo": workspace_slug,
+            "path": f"conversations/{session_id[:16]}",
+            "content_hash": content_hash,
+        }
+        result = _run_ingest(
+            source_dict, summary, _get_conn(), _get_chroma(),
+            _OLLAMA_URL, _MODEL, {"categorize": False}, ws,
+        )
+        return {"workspace_id": ws, **result}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Tool 11: memory.analyze (async — use job_status to poll)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def analyze(
+    repo: str,
+    full: bool = False,
+    no_pi: bool = False,
+    budget: int | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    """Start a full code analysis pipeline for a repository (async).
+
+    Runs src.pipeline as a subprocess. Returns immediately with a pid.
+    Analysis output is written to reports/. No job_id — fire and forget.
+
+    Args:
+        repo: Repository URL or local path (e.g. "https://github.com/org/repo")
+        full: Force full re-analysis (ignore incremental cache)
+        no_pi: Disable Pi-Agent (faster, no memory-augmented analysis)
+        budget: Max files to analyse (None = no limit)
+        workspace_id: Tenant namespace (default: from JWT)
+
+    Returns:
+        {status: "started", pid: int, repo: str} or {error: str}
+    """
+    try:
+        import subprocess
+        import sys
+
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        cmd = [sys.executable, "-m", "src.pipeline", "--repo", repo, "--workspace-id", ws]
+        if full:
+            cmd.append("--full")
+        if no_pi:
+            cmd.append("--no-pi")
+        if budget is not None:
+            cmd.extend(["--budget", str(budget)])
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(Path(__file__).parent.parent.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"status": "started", "pid": proc.pid, "repo": repo, "workspace_id": ws}
     except Exception as exc:
         return {"error": str(exc)}
 
