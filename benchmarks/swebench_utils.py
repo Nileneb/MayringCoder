@@ -23,14 +23,16 @@ def load_instances(n: int = 10, seed: int = 42) -> list[dict]:
 
 
 def clone_at_commit(repo: str, commit: str, dest: str) -> None:
+    subprocess.run(["git", "init", dest], check=True, capture_output=True)
     subprocess.run(
-        ["git", "clone", "--depth", "50", f"https://github.com/{repo}", dest],
-        check=True,
-        capture_output=True,
+        ["git", "remote", "add", "origin", f"https://github.com/{repo}"],
+        cwd=dest, check=True, capture_output=True,
     )
     subprocess.run(
-        ["git", "checkout", commit],
-        cwd=dest,
-        check=True,
-        capture_output=True,
+        ["git", "fetch", "--depth", "1", "origin", commit],
+        cwd=dest, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "FETCH_HEAD"],
+        cwd=dest, check=True, capture_output=True,
     )
