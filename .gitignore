@@ -20,3 +20,4 @@ AgentTemplates/
 Todo-research.md
 .CLAUDE.md.worktrees/
 benchmarks/swebench_results/
+benchmarks/version_upgrade_results/
