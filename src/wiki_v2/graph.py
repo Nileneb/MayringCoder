@@ -3,15 +3,16 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import os as _os_g
 from src.config import CACHE_DIR, WIKI_DIR
 from src.wiki_v2.models import WikiNode, WikiEdge, Cluster
 from src.wiki_v2 import store as _store
-from src.wiki_v2._path_utils import safe_workspace_id, confined_path
+from src.wiki_v2._path_utils import confined_path
 
 
 class WikiGraph:
     def __init__(self, workspace_id: str, repo_slug: str, db_path: Path | None = None):
-        self.workspace_id = workspace_id
+        self.workspace_id = _os_g.path.basename(workspace_id.replace('/', '_').replace('\\', '_'))
         self.repo_slug = repo_slug
         self._db_path = db_path or (CACHE_DIR / "wiki_v2.db")
         self._conn = _store.init_wiki_db(self._db_path)
@@ -97,7 +98,7 @@ class WikiGraph:
             ],
         }
 
-        out_path = confined_path(WIKI_DIR, safe_workspace_id(self.workspace_id), "graph.json")
+        out_path = confined_path(WIKI_DIR, self.workspace_id, "graph.json")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         return data
@@ -105,7 +106,7 @@ class WikiGraph:
     def snapshot(self) -> None:
         data = self.to_json()
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        snap_path = confined_path(WIKI_DIR, safe_workspace_id(self.workspace_id), "history", f"{ts}.json")
+        snap_path = confined_path(WIKI_DIR, self.workspace_id, "history", f"{ts}.json")
         snap_path.parent.mkdir(parents=True, exist_ok=True)
         snap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         self._conn.execute(

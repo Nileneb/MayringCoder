@@ -10,10 +10,10 @@ _FILE_PATH_RE = _re.compile(
 
 def _set_recluster_flag(workspace_id: str) -> None:
     try:
-        import re as _re
+        import os as _os_w
         from src.config import WIKI_DIR
         from src.wiki_v2._path_utils import confined_path
-        _safe = _re.sub(r'[^A-Za-z0-9_\-/]', '_', workspace_id).lstrip('/')
+        _safe = _os_w.path.basename(workspace_id.replace('/', '_').replace('\\', '_'))
         flag_path = confined_path(WIKI_DIR, _safe, "recluster_needed")
         flag_path.parent.mkdir(parents=True, exist_ok=True)
         flag_path.touch()

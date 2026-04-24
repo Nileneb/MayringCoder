@@ -871,10 +871,9 @@ def _build_brain_figure(workspace_id: str):
     if not _wid or not _re_b.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", _wid):
         return _empty_fig("Ungültige Workspace-ID")
 
-    import re as _re_b
     from src.wiki_v2._path_utils import confined_path as _cp_b
-    _safe_wid = _re_b.sub(r'[^A-Za-z0-9_\-]', '_', _wid)
-    _wiki_wid = _re_b.sub(r'[^A-Za-z0-9_\-/]', '_', _wid).lstrip('/')
+    _safe_wid = _os_b.path.basename(_wid.replace('/', '_').replace('\\', '_'))
+    _wiki_wid = _safe_wid
 
     # --- Try wiki_v2 graph.json first ---
     graph_path = _cp_b(WIKI_DIR, _wiki_wid, "graph.json")
@@ -1079,7 +1078,8 @@ def _build_cluster_stats(workspace_id: str) -> list:
         if not wid:
             return []
 
-        _safe_wid_cs = _re_cs.sub(r'[^A-Za-z0-9_\-/]', '_', wid).lstrip('/')
+        import os as _os_cs
+        _safe_wid_cs = _os_cs.path.basename(wid.replace('/', '_').replace('\\', '_'))
         graph_path = _cp_cs(WIKI_DIR, _safe_wid_cs, "graph.json")
         clusters_path = _cp_cs(WIKI_DIR, _safe_wid_cs, "clusters.json")
 
@@ -1124,7 +1124,8 @@ def _build_mermaid_html(workspace_id: str) -> str:
         from src.wiki_v2._path_utils import confined_path as _cp_m
         from src.wiki_v2.renderer import to_mermaid
 
-        wid = _re_m.sub(r'[^A-Za-z0-9_\-/]', '_', str(workspace_id or "").strip()).lstrip('/')
+        import os as _os_m
+        wid = _os_m.path.basename(str(workspace_id or "").strip().replace('/', '_').replace('\\', '_'))
         if not wid:
             return "<p style='color:#667788;font-family:monospace;padding:8px'>Kein Workspace ausgewählt.</p>"
         graph_path = _cp_m(WIKI_DIR, wid, "graph.json")

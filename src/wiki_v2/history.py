@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.wiki_v2._path_utils import safe_workspace_id, safe_filename_part, confined_path
+from src.wiki_v2._path_utils import safe_filename_part, confined_path
 
 if TYPE_CHECKING:
     from src.wiki_v2.graph import WikiGraph
@@ -73,7 +73,7 @@ class WikiHistory:
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             snap_path = confined_path(
                 WIKI_DIR,
-                safe_workspace_id(graph.workspace_id),
+                graph.workspace_id,
                 "history",
                 f"{ts}_{safe_filename_part(trigger)}.json",
             )

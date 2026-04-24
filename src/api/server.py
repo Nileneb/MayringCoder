@@ -1056,7 +1056,7 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
     """
     import json as _json
     import time as _time_g
-    import re as _re_g, os as _os_g
+    import os as _os_g
     from src.config import CACHE_DIR, WIKI_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
 
@@ -1066,8 +1066,8 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
     wid = workspace_id or slug
     if not wid:
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid workspace_id"}
-    _safe_wid = _re_g.sub(r'[^A-Za-z0-9_\-/]', '_', wid).lstrip('/')
-    _safe_slug = _re_g.sub(r'[^A-Za-z0-9_\-]', '_', slug) if slug else _safe_wid
+    _safe_wid = _os_g.path.basename(wid.replace('/', '_').replace('\\', '_'))
+    _safe_slug = _os_g.path.basename(slug.replace('/', '_').replace('\\', '_')) if slug else _safe_wid
 
     # --- Try wiki_v2 graph.json first ---
     graph_path = _cp(WIKI_DIR, _safe_wid, "graph.json")
@@ -1105,7 +1105,7 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
         return {"clusters": [], "edges": [], "activations": [],
                 "error": f"No wiki found for workspace '{wid}'. Run POST /wiki/rebuild first."}
 
-    _safe_slug = _re_g.sub(r'[^A-Za-z0-9_\-]', '_', slug)
+    _safe_slug = _os_g.path.basename(slug.replace('/', '_').replace('\\', '_'))
     cluster_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_clusters.json")
     index_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_index.json")
 
@@ -1180,14 +1180,15 @@ async def wiki_rebuild(
     async def _do_rebuild() -> None:
         try:
             _JOBS[job_id]["status"] = "running"
-            import json as _j, re as _re_rb
+            import json as _j
             from src.config import CACHE_DIR
             from src.wiki_v2.graph import WikiGraph
             from src.wiki_v2.edge_detector import EdgeDetector
             from src.wiki_v2.clustering import ClusterEngine
 
-            _safe_wid_rb = _re_rb.sub(r'[^A-Za-z0-9_\-/]', '_', wid).lstrip('/')
-            _safe_slug_rb = _re_rb.sub(r'[^A-Za-z0-9_\-]', '_', slug)
+            import os as _os_rb
+            _safe_wid_rb = _os_rb.path.basename(wid.replace('/', '_').replace('\\', '_'))
+            _safe_slug_rb = _os_rb.path.basename(slug.replace('/', '_').replace('\\', '_'))
             db = WikiGraph(_safe_wid_rb, _safe_slug_rb, CACHE_DIR / "wiki_v2.db")
             # Load overview_cache if available
             oc_path = _cp(CACHE_DIR, f"{_safe_slug_rb}_overview_cache.json")
@@ -1229,10 +1230,10 @@ async def wiki_edge_create(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Manually create a wiki edge with user_id tracking via wiki_contributions."""
-    import re as _re_e
     if not request.source or not request.target:
         raise HTTPException(status_code=400, detail="source and target required")
-    _safe_ws = _re_e.sub(r'[^A-Za-z0-9_\-/]', '_', workspace_id).lstrip('/')
+    import os as _os_e
+    _safe_ws = _os_e.path.basename(workspace_id.replace('/', '_').replace('\\', '_'))
     if not _safe_ws:
         raise HTTPException(status_code=400, detail="invalid workspace_id")
     try:
