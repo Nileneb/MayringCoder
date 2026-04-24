@@ -830,10 +830,11 @@ _BRAIN_HTML_UNUSED = """
 
 
 def _build_brain_figure(workspace_id: str):
-    """Build Plotly network graph from wiki_clusters.json for given workspace_id."""
+    """Build Plotly network graph. Tries wiki_v2 graph.json first, falls back to wiki_clusters.json."""
     try:
         import json as _json
         import time as _time
+        import math as _math
         import plotly.graph_objects as go
         import networkx as nx
     except ImportError:
@@ -844,8 +845,19 @@ def _build_brain_figure(workspace_id: str):
         )
 
     import re as _re_b, os as _os_b
-    from src.config import CACHE_DIR
+    from src.config import CACHE_DIR, WIKI_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
+
+    _EDGE_COLORS = {
+        "import": "#2255aa",
+        "call": "#e07c39",
+        "concept_link": "#2a9a6a",
+        "test_covers": "#8b5cf6",
+        "label_cooccurrence": "#556677",
+        "shared_type": "#5590cc",
+        "event_dispatch": "#e45c9a",
+    }
+    _EDGE_DEFAULT_COLOR = "#1e3a6e"
 
     def _empty_fig(msg: str):
         f = go.Figure()
@@ -856,10 +868,110 @@ def _build_brain_figure(workspace_id: str):
         return f
 
     _wid = str(workspace_id or "").strip()
-    if not _wid or not _re_b.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", _wid):
+    if not _wid or not _re_b.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", _wid):
         return _empty_fig("Ungültige Workspace-ID")
 
-    _safe_wid = _wid
+    _safe_wid = _os_b.path.basename(_wid.replace("/", "_"))
+
+    # --- Try wiki_v2 graph.json first ---
+    graph_path = WIKI_DIR / _wid / "graph.json"
+    use_new_format = graph_path.exists()
+
+    if use_new_format:
+        data = _json.loads(graph_path.read_text())
+        raw_nodes = data.get("nodes", [])
+        raw_edges = data.get("edges", [])
+        raw_clusters = data.get("clusters", [])
+
+        # Build cluster-color map
+        cluster_colors = {}
+        palette = ["#1a4a9a", "#a04a10", "#0a6a3a", "#5a1a8a", "#2a5a6a", "#6a4a1a"]
+        for i, c in enumerate(raw_clusters):
+            for m in c.get("members", []):
+                cluster_colors[m] = palette[i % len(palette)]
+
+        G = nx.Graph()
+        for n in raw_nodes:
+            n_files = 1
+            node_size = max(15, min(55, int(_math.log1p(n_files) * 14)))
+            G.add_node(n["id"], size=node_size, cluster_id=n.get("cluster_id", ""),
+                       labels=n.get("labels", []), summary=n.get("summary", ""),
+                       loc=n.get("loc", 0))
+        for e in raw_edges:
+            src, tgt = e.get("source"), e.get("target")
+            if src and tgt and G.has_node(src) and G.has_node(tgt):
+                G.add_edge(src, tgt, type=e.get("type", "import"),
+                           weight=float(e.get("weight", 1.0)))
+
+        pos = nx.spring_layout(G, seed=42, k=2.5) if len(G.nodes) > 1 else {n: (0.5, 0.5) for n in G.nodes}
+
+        # Active nodes from _RECENT_ACTIVATIONS
+        now = _time.time()
+        active: set[str] = set()
+        for ev in _RECENT_ACTIVATIONS:
+            if ev["workspace_id"] != _wid or now - ev["ts"] > 60:
+                continue
+            for sid in ev["source_ids"]:
+                path = sid.split(":")[-1]
+                for nid in G.nodes():
+                    if path == nid or path.endswith("/" + nid) or nid.endswith("/" + path):
+                        active.add(nid)
+
+        # Edge traces by type (colored separately)
+        edge_type_traces = {}
+        for u, v, edata in G.edges(data=True):
+            etype = edata.get("type", "import")
+            color = _EDGE_COLORS.get(etype, _EDGE_DEFAULT_COLOR)
+            if color not in edge_type_traces:
+                edge_type_traces[color] = ([], [], etype)
+            ex, ey, _ = edge_type_traces[color]
+            x0, y0 = pos[u]; x1, y1 = pos[v]
+            ex += [x0, x1, None]; ey += [y0, y1, None]
+
+        traces = []
+        for color, (ex, ey, etype) in edge_type_traces.items():
+            traces.append(go.Scatter(
+                x=ex, y=ey, mode="lines", name=etype,
+                line=dict(color=color, width=1.5), hoverinfo="none",
+            ))
+
+        node_x = [pos[n][0] for n in G.nodes()]
+        node_y = [pos[n][1] for n in G.nodes()]
+        colors = ["#ffcc44" if n in active else cluster_colors.get(n, "#1a4a9a") for n in G.nodes()]
+        sizes = [G.nodes[n]["size"] for n in G.nodes()]
+        hover = [
+            f"<b>{n}</b><br>Cluster: {G.nodes[n].get('cluster_id','?')}"
+            + (f"<br>Aktiv" if n in active else "")
+            for n in G.nodes()
+        ]
+        traces.append(go.Scatter(
+            x=node_x, y=node_y, mode="markers+text",
+            marker=dict(color=colors, size=sizes,
+                        line=dict(color="#334466", width=1.5), opacity=0.9),
+            text=list(G.nodes()), textposition="top center",
+            textfont=dict(color="#99aacc", size=9),
+            hovertext=hover, hoverinfo="text", name="nodes",
+        ))
+
+        n_clusters = len(raw_clusters)
+        n_edges = len(raw_edges)
+        title = f"{len(G.nodes())} Dateien · {n_edges} Edges · {n_clusters} Cluster · {len(active)} aktiv"
+
+        fig = go.Figure(
+            data=traces,
+            layout=go.Layout(
+                title=dict(text=title, font=dict(color="#556677", size=12), x=0.01),
+                paper_bgcolor="#06080f", plot_bgcolor="#0a0e1a",
+                showlegend=False, margin=dict(l=10, r=10, t=30, b=10),
+                height=680,
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
+                hovermode="closest",
+            ),
+        )
+        return fig
+
+    # --- Fallback: old _wiki_clusters.json format ---
     cache_root = CACHE_DIR.resolve()
     cluster_path = (cache_root / f"{_safe_wid}_wiki_clusters.json").resolve()
     try:
@@ -868,17 +980,14 @@ def _build_brain_figure(workspace_id: str):
         return _empty_fig("Ungültiger Workspace-Pfad")
 
     if not cluster_path.exists():
-        return _empty_fig("Kein Wiki — 'Wiki generieren' klicken")
+        return _empty_fig("Kein Wiki — 'Wiki generieren' oder '/wiki/rebuild' klicken")
 
-    import math as _math
     raw = _json.loads(cluster_path.read_text())
     G = nx.Graph()
     for c in raw:
         n_files = len(c.get("files", []))
         node_size = max(15, min(55, int(_math.log1p(n_files) * 14)))
-        G.add_node(c["name"],
-                   size=node_size,
-                   files=c.get("files", []),
+        G.add_node(c["name"], size=node_size, files=c.get("files", []),
                    labels=c.get("labels", []))
         for e in c.get("edges", []):
             if isinstance(e, (list, tuple)) and len(e) >= 2:
@@ -889,7 +998,7 @@ def _build_brain_figure(workspace_id: str):
     now = _time.time()
     active: set[str] = set()
     for ev in _RECENT_ACTIVATIONS:
-        if ev["workspace_id"] != workspace_id or now - ev["ts"] > 60:
+        if ev["workspace_id"] != _wid or now - ev["ts"] > 60:
             continue
         for sid in ev["source_ids"]:
             path = sid.split(":")[-1]
@@ -902,48 +1011,33 @@ def _build_brain_figure(workspace_id: str):
         x0, y0 = pos[u]; x1, y1 = pos[v]
         edge_x += [x0, x1, None]; edge_y += [y0, y1, None]
 
-    edges_trace = go.Scatter(
-        x=edge_x, y=edge_y, mode="lines",
-        line=dict(color="#1e3a6e", width=1.5), hoverinfo="none",
-    )
-
+    edges_trace = go.Scatter(x=edge_x, y=edge_y, mode="lines",
+        line=dict(color="#1e3a6e", width=1.5), hoverinfo="none")
     node_x = [pos[n][0] for n in G.nodes()]
     node_y = [pos[n][1] for n in G.nodes()]
     colors = ["#ffcc44" if n in active else "#1a4a9a" for n in G.nodes()]
     sizes = [G.nodes[n]["size"] for n in G.nodes()]
-    hover = [
-        f"<b>{n}</b><br>{len(G.nodes[n]['files'])} Dateien"
-        + (f"<br>Aktiv" if n in active else "")
-        for n in G.nodes()
-    ]
-
+    hover = [f"<b>{n}</b><br>{len(G.nodes[n]['files'])} Dateien" +
+             (f"<br>Aktiv" if n in active else "") for n in G.nodes()]
     nodes_trace = go.Scatter(
         x=node_x, y=node_y, mode="markers+text",
         marker=dict(color=colors, size=sizes,
-                    line=dict(color="#334466", width=1.5),
-                    opacity=0.9),
-        text=list(G.nodes()),
-        textposition="top center",
+                    line=dict(color="#334466", width=1.5), opacity=0.9),
+        text=list(G.nodes()), textposition="top center",
         textfont=dict(color="#99aacc", size=10),
         hovertext=hover, hoverinfo="text",
     )
-
     n_clusters = len(G.nodes())
     n_edges = len(G.edges())
     title = f"{n_clusters} Cluster · {n_edges} Verbindungen · {len(active)} aktiv"
-
     fig = go.Figure(
         data=[edges_trace, nodes_trace],
         layout=go.Layout(
             title=dict(text=title, font=dict(color="#556677", size=12), x=0.01),
             paper_bgcolor="#06080f", plot_bgcolor="#0a0e1a",
-            showlegend=False,
-            margin=dict(l=10, r=10, t=30, b=10),
-            height=680,
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                       showline=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                       showline=False),
+            showlegend=False, margin=dict(l=10, r=10, t=30, b=10), height=680,
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
             hovermode="closest",
         ),
     )

@@ -148,6 +148,8 @@ def parse_args() -> argparse.Namespace:
                    help="Scan conversation-summaries + rebuild Markov topic-transition matrix")
     p.add_argument("--wiki-type", choices=["code", "paper"], default="code",
                    help="Wiki-Modus: code (Import/Call-Graph) oder paper (Paper-Verknüpfungen)")
+    p.add_argument("--wiki-cluster-strategy", choices=["louvain", "full"], default="louvain",
+                   help="Wiki 2.0 Clustering-Strategie: louvain (schnell) oder full (Louvain+Embedding+LLM)")
     p.add_argument("--generate-ambient", action="store_true",
                    help="Ambient-Snapshot regenerieren (cache via SQLite, model required)")
     p.add_argument("--ingest-issues", metavar="REPO",
@@ -323,9 +325,33 @@ def main() -> None:
         sys.exit(0)
 
     if args.generate_wiki:
+        wid = args.workspace_id or "default"
         from src.api.dependencies import get_conn, get_chroma
         from src.memory.wiki import generate_wiki
-        generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, args.workspace_id, doc_type=args.wiki_type)
+        generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, wid, doc_type=args.wiki_type)
+        # Wiki 2.0: rebuild graph.json nach generate_wiki
+        try:
+            from src.config import CACHE_DIR
+            from src.analysis.context import load_overview_cache_raw
+            from src.wiki_v2.graph import WikiGraph
+            from src.wiki_v2.edge_detector import EdgeDetector
+            from src.wiki_v2.clustering import ClusterEngine
+            from src.config import repo_slug as _repo_slug_fn
+            slug = _repo_slug_fn(repo_url) if repo_url else wid
+            oc = load_overview_cache_raw(repo_url) or {} if repo_url else {}
+            db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
+            detector = EdgeDetector()
+            edges = detector.detect_from_overview(oc, get_conn(), wid, slug)
+            for e in edges:
+                db.add_edge(e)
+            engine = ClusterEngine()
+            engine.cluster(db, strategy=getattr(args, "wiki_cluster_strategy", "louvain"),
+                           ollama_url=ollama_url, model=model)
+            db.to_json()
+            db.close()
+            print(f"Wiki 2.0 graph.json geschrieben für workspace '{wid}'")
+        except Exception as _e:
+            print(f"Wiki 2.0 update skipped: {_e}")
         sys.exit(0)
 
     if args.rebuild_transitions:

@@ -1049,20 +1049,58 @@ async def wiki_slugs() -> dict:
 async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
     """Return wiki cluster graph + recent Pi-agent search activations for Brain visualization.
 
+    Tries wiki_v2 graph.json first, falls back to legacy _wiki_clusters.json.
     No auth required — exposes only structural cluster metadata (no chunk content).
     """
     import json as _json
     import time as _time_g
-    from src.config import CACHE_DIR
+    import re as _re_g, os as _os_g
+    from src.config import CACHE_DIR, WIKI_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
 
-    if not slug:
-        return {"clusters": [], "edges": [], "activations": [], "error": "slug required"}
+    if not slug and not workspace_id:
+        return {"clusters": [], "edges": [], "activations": [], "error": "slug or workspace_id required"}
 
-    import re as _re_g, os as _os_g
+    wid = workspace_id or slug
+    if not _re_g.fullmatch(r"[a-zA-Z0-9_\-./]+", wid):
+        return {"clusters": [], "edges": [], "activations": [], "error": "invalid workspace_id"}
+    _safe_wid = _os_g.path.basename(wid)
+
+    # --- Try wiki_v2 graph.json first ---
+    graph_path = WIKI_DIR / _safe_wid / "graph.json"
+    if graph_path.exists():
+        data = _json.loads(graph_path.read_text())
+        # Overlay activations
+        now = _time_g.time()
+        activations: list[dict] = []
+        member_lookup: dict[str, str] = {}
+        for c in data.get("clusters", []):
+            for m in c.get("members", []):
+                member_lookup[m] = c["cluster_id"]
+        for ev in _RECENT_ACTIVATIONS:
+            if ev["workspace_id"] != wid or now - ev["ts"] > 60:
+                continue
+            hit: set[str] = set()
+            for sid in ev["source_ids"]:
+                path = sid.split(":")[-1]
+                for member, cid in member_lookup.items():
+                    if path == member or path.endswith("/" + member) or member.endswith("/" + path):
+                        hit.add(cid)
+            activations.append({
+                "query": ev["query"][:80],
+                "clusters": list(hit),
+                "age_s": round(now - ev["ts"], 1),
+            })
+        data["activations"] = activations
+        return data
+
+    # --- Fallback: legacy _wiki_clusters.json ---
+    if not slug:
+        return {"clusters": [], "edges": [], "activations": [],
+                "error": f"No wiki found for workspace '{wid}'. Run POST /wiki/rebuild first."}
+
     if not _re_g.fullmatch(r"[a-zA-Z0-9_\-.]+", slug):
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
-
     _safe_slug = _os_g.path.basename(slug)
     cluster_path = CACHE_DIR / f"{_safe_slug}_wiki_clusters.json"
     index_path = CACHE_DIR / f"{_safe_slug}_wiki_index.json"
@@ -1072,12 +1110,8 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
     if cluster_path.exists():
         raw = _json.loads(cluster_path.read_text())
         clusters = [
-            {
-                "name": c["name"],
-                "files": c.get("files", []),
-                "labels": c.get("labels", []),
-                "size": max(1, len(c.get("files", []))),
-            }
+            {"name": c["name"], "files": c.get("files", []),
+             "labels": c.get("labels", []), "size": max(1, len(c.get("files", [])))}
             for c in raw
         ]
     elif index_path.exists():
@@ -1085,22 +1119,17 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
         clusters = [{"name": k, "files": [], "labels": [], "size": 1} for k in idx]
     else:
         return {"clusters": [], "edges": [], "activations": [],
-                "error": f"No wiki found for slug '{slug}'. Run POST /wiki/generate first."}
+                "error": f"No wiki found for slug '{slug}'. Run POST /wiki/rebuild first."}
 
     edges: list[dict] = []
     for c in raw:
         for edge in c.get("edges", []):
             if isinstance(edge, (list, tuple)) and len(edge) >= 2:
-                edges.append({
-                    "source": c["name"],
-                    "target": edge[0],
-                    "weight": edge[1],
-                    "rules": edge[2] if len(edge) > 2 else [],
-                })
+                edges.append({"source": c["name"], "target": edge[0],
+                               "weight": edge[1], "rules": edge[2] if len(edge) > 2 else []})
 
     now = _time_g.time()
-    wid = workspace_id or slug
-    activations: list[dict] = []
+    activations = []
     for ev in _RECENT_ACTIVATIONS:
         if ev["workspace_id"] != wid or now - ev["ts"] > 60:
             continue
@@ -1108,18 +1137,69 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
         for sid in ev["source_ids"]:
             path = sid.split(":")[-1]
             for c in clusters:
-                if any(
-                    path == f or path.endswith("/" + f) or f.endswith("/" + path)
-                    for f in c["files"]
-                ):
+                if any(path == f or path.endswith("/" + f) or f.endswith("/" + path)
+                       for f in c["files"]):
                     hit.add(c["name"])
-        activations.append({
-            "query": ev["query"][:80],
-            "clusters": list(hit),
-            "age_s": round(now - ev["ts"], 1),
-        })
+        activations.append({"query": ev["query"][:80], "clusters": list(hit),
+                              "age_s": round(now - ev["ts"], 1)})
 
     return {"clusters": clusters, "edges": edges, "activations": activations}
+
+
+class WikiRebuildRequest(BaseModel):
+    workspace_id: str
+    repo_slug: str = ""
+    strategy: str = "louvain"
+    ollama_url: str = ""
+    model: str = "qwen2.5-coder:14b"
+
+
+@app.post("/wiki/rebuild")
+async def wiki_rebuild(
+    request: WikiRebuildRequest,
+    token_data: dict = Depends(verify_mcp_token),
+) -> dict:
+    """Rebuild wiki_v2 graph.json for a workspace: EdgeDetector + ClusterEngine + to_json()."""
+    wid = request.workspace_id
+    slug = request.repo_slug or wid
+    job_id = _make_job(wid)
+
+    async def _do_rebuild() -> None:
+        try:
+            _JOBS[job_id]["status"] = "running"
+            import json as _j
+            from src.config import CACHE_DIR
+            from src.wiki_v2.graph import WikiGraph
+            from src.wiki_v2.edge_detector import EdgeDetector
+            from src.wiki_v2.clustering import ClusterEngine
+
+            db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
+            # Load overview_cache if available
+            oc_path = CACHE_DIR / f"{slug}_overview_cache.json"
+            oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
+            # Edge detection
+            import sqlite3
+            conn = sqlite3.connect(str(CACHE_DIR / "memory.db"))
+            detector = EdgeDetector()
+            edges = detector.detect_from_overview(oc, conn, wid, slug)
+            conn.close()
+            for e in edges:
+                db.add_edge(e)
+            # Clustering
+            ollama = request.ollama_url or "http://three.linn.games:11434"
+            engine = ClusterEngine()
+            engine.cluster(db, strategy=request.strategy, ollama_url=ollama, model=request.model)
+            db.to_json()
+            db.close()
+            n_edges = len(edges)
+            _JOBS[job_id]["status"] = "done"
+            _JOBS[job_id]["output"] = f"graph.json written: {len(oc)} nodes, {n_edges} edges"
+        except Exception as exc:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["output"] = "[Fehler] Wiki-Rebuild fehlgeschlagen"
+
+    asyncio.create_task(_do_rebuild())
+    return {"job_id": job_id, "status": "started"}
 
 
 def main() -> None:
