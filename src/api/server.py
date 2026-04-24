@@ -211,9 +211,19 @@ def stats_summary() -> dict:
     active = conn.execute("SELECT COUNT(*) FROM chunks WHERE is_active=1").fetchone()[0]
     total  = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
-    fb = {r[0]: r[1] for r in conn.execute(
-        "SELECT signal, COUNT(*) FROM chunk_feedback GROUP BY signal"
-    ).fetchall()}
+    fb_rows = conn.execute("SELECT signal, COUNT(*) FROM chunk_feedback GROUP BY signal").fetchall()
+    fb = {r[0]: r[1] for r in fb_rows}
+    # Aggregate star ratings (1–5) into positive/negative/neutral buckets
+    # so legacy dashboard code and new star-rating code both work.
+    star_pos   = sum(fb.get(str(s), 0) for s in (4, 5))
+    star_neg   = sum(fb.get(str(s), 0) for s in (1, 2))
+    star_neu   = fb.get("3", 0)
+    feedback_summary = {
+        "positive": fb.get("positive", 0) + star_pos,
+        "negative": fb.get("negative", 0) + star_neg,
+        "neutral":  fb.get("neutral",  0) + star_neu,
+        "stars":    {str(i): fb.get(str(i), 0) for i in range(1, 6)},
+    }
     last_hour = conn.execute(
         "SELECT COUNT(*) FROM ingestion_log WHERE created_at > datetime('now', '-1 hour')"
     ).fetchone()[0]
@@ -230,9 +240,7 @@ def stats_summary() -> dict:
     return {
         "chunks":    {"active": active, "total": total},
         "sources":   {"count": sources},
-        "feedback":  {"positive": fb.get("positive", 0),
-                      "negative": fb.get("negative", 0),
-                      "neutral":  fb.get("neutral",  0)},
+        "feedback":  feedback_summary,
         "ingestion": {"last_hour": last_hour, "last_24h": last_24h},
         "recent_ops": recent,
     }

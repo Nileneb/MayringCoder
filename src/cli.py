@@ -212,6 +212,23 @@ def _cmd_turbulence(args: argparse.Namespace, repo_url: str, ollama_url: str) ->
     run_turbulence(args, repo_url, ollama_url, turb_model)
 
 
+def _cmd_generate_training_data(args: argparse.Namespace) -> None:
+    from src.training.memory_context_generator import run as run_memory_gen, DEFAULT_OUTPUT
+    wid = getattr(args, "workspace_id", "default") or "default"
+    result = run_memory_gen(
+        workspace_id=wid,
+        output_path=DEFAULT_OUTPUT,
+        skip_feedback=getattr(args, "skip_auto_feedback", False),
+        limit=getattr(args, "training_limit", 500),
+    )
+    print(
+        f"[training] workspace={result['workspace_id']} | "
+        f"feedback_written={result['feedback_written']} | "
+        f"pairs_written={result['pairs_written']} | "
+        f"output={result['output']}"
+    )
+
+
 def main() -> None:
     import time
     load_dotenv()
@@ -314,6 +331,7 @@ def main() -> None:
     if args.ingest_issues:                             run_ingest_issues(args, ollama_url, model);             sys.exit(0)
     if args.ingest_images:                             run_ingest_images(args, ollama_url, model);             sys.exit(0)
     if args.pi_task:                                   run_pi_task(args, ollama_url, model);                   sys.exit(0)
+    if getattr(args, "generate_training_data", None):  _cmd_generate_training_data(args);                      sys.exit(0)
     if args.mode == "turbulence":                      _cmd_turbulence(args, repo_url, ollama_url);            sys.exit(0)
 
     start = time.perf_counter()
