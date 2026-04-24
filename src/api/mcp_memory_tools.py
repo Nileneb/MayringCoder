@@ -22,7 +22,6 @@ from src.memory.store import (
 
 def register_memory_tools(mcp: FastMCP) -> None:
 
-    @mcp.tool()
     def put(
         source: dict,
         content: str,
