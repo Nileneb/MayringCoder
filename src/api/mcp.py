@@ -320,8 +320,19 @@ def search_memory(
             "source_affinity": source_affinity,
             "workspace_id": ws,
         }
-        return _run_search(query, _get_conn(), _get_chroma(), _OLLAMA_URL,
-                           opts, char_budget, session_compacted=compacted)
+        result = _run_search(query, _get_conn(), _get_chroma(), _OLLAMA_URL,
+                             opts, char_budget, session_compacted=compacted)
+        # Auto-log neutral usage signal for every returned chunk so the feedback
+        # table gets populated even without explicit feedback() calls.
+        try:
+            conn = _get_conn()
+            for r in result.get("results", []):
+                cid = r.get("chunk_id") if isinstance(r, dict) else getattr(r, "chunk_id", None)
+                if cid:
+                    add_feedback(conn, cid, "neutral", {"auto": True, "query": query[:80]})
+        except Exception:
+            pass
+        return result
     except Exception as exc:
         return {"error": str(exc), "results": [], "prompt_context": ""}
 
