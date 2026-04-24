@@ -74,7 +74,7 @@ from src.api.auth import get_workspace
 from src.api.training import router as _training_router
 from src.api.job_queue import get_job as _get_job, make_job as _make_job, python_exe as _python_exe, run_checker_job as _run_checker_job, _JOBS
 from src.model_router import ModelRouter as _ModelRouter
-from src.wiki_v2._path_utils import safe_workspace_id as _swid, safe_filename_part as _sfp, confined_path as _cp
+from src.wiki_v2._path_utils import confined_path as _cp
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1064,9 +1064,10 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
         return {"clusters": [], "edges": [], "activations": [], "error": "slug or workspace_id required"}
 
     wid = workspace_id or slug
-    if not _re_g.fullmatch(r"[a-zA-Z0-9_\-./]+", wid) or ".." in wid.split("/"):
+    if not wid:
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid workspace_id"}
-    _safe_wid = _swid(wid)
+    _safe_wid = _re_g.sub(r'[^A-Za-z0-9_\-/]', '_', wid).lstrip('/')
+    _safe_slug = _re_g.sub(r'[^A-Za-z0-9_\-]', '_', slug) if slug else _safe_wid
 
     # --- Try wiki_v2 graph.json first ---
     graph_path = _cp(WIKI_DIR, _safe_wid, "graph.json")
@@ -1104,9 +1105,7 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
         return {"clusters": [], "edges": [], "activations": [],
                 "error": f"No wiki found for workspace '{wid}'. Run POST /wiki/rebuild first."}
 
-    if not _re_g.fullmatch(r"[a-zA-Z0-9_\-.]+", slug):
-        return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
-    _safe_slug = _sfp(slug)
+    _safe_slug = _re_g.sub(r'[^A-Za-z0-9_\-]', '_', slug)
     cluster_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_clusters.json")
     index_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_index.json")
 
@@ -1181,28 +1180,30 @@ async def wiki_rebuild(
     async def _do_rebuild() -> None:
         try:
             _JOBS[job_id]["status"] = "running"
-            import json as _j
+            import json as _j, re as _re_rb
             from src.config import CACHE_DIR
             from src.wiki_v2.graph import WikiGraph
             from src.wiki_v2.edge_detector import EdgeDetector
             from src.wiki_v2.clustering import ClusterEngine
 
-            db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
+            _safe_wid_rb = _re_rb.sub(r'[^A-Za-z0-9_\-/]', '_', wid).lstrip('/')
+            _safe_slug_rb = _re_rb.sub(r'[^A-Za-z0-9_\-]', '_', slug)
+            db = WikiGraph(_safe_wid_rb, _safe_slug_rb, CACHE_DIR / "wiki_v2.db")
             # Load overview_cache if available
-            oc_path = _cp(CACHE_DIR, f"{_sfp(slug)}_overview_cache.json")
+            oc_path = _cp(CACHE_DIR, f"{_safe_slug_rb}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
             # Edge detection
             import sqlite3
             conn = sqlite3.connect(str(CACHE_DIR / "memory.db"))
             detector = EdgeDetector()
-            edges = detector.detect_from_overview(oc, conn, wid, slug)
+            edges = detector.detect_from_overview(oc, conn, _safe_wid_rb, _safe_slug_rb)
             conn.close()
             # Upsert every known file as a node BEFORE clustering
             # (get_clusters reads members via wiki_nodes.cluster_id)
             from src.wiki_v2.models import WikiNode as _WikiNode
             node_ids = set(oc.keys()) | {e.source for e in edges} | {e.target for e in edges}
             for nid in sorted(node_ids):
-                db.upsert_node(_WikiNode(id=nid, repo_slug=slug, workspace_id=wid))
+                db.upsert_node(_WikiNode(id=nid, repo_slug=_safe_slug_rb, workspace_id=_safe_wid_rb))
             for e in edges:
                 db.add_edge(e)
             # Clustering
@@ -1231,26 +1232,27 @@ async def wiki_edge_create(
     import re as _re_e
     if not request.source or not request.target:
         raise HTTPException(status_code=400, detail="source and target required")
-    if not _re_e.fullmatch(r"[a-zA-Z0-9_.\-/]+", workspace_id):
+    _safe_ws = _re_e.sub(r'[^A-Za-z0-9_\-/]', '_', workspace_id).lstrip('/')
+    if not _safe_ws:
         raise HTTPException(status_code=400, detail="invalid workspace_id")
     try:
         from src.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.models import WikiEdge
         from src.wiki_v2 import store as _ws
-        db = WikiGraph(workspace_id, workspace_id, CACHE_DIR / "wiki_v2.db")
+        db = WikiGraph(_safe_ws, _safe_ws, CACHE_DIR / "wiki_v2.db")
         edge = WikiEdge(
             source=request.source,
             target=request.target,
-            repo_slug=workspace_id,
-            workspace_id=workspace_id,
+            repo_slug=_safe_ws,
+            workspace_id=_safe_ws,
             type=request.type,
             weight=request.weight,
             context=request.context,
             validated=True,
         )
         db.add_edge(edge)
-        _ws.log_contribution(db._conn, workspace_id, request.user_id, "add_edge",
+        _ws.log_contribution(db._conn, _safe_ws, request.user_id, "add_edge",
                              f"{request.source}→{request.target}")
         db.close()
         return {"status": "ok", "source": request.source, "target": request.target,

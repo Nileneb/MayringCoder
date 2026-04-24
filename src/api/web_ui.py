@@ -871,9 +871,10 @@ def _build_brain_figure(workspace_id: str):
     if not _wid or not _re_b.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", _wid):
         return _empty_fig("Ungültige Workspace-ID")
 
-    from src.wiki_v2._path_utils import safe_workspace_id as _swid_b, safe_filename_part as _sfp_b, confined_path as _cp_b
-    _safe_wid = _sfp_b(_wid)
-    _wiki_wid = _swid_b(_wid)
+    import re as _re_b
+    from src.wiki_v2._path_utils import confined_path as _cp_b
+    _safe_wid = _re_b.sub(r'[^A-Za-z0-9_\-]', '_', _wid)
+    _wiki_wid = _re_b.sub(r'[^A-Za-z0-9_\-/]', '_', _wid).lstrip('/')
 
     # --- Try wiki_v2 graph.json first ---
     graph_path = _cp_b(WIKI_DIR, _wiki_wid, "graph.json")
@@ -1072,13 +1073,13 @@ def _build_cluster_stats(workspace_id: str) -> list:
     try:
         import json as _json, os as _os_cs, re as _re_cs
         from src.config import WIKI_DIR, CACHE_DIR
-        from src.wiki_v2._path_utils import safe_workspace_id as _swid_cs, confined_path as _cp_cs
+        from src.wiki_v2._path_utils import confined_path as _cp_cs
 
         wid = str(workspace_id or "").strip()
-        if not wid or not _re_cs.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", wid) or ".." in wid.split("/"):
+        if not wid:
             return []
 
-        _safe_wid_cs = _swid_cs(wid)
+        _safe_wid_cs = _re_cs.sub(r'[^A-Za-z0-9_\-/]', '_', wid).lstrip('/')
         graph_path = _cp_cs(WIKI_DIR, _safe_wid_cs, "graph.json")
         clusters_path = _cp_cs(WIKI_DIR, _safe_wid_cs, "clusters.json")
 
@@ -1113,6 +1114,44 @@ def _build_cluster_stats(workspace_id: str) -> list:
         return rows
     except Exception:
         return []
+
+
+def _build_mermaid_html(workspace_id: str) -> str:
+    """Return an HTML block that renders the wiki graph as a Mermaid diagram."""
+    try:
+        import json as _json, re as _re_m
+        from src.config import WIKI_DIR
+        from src.wiki_v2._path_utils import confined_path as _cp_m
+        from src.wiki_v2.renderer import to_mermaid
+
+        wid = _re_m.sub(r'[^A-Za-z0-9_\-/]', '_', str(workspace_id or "").strip()).lstrip('/')
+        if not wid:
+            return "<p style='color:#667788;font-family:monospace;padding:8px'>Kein Workspace ausgewählt.</p>"
+        graph_path = _cp_m(WIKI_DIR, wid, "graph.json")
+        if not graph_path.exists():
+            return "<p style='color:#667788;font-family:monospace;padding:8px'>Kein graph.json — Wiki generieren klicken.</p>"
+        data = _json.loads(graph_path.read_text())
+        if not data.get("nodes") and not data.get("edges"):
+            return "<p style='color:#667788;font-family:monospace;padding:8px'>Wiki leer — Wiki generieren klicken.</p>"
+        mermaid_text = to_mermaid(data)
+        mermaid_js = mermaid_text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+        uid = "mm_" + str(abs(hash(mermaid_text)))[:10]
+        return (
+            f'<div style="background:#06080f;border-radius:8px;padding:12px;overflow:auto;max-height:660px;">'
+            f'<div id="{uid}" style="color:#aabbcc;font-size:11px">Lade Diagramm…</div>'
+            f'</div>'
+            f'<script type="module">'
+            f'import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";'
+            f'mermaid.initialize({{startOnLoad:false,theme:"dark",securityLevel:"loose"}});'
+            f'(async()=>{{try{{'
+            f'const {{svg}}=await mermaid.render("{uid}_svg",`{mermaid_js}`);'
+            f'document.getElementById("{uid}").innerHTML=svg;'
+            f'}}catch(e){{document.getElementById("{uid}").textContent="Render-Fehler: "+e.message;}}'
+            f'}})();'
+            f'</script>'
+        )
+    except Exception as ex:
+        return f"<p style='color:#cc4444;font-family:monospace;padding:8px'>Fehler: {str(ex)[:200]}</p>"
 
 
 # ---------------------------------------------------------------------------
@@ -1996,6 +2035,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 brain_history_btn = gr.Button("📸 Snapshot speichern")
             brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
             brain_plot = gr.Plot(label="Wiki Knowledge Graph")
+            brain_mermaid_html = gr.HTML(value="", label="Mermaid-Diagramm")
             brain_cluster_stats = gr.Dataframe(
                 headers=["Cluster-ID", "Name", "Dateien", "Interne Edges"],
                 datatype=["str", "str", "number", "number"],
@@ -2059,6 +2099,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 outputs=[brain_plot],
             )
             _workspace_state.change(
+                fn=_build_mermaid_html,
+                inputs=[_workspace_state],
+                outputs=[brain_mermaid_html],
+            )
+            _workspace_state.change(
                 fn=_build_cluster_stats,
                 inputs=[_workspace_state],
                 outputs=[brain_cluster_stats],
@@ -2072,6 +2117,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 fn=_build_brain_figure,
                 inputs=[_workspace_state],
                 outputs=[brain_plot],
+            )
+            brain_timer.tick(
+                fn=_build_mermaid_html,
+                inputs=[_workspace_state],
+                outputs=[brain_mermaid_html],
             )
             brain_timer.tick(
                 fn=_build_cluster_stats,
