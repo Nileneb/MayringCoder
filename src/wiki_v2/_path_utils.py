@@ -18,7 +18,7 @@ def confined_path(root: Path, *parts: str) -> Path:
     root_r = Path(root).resolve()
     p = root_r
     for part in parts:
-        _s = safe_filename_part(str(part))
+        _s = os.path.basename(str(part).replace('/', '_').replace('\\', '_'))
         if not _s or _s in {".", ".."}:
             raise ValueError(f"Invalid path segment: {part!r}")
         p = (p / _s).resolve()
