@@ -217,6 +217,43 @@ def register_agent_tools(mcp: FastMCP) -> None:
             return {"error": str(exc), "workspace_id": ws}
 
     @mcp.tool()
+    def populate_repo(
+        repo: str,
+        force_reingest: bool = False,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Trigger a full repository ingest into workspace memory.
+
+        Clones / fetches the repo, chunks all source files, embeds them into
+        ChromaDB, and (re-)categorises with Mayring labels. Runs async — returns
+        a job_id immediately; poll GET /jobs/{id} for progress.
+
+        Args:
+            repo: GitHub repo URL (e.g. "https://github.com/nileneb/MayringCoder")
+            force_reingest: Re-ingest even unchanged files (default False)
+            workspace_id: Tenant namespace (default: from JWT)
+
+        Returns:
+            {job_id, status, repo, workspace_id} or {error}
+        """
+        import httpx
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
+        _jwt = _current_raw_jwt()
+        headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
+        try:
+            resp = httpx.post(
+                f"{_api}/populate",
+                json={"repo": repo, "force_reingest": force_reingest},
+                headers=headers,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            return {**resp.json(), "workspace_id": ws}
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
+
+    @mcp.tool()
     def benchmark_tasks(
         model_a: str,
         model_b: str,
