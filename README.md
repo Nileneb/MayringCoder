@@ -35,13 +35,14 @@ flowchart TD
     subgraph Stage1["Stage 1 — Overview (optional)"]
         B[Fetcher\ngitingest] --> C[Splitter\nfile dicts]
         C --> D[Categorizer\ncodebook.yaml]
-        D --> E[Overview LLM\nper-file summary]
+        D --> E[Overview LLM\nmayring_code task]
         E --> F[(overview_context.json\n+ ChromaDB RAG)]
     end
 
     subgraph Stage2["Stage 2 — Analyze"]
         G[SQLite Diff\ncache/repo.db] --> H{Changed?}
-        H -- yes --> I[LLM Analysis\nOllama stream]
+        H -- yes --> MR["Model Router\nsrc/model_router.py\nmayring_code → mayringqwen:latest\nfallback: llama3.1:8b"]
+        MR --> I[LLM Analysis\nOllama stream]
         I --> J[JSON Parser]
         J -- fail --> K[Regex Fallback\nextractor.py]
         K -- fail --> L[2nd LLM Call\nextract_findings.md]
@@ -55,6 +56,13 @@ flowchart TD
     subgraph Stage3["Stage 3 — Turbulence"]
         Q[turbulence_analyzer.py\nheuristic / LLM]
         Q --> R[(turbulence-ts.json\n+ .md report)]
+    end
+
+    subgraph WikiGraph["wiki_v2 Knowledge Graph (src/wiki_v2/)"]
+        WH1[on_post_analyze\nnode + import/call edges]
+        WH2[on_post_finding\nissue_mentions edges]
+        WH3[on_post_ingest\nchunk node + summary]
+        WH1 & WH2 & WH3 --> WikiDB[(wiki_v2.db\nSQLite + clusters.json)]
     end
 
     subgraph Memory["MCP Memory Layer"]
@@ -73,11 +81,71 @@ flowchart TD
     A --> B
     A --> G
     F --> G
+    M --> WH2
+    P --> WH1
     P --> Report[reports/*.md\n+ run_meta.json]
     A --> Q
     I <-.->|search_memory| W
     X <-.->|--pi-task| W
+    T <-.->|on_post_ingest| WH3
 ```
+
+### Data Flow — Konkreter Ingest-Job (HTTP-Modus)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as FastAPI (server.py)
+    participant Q as JobQueue
+    participant Worker as checker.py subprocess
+    participant MR as ModelRouter
+    participant Ollama as Ollama (three.linn.games)
+    participant DB as memory.db (SQLite)
+    participant Chroma as ChromaDB
+    participant Wiki as wiki_v2.db
+
+    Client->>API: POST /populate {repo_url, workspace_id}
+    API->>Q: enqueue_job(job_id)
+    API-->>Client: 202 {job_id}
+
+    Q->>Worker: subprocess (checker.py --populate-memory)
+    Worker->>MR: resolve("mayring_code")
+    MR->>Ollama: GET /api/tags (Verfügbarkeits-Check, 30s TTL)
+    Ollama-->>MR: Modellliste
+    MR-->>Worker: "mayringqwen:latest"
+
+    Worker->>Ollama: POST /api/generate (stream, mayring_categorize)
+    Ollama-->>Worker: Token-Stream → Kategorie-Label
+
+    Worker->>Worker: structural_chunk() → Chunks
+    Worker->>MR: resolve("embedding")
+    MR-->>Worker: "nomic-embed-text"
+    Worker->>Ollama: POST /api/embeddings
+    Ollama-->>Worker: float[384]-Vektoren
+
+    Worker->>DB: INSERT chunks (workspace_id-isoliert)
+    Worker->>Chroma: upsert(embeddings, {workspace_id})
+
+    Worker->>Wiki: on_post_ingest(workspace_id, repo_slug)
+    Wiki-->>Worker: WikiNode + Edges geschrieben
+
+    Client->>API: GET /jobs/{id}
+    API-->>Client: {status, progress%, log_tail}
+```
+
+### Datenpunkte pro Stage
+
+| Stage | Input | Output | Modell (Router-Task) | Beobachtbares Signal |
+|---|---|---|---|---|
+| `fetch_repo` | GitHub URL / Dateipfad | Rohdatei-Dicts via gitingest | — | Dateianzahl, Repo-Größe |
+| `split` | gitingest-Text | `[{path, content, size}]` | — | Datei-Splitgrenzen |
+| `categorize_files` | Datei-Dicts + codebook.yaml | `{category, priority}` pro Datei | — | Kategorieverteilung |
+| `analyze_files` | Dateiinhalt + Prompt | Findings-JSON | `mayring_code` → mayringqwen:latest | Ollama-Stream-Tokens |
+| `structural_chunk` | Quelltext | `[{chunk_text, chunk_index}]` | — | Chunk-Anzahl |
+| `mayring_categorize` | Chunk + Codebook | Kategorie-Label | `mayring_hybrid` → llama3.1:8b | Label pro Chunk |
+| `_embed_texts` | Texte (Liste) | float[384]-Vektoren | `embedding` → nomic-embed-text | Embedding-Dauer |
+| `insert_chunk + chroma.upsert` | Chunk + Embedding | memory.db-Zeile + ChromaDB-Eintrag | — | Chunk-ID, workspace_id-Tag |
+| `on_post_ingest` | analyzed_file, Findings | WikiNode + WikiEdge in wiki_v2.db | — | recluster_needed-Flag |
 
 ---
 
