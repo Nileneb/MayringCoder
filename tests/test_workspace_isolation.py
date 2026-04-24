@@ -111,3 +111,110 @@ def test_effective_workspace_id_uses_jwt_in_http():
         assert mcp_mod._effective_workspace_id("default") == "bene-workspace"
     finally:
         mcp_mod._TOKEN_CTX.set(None)
+
+
+# ---------------------------------------------------------------------------
+# Retrieval-layer: Chroma filter failure must not leak cross-workspace data
+# ---------------------------------------------------------------------------
+
+def test_chroma_filter_failure_skips_vector_not_leaks(memory_db, monkeypatch):
+    """Chroma filter exception → vector stage skipped entirely, no cross-workspace leak."""
+    import src.memory.retrieval as ret_mod
+
+    monkeypatch.setattr(ret_mod, "_HAS_EMBED", True)
+    monkeypatch.setattr(ret_mod, "_embed_texts", lambda texts, url: [[0.1] * 4] * len(texts))
+
+    class FilterFailingChroma:
+        def count(self):
+            return 5
+
+        def query(self, **kwargs):
+            if kwargs.get("where"):
+                raise RuntimeError("where filter not supported by this chroma version")
+            # Would return cross-workspace data without filter — must NEVER be reached
+            return {"ids": [["chk_tenant-b_1"]], "distances": [[0.0]]}
+
+    results = ret_mod.search(
+        "content",
+        memory_db,
+        chroma_collection=FilterFailingChroma(),
+        ollama_url="http://fake",
+        opts={"workspace_id": "tenant-a", "top_k": 5},
+    )
+    result_ids = {r.chunk_id for r in results}
+    assert "chk_tenant-b_1" not in result_ids, "tenant-b data leaked via chroma fallback"
+    assert "chk_tenant-a_1" in result_ids
+
+
+def test_chroma_workspace_a_cannot_see_workspace_b_data(memory_db, monkeypatch):
+    """Stage-1 scope filter blocks cross-workspace chunks even if chroma returns them."""
+    import src.memory.retrieval as ret_mod
+
+    monkeypatch.setattr(ret_mod, "_HAS_EMBED", True)
+    monkeypatch.setattr(ret_mod, "_embed_texts", lambda texts, url: [[0.1] * 4] * len(texts))
+
+    class LeakyChroma:
+        """Simulates a broken chroma that ignores workspace filter and returns all chunks."""
+        def count(self):
+            return 2
+
+        def query(self, **kwargs):
+            return {"ids": [["chk_tenant-a_1", "chk_tenant-b_1"]], "distances": [[0.0, 0.1]]}
+
+    results = ret_mod.search(
+        "content",
+        memory_db,
+        chroma_collection=LeakyChroma(),
+        ollama_url="http://fake",
+        opts={"workspace_id": "tenant-a", "top_k": 5},
+    )
+    result_ids = {r.chunk_id for r in results}
+    assert "chk_tenant-b_1" not in result_ids, "tenant-b chunk leaked into tenant-a results"
+    assert "chk_tenant-a_1" in result_ids
+
+
+# ---------------------------------------------------------------------------
+# CLI: workspace_id="default" must print a visible warning
+# ---------------------------------------------------------------------------
+
+def test_default_workspace_warning(capsys, monkeypatch):
+    """main() prints Warnung when --workspace-id is not set (falls back to 'default')."""
+    import sys
+    import types
+    import src.cli as cli_mod
+
+    fake_args = types.SimpleNamespace(
+        repo="http://fake",
+        mode="ingest",
+        llm=False,
+        resolve_model_only=False,
+        model=None,
+        run_id=None,
+        cache_by_model=False,
+        log_training_data=False,
+        max_chars=None,
+        batch_size=None,
+        batch_delay=None,
+        ingest_issues=False,
+        ingest_images=False,
+        pi_task=None,
+        generate_wiki=False,
+        reset=False,
+        history=False,
+        compare=None,
+        cleanup=None,
+        codebook=None,
+        prompt=None,
+        full=False,
+        workspace_id="default",
+        populate_memory=True,
+    )
+    monkeypatch.setattr(cli_mod, "parse_args", lambda: fake_args)
+    monkeypatch.setattr(cli_mod, "run_populate_memory", lambda *a, **kw: None)
+
+    with pytest.raises(SystemExit):
+        cli_mod.main()
+
+    out = capsys.readouterr().out
+    assert "Warnung" in out
+    assert "workspace-id" in out

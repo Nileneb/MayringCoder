@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.memory.store import batch_context
+
 @dataclass
 class TriggerResult:
     """Result of trigger_scan() — context string + which triggers fired."""
@@ -272,15 +274,15 @@ def compute_feedback(
     )
 
     try:
-        conn.execute(
-            """INSERT INTO context_feedback_log
-               (trigger_ids, context_text, was_referenced, led_to_retrieval, relevance_score, captured_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (json.dumps(trigger_ids), context_text[:500],
-             int(was_referenced), int(led_to_retrieval),
-             relevance_score, captured_at),
-        )
-        conn.commit()
+        with batch_context(conn):
+            conn.execute(
+                """INSERT INTO context_feedback_log
+                   (trigger_ids, context_text, was_referenced, led_to_retrieval, relevance_score, captured_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (json.dumps(trigger_ids), context_text[:500],
+                 int(was_referenced), int(led_to_retrieval),
+                 relevance_score, captured_at),
+            )
     except Exception:
         pass
 
@@ -296,30 +298,30 @@ def update_trigger_stats(
 ) -> None:
     """Increment fire_count + ref_count. Deactivate if below threshold after min_fires."""
     now = datetime.utcnow().isoformat()
-    for trigger_id in trigger_ids:
-        conn.execute(
-            """INSERT INTO trigger_stats (trigger_id, fire_count, ref_count, is_active, last_fired)
-               VALUES (?, 1, ?, 1, ?)
-               ON CONFLICT(trigger_id) DO UPDATE SET
-                   fire_count = fire_count + 1,
-                   ref_count  = ref_count + ?,
-                   last_fired = ?""",
-            (trigger_id, int(was_referenced), now, int(was_referenced), now),
-        )
-        row = conn.execute(
-            "SELECT fire_count, ref_count FROM trigger_stats WHERE trigger_id = ?",
-            (trigger_id,),
-        ).fetchone()
-        if row:
-            fires, refs = row
-            if fires >= min_fires_for_deactivation:
-                rate = refs / fires
-                if rate < deactivate_threshold:
-                    conn.execute(
-                        "UPDATE trigger_stats SET is_active = 0 WHERE trigger_id = ?",
-                        (trigger_id,),
-                    )
-    conn.commit()
+    with batch_context(conn):
+        for trigger_id in trigger_ids:
+            conn.execute(
+                """INSERT INTO trigger_stats (trigger_id, fire_count, ref_count, is_active, last_fired)
+                   VALUES (?, 1, ?, 1, ?)
+                   ON CONFLICT(trigger_id) DO UPDATE SET
+                       fire_count = fire_count + 1,
+                       ref_count  = ref_count + ?,
+                       last_fired = ?""",
+                (trigger_id, int(was_referenced), now, int(was_referenced), now),
+            )
+            row = conn.execute(
+                "SELECT fire_count, ref_count FROM trigger_stats WHERE trigger_id = ?",
+                (trigger_id,),
+            ).fetchone()
+            if row:
+                fires, refs = row
+                if fires >= min_fires_for_deactivation:
+                    rate = refs / fires
+                    if rate < deactivate_threshold:
+                        conn.execute(
+                            "UPDATE trigger_stats SET is_active = 0 WHERE trigger_id = ?",
+                            (trigger_id,),
+                        )
 
 
 def generate_ambient_snapshot(

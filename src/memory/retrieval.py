@@ -333,6 +333,7 @@ def search(
                 chroma_where = (
                     {"workspace_id": {"$eq": workspace_id}} if workspace_id else None
                 )
+                results = None
                 try:
                     results = chroma_collection.query(
                         query_embeddings=[query_emb],
@@ -340,15 +341,17 @@ def search(
                         where=chroma_where,
                         include=["distances"],
                     )
-                except Exception:
-                    # Fallback: no where filter (older chunks without workspace_id metadata)
-                    results = chroma_collection.query(
-                        query_embeddings=[query_emb],
-                        n_results=n_results,
-                        include=["distances"],
+                except Exception as _chroma_exc:
+                    _log.warning(
+                        "chroma workspace filter failed for workspace=%r (%s) "
+                        "— skipping vector stage to prevent cross-workspace data leak",
+                        workspace_id, _chroma_exc,
                     )
-                ids_list = results.get("ids", [[]])[0]
-                dist_list = results.get("distances", [[]])[0]
+                if results is None:
+                    ids_list, dist_list = [], []
+                else:
+                    ids_list = results.get("ids", [[]])[0]
+                    dist_list = results.get("distances", [[]])[0]
                 candidate_set = {c.chunk_id for c in candidates}
                 vector_scores = _normalize_vector_scores(ids_list, dist_list, candidate_set)
         except Exception as exc:

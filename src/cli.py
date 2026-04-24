@@ -332,6 +332,13 @@ def main() -> None:
         print("  FULL SCAN — Cache wird ignoriert, kein Datei-Limit")
         print(f"{'='*60}\n")
 
+    _wid_for_ops = getattr(args, "workspace_id", "default") or "default"
+    if _wid_for_ops == "default":
+        print(
+            "Warnung: --workspace-id nicht gesetzt, Daten landen im 'default'-Workspace. "
+            "Bei Produktionsnutzung bitte explizit angeben: --workspace-id <id>"
+        )
+
     if args.populate_memory:
         run_populate_memory(args, repo_url, ollama_url, model)
         sys.exit(0)
