@@ -1059,10 +1059,16 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
     if not slug:
         return {"clusters": [], "edges": [], "activations": [], "error": "slug required"}
 
-    # Primary: full cluster data (written by generate_wiki since 2026-04-23)
-    cluster_path = CACHE_DIR / f"{slug}_wiki_clusters.json"
-    # Fallback: keyword index (older wikis)
-    index_path = CACHE_DIR / f"{slug}_wiki_index.json"
+    import re as _re_g
+    if not _re_g.fullmatch(r"[a-zA-Z0-9_\-.]+", slug):
+        return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
+
+    _cache_root = CACHE_DIR.resolve()
+    cluster_path = (CACHE_DIR / f"{slug}_wiki_clusters.json").resolve()
+    index_path = (CACHE_DIR / f"{slug}_wiki_index.json").resolve()
+    if not str(cluster_path).startswith(str(_cache_root)) or \
+       not str(index_path).startswith(str(_cache_root)):
+        return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
 
     clusters: list[dict] = []
     raw: list[dict] = []
