@@ -66,6 +66,8 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
 
     files, excluded = filter_excluded_files(files, exclude_pats)
     print(f"[populate-memory] {len(excluded)} Dateien ausgeschlossen, {len(files)} verbleiben")
+    print(f"[STAGE] fetch_repo done files={len(files) + len(excluded)}")
+    print(f"[STAGE] categorize done included={len(files)} excluded={len(excluded)}")
 
     if not files:
         print("[populate-memory] Keine Dateien nach Filter — Abbruch.")
@@ -75,6 +77,12 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     chroma = get_or_create_chroma_collection()
 
     total = len(files)
+    _budget = getattr(args, "budget", None)
+    if isinstance(_budget, int) and _budget < total:
+        print(f"[populate-memory] Budget: {_budget} von {total} Dateien werden verarbeitet.")
+        files = files[:_budget]
+        total = _budget
+
     ok_count = 0
     error_count = 0
     dedup_count = 0
@@ -110,6 +118,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         def _tqdm(it, **_kw):
             return it
 
+    print(f"[STAGE] ingest_loop start total={total}")
     try:
         for f in _tqdm(files, desc="populate-memory", unit="file", total=len(files)):
             content_hash = _content_hash(f["content"])
@@ -150,6 +159,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
                 print(f"[populate-memory] FEHLER bei {f['filename']!r}: {exc}")
                 error_count += 1
     finally:
+        print(f"[STAGE] ingest_loop done ok={ok_count} errors={error_count} dedup={dedup_count}")
         conn.close()
 
     if _gpu_proc:

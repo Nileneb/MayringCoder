@@ -6,8 +6,7 @@ Rollen-Abgrenzung (siehe Issue #66 Phase 5):
                             /pi-task etc. an den API-Server und poll-t dann
                             /jobs/{id}. Kein direkter Zugriff auf memory.db
                             oder Ollama. Auth: RS256-JWT aus env
-                            MAYRING_JWT (fällt auf Legacy SANCTUM_TOKEN
-                            zurück, falls ältere Shell-Skripte davon leben).
+                            Auth: RS256-JWT aus env MAYRING_JWT.
   - `src/pipeline.py`     — Shim (re-export) für src/workflows/.
   - `python -m src.cli`   — LOCAL-EXECUTOR, läuft direkt als subprocess im
                             Server-Container (run_checker_job), greift
@@ -97,9 +96,7 @@ def main() -> None:
     args = p.parse_args()
 
     repo = args.repo or os.getenv("GITHUB_REPO", "")
-    # Auth wurde 2026-04 von Sanctum auf RS256-JWT umgestellt. MAYRING_JWT
-    # ist der neue Name; SANCTUM_TOKEN bleibt als Fallback für alte Skripte.
-    token = os.getenv("MAYRING_JWT") or os.getenv("SANCTUM_TOKEN", "")
+    token = os.getenv("MAYRING_JWT", "")
     ws = args.workspace_id
 
     # --resolve-model-only: delegate to src.pipeline directly (no API needed)

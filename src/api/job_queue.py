@@ -32,6 +32,9 @@ _TQDM_RE = re.compile(
 # "[populate-memory] 207 Dateien gefunden" → total signal fürs progress-Label
 _FILECOUNT_RE = re.compile(r"\[populate-memory\]\s+(\d+)\s+Dateien gefunden")
 
+# "[STAGE] fetch_repo done files=274" → stages dict
+_STAGE_RE = re.compile(r"\[STAGE\]\s+(?P<name>\S+)\s+(?P<detail>.*)")
+
 
 def make_job(workspace_id: str) -> str:
     job_id = str(uuid.uuid4())[:8]
@@ -94,6 +97,15 @@ async def run_checker_job(job_id: str, checker_args: list[str], workspace_id: st
             progress = _parse_progress_line(last_segment)
             if progress is not None:
                 _JOBS[job_id]["progress"] = progress
+                continue
+            sm = _STAGE_RE.search(last_segment)
+            if sm:
+                if "stages" not in _JOBS[job_id]:
+                    _JOBS[job_id]["stages"] = {}
+                _JOBS[job_id]["stages"][sm.group("name")] = {
+                    "detail": sm.group("detail").strip(),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
                 continue
             m = _FILECOUNT_RE.search(last_segment)
             if m:
