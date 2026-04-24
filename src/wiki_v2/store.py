@@ -67,13 +67,36 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         snapshot_json TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS wiki_contributions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_node TEXT NOT NULL,
+        timestamp TEXT DEFAULT (datetime('now'))
+    );
     """)
     conn.commit()
 
 
 # --- Node CRUD ---
 
-def upsert_node(conn: sqlite3.Connection, node: WikiNode) -> None:
+def log_contribution(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    user_id: str,
+    action: str,
+    target_node: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO wiki_contributions (workspace_id, user_id, action, target_node) VALUES (?,?,?,?)",
+        (workspace_id, user_id, action, target_node),
+    )
+    conn.commit()
+
+
+def upsert_node(conn: sqlite3.Connection, node: WikiNode, user_id: str = "system") -> None:
     conn.execute(
         """INSERT INTO wiki_nodes (id, repo_slug, workspace_id, type, cluster_id,
            labels_json, summary, turbulence_tier, loc, updated_at)
@@ -86,6 +109,7 @@ def upsert_node(conn: sqlite3.Connection, node: WikiNode) -> None:
          json.dumps(node.labels), node.summary, node.turbulence_tier, node.loc),
     )
     conn.commit()
+    log_contribution(conn, node.workspace_id, user_id, "upsert_node", node.id)
 
 
 def get_node(conn: sqlite3.Connection, node_id: str, workspace_id: str) -> WikiNode | None:
@@ -157,7 +181,7 @@ def get_edges_by_type(conn: sqlite3.Connection, workspace_id: str, edge_type: st
 
 # --- Cluster CRUD ---
 
-def upsert_cluster(conn: sqlite3.Connection, cluster: Cluster) -> None:
+def upsert_cluster(conn: sqlite3.Connection, cluster: Cluster, user_id: str = "system") -> None:
     conn.execute(
         """INSERT INTO wiki_clusters (cluster_id, repo_slug, workspace_id, name, description, rationale, strategy_used, member_count)
            VALUES (?,?,?,?,?,?,?,?)
@@ -175,6 +199,7 @@ def upsert_cluster(conn: sqlite3.Connection, cluster: Cluster) -> None:
         [cluster.cluster_id, cluster.workspace_id] + cluster.members,
     )
     conn.commit()
+    log_contribution(conn, cluster.workspace_id, user_id, "upsert_cluster", cluster.cluster_id)
 
 
 def get_clusters(conn: sqlite3.Connection, workspace_id: str) -> list[Cluster]:

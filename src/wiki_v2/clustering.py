@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import networkx as nx
 
@@ -10,7 +11,7 @@ from src.wiki_v2.models import Cluster
 
 
 class ClusterEngine:
-    """Cluster-Strategie: Louvain für Struktur + Ollama für LLM-Benennung."""
+    """3-Layer Clustering: Struktur (Louvain) → Semantik (Embedding) → LLM-Benennung."""
 
     def cluster(
         self,
@@ -18,17 +19,27 @@ class ClusterEngine:
         strategy: str = "louvain",
         ollama_url: str = "",
         model: str = "qwen2.5-coder:14b",
+        chroma: Any = None,
+        embedding_threshold: float = 0.65,
     ) -> list[Cluster]:
         """Run clustering and persist results in graph.
 
-        strategy: "louvain" — Louvain + LLM-Namen (wenn ollama_url gesetzt)
-                  "full"    — reserviert für spätere Embedding-Layer
+        strategy: "louvain" — Layer 1 (Louvain) + LLM-Namen
+                  "full"    — Layer 1 (Louvain) + Layer 2 (Embedding) + Layer 3 (LLM)
         """
-        communities = self._louvain_communities(graph)
-
-        if not communities:
+        # Layer 1: Strukturell
+        structural = self._louvain_communities(graph)
+        if not structural:
             return []
 
+        # Layer 2: Semantisch (nur bei strategy="full" und chroma vorhanden)
+        if strategy == "full" and chroma is not None:
+            semantic = self._embedding_clusters(graph, chroma, embedding_threshold)
+            communities = self._merge_communities(structural, semantic, graph)
+        else:
+            communities = structural
+
+        # Layer 3: LLM-Benennung
         if ollama_url and model:
             clusters = self._llm_name_clusters(communities, graph, ollama_url, model)
         else:
@@ -36,7 +47,31 @@ class ClusterEngine:
 
         for c in clusters:
             graph.upsert_cluster(c)
+
+        self._write_clusters_json(clusters, graph)
         return clusters
+
+    def _write_clusters_json(self, clusters: list[Cluster], graph: WikiGraph) -> None:
+        """Schreibt clusters.json pro Workspace (Akzeptanzkriterium #73)."""
+        try:
+            from src.config import WIKI_DIR
+            data = [
+                {
+                    "cluster_id": c.cluster_id,
+                    "name": c.name,
+                    "description": c.description,
+                    "rationale": c.rationale,
+                    "strategy_used": c.strategy_used,
+                    "members": c.members,
+                    "member_count": len(c.members),
+                }
+                for c in clusters
+            ]
+            out_path = WIKI_DIR / graph.workspace_id / "clusters.json"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        except Exception:
+            pass
 
     def _louvain_communities(self, graph: WikiGraph) -> list[set[str]]:
         """NetworkX Louvain auf Import+Call-Edges.
@@ -88,6 +123,146 @@ class ClusterEngine:
         ]
         old_clusters = cluster_themes(old_edges, min_files=1)
         return [set(c.files) for c in old_clusters] or [{n.id} for n in nodes]
+
+    def _embedding_clusters(
+        self,
+        graph: WikiGraph,
+        chroma: Any,
+        threshold: float = 0.65,
+    ) -> list[set[str]]:
+        """Layer 2: Cosine-Similarity auf gemittelte Chunk-Embeddings pro Node.
+        Nutzt bestehende ChromaDB-Embeddings — kein Re-Embed.
+        """
+        if chroma is None:
+            return []
+        nodes = graph.all_nodes()
+        if len(nodes) < 2:
+            return []
+
+        workspace_id = graph.workspace_id
+        node_ids = [n.id for n in nodes]
+
+        try:
+            result = chroma.get(
+                where={"workspace_id": {"$eq": workspace_id}},
+                include=["embeddings", "metadatas"],
+            )
+            raw_embeddings = result.get("embeddings") or []
+            metadatas = result.get("metadatas") or []
+        except Exception:
+            return []
+
+        # Akkumuliere Embeddings pro Node-ID (average über alle Chunks)
+        node_vecs: dict[str, list[list[float]]] = {}
+        for emb, meta in zip(raw_embeddings, metadatas):
+            if not emb or not meta:
+                continue
+            source_id = meta.get("source_id", "")
+            path = source_id.split(":")[-1] if ":" in source_id else source_id
+            for nid in node_ids:
+                if path == nid or path.endswith("/" + nid) or nid.endswith("/" + path):
+                    node_vecs.setdefault(nid, []).append(list(emb))
+                    break
+
+        def _avg(vecs: list[list[float]]) -> list[float] | None:
+            if not vecs:
+                return None
+            dim = len(vecs[0])
+            return [sum(v[i] for v in vecs) / len(vecs) for i in range(dim)]
+
+        def _cosine(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(x * x for x in b) ** 0.5
+            return dot / (na * nb) if na > 0 and nb > 0 else 0.0
+
+        avg_embs: dict[str, list[float]] = {
+            nid: emb for nid, vecs in node_vecs.items()
+            if (emb := _avg(vecs)) is not None
+        }
+        if len(avg_embs) < 2:
+            return []
+
+        # Union-Find: Nodes mit Cosine-Similarity >= threshold zusammenführen
+        parent: dict[str, str] = {nid: nid for nid in avg_embs}
+
+        def find(x: str) -> str:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: str, b: str) -> None:
+            pa, pb = find(a), find(b)
+            if pa != pb:
+                parent[pa] = pb
+
+        nids = list(avg_embs.keys())
+        for i, a in enumerate(nids):
+            for b in nids[i + 1:]:
+                if _cosine(avg_embs[a], avg_embs[b]) >= threshold:
+                    union(a, b)
+
+        groups: dict[str, set[str]] = {}
+        for nid in nids:
+            root = find(nid)
+            groups.setdefault(root, set()).add(nid)
+
+        return list(groups.values())
+
+    def _merge_communities(
+        self,
+        structural: list[set[str]],
+        semantic: list[set[str]],
+        graph: WikiGraph,
+    ) -> list[set[str]]:
+        """Merge Layer-1 (Louvain) und Layer-2 (Embedding) Communities.
+
+        Strategie: Wenn eine semantische Community Mitglieder aus mehreren
+        strukturellen Clustern hat, werden diese strukturellen Cluster zusammengeführt.
+        Isolierte Nodes (nur in semantischer, nicht in struktureller Community)
+        werden dem nächsten strukturellen Cluster zugeteilt.
+        """
+        all_nodes = {n.id for n in graph.all_nodes()}
+
+        # Node → struktureller Community-Index
+        node_struct: dict[str, int] = {}
+        for i, comm in enumerate(structural):
+            for n in comm:
+                node_struct[n] = i
+
+        # Union-Find auf Community-Indizes
+        parent_idx = list(range(len(structural)))
+
+        def find_idx(x: int) -> int:
+            while parent_idx[x] != x:
+                parent_idx[x] = parent_idx[parent_idx[x]]
+                x = parent_idx[x]
+            return x
+
+        def union_idx(a: int, b: int) -> None:
+            pa, pb = find_idx(a), find_idx(b)
+            if pa != pb:
+                parent_idx[pa] = pb
+
+        for sem_comm in semantic:
+            struct_idxs = list({node_struct[n] for n in sem_comm if n in node_struct})
+            for j in range(1, len(struct_idxs)):
+                union_idx(struct_idxs[0], struct_idxs[j])
+
+        # Zusammenführen
+        merged: dict[int, set[str]] = {}
+        for i, comm in enumerate(structural):
+            root = find_idx(i)
+            merged.setdefault(root, set()).update(comm)
+
+        # Nodes die in keiner strukturellen Community sind (sollte nicht passieren)
+        covered = {n for comm in merged.values() for n in comm}
+        for n in all_nodes - covered:
+            next_key = max(merged.keys(), default=-1) + 1
+            merged[next_key] = {n}
+
+        return list(merged.values())
 
     def _llm_name_clusters(
         self,

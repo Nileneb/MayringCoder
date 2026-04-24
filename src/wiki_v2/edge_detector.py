@@ -246,3 +246,34 @@ class EdgeDetector:
             else:
                 merged[key] = copy.copy(e)
         return list(merged.values())
+
+
+EDGE_TYPES = ["import", "call", "test_covers", "concept_link", "label_cooccurrence",
+              "shared_type", "event_dispatch"]
+
+
+def edge_stats(graph: Any) -> dict:
+    """Übersicht: Edges pro Typ, avg weight, isolierte Nodes, am stärksten vernetzte Nodes."""
+    all_edges = graph.get_edges()
+    all_nodes = graph.all_nodes()
+
+    by_type = {t: 0 for t in EDGE_TYPES}
+    weight_sum = 0.0
+    degree: dict[str, int] = {}
+    for e in all_edges:
+        by_type[e.type] = by_type.get(e.type, 0) + 1
+        weight_sum += e.weight
+        degree[e.source] = degree.get(e.source, 0) + 1
+        degree[e.target] = degree.get(e.target, 0) + 1
+
+    connected = set(degree.keys())
+    isolated = [n.id for n in all_nodes if n.id not in connected]
+    top5 = sorted(degree.items(), key=lambda x: -x[1])[:5]
+
+    return {
+        "total_edges": len(all_edges),
+        "by_type": by_type,
+        "avg_weight": round(weight_sum / len(all_edges), 3) if all_edges else 0.0,
+        "isolated_nodes": len(isolated),
+        "most_connected": [{"node": n, "degree": d} for n, d in top5],
+    }

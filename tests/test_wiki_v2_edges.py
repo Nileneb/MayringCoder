@@ -71,3 +71,38 @@ def test_workspace_id_on_edges(detector):
     edges = detector.detect_from_overview(oc, None, "my-workspace", "myrepo")
     assert all(e.workspace_id == "my-workspace" for e in edges)
     assert all(e.repo_slug == "myrepo" for e in edges)
+
+
+# --- #72 Akzeptanzkriterium: edge_stats() ---
+
+def test_edge_stats_returns_correct_structure(tmp_path):
+    """edge_stats() gibt Übersicht mit allen Pflichtfeldern zurück."""
+    from src.wiki_v2.graph import WikiGraph
+    from src.wiki_v2.models import WikiNode, WikiEdge
+    from src.wiki_v2.edge_detector import edge_stats
+
+    g = WikiGraph("ws-test", "repo", db_path=tmp_path / "wiki.db")
+    g.upsert_node(WikiNode("src/a.py", "repo", "ws-test"))
+    g.upsert_node(WikiNode("src/b.py", "repo", "ws-test"))
+    g.upsert_node(WikiNode("src/c.py", "repo", "ws-test"))  # isolated
+    g.add_edge(WikiEdge("src/a.py", "src/b.py", "repo", "ws-test", "import", weight=1.0))
+
+    stats = edge_stats(g)
+    assert stats["total_edges"] == 1
+    assert stats["by_type"]["import"] == 1
+    assert stats["isolated_nodes"] == 1  # src/c.py hat keine Edges
+    assert len(stats["most_connected"]) == 2
+    assert stats["avg_weight"] == 1.0
+    g.close()
+
+
+def test_edge_stats_empty_graph(tmp_path):
+    """edge_stats() bricht bei leerem Graph nicht ab."""
+    from src.wiki_v2.graph import WikiGraph
+    from src.wiki_v2.edge_detector import edge_stats
+
+    g = WikiGraph("ws-empty", "repo", db_path=tmp_path / "wiki.db")
+    stats = edge_stats(g)
+    assert stats["total_edges"] == 0
+    assert stats["isolated_nodes"] == 0
+    g.close()

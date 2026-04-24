@@ -79,3 +79,42 @@ def test_duplicate_edge_upsert(tmp_graph):
     tmp_graph.add_edge(e)
     tmp_graph.add_edge(e)  # duplicate — should not throw
     assert tmp_graph.edge_count() == 1
+
+
+# --- #71 Akzeptanzkriterien: wiki_contributions + user_id ---
+
+def test_wiki_contributions_table_exists(tmp_path):
+    """wiki_contributions-Tabelle wird bei DB-Init angelegt."""
+    from src.wiki_v2 import store as s
+    db_path = tmp_path / "wiki.db"
+    conn = s.init_wiki_db(db_path)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "wiki_contributions" in tables
+    conn.close()
+
+
+def test_upsert_node_logs_contribution(tmp_path):
+    """upsert_node schreibt Eintrag in wiki_contributions."""
+    from src.wiki_v2 import store as s
+    db_path = tmp_path / "wiki.db"
+    conn = s.init_wiki_db(db_path)
+    node = WikiNode("src/a.py", "repo", "ws-a")
+    s.upsert_node(conn, node, user_id="user-42")
+    rows = conn.execute("SELECT * FROM wiki_contributions WHERE user_id='user-42'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["action"] == "upsert_node"
+    assert rows[0]["target_node"] == "src/a.py"
+    conn.close()
+
+
+def test_upsert_cluster_logs_contribution(tmp_path):
+    """upsert_cluster schreibt Eintrag in wiki_contributions."""
+    from src.wiki_v2 import store as s
+    db_path = tmp_path / "wiki.db"
+    conn = s.init_wiki_db(db_path)
+    cluster = Cluster("api-layer", "repo", "ws-a", "API Layer")
+    s.upsert_cluster(conn, cluster, user_id="user-99")
+    rows = conn.execute("SELECT * FROM wiki_contributions WHERE user_id='user-99'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["action"] == "upsert_cluster"
+    conn.close()
