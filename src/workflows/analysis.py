@@ -242,6 +242,7 @@ def run_analysis(
             print("  Projektkontext aus Overview-Cache geladen (Phase 1 Fallback)")
 
     hot_zone_context_map: dict[str, str] | None = None
+    _turb_tiers: dict[str, str] | None = None
     if args.use_turbulence_cache:
         hot_zone_context_map, _turb_tiers = load_turbulence_cache(repo_url)
         if hot_zone_context_map is not None:
@@ -487,7 +488,8 @@ def run_analysis(
         for r in results:
             if "error" in r or not r.get("filename"):
                 continue
-            on_post_analyze(wid, slug, r["filename"])
+            on_post_analyze(wid, slug, r["filename"],
+                            turbulence_tier=(_turb_tiers or {}).get(r["filename"], ""))
             texts = []
             for item in r.get("potential_smells", []) + r.get("codierungen", []):
                 for key in ("reasoning", "text", "description", "summary"):

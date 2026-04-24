@@ -1167,6 +1167,12 @@ class WikiEdgeCreateRequest(BaseModel):
     user_id: str = "api"
 
 
+class WikiConflictResolveRequest(BaseModel):
+    source: str
+    target: str
+    user_id: str = "api"
+
+
 @app.post("/wiki/rebuild")
 async def wiki_rebuild(
     request: WikiRebuildRequest,
@@ -1212,6 +1218,7 @@ async def wiki_rebuild(
             engine = ClusterEngine()
             engine.cluster(db, strategy=request.strategy, ollama_url=ollama, model=request.model)
             db.to_json()
+            db.snapshot()
             db.close()
             n_edges = len(edges)
             _JOBS[job_id]["status"] = "done"
@@ -1258,6 +1265,64 @@ async def wiki_edge_create(
         db.close()
         return {"status": "ok", "source": request.source, "target": request.target,
                 "type": request.type}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/wiki/conflicts")
+async def wiki_conflicts(
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Return edges where both existing and incoming are validated (manual conflict)."""
+    try:
+        import sqlite3 as _sq
+        from src.config import CACHE_DIR
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        rows = conn.execute(
+            "SELECT source, target, type, weight, context FROM wiki_edges "
+            "WHERE workspace_id=? AND validated=1 "
+            "GROUP BY source, target HAVING COUNT(*)>1",
+            (workspace_id,),
+        ).fetchall()
+        conn.close()
+        return {"workspace_id": workspace_id, "conflicts": [dict(r) for r in rows]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/wiki/conflicts/resolve")
+async def wiki_conflicts_resolve(
+    request: WikiConflictResolveRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Resolve a manual-edge conflict: keep the most recently validated edge."""
+    try:
+        import sqlite3 as _sq
+        from src.config import CACHE_DIR
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        rows = conn.execute(
+            "SELECT rowid, * FROM wiki_edges WHERE workspace_id=? AND source=? AND target=? AND validated=1 "
+            "ORDER BY updated_at DESC",
+            (workspace_id, request.source, request.target),
+        ).fetchall()
+        if len(rows) <= 1:
+            conn.close()
+            return {"status": "no_conflict", "source": request.source, "target": request.target}
+        # Keep newest, delete the rest
+        keep_rowid = rows[0]["rowid"]
+        conn.execute(
+            "DELETE FROM wiki_edges WHERE workspace_id=? AND source=? AND target=? "
+            "AND validated=1 AND rowid!=?",
+            (workspace_id, request.source, request.target, keep_rowid),
+        )
+        from src.wiki_v2 import store as _ws
+        _ws.log_contribution(conn, workspace_id, request.user_id, "resolve_conflict",
+                             f"{request.source}→{request.target}")
+        conn.commit()
+        conn.close()
+        return {"status": "resolved", "kept": dict(rows[0]), "removed": len(rows) - 1}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

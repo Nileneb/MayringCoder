@@ -70,6 +70,7 @@ def on_post_analyze(
     analyzed_file: str,
     db_path: Path | None = None,
     overview_cache: dict | None = None,
+    turbulence_tier: str = "",
 ) -> None:
     """Watcher hook after analysis run. Updates node + edges in wiki graph.
     Designed to be called non-blockingly; all exceptions are swallowed.
@@ -86,11 +87,11 @@ def on_post_analyze(
                 id=analyzed_file,
                 repo_slug=repo_slug,
                 workspace_id=workspace_id,
+                turbulence_tier=turbulence_tier,
             ))
         if overview_cache:
             detector = EdgeDetector()
             edges = detector.detect_from_overview(overview_cache, None, workspace_id, repo_slug)
-            # Upsert all files referenced in edges so get_clusters() finds members
             node_ids = set(overview_cache.keys()) | {e.source for e in edges} | {e.target for e in edges}
             for nid in sorted(node_ids):
                 db.upsert_node(WikiNode(id=nid, repo_slug=repo_slug, workspace_id=workspace_id))
@@ -106,8 +107,9 @@ def on_post_ingest(
     repo_slug: str,
     source_id: str,
     db_path: Path | None = None,
+    chroma: Any = None,
 ) -> None:
-    """Watcher hook after memory ingest. Adds node to wiki graph."""
+    """Watcher hook after memory ingest. Adds node + concept_link edges to wiki graph."""
     try:
         from src.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
@@ -116,6 +118,13 @@ def on_post_ingest(
         path = source_id.split(":")[-1] if ":" in source_id else source_id
         db = WikiGraph(workspace_id, repo_slug, db_path or (CACHE_DIR / "wiki_v2.db"))
         db.upsert_node(WikiNode(id=path, repo_slug=repo_slug, workspace_id=workspace_id))
+
+        if chroma is not None and db.node_count() >= 2:
+            from src.wiki_v2.edge_detector import EdgeDetector
+            edges = EdgeDetector().detect_concept_links(db, chroma)
+            for e in edges:
+                db.add_edge(e)
+
         db.close()
     except Exception:
         pass

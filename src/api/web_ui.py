@@ -749,12 +749,16 @@ def _build_cluster_graph(data: dict | None, workspace_id: str):
             member_to_cid[m] = c["cluster_id"]
 
     cluster_edges: dict[tuple, int] = {}
+    cluster_edge_types: dict[tuple, dict[str, int]] = {}
     for e in edges_raw:
         sc = member_to_cid.get(e.get("source", ""))
         tc = member_to_cid.get(e.get("target", ""))
         if sc and tc and sc != tc:
             key = (sc, tc) if sc < tc else (tc, sc)
             cluster_edges[key] = cluster_edges.get(key, 0) + 1
+            etype = e.get("type", "import")
+            cluster_edge_types.setdefault(key, {})
+            cluster_edge_types[key][etype] = cluster_edge_types[key].get(etype, 0) + 1
 
     now = time.time()
     active_cids: set[str] = set()
@@ -785,13 +789,33 @@ def _build_cluster_graph(data: dict | None, workspace_id: str):
 
     pos = nx.spring_layout(G, seed=42, k=3.0) if len(G.nodes) > 1 else {n: (0.5, 0.5) for n in G.nodes}
 
-    ex, ey = [], []
+    _EDGE_TYPE_COLORS = {
+        "import":        "#2a5a9a",
+        "call":          "#9a5a2a",
+        "concept_link":  "#2a8a5a",
+        "test_covers":   "#6a2a8a",
+        "issue_mentions":"#6a6a2a",
+    }
+    _DEFAULT_EDGE_COLOR = "#2a4a7a"
+
+    # Group edges by dominant type for color coding
+    edge_by_type: dict[str, tuple[list, list]] = {}
     for u, v in G.edges():
         x0, y0 = pos[u]; x1, y1 = pos[v]
-        ex += [x0, x1, None]; ey += [y0, y1, None]
+        key = (u, v) if u < v else (v, u)
+        type_counts = cluster_edge_types.get(key, {})
+        dominant = max(type_counts, key=type_counts.get) if type_counts else "import"
+        color = _EDGE_TYPE_COLORS.get(dominant, _DEFAULT_EDGE_COLOR)
+        if color not in edge_by_type:
+            edge_by_type[color] = ([], [])
+        edge_by_type[color][0].extend([x0, x1, None])
+        edge_by_type[color][1].extend([y0, y1, None])
 
-    traces = [go.Scatter(x=ex, y=ey, mode="lines",
-                         line=dict(color="#2a4a7a", width=2), hoverinfo="none")]
+    traces = [
+        go.Scatter(x=ex, y=ey, mode="lines",
+                   line=dict(color=color, width=2), hoverinfo="none", showlegend=False)
+        for color, (ex, ey) in edge_by_type.items()
+    ]
 
     node_colors, node_borders, sizes, labels, hover = [], [], [], [], []
     for n in G.nodes():

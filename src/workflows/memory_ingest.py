@@ -177,6 +177,6 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         wid = getattr(args, "workspace_id", "default")
         slug = _repo_slug(repo_url)
         for f in files:
-            on_post_ingest(wid, slug, f"repo:{repo_url}:{f['filename']}")
+            on_post_ingest(wid, slug, f"repo:{repo_url}:{f['filename']}", chroma=chroma)
     except Exception:
         pass

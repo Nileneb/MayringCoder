@@ -131,3 +131,36 @@ def test_on_post_ingest_adds_node(tmp_path):
     node = g.get_node("src/memory/store.py")
     g.close()
     assert node is not None
+
+
+def test_on_post_analyze_stores_turbulence_tier(tmp_path):
+    """turbulence_tier is persisted in the wiki node."""
+    on_post_analyze(
+        workspace_id="ws-c",
+        repo_slug="repo",
+        analyzed_file="src/api/server.py",
+        db_path=tmp_path / "wiki.db",
+        turbulence_tier="hot",
+    )
+    g = WikiGraph("ws-c", "repo", db_path=tmp_path / "wiki.db")
+    node = g.get_node("src/api/server.py")
+    g.close()
+    assert node is not None
+    assert node.turbulence_tier == "hot"
+
+
+def test_on_post_ingest_no_chroma_creates_node_only(tmp_path):
+    """on_post_ingest with chroma=None skips concept_link detection."""
+    on_post_ingest(
+        workspace_id="ws-d",
+        repo_slug="repo",
+        source_id="repo:repo:src/config.py",
+        db_path=tmp_path / "wiki.db",
+        chroma=None,
+    )
+    g = WikiGraph("ws-d", "repo", db_path=tmp_path / "wiki.db")
+    node = g.get_node("src/config.py")
+    edges = g.get_edges()
+    g.close()
+    assert node is not None
+    assert edges == []
