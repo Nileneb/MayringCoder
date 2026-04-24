@@ -1197,6 +1197,12 @@ async def wiki_rebuild(
             detector = EdgeDetector()
             edges = detector.detect_from_overview(oc, conn, wid, slug)
             conn.close()
+            # Upsert every known file as a node BEFORE clustering
+            # (get_clusters reads members via wiki_nodes.cluster_id)
+            from src.wiki_v2.models import WikiNode as _WikiNode
+            node_ids = set(oc.keys()) | {e.source for e in edges} | {e.target for e in edges}
+            for nid in sorted(node_ids):
+                db.upsert_node(_WikiNode(id=nid, repo_slug=slug, workspace_id=wid))
             for e in edges:
                 db.add_edge(e)
             # Clustering

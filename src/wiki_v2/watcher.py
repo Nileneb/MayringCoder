@@ -87,6 +87,10 @@ def on_post_analyze(
         if overview_cache:
             detector = EdgeDetector()
             edges = detector.detect_from_overview(overview_cache, None, workspace_id, repo_slug)
+            # Upsert all files referenced in edges so get_clusters() finds members
+            node_ids = set(overview_cache.keys()) | {e.source for e in edges} | {e.target for e in edges}
+            for nid in sorted(node_ids):
+                db.upsert_node(WikiNode(id=nid, repo_slug=repo_slug, workspace_id=workspace_id))
             for e in edges:
                 db.add_edge(e)
         db.close()

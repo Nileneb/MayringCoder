@@ -354,6 +354,12 @@ def main() -> None:
             db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
             detector = EdgeDetector()
             edges = detector.detect_from_overview(oc, get_conn(), wid, slug)
+            # Upsert every known file as a node BEFORE clustering
+            # (get_clusters reads members via wiki_nodes.cluster_id)
+            from src.wiki_v2.models import WikiNode
+            node_ids = set(oc.keys()) | {e.source for e in edges} | {e.target for e in edges}
+            for nid in sorted(node_ids):
+                db.upsert_node(WikiNode(id=nid, repo_slug=slug, workspace_id=wid))
             for e in edges:
                 db.add_edge(e)
             engine = ClusterEngine()
