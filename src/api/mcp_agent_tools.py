@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -61,103 +60,87 @@ def register_agent_tools(mcp: FastMCP) -> None:
             return {"error": str(exc)}
 
     @mcp.tool()
-    def conversation_ingest(
-        turns: list[dict],
-        session_id: str,
-        workspace_slug: str = "default",
-        presumarized: str | None = None,
-    ) -> dict:
-        """Ingest a batch of conversation turns into workspace memory.
-
-        Summarizes (via Ollama) and stores as a conversation_summary source.
-        Dedup: same session_id + same content is skipped automatically.
-
-        Args:
-            turns: List of {"role": "user"|"assistant", "content": str, "timestamp": str}
-            session_id: Unique session identifier (used for dedup)
-            workspace_slug: Workspace namespace (default: "default")
-            presumarized: Pre-written summary to skip Ollama summarization
-
-        Returns:
-            {workspace_id, source_id, chunk_ids, indexed, deduped, skipped}
-        """
-        try:
-            import hashlib
-            from tools.ingest_conversations import _summarize as _summarize_turns
-
-            if not turns:
-                return {"error": "turns must not be empty"}
-
-            ws = _enforce_tenant(workspace_slug) or workspace_slug
-            batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp', '')}"
-            content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
-            source_id = f"conversation:{workspace_slug}:{session_id[:16]}"
-
-            summary = presumarized or _summarize_turns(turns, "", _OLLAMA_URL, _MODEL)
-
-            if not summary or not summary.strip():
-                return {"workspace_id": ws, "source_id": source_id,
-                        "chunk_ids": [], "indexed": False, "skipped": True}
-
-            source_dict = {
-                "source_id": source_id,
-                "source_type": "conversation_summary",
-                "repo": workspace_slug,
-                "path": f"conversations/{session_id[:16]}",
-                "content_hash": content_hash,
-            }
-            result = _run_ingest(
-                source_dict, summary, _get_conn(), _get_chroma(),
-                _OLLAMA_URL, _MODEL, {"categorize": False}, ws,
-            )
-            return {"workspace_id": ws, **result}
-        except Exception as exc:
-            return {"error": str(exc)}
-
-    @mcp.tool()
-    def analyze(
-        repo: str,
-        full: bool = False,
-        no_pi: bool = False,
-        budget: int | None = None,
+    def ingest(
+        source: str,
+        source_type: str = "auto",
+        source_id: str | None = None,
         workspace_id: str | None = None,
     ) -> dict:
-        """Start a full code analysis pipeline for a repository (async).
+        """Ingest any source into memory and run the full analysis pipeline.
 
-        Runs src.pipeline as a subprocess. Returns immediately with a pid.
-        Analysis output is written to reports/. No job_id — fire and forget.
+        One call handles everything: chunk → embed → categorize (Mayring) →
+        wiki update → ambient snapshot → predictive rebuild. Dedup via content
+        hash — unchanged content is skipped automatically.
+
+        source_type auto-detection (when "auto"):
+        - GitHub/GitLab URL or git@ → repo pipeline (async, returns job_id)
+        - Everything else → text pipeline (sync, returns chunk info)
 
         Args:
-            repo: Repository URL or local path
-            full: Force full re-analysis (ignore incremental cache)
-            no_pi: Disable Pi-Agent (faster, no memory-augmented analysis)
-            budget: Max files to analyse (None = no limit)
+            source:      Repo URL (e.g. "https://github.com/nileneb/MayringCoder")
+                         or text content (conversation summary, file content, insight)
+            source_type: "auto" | "repo" | "text"  (default: "auto")
+            source_id:   Dedup key for text sources (e.g. "session-memory:2026-04-25-topic")
             workspace_id: Tenant namespace (default: from JWT)
 
         Returns:
-            {status: "started", pid: int, repo: str} or {error: str}
+            repo: {job_id, status, repo, workspace_id}
+            text: {source_id, chunk_ids, workspace_id}
         """
-        try:
-            import subprocess
+        import httpx
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
+        _jwt = _current_raw_jwt()
+        headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
 
-            ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-            cmd = [sys.executable, "-m", "src.pipeline", "--repo", repo, "--workspace-id", ws]
-            if full:
-                cmd.append("--full")
-            if no_pi:
-                cmd.append("--no-pi")
-            if budget is not None:
-                cmd.extend(["--budget", str(budget)])
-
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(Path(__file__).parent.parent.parent),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+        is_repo = source_type == "repo" or (
+            source_type == "auto" and (
+                source.startswith("https://github.com")
+                or source.startswith("https://gitlab.com")
+                or source.startswith("git@")
             )
-            return {"status": "started", "pid": proc.pid, "repo": repo, "workspace_id": ws}
-        except Exception as exc:
-            return {"error": str(exc)}
+        )
+
+        if is_repo:
+            try:
+                resp = httpx.post(
+                    f"{_api}/populate",
+                    json={"repo": source},
+                    headers=headers,
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                return {**resp.json(), "workspace_id": ws}
+            except Exception as exc:
+                return {"error": str(exc), "workspace_id": ws}
+        else:
+            try:
+                import hashlib
+                sid = source_id or f"text:{ws}:{hashlib.sha256(source[:64].encode()).hexdigest()[:12]}"
+                source_dict = {
+                    "source_id": sid,
+                    "source_type": "knowledge",
+                    "repo": ws,
+                    "path": sid,
+                    "content_hash": "sha256:" + hashlib.sha256(source.encode()).hexdigest()[:16],
+                }
+                result = _run_ingest(
+                    source_dict, source, _get_conn(), _get_chroma(),
+                    _OLLAMA_URL, _MODEL, {"categorize": True}, ws,
+                )
+                # Post-ingest: wiki + ambient (fire-and-forget, non-critical)
+                try:
+                    httpx.post(f"{_api}/wiki/generate",
+                               json={"workspace_id": ws},
+                               headers=headers, timeout=5.0)
+                    httpx.post(f"{_api}/ambient/snapshot",
+                               json={"repo": ws},
+                               headers=headers, timeout=5.0)
+                except Exception:
+                    pass
+                return {"source_id": sid, "workspace_id": ws, **result}
+            except Exception as exc:
+                return {"error": str(exc), "workspace_id": ws}
 
     @mcp.tool()
     def duel(
@@ -208,43 +191,6 @@ def register_agent_tools(mcp: FastMCP) -> None:
                     "no_memory_baseline": no_memory_baseline,
                     "timeout": timeout,
                 },
-                headers=headers,
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return {**resp.json(), "workspace_id": ws}
-        except Exception as exc:
-            return {"error": str(exc), "workspace_id": ws}
-
-    @mcp.tool()
-    def populate_repo(
-        repo: str,
-        force_reingest: bool = False,
-        workspace_id: str | None = None,
-    ) -> dict:
-        """Trigger a full repository ingest into workspace memory.
-
-        Clones / fetches the repo, chunks all source files, embeds them into
-        ChromaDB, and (re-)categorises with Mayring labels. Runs async — returns
-        a job_id immediately; poll GET /jobs/{id} for progress.
-
-        Args:
-            repo: GitHub repo URL (e.g. "https://github.com/nileneb/MayringCoder")
-            force_reingest: Re-ingest even unchanged files (default False)
-            workspace_id: Tenant namespace (default: from JWT)
-
-        Returns:
-            {job_id, status, repo, workspace_id} or {error}
-        """
-        import httpx
-        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
-        _jwt = _current_raw_jwt()
-        headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
-        try:
-            resp = httpx.post(
-                f"{_api}/populate",
-                json={"repo": repo, "force_reingest": force_reingest},
                 headers=headers,
                 timeout=30.0,
             )
