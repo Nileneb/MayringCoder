@@ -864,11 +864,14 @@ def _build_brain_figure(workspace_id: str):
     if not cluster_path.exists():
         return _empty_fig("Kein Wiki — 'Wiki generieren' klicken")
 
+    import math as _math
     raw = _json.loads(cluster_path.read_text())
     G = nx.Graph()
     for c in raw:
+        n_files = len(c.get("files", []))
+        node_size = max(15, min(55, int(_math.log1p(n_files) * 14)))
         G.add_node(c["name"],
-                   size=max(12, len(c.get("files", [])) * 4),
+                   size=node_size,
                    files=c.get("files", []),
                    labels=c.get("labels", []))
         for e in c.get("edges", []):
