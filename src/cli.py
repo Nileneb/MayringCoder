@@ -222,7 +222,7 @@ def main() -> None:
         print(model)
         sys.exit(0)
 
-    cache_run_key = args.run_id or (model if args.cache_by_model else "default")
+    cache_run_key = args.run_id or (model if (args.cache_by_model and model) else "default")
 
     if args.log_training_data:
         from src.analysis.analyzer import configure_training_log

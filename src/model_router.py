@@ -96,8 +96,9 @@ class ModelRouter:
                         fallback=str(cfg.get("fallback", "")),
                         timeout=int(cfg.get("timeout", 240)),
                     )
-        except Exception:
-            pass  # Silent — defaults remain
+        except Exception as e:
+            import logging
+            logging.warning("model_routes.yaml konnte nicht geladen werden: %s — Defaults aktiv", e)
 
     def save_config(self, path: Path | None = None) -> None:
         """Persist current routes to YAML."""

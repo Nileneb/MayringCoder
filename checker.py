@@ -23,6 +23,7 @@ import time
 
 import httpx
 from dotenv import load_dotenv
+from src.analysis.history import cleanup_runs, compare_runs, list_runs
 
 
 def _api_url() -> str:
@@ -44,8 +45,12 @@ def _call(method: str, path: str, *, json: dict | None = None, token: str = "") 
         sys.exit(1)
 
 
-def _poll(job_id: str, token: str = "") -> None:
+def _poll(job_id: str, token: str = "", max_wait: int = 600) -> None:
+    start = time.time()
     while True:
+        if time.time() - start > max_wait:
+            print(f"Timeout nach {max_wait}s — Job {job_id} nicht abgeschlossen.", file=sys.stderr)
+            sys.exit(2)
         r = _call("GET", f"/jobs/{job_id}", token=token)
         if r["status"] in ("done", "error"):
             print(r.get("output", "").rstrip())
