@@ -63,6 +63,7 @@ load_dotenv(_ROOT / ".env")
 
 try:
     from fastapi import Depends, FastAPI, HTTPException, status
+    from fastapi.responses import PlainTextResponse
     from pydantic import BaseModel
 except ImportError:
     raise ImportError("Missing dependency: pip install fastapi uvicorn")
@@ -1046,7 +1047,7 @@ async def wiki_slugs() -> dict:
 
 
 @app.get("/wiki/graph")
-async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
+async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json"):
     """Return wiki cluster graph + recent Pi-agent search activations for Brain visualization.
 
     Tries wiki_v2 graph.json first, falls back to legacy _wiki_clusters.json.
@@ -1070,6 +1071,9 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
     graph_path = WIKI_DIR / _safe_wid / "graph.json"
     if graph_path.exists():
         data = _json.loads(graph_path.read_text())
+        if format == "mermaid":
+            from src.wiki_v2.renderer import to_mermaid
+            return PlainTextResponse(to_mermaid(data), media_type="text/plain")
         # Overlay activations
         now = _time_g.time()
         activations: list[dict] = []
@@ -1154,10 +1158,19 @@ class WikiRebuildRequest(BaseModel):
     model: str = "qwen2.5-coder:14b"
 
 
+class WikiEdgeCreateRequest(BaseModel):
+    source: str
+    target: str
+    type: str = "import"
+    weight: float = 1.0
+    context: str = ""
+    user_id: str = "api"
+
+
 @app.post("/wiki/rebuild")
 async def wiki_rebuild(
     request: WikiRebuildRequest,
-    token_data: dict = Depends(verify_mcp_token),
+    workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Rebuild wiki_v2 graph.json for a workspace: EdgeDetector + ClusterEngine + to_json()."""
     wid = request.workspace_id
@@ -1200,6 +1213,43 @@ async def wiki_rebuild(
 
     asyncio.create_task(_do_rebuild())
     return {"job_id": job_id, "status": "started"}
+
+
+@app.post("/wiki/edge")
+async def wiki_edge_create(
+    request: WikiEdgeCreateRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Manually create a wiki edge with user_id tracking via wiki_contributions."""
+    import re as _re_e
+    if not request.source or not request.target:
+        raise HTTPException(status_code=400, detail="source and target required")
+    if not _re_e.fullmatch(r"[a-zA-Z0-9_.\-/]+", workspace_id):
+        raise HTTPException(status_code=400, detail="invalid workspace_id")
+    try:
+        from src.config import CACHE_DIR
+        from src.wiki_v2.graph import WikiGraph
+        from src.wiki_v2.models import WikiEdge
+        from src.wiki_v2 import store as _ws
+        db = WikiGraph(workspace_id, workspace_id, CACHE_DIR / "wiki_v2.db")
+        edge = WikiEdge(
+            source=request.source,
+            target=request.target,
+            repo_slug=workspace_id,
+            workspace_id=workspace_id,
+            type=request.type,
+            weight=request.weight,
+            context=request.context,
+            validated=True,
+        )
+        db.add_edge(edge)
+        _ws.log_contribution(db._conn, workspace_id, request.user_id, "add_edge",
+                             f"{request.source}→{request.target}")
+        db.close()
+        return {"status": "ok", "source": request.source, "target": request.target,
+                "type": request.type}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 def main() -> None:

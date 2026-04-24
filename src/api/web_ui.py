@@ -1043,6 +1043,52 @@ def _build_brain_figure(workspace_id: str):
     )
     return fig
 
+def _build_cluster_stats(workspace_id: str) -> list:
+    """Return rows for gr.Dataframe: [cluster_id, name, members, internal_edges]."""
+    try:
+        import json as _json, os as _os_cs, re as _re_cs
+        from src.config import WIKI_DIR, CACHE_DIR
+
+        wid = str(workspace_id or "").strip()
+        if not wid or not _re_cs.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", wid):
+            return []
+
+        graph_path = WIKI_DIR / wid / "graph.json"
+        clusters_path = WIKI_DIR / wid / "clusters.json"
+
+        clusters_data: list[dict] = []
+        if clusters_path.exists():
+            clusters_data = _json.loads(clusters_path.read_text())
+        elif graph_path.exists():
+            graph = _json.loads(graph_path.read_text())
+            clusters_data = graph.get("clusters", [])
+
+        if not clusters_data:
+            return []
+
+        # Build edge sets for internal-edge counting
+        edges: list[dict] = []
+        if graph_path.exists():
+            edges = _json.loads(graph_path.read_text()).get("edges", [])
+
+        rows = []
+        for c in clusters_data:
+            members = set(c.get("members", []))
+            internal = sum(
+                1 for e in edges
+                if e.get("source") in members and e.get("target") in members
+            )
+            rows.append([
+                c.get("cluster_id", ""),
+                c.get("name", ""),
+                len(members),
+                internal,
+            ])
+        return rows
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # App Builder
 # ---------------------------------------------------------------------------
@@ -1923,6 +1969,12 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 brain_wiki_btn = gr.Button("🔄 Wiki generieren", variant="primary")
             brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
             brain_plot = gr.Plot(label="Wiki Knowledge Graph")
+            brain_cluster_stats = gr.Dataframe(
+                headers=["Cluster-ID", "Name", "Dateien", "Interne Edges"],
+                datatype=["str", "str", "number", "number"],
+                interactive=False,
+                label="Cluster-Statistiken",
+            )
             brain_timer = gr.Timer(value=5, active=False)
 
             def _generate_wiki_for_workspace(workspace_id: str, token: str) -> str:
@@ -1953,6 +2005,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 outputs=[brain_plot],
             )
             _workspace_state.change(
+                fn=_build_cluster_stats,
+                inputs=[_workspace_state],
+                outputs=[brain_cluster_stats],
+            )
+            _workspace_state.change(
                 fn=lambda wid: gr.Timer(active=bool(wid)),
                 inputs=[_workspace_state],
                 outputs=[brain_timer],
@@ -1961,6 +2018,11 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 fn=_build_brain_figure,
                 inputs=[_workspace_state],
                 outputs=[brain_plot],
+            )
+            brain_timer.tick(
+                fn=_build_cluster_stats,
+                inputs=[_workspace_state],
+                outputs=[brain_cluster_stats],
             )
 
         # =======================================================================
