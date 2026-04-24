@@ -6,6 +6,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.wiki_v2._path_utils import safe_workspace_id, safe_filename_part, confined_path
+
 if TYPE_CHECKING:
     from src.wiki_v2.graph import WikiGraph
     from src.wiki_v2.models import WikiEdge, Cluster
@@ -69,7 +71,12 @@ class WikiHistory:
         try:
             from src.config import WIKI_DIR
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            snap_path = WIKI_DIR / graph.workspace_id / "history" / f"{ts}_{trigger}.json"
+            snap_path = confined_path(
+                WIKI_DIR,
+                safe_workspace_id(graph.workspace_id),
+                "history",
+                f"{ts}_{safe_filename_part(trigger)}.json",
+            )
             snap_path.parent.mkdir(parents=True, exist_ok=True)
             snap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except Exception:

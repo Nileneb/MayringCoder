@@ -871,10 +871,12 @@ def _build_brain_figure(workspace_id: str):
     if not _wid or not _re_b.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", _wid):
         return _empty_fig("Ungültige Workspace-ID")
 
-    _safe_wid = _os_b.path.basename(_wid.replace("/", "_"))
+    from src.wiki_v2._path_utils import safe_workspace_id as _swid_b, safe_filename_part as _sfp_b, confined_path as _cp_b
+    _safe_wid = _sfp_b(_wid)
+    _wiki_wid = _swid_b(_wid)
 
     # --- Try wiki_v2 graph.json first ---
-    graph_path = WIKI_DIR / _wid / "graph.json"
+    graph_path = _cp_b(WIKI_DIR, _wiki_wid, "graph.json")
     use_new_format = graph_path.exists()
 
     if use_new_format:
@@ -972,10 +974,8 @@ def _build_brain_figure(workspace_id: str):
         return fig
 
     # --- Fallback: old _wiki_clusters.json format ---
-    cache_root = CACHE_DIR.resolve()
-    cluster_path = (cache_root / f"{_safe_wid}_wiki_clusters.json").resolve()
     try:
-        cluster_path.relative_to(cache_root)
+        cluster_path = _cp_b(CACHE_DIR, f"{_safe_wid}_wiki_clusters.json")
     except ValueError:
         return _empty_fig("Ungültiger Workspace-Pfad")
 
@@ -1072,13 +1072,15 @@ def _build_cluster_stats(workspace_id: str) -> list:
     try:
         import json as _json, os as _os_cs, re as _re_cs
         from src.config import WIKI_DIR, CACHE_DIR
+        from src.wiki_v2._path_utils import safe_workspace_id as _swid_cs, confined_path as _cp_cs
 
         wid = str(workspace_id or "").strip()
-        if not wid or not _re_cs.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", wid):
+        if not wid or not _re_cs.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", wid) or ".." in wid.split("/"):
             return []
 
-        graph_path = WIKI_DIR / wid / "graph.json"
-        clusters_path = WIKI_DIR / wid / "clusters.json"
+        _safe_wid_cs = _swid_cs(wid)
+        graph_path = _cp_cs(WIKI_DIR, _safe_wid_cs, "graph.json")
+        clusters_path = _cp_cs(WIKI_DIR, _safe_wid_cs, "clusters.json")
 
         clusters_data: list[dict] = []
         if clusters_path.exists():

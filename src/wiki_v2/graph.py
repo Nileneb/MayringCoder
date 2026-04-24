@@ -6,6 +6,7 @@ from pathlib import Path
 from src.config import CACHE_DIR, WIKI_DIR
 from src.wiki_v2.models import WikiNode, WikiEdge, Cluster
 from src.wiki_v2 import store as _store
+from src.wiki_v2._path_utils import safe_workspace_id, confined_path
 
 
 class WikiGraph:
@@ -96,7 +97,7 @@ class WikiGraph:
             ],
         }
 
-        out_path = WIKI_DIR / self.workspace_id / "graph.json"
+        out_path = confined_path(WIKI_DIR, safe_workspace_id(self.workspace_id), "graph.json")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         return data
@@ -104,7 +105,7 @@ class WikiGraph:
     def snapshot(self) -> None:
         data = self.to_json()
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        snap_path = WIKI_DIR / self.workspace_id / "history" / f"{ts}.json"
+        snap_path = confined_path(WIKI_DIR, safe_workspace_id(self.workspace_id), "history", f"{ts}.json")
         snap_path.parent.mkdir(parents=True, exist_ok=True)
         snap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         self._conn.execute(

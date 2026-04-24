@@ -8,6 +8,7 @@ import networkx as nx
 
 from src.wiki_v2.graph import WikiGraph
 from src.wiki_v2.models import Cluster
+from src.wiki_v2._path_utils import safe_workspace_id, confined_path
 
 
 class ClusterEngine:
@@ -67,7 +68,7 @@ class ClusterEngine:
                 }
                 for c in clusters
             ]
-            out_path = WIKI_DIR / graph.workspace_id / "clusters.json"
+            out_path = confined_path(WIKI_DIR, safe_workspace_id(graph.workspace_id), "clusters.json")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except Exception:

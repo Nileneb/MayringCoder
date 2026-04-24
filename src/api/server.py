@@ -74,6 +74,7 @@ from src.api.auth import get_workspace
 from src.api.training import router as _training_router
 from src.api.job_queue import get_job as _get_job, make_job as _make_job, python_exe as _python_exe, run_checker_job as _run_checker_job, _JOBS
 from src.model_router import ModelRouter as _ModelRouter
+from src.wiki_v2._path_utils import safe_workspace_id as _swid, safe_filename_part as _sfp, confined_path as _cp
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1063,12 +1064,12 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
         return {"clusters": [], "edges": [], "activations": [], "error": "slug or workspace_id required"}
 
     wid = workspace_id or slug
-    if not _re_g.fullmatch(r"[a-zA-Z0-9_\-./]+", wid):
+    if not _re_g.fullmatch(r"[a-zA-Z0-9_\-./]+", wid) or ".." in wid.split("/"):
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid workspace_id"}
-    _safe_wid = _os_g.path.basename(wid)
+    _safe_wid = _swid(wid)
 
     # --- Try wiki_v2 graph.json first ---
-    graph_path = WIKI_DIR / _safe_wid / "graph.json"
+    graph_path = _cp(WIKI_DIR, _safe_wid, "graph.json")
     if graph_path.exists():
         data = _json.loads(graph_path.read_text())
         if format == "mermaid":
@@ -1105,9 +1106,9 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
 
     if not _re_g.fullmatch(r"[a-zA-Z0-9_\-.]+", slug):
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
-    _safe_slug = _os_g.path.basename(slug)
-    cluster_path = CACHE_DIR / f"{_safe_slug}_wiki_clusters.json"
-    index_path = CACHE_DIR / f"{_safe_slug}_wiki_index.json"
+    _safe_slug = _sfp(slug)
+    cluster_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_clusters.json")
+    index_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_index.json")
 
     clusters: list[dict] = []
     raw: list[dict] = []
@@ -1188,7 +1189,7 @@ async def wiki_rebuild(
 
             db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
             # Load overview_cache if available
-            oc_path = CACHE_DIR / f"{slug}_overview_cache.json"
+            oc_path = _cp(CACHE_DIR, f"{_sfp(slug)}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
             # Edge detection
             import sqlite3
