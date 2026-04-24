@@ -13,6 +13,8 @@ fastapi
 uvicorn[standard]
 psycopg2-binary
 gradio>=4.0
+plotly>=5.0
+networkx>=3.0
 pymysql
 datasets>=2.0
 

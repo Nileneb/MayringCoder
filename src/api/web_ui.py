@@ -666,10 +666,11 @@ def _save_router_config(*model_values) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Brain Visualization HTML (Three.js 3D Wiki-Cluster)
+# Brain Visualization — Plotly + networkx
 # ---------------------------------------------------------------------------
 
-_BRAIN_HTML = """
+_BRAIN_HTML = """<REMOVED>"""  # kept as sentinel so grep still finds the name
+_BRAIN_HTML_UNUSED = """
 <div style="width:100%;height:780px;background:#06080f;border-radius:8px;overflow:hidden;position:relative;">
   <canvas id="bc" style="width:100%;height:100%;display:block;"></canvas>
   <div id="bi" style="position:absolute;top:12px;left:12px;color:#667;font:11px monospace;max-width:60%;">Lade Slugs...</div>
@@ -826,6 +827,112 @@ _BRAIN_HTML = """
 })();
 </script>
 """
+
+
+def _build_brain_figure(workspace_id: str):
+    """Build Plotly network graph from wiki_clusters.json for given workspace_id."""
+    try:
+        import json as _json
+        import time as _time
+        import plotly.graph_objects as go
+        import networkx as nx
+    except ImportError:
+        import plotly.graph_objects as go
+        return go.Figure().add_annotation(
+            text="plotly/networkx nicht installiert",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+        )
+
+    from src.config import CACHE_DIR
+    from src.api.memory_service import _RECENT_ACTIVATIONS
+
+    cluster_path = CACHE_DIR / f"{workspace_id}_wiki_clusters.json"
+    if not cluster_path.exists():
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Kein Wiki — 'Wiki generieren' klicken",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            font=dict(color="#667788", size=14),
+        )
+        fig.update_layout(paper_bgcolor="#06080f", plot_bgcolor="#06080f",
+                          margin=dict(l=0, r=0, t=0, b=0), height=680)
+        return fig
+
+    raw = _json.loads(cluster_path.read_text())
+    G = nx.Graph()
+    for c in raw:
+        G.add_node(c["name"],
+                   size=max(12, len(c.get("files", [])) * 4),
+                   files=c.get("files", []),
+                   labels=c.get("labels", []))
+        for e in c.get("edges", []):
+            if isinstance(e, (list, tuple)) and len(e) >= 2:
+                G.add_edge(c["name"], e[0], weight=float(e[1]))
+
+    pos = nx.spring_layout(G, seed=42, k=2.5) if len(G.nodes) > 1 else {n: (0.5, 0.5) for n in G.nodes}
+
+    now = _time.time()
+    active: set[str] = set()
+    for ev in _RECENT_ACTIVATIONS:
+        if ev["workspace_id"] != workspace_id or now - ev["ts"] > 60:
+            continue
+        for sid in ev["source_ids"]:
+            path = sid.split(":")[-1]
+            for c in raw:
+                if any(path.endswith(f) or f.endswith(path) for f in c.get("files", [])):
+                    active.add(c["name"])
+
+    edge_x, edge_y = [], []
+    for u, v in G.edges():
+        x0, y0 = pos[u]; x1, y1 = pos[v]
+        edge_x += [x0, x1, None]; edge_y += [y0, y1, None]
+
+    edges_trace = go.Scatter(
+        x=edge_x, y=edge_y, mode="lines",
+        line=dict(color="#1e3a6e", width=1.5), hoverinfo="none",
+    )
+
+    node_x = [pos[n][0] for n in G.nodes()]
+    node_y = [pos[n][1] for n in G.nodes()]
+    colors = ["#ffcc44" if n in active else "#1a4a9a" for n in G.nodes()]
+    sizes = [G.nodes[n]["size"] for n in G.nodes()]
+    hover = [
+        f"<b>{n}</b><br>{len(G.nodes[n]['files'])} Dateien"
+        + (f"<br>Aktiv" if n in active else "")
+        for n in G.nodes()
+    ]
+
+    nodes_trace = go.Scatter(
+        x=node_x, y=node_y, mode="markers+text",
+        marker=dict(color=colors, size=sizes,
+                    line=dict(color="#334466", width=1.5),
+                    opacity=0.9),
+        text=list(G.nodes()),
+        textposition="top center",
+        textfont=dict(color="#99aacc", size=10),
+        hovertext=hover, hoverinfo="text",
+    )
+
+    n_clusters = len(G.nodes())
+    n_edges = len(G.edges())
+    title = f"{n_clusters} Cluster · {n_edges} Verbindungen · {len(active)} aktiv"
+
+    fig = go.Figure(
+        data=[edges_trace, nodes_trace],
+        layout=go.Layout(
+            title=dict(text=title, font=dict(color="#556677", size=12), x=0.01),
+            paper_bgcolor="#06080f", plot_bgcolor="#0a0e1a",
+            showlegend=False,
+            margin=dict(l=10, r=10, t=30, b=10),
+            height=680,
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                       showline=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                       showline=False),
+            hovermode="closest",
+        ),
+    )
+    return fig
 
 # ---------------------------------------------------------------------------
 # App Builder
@@ -1706,9 +1813,8 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
             with gr.Row():
                 brain_wiki_btn = gr.Button("🔄 Wiki generieren", variant="primary")
             brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
-            # Hidden textbox: workspace_id → JS reads data-workspace attr to auto-select slug
-            brain_workspace_hidden = gr.Textbox(visible=False, elem_id="brain_workspace_id")
-            gr.HTML(_BRAIN_HTML)
+            brain_plot = gr.Plot(label="Wiki Knowledge Graph")
+            brain_timer = gr.Timer(value=5, active=False)
 
             def _generate_wiki_for_workspace(workspace_id: str, token: str) -> str:
                 if not workspace_id:
@@ -1732,11 +1838,20 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 inputs=[_workspace_state, _token_state],
                 outputs=[brain_status],
             )
-            # Push workspace_id into hidden element so Brain JS can auto-select the right slug
             _workspace_state.change(
-                fn=lambda wid: wid,
+                fn=_build_brain_figure,
                 inputs=[_workspace_state],
-                outputs=[brain_workspace_hidden],
+                outputs=[brain_plot],
+            )
+            _workspace_state.change(
+                fn=lambda wid: gr.Timer(active=bool(wid)),
+                inputs=[_workspace_state],
+                outputs=[brain_timer],
+            )
+            brain_timer.tick(
+                fn=_build_brain_figure,
+                inputs=[_workspace_state],
+                outputs=[brain_plot],
             )
 
         # =======================================================================
