@@ -19,12 +19,9 @@ name: mayring-watcher
 
 services:
   conversation-watcher:
-    image: nileneb/mayring:latest
+    image: nileneb/mayring-watcher:latest
     restart: unless-stopped
     command:
-      - python
-      - -m
-      - tools.conversation_watcher
       - --workspace-id
       - "system"
       - --poll-interval

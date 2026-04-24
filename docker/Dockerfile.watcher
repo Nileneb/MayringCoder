@@ -1,0 +1,6 @@
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install --no-cache-dir httpx
+COPY tools/__init__.py tools/conversation_watcher.py tools/ingest_conversations.py tools/
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "-m", "tools.conversation_watcher"]
