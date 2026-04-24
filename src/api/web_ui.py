@@ -855,10 +855,11 @@ def _build_brain_figure(workspace_id: str):
                         margin=dict(l=0, r=0, t=0, b=0), height=680)
         return f
 
-    if not workspace_id or not _re_b.fullmatch(r"[a-zA-Z0-9_\-.]+", workspace_id):
+    _wid = str(workspace_id or "").strip()
+    if not _wid or not _re_b.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", _wid):
         return _empty_fig("Ungültige Workspace-ID")
 
-    _safe_wid = _os_b.path.basename(workspace_id)
+    _safe_wid = _wid
     cache_root = CACHE_DIR.resolve()
     cluster_path = (cache_root / f"{_safe_wid}_wiki_clusters.json").resolve()
     try:
