@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).parent.parent
 CACHE_DIR = BASE_DIR / "cache"
+WIKI_DIR = BASE_DIR / "wiki"
 REPORTS_DIR = BASE_DIR / "reports"
 PROMPTS_DIR = BASE_DIR / "prompts"
 CODEBOOKS_DIR: Path = Path(__file__).parent.parent / "codebooks"
