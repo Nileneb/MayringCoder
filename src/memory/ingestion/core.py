@@ -6,7 +6,10 @@ from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import threading as _threading
+
 _log = logging.getLogger(__name__)
+_CHROMA_WRITE_LOCK = _threading.Lock()
 
 if TYPE_CHECKING:
     from src.model_router import ModelRouter
@@ -197,20 +200,21 @@ def ingest(
 
             if chroma_collection is not None and emb is not None:
                 try:
-                    chroma_collection.upsert(
-                        ids=[chunk.chunk_id],
-                        documents=[chunk.text[:500]],
-                        embeddings=[emb],
-                        metadatas=[{
-                            "workspace_id": workspace_id,
-                            "source_id": chunk.source_id,
-                            "chunk_level": chunk.chunk_level,
-                            "category_labels": ",".join(chunk.category_labels),
-                            "category_source": chunk.category_source,
-                            "category_confidence": chunk.category_confidence,
-                            "is_active": 1,
-                        }],
-                    )
+                    with _CHROMA_WRITE_LOCK:
+                        chroma_collection.upsert(
+                            ids=[chunk.chunk_id],
+                            documents=[chunk.text[:500]],
+                            embeddings=[emb],
+                            metadatas=[{
+                                "workspace_id": workspace_id,
+                                "source_id": chunk.source_id,
+                                "chunk_level": chunk.chunk_level,
+                                "category_labels": ",".join(chunk.category_labels),
+                                "category_source": chunk.category_source,
+                                "category_confidence": chunk.category_confidence,
+                                "is_active": 1,
+                            }],
+                        )
                     indexed = True
                 except Exception as exc:
                     _log.warning("chroma upsert failed for %s: %s",

@@ -24,6 +24,16 @@ def _content_hash(text: str) -> str:
     return "sha256:" + _hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _ollama_ps(ollama_url: str) -> dict:
+    import json as _json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{ollama_url}/api/ps", timeout=3) as r:
+            return _json.loads(r.read())
+    except Exception:
+        return {}
+
+
 def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
     if router is not None and not model:
         if router.is_available("embedding"):
@@ -90,6 +100,10 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         files = files[:_budget]
         total = _budget
 
+    _ps = _ollama_ps(ollama_url)
+    for _m in _ps.get("models", []):
+        print(f"[GPU] {_m['name']} in VRAM: {_m.get('size_vram', 0) // 1024**2} MB")
+
     ok_count = 0
     error_count = 0
     dedup_count = 0
@@ -148,7 +162,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
                 _opts["codebook"] = _codebook_profile
             if do_force:
                 _opts["force"] = True
-            r = ingest(_src, f["content"], _conn, chroma, ollama_url, model,
+            r = ingest(_src, f["content"], _conn, chroma, ollama_url, _ingest_model,
                        opts=_opts or None, workspace_id=_workspace)
             return {"ok": True, "deduped": r.get("deduped", 0)}
         except Exception as exc:
@@ -189,6 +203,8 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     finally:
         pbar.close()
         print(f"[STAGE] ingest_loop done ok={ok_count} errors={error_count} dedup={dedup_count}")
+        for _m in _ollama_ps(ollama_url).get("models", []):
+            print(f"[GPU] Post-Run: {_m['name']} VRAM: {_m.get('size_vram', 0) // 1024**2} MB")
         conn.close()
 
     if _gpu_proc:
