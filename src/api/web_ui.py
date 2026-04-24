@@ -859,7 +859,12 @@ def _build_brain_figure(workspace_id: str):
         return _empty_fig("Ungültige Workspace-ID")
 
     _safe_wid = _os_b.path.basename(workspace_id)
-    cluster_path = CACHE_DIR / f"{_safe_wid}_wiki_clusters.json"
+    cache_root = CACHE_DIR.resolve()
+    cluster_path = (cache_root / f"{_safe_wid}_wiki_clusters.json").resolve()
+    try:
+        cluster_path.relative_to(cache_root)
+    except ValueError:
+        return _empty_fig("Ungültiger Workspace-Pfad")
 
     if not cluster_path.exists():
         return _empty_fig("Kein Wiki — 'Wiki generieren' klicken")
