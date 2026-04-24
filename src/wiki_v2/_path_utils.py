@@ -7,7 +7,11 @@ _SAFE_NAME_RE = re.compile(r'[^A-Za-z0-9_\-]')
 
 
 def safe_workspace_id(wid: str) -> str:
-    return os.path.basename(wid.replace('/', '_').replace('\\', '_'))
+    s = os.path.basename(str(wid or "").replace('/', '_').replace('\\', '_'))
+    s = _SAFE_NAME_RE.sub('_', s).strip("._-")
+    if not s or s in {".", ".."}:
+        raise ValueError(f"Invalid workspace id: {wid!r}")
+    return s
 
 
 def safe_filename_part(name: str) -> str:

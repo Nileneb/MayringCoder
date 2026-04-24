@@ -830,11 +830,12 @@ _BRAIN_HTML_UNUSED = """
 
 
 def _load_graph_data(workspace_id: str) -> dict | None:
-    import json, os
+    import json
     from src.config import WIKI_DIR
-    from src.wiki_v2._path_utils import confined_path
-    wid = os.path.basename(str(workspace_id or "").strip().replace('/', '_').replace('\\', '_'))
-    if not wid:
+    from src.wiki_v2._path_utils import confined_path, safe_workspace_id
+    try:
+        wid = safe_workspace_id(workspace_id)
+    except ValueError:
         return None
     path = confined_path(WIKI_DIR, wid, "graph.json")
     if not path.exists():
