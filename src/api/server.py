@@ -10,7 +10,7 @@ JWT_PUBLIC_KEY_PATH — keine Laravel-DB-Roundtrip mehr nötig.
 Start:
     .venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8090
 
-Endpoints (alle außer /health benötigen Bearer <RS256-JWT>):
+Endpoints (alle außer /health und /stats/summary benötigen Bearer <RS256-JWT>):
     POST /analyze          — submit analysis job (returns pid)
     POST /overview         — overview map of a repo (returns job_id)
     POST /turbulence       — turbulence analysis (returns job_id)
@@ -203,6 +203,39 @@ class ConversationMicroBatchRequest(BaseModel):
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.get("/stats/summary")
+def stats_summary() -> dict:
+    conn = _get_conn()
+    active = conn.execute("SELECT COUNT(*) FROM chunks WHERE is_active=1").fetchone()[0]
+    total  = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    fb = {r[0]: r[1] for r in conn.execute(
+        "SELECT signal, COUNT(*) FROM chunk_feedback GROUP BY signal"
+    ).fetchall()}
+    last_hour = conn.execute(
+        "SELECT COUNT(*) FROM ingestion_log WHERE created_at > datetime('now', '-1 hour')"
+    ).fetchone()[0]
+    last_24h = conn.execute(
+        "SELECT COUNT(*) FROM ingestion_log WHERE created_at > datetime('now', '-24 hours')"
+    ).fetchone()[0]
+    recent = [
+        {"event_type": r[0], "source_id": r[1], "created_at": r[2]}
+        for r in conn.execute(
+            "SELECT event_type, source_id, created_at FROM ingestion_log "
+            "ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+    ]
+    return {
+        "chunks":    {"active": active, "total": total},
+        "sources":   {"count": sources},
+        "feedback":  {"positive": fb.get("positive", 0),
+                      "negative": fb.get("negative", 0),
+                      "neutral":  fb.get("neutral",  0)},
+        "ingestion": {"last_hour": last_hour, "last_24h": last_24h},
+        "recent_ops": recent,
+    }
 
 
 @app.post("/pi-task")
