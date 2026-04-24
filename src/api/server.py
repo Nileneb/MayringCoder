@@ -945,8 +945,8 @@ async def benchmark_tasks(
                     repo_slug=_repo_slug, timeout=request.timeout,
                 ),
             )
-        except Exception as exc:
-            ans_a = f"[Fehler] {exc}"
+        except Exception:
+            ans_a = "[Fehler] Modell nicht verfügbar"
         time_a = round((time.monotonic() - t0) * 1000, 1)
 
         t0 = time.monotonic()
@@ -958,8 +958,8 @@ async def benchmark_tasks(
                     repo_slug=_repo_slug, timeout=request.timeout,
                 ),
             )
-        except Exception as exc:
-            ans_b = f"[Fehler] {exc}"
+        except Exception:
+            ans_b = "[Fehler] Modell nicht verfügbar"
         time_b = round((time.monotonic() - t0) * 1000, 1)
 
         score_a = _score_answer(task_text, ans_a, keywords)
@@ -1059,16 +1059,13 @@ async def wiki_graph(slug: str = "", workspace_id: str = "") -> dict:
     if not slug:
         return {"clusters": [], "edges": [], "activations": [], "error": "slug required"}
 
-    import re as _re_g
+    import re as _re_g, os as _os_g
     if not _re_g.fullmatch(r"[a-zA-Z0-9_\-.]+", slug):
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
 
-    _cache_root = CACHE_DIR.resolve()
-    cluster_path = (CACHE_DIR / f"{slug}_wiki_clusters.json").resolve()
-    index_path = (CACHE_DIR / f"{slug}_wiki_index.json").resolve()
-    if not str(cluster_path).startswith(str(_cache_root)) or \
-       not str(index_path).startswith(str(_cache_root)):
-        return {"clusters": [], "edges": [], "activations": [], "error": "invalid slug"}
+    _safe_slug = _os_g.path.basename(slug)
+    cluster_path = CACHE_DIR / f"{_safe_slug}_wiki_clusters.json"
+    index_path = CACHE_DIR / f"{_safe_slug}_wiki_index.json"
 
     clusters: list[dict] = []
     raw: list[dict] = []

@@ -843,40 +843,26 @@ def _build_brain_figure(workspace_id: str):
             xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
         )
 
-    import re as _re_b
+    import re as _re_b, os as _os_b
     from src.config import CACHE_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
 
-    if not workspace_id or not _re_b.fullmatch(r"[a-zA-Z0-9_\-.]+", workspace_id):
-        fig = go.Figure()
-        fig.add_annotation(text="Ungültige Workspace-ID",
-                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
-                           font=dict(color="#667788", size=14))
-        fig.update_layout(paper_bgcolor="#06080f", plot_bgcolor="#06080f",
-                          margin=dict(l=0, r=0, t=0, b=0), height=680)
-        return fig
+    def _empty_fig(msg: str):
+        f = go.Figure()
+        f.add_annotation(text=msg, xref="paper", yref="paper", x=0.5, y=0.5,
+                         showarrow=False, font=dict(color="#667788", size=14))
+        f.update_layout(paper_bgcolor="#06080f", plot_bgcolor="#06080f",
+                        margin=dict(l=0, r=0, t=0, b=0), height=680)
+        return f
 
-    _cache_root = CACHE_DIR.resolve()
-    cluster_path = (CACHE_DIR / f"{workspace_id}_wiki_clusters.json").resolve()
-    if not str(cluster_path).startswith(str(_cache_root)):
-        fig = go.Figure()
-        fig.add_annotation(text="Ungültige Workspace-ID",
-                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
-                           font=dict(color="#667788", size=14))
-        fig.update_layout(paper_bgcolor="#06080f", plot_bgcolor="#06080f",
-                          margin=dict(l=0, r=0, t=0, b=0), height=680)
-        return fig
+    if not workspace_id or not _re_b.fullmatch(r"[a-zA-Z0-9_\-.]+", workspace_id):
+        return _empty_fig("Ungültige Workspace-ID")
+
+    _safe_wid = _os_b.path.basename(workspace_id)
+    cluster_path = CACHE_DIR / f"{_safe_wid}_wiki_clusters.json"
 
     if not cluster_path.exists():
-        fig = go.Figure()
-        fig.add_annotation(
-            text="Kein Wiki — 'Wiki generieren' klicken",
-            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
-            font=dict(color="#667788", size=14),
-        )
-        fig.update_layout(paper_bgcolor="#06080f", plot_bgcolor="#06080f",
-                          margin=dict(l=0, r=0, t=0, b=0), height=680)
-        return fig
+        return _empty_fig("Kein Wiki — 'Wiki generieren' klicken")
 
     raw = _json.loads(cluster_path.read_text())
     G = nx.Graph()
