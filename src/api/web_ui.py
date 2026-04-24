@@ -666,184 +666,58 @@ def _save_router_config(*model_values) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Brain Visualization — Plotly + networkx
+# Brain — Plotly + networkx helpers
 # ---------------------------------------------------------------------------
-
-_BRAIN_HTML = """<REMOVED>"""  # kept as sentinel so grep still finds the name
-_BRAIN_HTML_UNUSED = """
-<div style="width:100%;height:780px;background:#06080f;border-radius:8px;overflow:hidden;position:relative;">
-  <canvas id="bc" style="width:100%;height:100%;display:block;"></canvas>
-  <div id="bi" style="position:absolute;top:12px;left:12px;color:#667;font:11px monospace;max-width:60%;">Lade Slugs...</div>
-  <div id="bt" style="position:absolute;display:none;background:rgba(0,0,0,.85);color:#eee;padding:5px 9px;border-radius:4px;font:11px monospace;pointer-events:none;max-width:220px;"></div>
-  <select id="bs" style="position:absolute;top:12px;right:12px;background:#0d1117;color:#aaa;border:1px solid #223;padding:4px 8px;border-radius:4px;font:11px monospace;min-width:180px;">
-    <option value="">-- Slug wählen --</option>
-  </select>
-</div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script>
-(function(){
-  // Determine API base — works both locally and behind nginx reverse proxy
-  const API = window.location.origin;
-
-  const cv=document.getElementById('bc'),info=document.getElementById('bi'),
-        tt=document.getElementById('bt'),sel=document.getElementById('bs');
-
-  // Resize canvas to actual container
-  function resize(){
-    const W=cv.parentElement.clientWidth,H=cv.parentElement.clientHeight;
-    renderer.setSize(W,H,false);
-    cam.aspect=W/H; cam.updateProjectionMatrix();
-  }
-  window.addEventListener('resize',resize);
-
-  const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
-  const scene=new THREE.Scene();
-  const cam=new THREE.PerspectiveCamera(55,1,.1,2000);
-  cam.position.z=130;
-  scene.add(new THREE.AmbientLight(0x223355,2.5));
-  const dl=new THREE.DirectionalLight(0x6688ff,2);
-  dl.position.set(60,60,60); scene.add(dl);
-  resize();
-
-  let meshes={},lines=[],clusters=[],t=0,currentSlug='';
-
-  // Populate slug dropdown — prefer slug matching logged-in workspace_id
-  function getWorkspaceId(){
-    const el=document.getElementById('brain_workspace_id');
-    if(el) return (el.querySelector('textarea')||el).value||'';
-    return '';
-  }
-  function loadSlugs(){
-    fetch(API+'/wiki/slugs').then(r=>r.json()).then(d=>{
-      const slugs=d.slugs||[];
-      if(slugs.length===0){
-        info.textContent='Kein Wiki — "Wiki generieren" klicken';
-        return;
-      }
-      sel.innerHTML='';
-      slugs.forEach(s=>{
-        const o=document.createElement('option');
-        o.value=s; o.textContent=s; sel.appendChild(o);
-      });
-      const wid=getWorkspaceId();
-      const best=slugs.find(s=>s===wid)||slugs[0];
-      sel.value=best; currentSlug=best; clusters=[]; poll();
-    }).catch(()=>{info.textContent='API nicht erreichbar ('+API+')';});
-  }
-  loadSlugs();
-  // Re-load slugs every 30s (picks up newly generated wikis)
-  setInterval(loadSlugs, 30000);
-
-  function fib(n,r){
-    const p=[],g=Math.PI*(3-Math.sqrt(5));
-    for(let i=0;i<n;i++){
-      const y=1-(i/(Math.max(n-1,1)))*2,rx=Math.sqrt(Math.max(0,1-y*y)),a=g*i;
-      p.push([r*rx*Math.cos(a),r*y,r*rx*Math.sin(a)]);
-    }
-    return p;
-  }
-
-  function build(data){
-    Object.values(meshes).forEach(m=>scene.remove(m));
-    lines.forEach(l=>scene.remove(l));
-    meshes={};lines=[];clusters=data.clusters;
-    const pos=fib(clusters.length,65),pm={};
-    clusters.forEach((c,i)=>{
-      pm[c.name]=pos[i];
-      const sz=Math.max(2,Math.min(9,Math.sqrt(c.size)*1.6));
-      const m=new THREE.Mesh(
-        new THREE.SphereGeometry(sz,20,20),
-        new THREE.MeshStandardMaterial({color:0x1a3a7a,emissive:0x081840,emissiveIntensity:1,roughness:.45,metalness:.3})
-      );
-      m.position.set(...pos[i]);
-      m.userData={name:c.name,files:c.files||[],labels:c.labels||[],_pulse:0};
-      scene.add(m); meshes[c.name]=m;
-    });
-    data.edges.forEach(e=>{
-      const a=pm[e.source],b=pm[e.target]; if(!a||!b)return;
-      const g=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]);
-      const l=new THREE.Line(g,new THREE.LineBasicMaterial({color:0x1a2a44,transparent:true,opacity:Math.min(.7,(e.weight||0.5)*.9)}));
-      scene.add(l); lines.push(l);
-    });
-    info.textContent=clusters.length+' Cluster · '+data.edges.length+' Kanten · '+currentSlug;
-  }
-
-  function applyActivations(data){
-    (data.activations||[]).forEach(act=>{
-      (act.clusters||[]).forEach(name=>{
-        const m=meshes[name]; if(!m)return;
-        m.userData._pulse=Math.max(m.userData._pulse||0,1-act.age_s/60);
-        m.material.color.setHex(0xffcc44);
-        m.material.emissive.setHex(0xff8800);
-      });
-    });
-  }
-
-  async function poll(){
-    const slug=sel.value; if(!slug)return;
-    try{
-      const r=await fetch(API+'/wiki/graph?slug='+encodeURIComponent(slug)+'&workspace_id='+encodeURIComponent(slug));
-      if(!r.ok){info.textContent='API-Fehler '+r.status+(r.status===401?' (Auth)':'');return;}
-      const d=await r.json();
-      if(d.error){info.textContent=d.error;return;}
-      if(d.clusters.length!==clusters.length||clusters.length===0){build(d);}
-      Object.values(meshes).forEach(m=>{if((m.userData._pulse||0)<.02){m.material.color.setHex(0x1a3a7a);m.material.emissive.setHex(0x081840);}});
-      applyActivations(d);
-    }catch(e){info.textContent='Fetch-Fehler: '+e.message;}
-  }
-  setInterval(poll,2000);
-  sel.addEventListener('change',()=>{clusters=[];currentSlug=sel.value;poll();});
-
-  // Raycaster tooltip
-  const ray=new THREE.Raycaster(),mo=new THREE.Vector2();
-  cv.addEventListener('mousemove',e=>{
-    const rc=cv.getBoundingClientRect();
-    mo.x=((e.clientX-rc.left)/rc.width)*2-1;
-    mo.y=-((e.clientY-rc.top)/rc.height)*2+1;
-    ray.setFromCamera(mo,cam);
-    const h=ray.intersectObjects(Object.values(meshes));
-    if(h.length){
-      const d=h[0].object.userData;
-      tt.style.display='block';
-      tt.style.left=(e.clientX-rc.left+14)+'px';
-      tt.style.top=(e.clientY-rc.top-18)+'px';
-      tt.innerHTML='<b>'+d.name+'</b><br>'+d.files.length+' Dateien<br>'+(d.labels||[]).slice(0,3).join(', ');
-    }else{tt.style.display='none';}
-  });
-
-  function animate(){
-    requestAnimationFrame(animate);
-    t+=.0025;
-    cam.position.x=Math.sin(t)*130; cam.position.z=Math.cos(t)*130; cam.lookAt(0,0,0);
-    Object.values(meshes).forEach(m=>{
-      const p=m.userData._pulse||0;
-      if(p>.02){m.userData._pulse=p*.993;m.material.emissiveIntensity=m.userData._pulse;}
-      else{m.userData._pulse=0;m.material.color.setHex(0x1a3a7a);m.material.emissive.setHex(0x081840);m.material.emissiveIntensity=1;}
-    });
-    renderer.render(scene,cam);
-  }
-  animate();
-})();
-</script>
-"""
 
 
 def _load_graph_data(workspace_id: str) -> dict | None:
     import json
-    from src.config import WIKI_DIR
+    from src.config import CACHE_DIR, WIKI_DIR
     from src.wiki_v2._path_utils import confined_path, safe_workspace_id
     try:
         wid = safe_workspace_id(workspace_id)
     except ValueError:
         return None
-    path = confined_path(WIKI_DIR, wid, "graph.json")
-    if not path.exists():
-        return None
+
+    # DB-first: read live data from wiki_v2.db
     try:
-        return json.loads(path.read_text())
+        from src.wiki_v2.graph import WikiGraph
+        db = WikiGraph(wid, wid, CACHE_DIR / "wiki_v2.db")
+        nodes = db.all_nodes()
+        if nodes:
+            edges = db.get_edges()
+            clusters = db.get_clusters()
+            db.close()
+            return {
+                "nodes": [
+                    {"id": n.id, "cluster_id": n.cluster_id or "", "loc": n.loc or 0, "summary": n.summary or ""}
+                    for n in nodes
+                ],
+                "edges": [
+                    {"source": e.source, "target": e.target, "type": e.type, "weight": e.weight}
+                    for e in edges
+                ],
+                "clusters": [
+                    {"cluster_id": c.cluster_id, "name": c.name, "description": c.description,
+                     "members": c.members}
+                    for c in clusters
+                ],
+                "workspace_id": wid,
+                "generated_at": "",
+            }
+        db.close()
     except Exception:
-        return None
+        pass
+
+    # Fallback: graph.json snapshot
+    try:
+        path = confined_path(WIKI_DIR, wid, "graph.json")
+        if path.exists():
+            return json.loads(path.read_text())
+    except Exception:
+        pass
+
+    return None
 
 
 def _build_cluster_graph(data: dict | None, workspace_id: str):

@@ -480,6 +480,25 @@ def run_analysis(
     print(f"Run-History: {run_path.name}")
     print(f"Fertig in {elapsed:.0f}s")
 
+    try:
+        from src.wiki_v2.watcher import on_post_analyze, on_post_finding
+        wid = getattr(args, "workspace_id", "default")
+        slug = _repo_slug(repo_url)
+        for r in results:
+            if "error" in r or not r.get("filename"):
+                continue
+            on_post_analyze(wid, slug, r["filename"])
+            texts = []
+            for item in r.get("potential_smells", []) + r.get("codierungen", []):
+                for key in ("reasoning", "text", "description", "summary"):
+                    if item.get(key):
+                        texts.append(str(item[key]))
+                        break
+            if texts:
+                on_post_finding(wid, slug, r["filename"], " ".join(texts))
+    except Exception:
+        pass
+
 
 def _run_overview(
     args,

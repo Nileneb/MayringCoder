@@ -171,3 +171,12 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
             generate(project_filter=slug)
         except Exception as _kg_exc:
             print(f"  Knowledge Graph Fehler: {_kg_exc}")
+
+    try:
+        from src.wiki_v2.watcher import on_post_ingest
+        wid = getattr(args, "workspace_id", "default")
+        slug = _repo_slug(repo_url)
+        for f in files:
+            on_post_ingest(wid, slug, f"repo:{repo_url}:{f['filename']}")
+    except Exception:
+        pass
