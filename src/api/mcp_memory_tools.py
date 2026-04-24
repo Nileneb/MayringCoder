@@ -22,42 +22,6 @@ from src.memory.store import (
 
 def register_memory_tools(mcp: FastMCP) -> None:
 
-    def put(
-        source: dict,
-        content: str,
-        scope: str = "repo",
-        tags: list[str] | None = None,
-        categorize: bool = False,
-        log: bool = False,
-        workspace_id: str = "default",
-    ) -> dict:
-        """Ingest content into persistent memory.
-
-        Args:
-            source: Dict with fields: source_id, source_type, repo, path,
-                    branch (opt), commit (opt), content_hash (opt)
-            content: Raw text content to ingest and chunk
-            scope: Scope label (default: "repo")
-            tags: Optional extra tags stored as category_labels on all chunks
-            categorize: Run Mayring LLM categorization (requires Ollama)
-            log: Write JSONL log entry
-            workspace_id: Tenant namespace (default: "default")
-
-        Returns:
-            {source_id, chunk_ids, indexed, deduped, superseded}
-        """
-        try:
-            ws = _enforce_tenant(workspace_id) or workspace_id
-            result = _run_ingest(
-                source, content, _get_conn(), _get_chroma(),
-                _OLLAMA_URL, _MODEL, {"categorize": categorize, "log": log},
-                ws,
-            )
-            invalidate_query_cache()
-            return result
-        except Exception as exc:
-            return {"error": str(exc)}
-
     @mcp.tool()
     def get(chunk_id: str) -> dict:
         """Retrieve a specific memory chunk by ID.
