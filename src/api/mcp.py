@@ -498,6 +498,7 @@ def feedback(
     """
     try:
         add_feedback(_get_conn(), chunk_id, signal, metadata or {})
+        invalidate_query_cache()
         return {"chunk_id": chunk_id, "recorded": True}
     except Exception as exc:
         return {"error": str(exc)}

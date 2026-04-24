@@ -481,6 +481,19 @@ def add_feedback(
     _maybe_commit(conn)
 
 
+def get_feedback_score(conn: sqlite3.Connection, chunk_id: str) -> float:
+    """Net feedback: 0.5=neutral, 1.0=nur positiv, 0.0=nur negativ."""
+    rows = conn.execute(
+        "SELECT signal FROM chunk_feedback WHERE chunk_id = ?",
+        (chunk_id,),
+    ).fetchall()
+    if not rows:
+        return 0.5
+    pos = sum(1 for (s,) in rows if s == "positive")
+    neg = sum(1 for (s,) in rows if s == "negative")
+    return max(0.0, min(1.0, (pos - neg) / len(rows) * 0.5 + 0.5))
+
+
 # ---------------------------------------------------------------------------
 # Ingestion log
 # ---------------------------------------------------------------------------

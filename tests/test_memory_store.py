@@ -11,6 +11,7 @@ from src.memory.store import (
     find_by_text_hash,
     get_chunk,
     get_chunks_by_source,
+    get_feedback_score,
     get_source,
     init_memory_db,
     insert_chunk,
@@ -245,6 +246,35 @@ class TestFeedback:
         assert rows[0]["signal"] == "positive"
         meta = json.loads(rows[0]["metadata"])
         assert meta["query"] == "auth flow"
+
+    def test_feedback_score_neutral_when_empty(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        assert get_feedback_score(conn, "nonexistent-chunk-id") == 0.5
+
+    def test_feedback_score_all_positive(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        upsert_source(conn, _make_source())
+        chunk = _make_chunk()
+        insert_chunk(conn, chunk)
+        add_feedback(conn, chunk.chunk_id, "positive")
+        assert get_feedback_score(conn, chunk.chunk_id) == 1.0
+
+    def test_feedback_score_all_negative(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        upsert_source(conn, _make_source())
+        chunk = _make_chunk()
+        insert_chunk(conn, chunk)
+        add_feedback(conn, chunk.chunk_id, "negative")
+        assert get_feedback_score(conn, chunk.chunk_id) == 0.0
+
+    def test_feedback_score_balanced(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        upsert_source(conn, _make_source())
+        chunk = _make_chunk()
+        insert_chunk(conn, chunk)
+        add_feedback(conn, chunk.chunk_id, "positive")
+        add_feedback(conn, chunk.chunk_id, "negative")
+        assert get_feedback_score(conn, chunk.chunk_id) == 0.5
 
 
 class TestKVCache:

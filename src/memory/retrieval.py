@@ -20,7 +20,7 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from src.memory.schema import Chunk, RetrievalRecord
-from src.memory.store import get_chunk, kv_get
+from src.memory.store import get_chunk, kv_get, get_feedback_score
 
 # ---------------------------------------------------------------------------
 # Query-Cache (in-process, invalidated on any memory mutation)
@@ -47,10 +47,11 @@ except ImportError:
     _HAS_EMBED = False
 
 _WEIGHTS = {
-    "vector": 0.45,
-    "symbolic": 0.25,
-    "recency": 0.15,
-    "source_affinity": 0.15,
+    "vector":          0.45,
+    "symbolic":        0.25,
+    "recency":         0.15,
+    "source_affinity": 0.10,
+    "feedback":        0.05,   # additive ±0.05 Bonus
 }
 
 _RECENCY_DECAY_DAYS = 30.0
@@ -155,6 +156,38 @@ def _normalize_vector_scores(
 
 
 # ---------------------------------------------------------------------------
+# Stage 3b: Optional LLM pre-filter
+# ---------------------------------------------------------------------------
+
+def _llm_relevance_scores(
+    query: str,
+    candidates: list[Chunk],
+    ollama_url: str,
+    model: str = "mayring-qwen3:2b",
+    timeout: float = 10.0,
+) -> dict[str, float]:
+    """Best-effort: LLM rates relevance of each candidate for query.
+    Returns chunk_id → [0.0, 1.0]. Falls back to 0.5 on any error."""
+    from src.ollama_client import generate as _oll_gen
+    scores: dict[str, float] = {}
+    for chunk in candidates[:20]:
+        prompt = (
+            f"Query: {query}\n\n"
+            f"Chunk: {chunk.text[:300]}\n\n"
+            "Rate relevance 0.0–1.0. Answer ONLY with the number."
+        )
+        try:
+            raw = _oll_gen(
+                ollama_url, model, prompt,
+                stream=False, timeout=timeout, num_predict=8,
+            ).strip()
+            scores[chunk.chunk_id] = max(0.0, min(1.0, float(raw)))
+        except Exception:
+            scores[chunk.chunk_id] = 0.5
+    return scores
+
+
+# ---------------------------------------------------------------------------
 # Stage 4: Recency and affinity
 # ---------------------------------------------------------------------------
 
@@ -187,6 +220,7 @@ def _rerank(
     vector_scores: dict[str, float],
     symbolic_scores: dict[str, float],
     top_k: int,
+    conn: sqlite3.Connection,
     affinity_source_id: str | None = None,
     source_type_map: dict[str, str] | None = None,
     session_compacted: bool = False,
@@ -199,12 +233,14 @@ def _rerank(
         ss = symbolic_scores.get(chunk.chunk_id, 0.0)
         sr = _recency_score(chunk)
         sa = _source_affinity_score(chunk, affinity_source_id)
+        sf = get_feedback_score(conn, chunk.chunk_id)
 
         score_final = (
             _WEIGHTS["vector"] * sv
             + _WEIGHTS["symbolic"] * ss
             + _WEIGHTS["recency"] * sr
             + _WEIGHTS["source_affinity"] * sa
+            + _WEIGHTS["feedback"] * (sf * 2.0 - 1.0)   # [0,1]→[-1,1] → ±0.05
         )
 
         # Compaction boost: prefer conversation_summary section chunks
@@ -357,6 +393,13 @@ def search(
         except Exception as exc:
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
 
+    # Stage 3b: optional LLM pre-filter (opt-in via opts["llm_prefilter"]=True)
+    if opts.get("llm_prefilter") and ollama_url and candidates:
+        llm_model = opts.get("llm_prefilter_model", "mayring-qwen3:2b")
+        llm_s = _llm_relevance_scores(query, candidates, ollama_url, model=llm_model)
+        candidates.sort(key=lambda c: llm_s.get(c.chunk_id, 0.5), reverse=True)
+        candidates = candidates[:max(top_k * 2, 6)]
+
     # Build source_type lookup for session_compacted boost
     source_type_map: dict[str, str] = {}
     if session_compacted and candidates:
@@ -370,7 +413,8 @@ def search(
 
     # Stage 4: re-rank
     ranked = _rerank(
-        candidates, vector_scores, symbolic_scores, top_k, affinity_source_id,
+        candidates, vector_scores, symbolic_scores, top_k, conn,
+        affinity_source_id,
         source_type_map=source_type_map,
         session_compacted=session_compacted,
     )

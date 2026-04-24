@@ -4,9 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.schema import Chunk, RetrievalRecord
-from src.memory.store import init_memory_db, upsert_source, insert_chunk
-from src.memory.schema import Source
+from src.memory.schema import Chunk, RetrievalRecord, Source
+from src.memory.store import init_memory_db, upsert_source, insert_chunk, add_feedback
 from src.memory.retrieval import (
     _scope_filter,
     _symbolic_score,
@@ -365,3 +364,62 @@ class TestQueryCache:
         assert k1 != k2
         assert k1 != k3
         assert k2 != k3
+
+
+class TestFeedbackRanking:
+    def test_positive_feedback_ranks_higher(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:f.py")
+        upsert_source(conn, src)
+        # Two chunks with identical text (same symbolic/vector scores)
+        ca = _make_chunk(src.source_id, 0, text="def process(): return result")
+        cb = _make_chunk(src.source_id, 1, text="def process(): return result")
+        insert_chunk(conn, ca)
+        insert_chunk(conn, cb)
+        add_feedback(conn, ca.chunk_id, "positive")
+
+        records = _rerank(
+            [ca, cb],
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            top_k=2,
+            conn=conn,
+        )
+        assert records[0].chunk_id == ca.chunk_id
+
+    def test_negative_feedback_ranks_lower(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:g.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="def compute(): pass")
+        cb = _make_chunk(src.source_id, 1, text="def compute(): pass")
+        insert_chunk(conn, ca)
+        insert_chunk(conn, cb)
+        add_feedback(conn, ca.chunk_id, "negative")
+
+        records = _rerank(
+            [ca, cb],
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            top_k=2,
+            conn=conn,
+        )
+        assert records[0].chunk_id == cb.chunk_id
+
+    def test_neutral_no_change(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:h.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="x")
+        cb = _make_chunk(src.source_id, 1, text="x")
+        insert_chunk(conn, ca)
+        insert_chunk(conn, cb)
+        # No feedback for either — both score equally; order stable by ordinal
+        records = _rerank(
+            [ca, cb],
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            top_k=2,
+            conn=conn,
+        )
+        assert len(records) == 2
