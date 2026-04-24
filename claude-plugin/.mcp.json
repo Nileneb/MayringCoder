@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "claude_ai_Memory": {
+      "type": "sse",
+      "url": "https://mcp.linn.games/sse",
+      "headers": {
+        "Authorization": "Bearer ${MAYRING_JWT}"
+      }
+    }
+  }
+}

@@ -9,6 +9,7 @@ __pycache__/
 /reports
 appLinnGames.txt
 .mcp.json
+!claude-plugin/.mcp.json
 unsloth_compiled_cache/
 .superpowers/
 .claude/*
