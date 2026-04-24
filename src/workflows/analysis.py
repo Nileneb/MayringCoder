@@ -290,6 +290,27 @@ def run_analysis(
         except Exception as _pi_check_exc:
             print(f"  Warnung: Pi-Agent Memory-Check fehlgeschlagen: {_pi_check_exc}")
 
+    # Load wiki context map for injection (skipped when --no-wiki-inject)
+    _wiki_context_map: dict[str, str] = {}
+    if not getattr(args, "no_wiki_inject", False):
+        try:
+            from src.config import CACHE_DIR
+            from src.wiki_v2.graph import WikiGraph
+            from src.wiki_v2.injection import WikiContextInjector
+            _wid = getattr(args, "workspace_id", "default")
+            _wg = WikiGraph(_wid, _pi_repo_slug, CACHE_DIR / "wiki_v2.db")
+            if _wg.node_count() > 0:
+                _inj = WikiContextInjector()
+                for _fn in non_test_files:
+                    _ctx = _inj.build_context(_fn, _wg)
+                    if _ctx:
+                        _wiki_context_map[_fn] = _ctx
+                if _wiki_context_map:
+                    print(f"  Wiki-Kontext aktiv: {len(_wiki_context_map)} Dateien angereichert")
+            _wg.close()
+        except Exception:
+            pass
+
     _time_budget_hit = False
     if non_test_files:
         print(f"\nAnalysiere {len(non_test_files)} Nicht-Test-Dateien mit {model} ...")
@@ -301,6 +322,7 @@ def run_analysis(
             time_budget=args.time_budget,
             use_pi=_use_pi,
             pi_repo_slug=_pi_repo_slug,
+            wiki_context_map=_wiki_context_map,
         )
         results.extend(batch_results)
 

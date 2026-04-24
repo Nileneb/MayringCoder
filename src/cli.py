@@ -150,6 +150,15 @@ def parse_args() -> argparse.Namespace:
                    help="Wiki-Modus: code (Import/Call-Graph) oder paper (Paper-Verknüpfungen)")
     p.add_argument("--wiki-cluster-strategy", choices=["louvain", "full"], default="louvain",
                    help="Wiki 2.0 Clustering-Strategie: louvain (schnell) oder full (Louvain+Embedding+LLM)")
+    p.add_argument("--wiki-second-opinion", metavar="MODEL", default=None,
+                   help="Zweites Modell zur Validierung von Cluster-Zuordnungen und concept_link-Edges. "
+                        "Z. B. --wiki-second-opinion gemma4:e4b. Automatische Split-Umsetzung bei SPLIT_VORSCHLAG.")
+    p.add_argument("--wiki-history", action="store_true",
+                   help="Zeigt die letzten 20 Wiki-Snapshots für den aktuellen Workspace.")
+    p.add_argument("--wiki-team-activity", action="store_true",
+                   help="Zeigt Team-Contribution-Übersicht (letzte 30 Tage).")
+    p.add_argument("--wiki-history-cleanup", type=int, metavar="N", default=None,
+                   help="Behält nur die N neuesten Wiki-Snapshots, löscht ältere.")
     p.add_argument("--generate-ambient", action="store_true",
                    help="Ambient-Snapshot regenerieren (cache via SQLite, model required)")
     p.add_argument("--ingest-issues", metavar="REPO",
@@ -177,6 +186,9 @@ def parse_args() -> argparse.Namespace:
                    help="Pi-Agent deaktivieren (Standard: an). Pi nutzt Memory-Tool-Calling um "
                         "Projektkontext abzufragen und false positives zu reduzieren. "
                         "Deaktivieren wenn keine Memory-DB vorhanden oder Ressourcen knapp.")
+    p.add_argument("--no-wiki-inject", action="store_true",
+                   help="Wiki-Kontext-Injektion deaktivieren (für A/B-Tests). Standard: Wiki-Kontext "
+                        "wird automatisch in Analyse-Prompts eingefügt wenn graph.json vorhanden.")
     p.add_argument("--pi-task", metavar="TASK",
                    help="Freier Auftrag an Pi mit Memory-Zugriff (z.B. 'Entwickle PICO-Suchterms für X'). "
                         "Gibt die Antwort als Freitext aus — kein JSON-Zwang. "
@@ -345,13 +357,77 @@ def main() -> None:
             for e in edges:
                 db.add_edge(e)
             engine = ClusterEngine()
-            engine.cluster(db, strategy=getattr(args, "wiki_cluster_strategy", "louvain"),
-                           ollama_url=ollama_url, model=model)
+            clusters = engine.cluster(db, strategy=getattr(args, "wiki_cluster_strategy", "louvain"),
+                                      ollama_url=ollama_url, model=model)
+
+            # Second-Opinion Validierung (wenn --wiki-second-opinion gesetzt)
+            so_model = getattr(args, "wiki_second_opinion", None)
+            if so_model and clusters:
+                from src.wiki_v2.second_opinion import WikiSecondOpinion
+                so = WikiSecondOpinion()
+                c_verdicts = so.validate_clusters(clusters, db, so_model, ollama_url)
+                clusters = so.apply_cluster_verdicts(clusters, c_verdicts, db)
+                all_edges = db.get_edges()
+                e_verdicts = so.validate_edges(all_edges, db, so_model, ollama_url)
+                print(so.second_opinion_report(c_verdicts, e_verdicts))
+
             db.to_json()
+            # Auto-Snapshot nach jedem Rebuild
+            from src.wiki_v2.history import WikiHistory
+            WikiHistory().create_snapshot(db, trigger="rebuild")
             db.close()
             print(f"Wiki 2.0 graph.json geschrieben für workspace '{wid}'")
         except Exception as _e:
             print(f"Wiki 2.0 update skipped: {_e}")
+        sys.exit(0)
+
+    if getattr(args, "wiki_history", False):
+        wid = args.workspace_id or "default"
+        from src.config import CACHE_DIR
+        from src.wiki_v2 import store as _ws
+        from src.wiki_v2.history import WikiHistory
+        import sqlite3 as _sq
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        snaps = WikiHistory().timeline(conn, wid)
+        conn.close()
+        if not snaps:
+            print(f"Keine Snapshots für workspace '{wid}'.")
+        else:
+            print(f"{'ID':>5}  {'Trigger':<20} {'Nodes':>5} {'Edges':>5} {'Cluster':>7}  Zeitstempel")
+            print("-" * 65)
+            for s in snaps:
+                print(f"{s.snapshot_id:>5}  {s.trigger:<20} {s.node_count:>5} {s.edge_count:>5} {s.cluster_count:>7}  {s.created_at}")
+        sys.exit(0)
+
+    if getattr(args, "wiki_team_activity", False):
+        wid = args.workspace_id or "default"
+        from src.config import CACHE_DIR
+        from src.wiki_v2.history import team_activity
+        import sqlite3 as _sq
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        activity = team_activity(conn, wid)
+        conn.close()
+        if not activity:
+            print(f"Keine Contributions für workspace '{wid}' (letzte 30 Tage).")
+        else:
+            print(f"Team-Aktivität workspace '{wid}' (letzte 30 Tage):")
+            for user, count in sorted(activity.items(), key=lambda x: -x[1]):
+                print(f"  {user}: {count} Aktionen")
+        sys.exit(0)
+
+    if getattr(args, "wiki_history_cleanup", None) is not None:
+        wid = args.workspace_id or "default"
+        keep = args.wiki_history_cleanup
+        from src.config import CACHE_DIR
+        from src.wiki_v2.history import WikiHistory
+        import sqlite3 as _sq
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        deleted = WikiHistory().cleanup(conn, wid, keep=keep)
+        conn.close()
+        print(f"{deleted} Snapshot(s) gelöscht, {keep} neueste behalten.")
         sys.exit(0)
 
     if args.rebuild_transitions:

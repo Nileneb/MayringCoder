@@ -212,6 +212,7 @@ def analyze_file(
     model: str,
     project_context: str | None = None,
     hot_zone_context: str | None = None,
+    wiki_context: str = "",
 ) -> dict:
     """Analyze one file. Uses a two-stage output strategy:
 
@@ -240,6 +241,8 @@ def analyze_file(
     # Ollama's /api/generate `system` parameter gives these instructions higher
     # authority — models are less likely to prepend prose or deviate from the format.
     user_parts = []
+    if wiki_context:
+        user_parts.append(f"## Projekt-Kontext (Wiki)\n{wiki_context}\n")
     if project_context:
         user_parts.append(f"{project_context}\n")
     if hot_zone_context:
@@ -374,6 +377,7 @@ def analyze_files(
     time_budget: float | None = None,
     use_pi: bool = False,
     pi_repo_slug: str | None = None,
+    wiki_context_map: dict[str, str] | None = None,
 ) -> tuple[list[dict], bool]:
     """Analyze multiple files, optionally enriching each with per-file context.
 
@@ -401,11 +405,12 @@ def analyze_files(
         if ctx is None:
             ctx = project_context
         hz_ctx = hot_zone_context_map.get(fn) if hot_zone_context_map else None
+        wctx = (wiki_context_map or {}).get(fn, "")
         if use_pi:
             from src.agents.pi import analyze_with_memory
-            result = analyze_with_memory(file, ollama_url, model, pi_repo_slug)
+            result = analyze_with_memory(file, ollama_url, model, pi_repo_slug, wiki_context=wctx)
         else:
-            result = analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx)
+            result = analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx, wiki_context=wctx)
         results.append(result)
         _bs = get_batch_size()
         if _bs > 0 and i % _bs == 0 and i < total:

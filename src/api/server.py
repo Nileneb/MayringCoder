@@ -1252,6 +1252,80 @@ async def wiki_edge_create(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/wiki/history")
+async def wiki_history(
+    workspace_id: str = Depends(get_workspace),
+    limit: int = 20,
+) -> dict:
+    """Return last `limit` graph snapshots for a workspace (newest first)."""
+    try:
+        import sqlite3 as _sq
+        from src.config import CACHE_DIR
+        from src.wiki_v2.history import WikiHistory
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        hist = WikiHistory()
+        snaps = hist.timeline(conn, workspace_id, limit=limit)
+        conn.close()
+        return {"snapshots": [
+            {"snapshot_id": s.snapshot_id, "trigger": s.trigger,
+             "node_count": s.node_count, "edge_count": s.edge_count,
+             "cluster_count": s.cluster_count, "created_at": s.created_at}
+            for s in snaps
+        ]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/wiki/diff")
+async def wiki_diff(
+    from_date: str,
+    to_date: str,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Return diff between two ISO-8601 dates for a workspace."""
+    try:
+        import sqlite3 as _sq
+        from src.config import CACHE_DIR
+        from src.wiki_v2.history import WikiHistory
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        hist = WikiHistory()
+        diff = hist.diff(conn, workspace_id, from_date, to_date)
+        conn.close()
+        return {
+            "nodes_added": diff.nodes_added,
+            "nodes_removed": diff.nodes_removed,
+            "edges_added": diff.edges_added,
+            "edges_removed": diff.edges_removed,
+            "clusters_added": diff.clusters_added,
+            "clusters_removed": diff.clusters_removed,
+            "contributors": diff.contributors,
+            "summary": diff.summary(),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/wiki/team")
+async def wiki_team_activity(
+    workspace_id: str = Depends(get_workspace),
+    days: int = 30,
+) -> dict:
+    """Return team contribution counts per user for the last `days` days."""
+    try:
+        import sqlite3 as _sq
+        from src.config import CACHE_DIR
+        from src.wiki_v2.history import team_activity
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        activity = team_activity(conn, workspace_id, days=days)
+        conn.close()
+        return {"workspace_id": workspace_id, "days": days, "users": activity}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 def main() -> None:
     import uvicorn
     import os

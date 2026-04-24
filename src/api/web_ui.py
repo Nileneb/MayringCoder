@@ -1043,6 +1043,30 @@ def _build_brain_figure(workspace_id: str):
     )
     return fig
 
+def _build_history_timeline(workspace_id: str) -> list:
+    """Return rows for gr.Dataframe showing last 20 snapshots."""
+    try:
+        import sqlite3 as _sq, re as _re_ht
+        from src.config import CACHE_DIR
+        from src.wiki_v2.history import WikiHistory
+
+        wid = str(workspace_id or "").strip()
+        if not wid or not _re_ht.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-/]*", wid):
+            return []
+
+        conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
+        conn.row_factory = _sq.Row
+        hist = WikiHistory()
+        snaps = hist.timeline(conn, wid, limit=20)
+        conn.close()
+        return [
+            [s.snapshot_id, s.trigger, s.node_count, s.edge_count, s.cluster_count, s.created_at]
+            for s in snaps
+        ]
+    except Exception:
+        return []
+
+
 def _build_cluster_stats(workspace_id: str) -> list:
     """Return rows for gr.Dataframe: [cluster_id, name, members, internal_edges]."""
     try:
@@ -1967,6 +1991,7 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
         with gr.Tab("🧠 Brain"):
             with gr.Row():
                 brain_wiki_btn = gr.Button("🔄 Wiki generieren", variant="primary")
+                brain_history_btn = gr.Button("📸 Snapshot speichern")
             brain_status = gr.Textbox(label="Status", interactive=False, lines=2)
             brain_plot = gr.Plot(label="Wiki Knowledge Graph")
             brain_cluster_stats = gr.Dataframe(
@@ -1974,6 +1999,12 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 datatype=["str", "str", "number", "number"],
                 interactive=False,
                 label="Cluster-Statistiken",
+            )
+            brain_timeline = gr.Dataframe(
+                headers=["ID", "Trigger", "Nodes", "Edges", "Cluster", "Zeitstempel"],
+                datatype=["number", "str", "number", "number", "number", "str"],
+                interactive=False,
+                label="Snapshot-Timeline (letzte 20)",
             )
             brain_timer = gr.Timer(value=5, active=False)
 
@@ -1994,9 +2025,30 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 except Exception as exc:
                     return f"❌ Fehler: {exc}"
 
+            def _create_snapshot(workspace_id: str) -> str:
+                if not workspace_id:
+                    return "Nicht eingeloggt."
+                try:
+                    import sqlite3 as _sq
+                    from src.config import CACHE_DIR
+                    from src.wiki_v2.graph import WikiGraph
+                    from src.wiki_v2.history import WikiHistory
+                    db = WikiGraph(workspace_id, workspace_id, CACHE_DIR / "wiki_v2.db")
+                    hist = WikiHistory()
+                    sid = hist.create_snapshot(db, trigger="manual")
+                    db.close()
+                    return f"✅ Snapshot #{sid} gespeichert."
+                except Exception as exc:
+                    return f"❌ Fehler: {exc}"
+
             brain_wiki_btn.click(
                 fn=_generate_wiki_for_workspace,
                 inputs=[_workspace_state, _token_state],
+                outputs=[brain_status],
+            )
+            brain_history_btn.click(
+                fn=_create_snapshot,
+                inputs=[_workspace_state],
                 outputs=[brain_status],
             )
             _workspace_state.change(
@@ -2023,6 +2075,16 @@ def build_app(ollama_url: str, api_url: str = "http://localhost:8080") -> gr.Blo
                 fn=_build_cluster_stats,
                 inputs=[_workspace_state],
                 outputs=[brain_cluster_stats],
+            )
+            _workspace_state.change(
+                fn=_build_history_timeline,
+                inputs=[_workspace_state],
+                outputs=[brain_timeline],
+            )
+            brain_timer.tick(
+                fn=_build_history_timeline,
+                inputs=[_workspace_state],
+                outputs=[brain_timeline],
             )
 
         # =======================================================================
