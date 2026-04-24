@@ -156,6 +156,25 @@ TURB_MODEL=mistral:7b-instruct       # optional, for turbulence LLM mode
 EMBEDDING_MODEL=nomic-embed-text     # used for RAG and MCP memory
 ```
 
+### Auth & Workspace Isolation (HTTP/MCP mode)
+
+By default auth is disabled (stdio usage). For HTTP deployments with multiple users:
+
+```env
+MCP_AUTH_ENABLED=false              # set to true to require JWT on every request
+JWT_PUBLIC_KEY_PATH=./secrets/jwt_public.pem   # RS256 public key from your auth server
+JWT_ISSUER=https://app.linn.games   # expected "iss" claim
+JWT_AUDIENCE=mayringcoder           # expected "aud" claim
+```
+
+**How it works:**
+- `MCP_AUTH_ENABLED=false` (default): no token required, workspace isolation relies on caller-supplied `--workspace-id`
+- `MCP_AUTH_ENABLED=true`: every HTTP request must carry `Authorization: Bearer <jwt>` or `X-Auth-Token: <jwt>`; the token's `workspace_id` claim overrides any caller-supplied value
+- Admin tokens (scope `["admin"]`) may query across workspaces
+- Invalid or missing token → 401 before any data access
+
+The JWT is issued by `app.linn.games` (RS256). Place the matching public key at `JWT_PUBLIC_KEY_PATH`. Required claims: `exp`, `iss`, `aud`, `workspace_id`.
+
 ---
 
 ## Usage

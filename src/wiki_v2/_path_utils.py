@@ -6,7 +6,7 @@ from pathlib import Path
 _SAFE_NAME_RE = re.compile(r'[^A-Za-z0-9_\-]')
 
 
-def safe_workspace_id(wid: str) -> str:
+def safe_workspace_id(wid: str | None) -> str:
     s = os.path.basename(str(wid or "").replace('/', '_').replace('\\', '_'))
     s = _SAFE_NAME_RE.sub('_', s).strip("._-")
     if not s or s in {".", ".."}:
