@@ -132,6 +132,9 @@ def parse_args() -> argparse.Namespace:
                         "Vektor-DB (benötigt vorherigen --mode overview Lauf).")
     p.add_argument("--populate-memory", action="store_true",
                    help="Repo laden und alle Dateien in die Memory-Pipeline ingesten.")
+    p.add_argument("--workers", type=int, default=1, metavar="N",
+                   help="Parallele Ingest-Worker für populate-memory (Standard: 1). "
+                        "Empfohlen: 2-3 mit mayring-qwen3:2b.")
     # Mayring-Kategorisierung ist default an — sie IST die Pipeline, nicht ein
     # Zusatz. Wer Rohingestion ohne Labels will, muss explizit opt-out.
     p.add_argument("--no-memory-categorize", dest="memory_categorize",

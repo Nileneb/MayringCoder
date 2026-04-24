@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib as _hashlib
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +28,11 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     if router is not None and not model:
         if router.is_available("embedding"):
             model = router.resolve("embedding")
+
+    _ingest_model = model
+    if router is not None:
+        _ingest_model = router.resolve_with_fallback("mayring_code") or model
+    print(f"[populate-memory] Modell: {_ingest_model} (Task: mayring_code)")
 
     from src.gpu_metrics import format_summary, parse_metrics, start_monitoring, stop_monitoring
     from src.memory.ingest import get_or_create_chroma_collection, ingest
@@ -108,57 +115,79 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         print(f"[populate-memory] --force-reingest: {len(old_chunk_ids)} "
               f"alte Chunks invalidiert.")
 
-    # File-Level tqdm — wird vom API-Server als Live-Progress-Signal
-    # geparsed (siehe src/api/job_queue.py::_parse_progress_line). Der
-    # import ist defensiv, damit ein fehlendes tqdm nicht das Populate
-    # bricht (passiert in manchen Dev-Envs ohne das Extra).
     try:
         from tqdm import tqdm as _tqdm
     except ImportError:  # pragma: no cover
         def _tqdm(it, **_kw):
             return it
 
-    print(f"[STAGE] ingest_loop start total={total}")
-    try:
-        for f in _tqdm(files, desc="populate-memory", unit="file", total=len(files)):
-            content_hash = _content_hash(f["content"])
-            source = Source(
+    _workers = max(1, int(getattr(args, "workers", 1) or 1))
+    _delay = float(getattr(args, "batch_delay", None) or 0)
+    _workspace = getattr(args, "workspace_id", "default")
+    _do_categorize = getattr(args, "memory_categorize", True) is not False
+    _codebook_profile = getattr(args, "codebook_profile", None)
+
+    def _ingest_one(f: dict) -> dict:
+        """Verarbeitet eine Datei — thread-safe (eigene DB-Connection pro Worker)."""
+        from src.memory.store import init_memory_db
+        _conn = init_memory_db()
+        try:
+            _src = Source(
                 source_id=f"repo:{repo_url}:{f['filename']}",
                 source_type="repo_file",
                 repo=repo_url,
                 path=f["filename"],
-                content_hash=content_hash,
+                content_hash=_content_hash(f["content"]),
                 branch="",
                 commit="",
             )
-            try:
-                _opts: dict = {}
-                # Mayring-Kategorisierung ist default an (siehe cli.py); Opt-Out
-                # nur wenn ein Caller args.memory_categorize explizit auf False
-                # setzt. Kein "silent off" mehr.
-                if getattr(args, "memory_categorize", True) is False:
-                    _opts["categorize"] = False
-                codebook_profile = getattr(args, "codebook_profile", None)
-                if codebook_profile:
-                    _opts["codebook"] = codebook_profile
-                if do_force:
-                    _opts["force"] = True
-                result = ingest(
-                    source,
-                    f["content"],
-                    conn,
-                    chroma,
-                    ollama_url,
-                    model,
-                    opts=_opts or None,
-                    workspace_id=getattr(args, "workspace_id", "default"),
-                )
-                dedup_count += result.get("deduped", 0)
-                ok_count += 1
-            except Exception as exc:
-                print(f"[populate-memory] FEHLER bei {f['filename']!r}: {exc}")
-                error_count += 1
+            _opts: dict = {}
+            if not _do_categorize:
+                _opts["categorize"] = False
+            if _codebook_profile:
+                _opts["codebook"] = _codebook_profile
+            if do_force:
+                _opts["force"] = True
+            r = ingest(_src, f["content"], _conn, chroma, ollama_url, model,
+                       opts=_opts or None, workspace_id=_workspace)
+            return {"ok": True, "deduped": r.get("deduped", 0)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "file": f["filename"]}
+        finally:
+            _conn.close()
+
+    print(f"[STAGE] ingest_loop start total={total} workers={_workers} delay={_delay}s")
+    pbar = _tqdm(total=total, desc="populate-memory", unit="file")
+    try:
+        batch_size = _workers
+        for batch_start in range(0, total, batch_size):
+            batch = files[batch_start:batch_start + batch_size]
+            if _workers == 1:
+                for f in batch:
+                    r = _ingest_one(f)
+                    if r["ok"]:
+                        ok_count += 1
+                        dedup_count += r["deduped"]
+                    else:
+                        print(f"[populate-memory] FEHLER bei {r['file']!r}: {r['error']}")
+                        error_count += 1
+                    pbar.update(1)
+            else:
+                with ThreadPoolExecutor(max_workers=_workers) as pool:
+                    futures = {pool.submit(_ingest_one, f): f for f in batch}
+                    for fut in as_completed(futures):
+                        r = fut.result()
+                        if r["ok"]:
+                            ok_count += 1
+                            dedup_count += r["deduped"]
+                        else:
+                            print(f"[populate-memory] FEHLER bei {r['file']!r}: {r['error']}")
+                            error_count += 1
+                        pbar.update(1)
+            if _delay > 0 and batch_start + batch_size < total:
+                time.sleep(_delay)
     finally:
+        pbar.close()
         print(f"[STAGE] ingest_loop done ok={ok_count} errors={error_count} dedup={dedup_count}")
         conn.close()
 
