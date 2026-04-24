@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import urllib.request
-import urllib.error
 import json
 import sys
+
+import httpx
 
 
 _FALLBACK_MODEL = "llama3.1:8b"
@@ -18,8 +18,9 @@ def fetch_ollama_models(ollama_url: str, timeout: int = 2) -> list[str] | None:
     """
     url = ollama_url.rstrip("/") + "/api/tags"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
-            data = json.loads(resp.read().decode())
+        resp = httpx.get(url, timeout=float(timeout))
+        resp.raise_for_status()
+        data = resp.json()
         # Exclude embedding-only models — they can't be used for text generation.
         _EMBED_KEYWORDS = ("embed", "embedding")
         models = [
@@ -27,7 +28,7 @@ def fetch_ollama_models(ollama_url: str, timeout: int = 2) -> list[str] | None:
             if "name" in m and not any(kw in m["name"].lower() for kw in _EMBED_KEYWORDS)
         ]
         return sorted(models) if models else None
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError, TypeError):
+    except Exception:
         return None
 
 

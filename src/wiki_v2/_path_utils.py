@@ -3,7 +3,8 @@ import os
 import re
 from pathlib import Path
 
-_SAFE_NAME_RE = re.compile(r'[^A-Za-z0-9_\-]')
+_SAFE_NAME_RE = re.compile(r'[^A-Za-z0-9_\-]')       # workspace IDs — no dots
+_SAFE_PATH_PART_RE = re.compile(r'[^A-Za-z0-9_\-.]')  # path parts — dots allowed for file extensions
 
 
 def safe_workspace_id(wid: str | None) -> str:
@@ -23,7 +24,7 @@ def confined_path(root: Path, *parts: str) -> Path:
     p = root_r
     for part in parts:
         _raw = os.path.basename(str(part).replace('/', '_').replace('\\', '_'))
-        _s = _SAFE_NAME_RE.sub('_', _raw).strip("._-")
+        _s = _SAFE_PATH_PART_RE.sub('_', _raw).strip("_-")
         if not _s or _s in {".", ".."}:
             raise ValueError(f"Invalid path segment: {part!r}")
         p = (p / _s).resolve()

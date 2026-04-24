@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import re
-import urllib.request
+from src.ollama_client import generate as _ollama_gen
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -195,20 +195,13 @@ class WikiSecondOpinion:
 
     def _call_ollama(self, model: str, ollama_url: str, prompt: str, timeout: int = 60) -> str:
         try:
-            payload = json.dumps({
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 300},
-            }).encode()
-            req = urllib.request.Request(
-                f"{ollama_url.rstrip('/')}/api/generate",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
+            return _ollama_gen(
+                ollama_url, model, prompt,
+                stream=False,
+                options={"temperature": 0.1},
+                num_predict=300,
+                timeout=float(timeout),
             )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read()).get("response", "")
         except Exception:
             return ""
 

@@ -292,22 +292,14 @@ class ClusterEngine:
         )
 
         try:
-            import urllib.request
-            payload = json.dumps({
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 2000},
-            }).encode()
-            req = urllib.request.Request(
-                f"{ollama_url.rstrip('/')}/api/generate",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
+            from src.ollama_client import generate as _ollama_gen
+            response_text = _ollama_gen(
+                ollama_url, model, prompt,
+                stream=False,
+                options={"temperature": 0.1},
+                num_predict=2000,
+                timeout=60.0,
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                raw = json.loads(resp.read())
-            response_text = raw.get("response", "")
             m = re.search(r'\[.*\]', response_text, re.DOTALL)
             if not m:
                 raise ValueError("No JSON array found")
