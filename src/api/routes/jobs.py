@@ -81,7 +81,7 @@ async def _run_with_v2_postingest(
     _JOBS[job_id]["v2_jobs"] = v2_jobs
 
     async def _overview_then_wiki() -> None:
-        await _run_checker_job(overview_id, ["--repo", repo, "--mode", "overview"], workspace_id)
+        await _run_checker_job(overview_id, ["--repo", repo, "--mode", "overview", "--time-budget", "600"], workspace_id)
         if _JOBS.get(overview_id, {}).get("status") == "done":
             await _run_checker_job(wiki_id, ["--repo", repo, "--generate-wiki"], workspace_id)
         else:

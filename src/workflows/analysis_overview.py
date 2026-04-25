@@ -48,10 +48,12 @@ def _run_overview(
         sys.exit(0)
 
     print(f"\nErstelle Übersicht für {len(filenames_to_check)} Dateien mit {model} ...")
+    print(f"[STAGE] overview_start files={len(filenames_to_check)} budget={args.time_budget}")
     results, _time_budget_hit = overview_files(
         files, filenames_to_check, OVERVIEW_PROMPT, ollama_url, model,
         time_budget=args.time_budget,
     )
+    print(f"[STAGE] overview_done analyzed={len(results)} budget_hit={_time_budget_hit}")
 
     ctx_path = save_overview_context(results, repo_url)
     print(f"  Kontext gespeichert: {ctx_path}")
