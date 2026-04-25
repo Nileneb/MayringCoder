@@ -289,6 +289,26 @@ async def memory_feedback(
     return {"workspace_id": workspace_id, "chunk_id": request.chunk_id, "recorded": True}
 
 
+@router.get("/memory/unrated-chunks")
+async def unrated_chunks(
+    minutes: int = 120,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Return chunk_ids from context_feedback_log that were injected but not yet rated."""
+    rows = _get_conn().execute(
+        "SELECT trigger_ids FROM context_feedback_log"
+        " WHERE was_referenced = 0"
+        " AND captured_at > datetime('now', ? || ' minutes')"
+        " ORDER BY id DESC LIMIT 100",
+        (f"-{minutes}",),
+    ).fetchall()
+    ids: list[str] = []
+    import json as _json
+    for (raw,) in rows:
+        ids.extend(_json.loads(raw or "[]"))
+    return {"chunk_ids": list(dict.fromkeys(ids))}
+
+
 @router.post("/search")
 async def search_alias(
     request: MemorySearchRequest,
