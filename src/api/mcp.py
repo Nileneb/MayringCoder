@@ -48,6 +48,10 @@ from src.api.mcp_memory_tools import register_memory_tools
 from src.api.mcp_agent_tools import register_agent_tools
 from src.api.mcp_oauth import PathNormMiddleware, build_starlette_routes
 
+# Backward-compat aliases for tests that import with underscore prefix
+_JWTAuthMiddleware = JWTAuthMiddleware
+_PathNormMiddleware = PathNormMiddleware
+
 _TRANSPORT  = os.getenv("MCP_TRANSPORT", "stdio")
 _HTTP_PORT  = int(os.getenv("MCP_HTTP_PORT", "8000"))
 _HTTP_HOST  = os.getenv("MCP_HTTP_HOST", "0.0.0.0")

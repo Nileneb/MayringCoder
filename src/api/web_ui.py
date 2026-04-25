@@ -35,6 +35,9 @@ from src.api.web_ui_helpers import (
     _laravel_base,
     _laravel_headers,
     set_runtime_urls,
+    # Re-exports for test accessibility (functions defined in helpers)
+    _do_feedback, refresh_jwt, _do_search,
+    _do_ingest, _do_ingest_conversation, _get_conn, _api_post,
 )
 from src.api.web_ui_tabs import (
     build_memory_tab,

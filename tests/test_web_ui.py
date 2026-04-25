@@ -153,13 +153,13 @@ class TestIngestTabWithoutOllama:
         fake_conn = MagicMock(spec=sqlite3.Connection)
 
         with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch.object(web_ui, "_conn", fake_conn),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui._get_chroma", return_value=None),
-            patch("src.api.web_ui.ingest", return_value=mock_ingest_result),
-            patch("src.api.web_ui.Source") as MockSource,
-            patch("src.api.web_ui.hashlib") as mock_hashlib,
+            patch("src.api.web_ui_helpers._MEMORY_READY", True),
+            patch("src.api.web_ui_helpers._conn", fake_conn),
+            patch("src.api.web_ui_helpers._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui_helpers._get_chroma", return_value=None),
+            patch("src.api.web_ui_helpers.ingest", return_value=mock_ingest_result),
+            patch("src.api.web_ui_helpers.Source") as MockSource,
+            patch("src.api.web_ui_helpers.hashlib") as mock_hashlib,
         ):
             # Setup hashlib mock
             mock_hash = MagicMock()
@@ -191,7 +191,7 @@ class TestIngestTabWithoutOllama:
         """Empty text + no file → error JSON."""
         import src.api.web_ui as web_ui
 
-        with patch.object(web_ui, "_MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers._MEMORY_READY", True):
             raw = web_ui._do_ingest(
                 text_input="",
                 file_upload=None,
@@ -233,10 +233,10 @@ class TestSearchFallbackSymbolic:
         fake_conn = MagicMock(spec=sqlite3.Connection)
 
         with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui._get_chroma", return_value=None),
-            patch("src.api.web_ui.search", return_value=[fake_record]),
+            patch("src.api.web_ui_helpers._MEMORY_READY", True),
+            patch("src.api.web_ui_helpers._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui_helpers._get_chroma", return_value=None),
+            patch("src.api.web_ui_helpers.search", return_value=[fake_record]),
         ):
             status, rows = web_ui._do_search(
                 query="foo",
@@ -252,7 +252,7 @@ class TestSearchFallbackSymbolic:
         """Empty query → hint message, no rows."""
         import src.api.web_ui as web_ui
 
-        with patch.object(web_ui, "_MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers._MEMORY_READY", True):
             status, rows = web_ui._do_search("", 8, False)
 
         assert "eingeben" in status.lower() or "suchbegriff" in status.lower()
@@ -262,7 +262,7 @@ class TestSearchFallbackSymbolic:
         """_MEMORY_READY=False → error message, no rows."""
         import src.api.web_ui as web_ui
 
-        with patch.object(web_ui, "_MEMORY_READY", False):
+        with patch("src.api.web_ui_helpers._MEMORY_READY", False):
             status, rows = web_ui._do_search("something", 8, True)
 
         assert "nicht geladen" in status.lower() or "memory" in status.lower()
@@ -291,7 +291,7 @@ class TestFeedbackWrite:
     def test_feedback_positive_via_http(self):
         """Positive signal → _api_post called with correct payload."""
         import src.api.web_ui as web_ui
-        with patch("src.api.web_ui._api_post", return_value={"recorded": True}) as mock_post:
+        with patch("src.api.web_ui_helpers._api_post", return_value={"recorded": True}) as mock_post:
             result = web_ui._do_feedback("chk_aabbccdd", "positive", "", "tok")
         mock_post.assert_called_once_with(
             "memory/feedback",
@@ -303,7 +303,7 @@ class TestFeedbackWrite:
     def test_feedback_with_label_via_http(self):
         """Label is passed in metadata."""
         import src.api.web_ui as web_ui
-        with patch("src.api.web_ui._api_post", return_value={"recorded": True}) as mock_post:
+        with patch("src.api.web_ui_helpers._api_post", return_value={"recorded": True}) as mock_post:
             web_ui._do_feedback("chk_test", "negative", "irrelevant duplicate", "tok")
         mock_post.assert_called_once_with(
             "memory/feedback",
@@ -314,7 +314,7 @@ class TestFeedbackWrite:
     def test_feedback_api_error(self):
         """API error → error message forwarded."""
         import src.api.web_ui as web_ui
-        with patch("src.api.web_ui._api_post", return_value={"error": "server exploded"}):
+        with patch("src.api.web_ui_helpers._api_post", return_value={"error": "server exploded"}):
             result = web_ui._do_feedback("chk_x", "neutral", "", "tok")
         assert "fehler" in result.lower()
 
@@ -335,10 +335,10 @@ class TestModelSelector:
             captured.append(model)
             return {"source_id": "x", "chunk_ids": [], "indexed": False, "deduped": 0, "superseded": 0}
 
-        with patch("src.api.web_ui.ingest", side_effect=fake_ingest), \
-             patch("src.api.web_ui._get_conn", return_value=MagicMock()), \
-             patch("src.api.web_ui._get_chroma", return_value=None), \
-             patch("src.api.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers.ingest", side_effect=fake_ingest), \
+             patch("src.api.web_ui_helpers._get_conn", return_value=MagicMock()), \
+             patch("src.api.web_ui_helpers._get_chroma", return_value=None), \
+             patch("src.api.web_ui_helpers._MEMORY_READY", True):
             _do_ingest("hello world", None, "test.txt", "owner/repo",
                        categorize=False, mode="hybrid", codebook="auto",
                        model="mistral:7b", ollama_available=True)
@@ -354,10 +354,10 @@ class TestModelSelector:
             captured_opts.append(opts or {})
             return {"source_id": "x", "chunk_ids": [], "indexed": False, "deduped": 0, "superseded": 0}
 
-        with patch("src.api.web_ui.ingest", side_effect=fake_ingest), \
-             patch("src.api.web_ui._get_conn", return_value=MagicMock()), \
-             patch("src.api.web_ui._get_chroma", return_value=None), \
-             patch("src.api.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers.ingest", side_effect=fake_ingest), \
+             patch("src.api.web_ui_helpers._get_conn", return_value=MagicMock()), \
+             patch("src.api.web_ui_helpers._get_chroma", return_value=None), \
+             patch("src.api.web_ui_helpers._MEMORY_READY", True):
             _do_ingest("hello world", None, "test.txt", "owner/repo",
                        categorize=True, mode="deductive", codebook="social",
                        model="llama3", ollama_available=True)
@@ -383,10 +383,10 @@ class TestConversationTab:
             captured.append({"session_id": session_id, "run_id": run_id, "text": summary_text})
             return {"source_id": "conv:x", "chunk_ids": ["c1"], "indexed": False, "deduped": 0, "superseded": 0}
 
-        with patch("src.api.web_ui.ingest_conversation_summary", side_effect=fake_ingest_conv), \
-             patch("src.api.web_ui._get_conn", return_value=MagicMock()), \
-             patch("src.api.web_ui._get_chroma", return_value=None), \
-             patch("src.api.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers.ingest_conversation_summary", side_effect=fake_ingest_conv), \
+             patch("src.api.web_ui_helpers._get_conn", return_value=MagicMock()), \
+             patch("src.api.web_ui_helpers._get_chroma", return_value=None), \
+             patch("src.api.web_ui_helpers._MEMORY_READY", True):
             result = _do_ingest_conversation(
                 summary_text="## Summary\n\nWas wir gemacht haben.",
                 session_id="sess-abc",
@@ -401,7 +401,7 @@ class TestConversationTab:
 
     def test_do_ingest_conversation_empty_text_returns_error(self) -> None:
         from src.api.web_ui import _do_ingest_conversation
-        with patch("src.api.web_ui._MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers._MEMORY_READY", True):
             result = _do_ingest_conversation("", "sess-1", "", "model", True)
         assert "error" in result.lower() or "Kein" in result
 
@@ -422,13 +422,13 @@ class TestE2EAnalysisFlow:
         search_result = RetrievalRecord(chunk_id="chk_e2e001", score_final=0.85, score_symbolic=0.6, source_id="repo:test:e2e.py", text="def authenticate(user): pass", category_labels=["auth"], reasons=["token_overlap", "embedding_similarity"])
 
         with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui._get_chroma", return_value=None),
-            patch("src.api.web_ui.ingest", return_value=ingest_result),
-            patch("src.api.web_ui.Source") as MockSource,
-            patch("src.api.web_ui.hashlib") as mock_hashlib,
-            patch("src.api.web_ui.search", return_value=[search_result]),
+            patch("src.api.web_ui_helpers._MEMORY_READY", True),
+            patch("src.api.web_ui_helpers._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui_helpers._get_chroma", return_value=None),
+            patch("src.api.web_ui_helpers.ingest", return_value=ingest_result),
+            patch("src.api.web_ui_helpers.Source") as MockSource,
+            patch("src.api.web_ui_helpers.hashlib") as mock_hashlib,
+            patch("src.api.web_ui_helpers.search", return_value=[search_result]),
         ):
             mock_hash = MagicMock()
             mock_hash.hexdigest.return_value = "b" * 64
@@ -446,7 +446,7 @@ class TestE2EAnalysisFlow:
 
     def test_feedback_after_search(self):
         import src.api.web_ui as web_ui
-        with patch("src.api.web_ui._api_post", return_value={"recorded": True}) as mock_fb:
+        with patch("src.api.web_ui_helpers._api_post", return_value={"recorded": True}) as mock_fb:
             result = web_ui._do_feedback("chk_e2e001", "positive", "relevant", "tok")
         mock_fb.assert_called_once_with(
             "memory/feedback",
@@ -471,11 +471,11 @@ class TestE2EConversationFlow:
         search_hit = RetrievalRecord(chunk_id="chk_conv_001", score_final=0.72, source_id="conv:sess-e2e", text="Wir haben HTTP-Transport implementiert.", category_labels=["Zusammenfassung"], reasons=["token_overlap"])
 
         with (
-            patch.object(web_ui, "_MEMORY_READY", True),
-            patch("src.api.web_ui._get_conn", return_value=fake_conn),
-            patch("src.api.web_ui._get_chroma", return_value=None),
-            patch("src.api.web_ui.ingest_conversation_summary", return_value=conv_result),
-            patch("src.api.web_ui.search", return_value=[search_hit]),
+            patch("src.api.web_ui_helpers._MEMORY_READY", True),
+            patch("src.api.web_ui_helpers._get_conn", return_value=fake_conn),
+            patch("src.api.web_ui_helpers._get_chroma", return_value=None),
+            patch("src.api.web_ui_helpers.ingest_conversation_summary", return_value=conv_result),
+            patch("src.api.web_ui_helpers.search", return_value=[search_hit]),
         ):
             raw = web_ui._do_ingest_conversation(summary_text="## Summary\nWir haben HTTP-Transport implementiert.", session_id="sess-e2e", run_id="run-001", model="", ollama_available=False)
             assert "conv:sess-e2e" in raw
@@ -493,14 +493,14 @@ class TestE2EErrorCases:
 
     def test_ingest_with_no_content_and_no_file(self):
         import src.api.web_ui as web_ui
-        with patch.object(web_ui, "_MEMORY_READY", True):
+        with patch("src.api.web_ui_helpers._MEMORY_READY", True):
             raw = web_ui._do_ingest("", None, "", "", False, "hybrid", "auto", "", False)
         result = json.loads(raw)
         assert "error" in result
 
     def test_search_with_memory_not_loaded(self):
         import src.api.web_ui as web_ui
-        with patch.object(web_ui, "_MEMORY_READY", False):
+        with patch("src.api.web_ui_helpers._MEMORY_READY", False):
             status, rows = web_ui._do_search("test", 5, True)
         assert rows == []
         assert "memory" in status.lower() or "nicht" in status.lower()
