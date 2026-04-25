@@ -23,6 +23,62 @@ else
     echo "Warnung: superpowers-Plugin nicht gefunden — Skills nicht installiert"
 fi
 
+# Hooks in ~/.claude/settings.json eintragen (UserPromptSubmit + PostCompact)
+SETTINGS="$HOME/.claude/settings.json"
+HOOK_SCRIPT="$DEST/hooks/start_watcher.py"
+COMPACT_SCRIPT="$HOME/Desktop/MayringCoder/tools/postcompact_hook.py"
+
+python3 - <<PYEOF
+import json, os, sys
+
+settings_path = os.path.expanduser("$SETTINGS")
+hook_script = "$HOOK_SCRIPT"
+compact_script = "$COMPACT_SCRIPT"
+
+with open(settings_path) as f:
+    cfg = json.load(f)
+
+hooks = cfg.setdefault("hooks", {})
+
+# UserPromptSubmit — Watcher starten
+hooks.setdefault("UserPromptSubmit", [])
+watcher_hook = {"type": "command", "command": f"python3 {hook_script}"}
+watcher_entry = {"matcher": "", "hooks": [watcher_hook]}
+already = any(
+    any(h.get("command", "").endswith("start_watcher.py")
+        for h in e.get("hooks", []))
+    for e in hooks["UserPromptSubmit"]
+)
+if not already:
+    hooks["UserPromptSubmit"].append(watcher_entry)
+    print("Hook hinzugefügt: UserPromptSubmit → start_watcher.py")
+else:
+    print("Hook bereits vorhanden: UserPromptSubmit")
+
+# PostCompact — Summary ingesten
+hooks.setdefault("PostCompact", [])
+compact_hook = {"type": "command", "command": f"python3 {compact_script}"}
+compact_entry = {"matcher": "", "hooks": [compact_hook]}
+already_compact = any(
+    any(h.get("command", "").endswith("postcompact_hook.py")
+        for h in e.get("hooks", []))
+    for e in hooks["PostCompact"]
+)
+if not already_compact:
+    hooks["PostCompact"].append(compact_entry)
+    print("Hook hinzugefügt: PostCompact → postcompact_hook.py")
+else:
+    print("Hook bereits vorhanden: PostCompact")
+
+with open(settings_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+
 echo ""
-echo "MAYRING_JWT in der Shell setzen:"
-echo "  export MAYRING_JWT=<Token von app.linn.games/mayring/watcher>"
+echo "Service-Token für Watcher-Auth einrichten:"
+echo "  mkdir -p ~/.config/mayring"
+echo "  ssh nileneb@u-server \"docker exec mayring-mayring-api-1 printenv MCP_SERVICE_TOKEN\" > ~/.config/mayring/hook.jwt"
+echo "  chmod 600 ~/.config/mayring/hook.jwt"
+echo ""
+echo "Watcher-Log: ~/.cache/mayryngcoder/watcher.log"
