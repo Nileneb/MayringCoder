@@ -126,8 +126,15 @@ def embed_batch(
         result = data.get("embeddings")
         if isinstance(result, list) and len(result) == len(texts):
             return result
-    except Exception:
-        pass
+        print(f"[embed_batch] unexpected response shape: {str(data)[:200]}", flush=True)
+    except httpx.ConnectError as exc:
+        print(f"[embed_batch] ConnectError → {url}: {exc}", flush=True)
+    except httpx.HTTPStatusError as exc:
+        print(f"[embed_batch] HTTP {exc.response.status_code} from {url}: {exc.response.text[:200]}", flush=True)
+    except httpx.TimeoutException:
+        print(f"[embed_batch] Timeout after {timeout}s → {url}", flush=True)
+    except Exception as exc:
+        print(f"[embed_batch] {type(exc).__name__}: {exc}", flush=True)
     return None
 
 
