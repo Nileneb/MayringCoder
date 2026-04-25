@@ -102,6 +102,28 @@ def stats_summary() -> dict:
         }
         for j in sorted(_JOBS.values(), key=lambda x: x.get("started_at", ""), reverse=True)[:5]
     ]
+    try:
+        llm_recent = [
+            {
+                "call_type":   r[0],
+                "model":       r[1],
+                "prompt":      r[2],
+                "response":    r[3],
+                "tool_calls":  r[4],
+                "duration_ms": r[5],
+                "created_at":  r[6],
+            }
+            for r in conn.execute(
+                "SELECT call_type, model, prompt, response, tool_calls, duration_ms, created_at"
+                " FROM llm_calls_log ORDER BY created_at DESC LIMIT 20"
+            ).fetchall()
+        ]
+        llm_24h = conn.execute(
+            "SELECT COUNT(*) FROM llm_calls_log"
+            " WHERE created_at > datetime('now','-24 hours')"
+        ).fetchone()[0]
+    except Exception:
+        llm_recent, llm_24h = [], 0
     return {
         "chunks":      {"active": active, "total": total},
         "sources":     {"count": sources},
@@ -109,6 +131,7 @@ def stats_summary() -> dict:
         "ingestion":   {"last_hour": last_hour, "last_24h": last_24h},
         "recent_ops":  recent,
         "recent_jobs": recent_jobs,
+        "llm_calls":   {"last_24h": llm_24h, "recent": llm_recent},
     }
 
 

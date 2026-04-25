@@ -235,6 +235,20 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             last_seen   TEXT NOT NULL,
             PRIMARY KEY (from_topic, to_topic)
         );
+
+        CREATE TABLE IF NOT EXISTS llm_calls_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            call_type    TEXT NOT NULL DEFAULT 'pi_task',
+            model        TEXT NOT NULL DEFAULT '',
+            prompt       TEXT NOT NULL DEFAULT '',
+            response     TEXT NOT NULL DEFAULT '',
+            tool_calls   INTEGER NOT NULL DEFAULT 0,
+            duration_ms  INTEGER NOT NULL DEFAULT 0,
+            workspace_id TEXT NOT NULL DEFAULT 'default',
+            created_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_calls_created
+            ON llm_calls_log(created_at);
     """)
 
     # Migration: add missing columns to existing DBs
@@ -496,3 +510,25 @@ def get_source_refs(
         (canonical_chunk_id,),
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def log_llm_call(
+    conn: sqlite3.Connection,
+    call_type: str,
+    model: str,
+    prompt: str,
+    response: str,
+    tool_calls: int = 0,
+    duration_ms: int = 0,
+    workspace_id: str = "default",
+) -> None:
+    from datetime import datetime, timezone
+    conn.execute(
+        "INSERT INTO llm_calls_log"
+        " (call_type, model, prompt, response, tool_calls, duration_ms, workspace_id, created_at)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (call_type, model, prompt[:500], response[:800],
+         tool_calls, duration_ms, workspace_id,
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
