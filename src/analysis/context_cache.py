@@ -21,9 +21,14 @@ def _overview_path(repo_url: str) -> Path:
     return CACHE_DIR / f"{_repo_slug(repo_url)}_overview.json"
 
 
-def save_overview_context(results: list[dict], repo_url: str) -> str:
+def save_overview_context(results: list[dict], repo_url: str, existing: dict | None = None) -> str:
+    """Persist overview results, merging with existing cache entries for unchanged files.
+
+    existing: dict[filename -> entry] from load_overview_cache_raw — unchanged entries
+    are carried forward as-is so subsequent runs only rewrite what actually changed.
+    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    entries = []
+    merged: dict[str, dict] = dict(existing or {})
     for r in results:
         if "error" in r:
             continue
@@ -38,7 +43,10 @@ def save_overview_context(results: list[dict], repo_url: str) -> str:
                 entry[field] = r[field]
         if "_signatures" in r:
             entry["_signatures"] = r["_signatures"]
-        entries.append(entry)
+        if "content_hash" in r:
+            entry["content_hash"] = r["content_hash"]
+        merged[r["filename"]] = entry
+    entries = list(merged.values())
     path = _overview_path(repo_url)
     path.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
     return str(path)
