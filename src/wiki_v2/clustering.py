@@ -117,13 +117,7 @@ class ClusterEngine:
         except Exception:
             pass
 
-        from src.memory.wiki import cluster_themes, WikiEdge as OldEdge
-        old_edges = [
-            OldEdge(file_a=e.source, file_b=e.target, weight=e.weight, rule=e.type)
-            for e in all_edges
-        ]
-        old_clusters = cluster_themes(old_edges, min_files=1)
-        return [set(c.files) for c in old_clusters] or [{n.id} for n in nodes]
+        return [{n.id} for n in nodes]
 
     def _embedding_clusters(
         self,

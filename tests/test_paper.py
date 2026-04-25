@@ -8,10 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.memory.chunker import chunk_paper, extract_pdf_text
-from src.memory.wiki import (
-    find_citation_pairs, find_keyword_overlap,
-    find_shared_concepts, find_method_chains, find_dataset_pairs,
-)
 
 
 # ─── Chunker Tests ────────────────────────────────────────────────────────────
@@ -123,55 +119,3 @@ def test_run_ingest_paper_skips_unchanged(tmp_path):
     assert result["ingested"] == 0
 
 
-# ─── Wiki Rules Tests ─────────────────────────────────────────────────────────
-
-def _make_chunk(source_id: str, text: str):
-    class _C:
-        pass
-    c = _C()
-    c.source_id = source_id
-    c.text = text
-    return c
-
-
-def test_find_keyword_overlap_basic():
-    text_a = "deep learning neural network transformer attention mechanism self-attention"
-    text_b = "neural network transformer attention mechanism multi-head attention layers"
-    chunks = [
-        _make_chunk("paper:arxiv:0001.00001", text_a),
-        _make_chunk("paper:arxiv:0001.00002", text_b),
-    ]
-    edges = find_keyword_overlap({}, chunks)
-    assert len(edges) >= 1
-    assert edges[0].rule == "keyword_overlap"
-    assert edges[0].weight >= 0.2
-
-
-def test_find_method_chains_bert():
-    chunks = [
-        _make_chunk("paper:arxiv:0002.00001", "We fine-tune bert on downstream tasks"),
-        _make_chunk("paper:arxiv:0002.00002", "Our model outperforms bert baseline"),
-    ]
-    edges = find_method_chains(chunks, None, None, "", "")
-    assert any(e.rule.startswith("method:bert") for e in edges)
-
-
-def test_find_shared_concepts_no_chroma_returns_empty():
-    assert find_shared_concepts([], None, None, "", "") == []
-
-
-def test_find_dataset_pairs_squad():
-    chunks = [
-        _make_chunk("paper:arxiv:0003.00001", "Evaluated on squad question answering benchmark"),
-        _make_chunk("paper:arxiv:0003.00002", "Our model achieves 91 F1 on squad"),
-    ]
-    edges = find_dataset_pairs(chunks, None, None, "", "")
-    assert any(e.rule.startswith("dataset:squad") for e in edges)
-
-
-def test_paper_rules_return_empty_for_no_papers():
-    non_paper = [_make_chunk("repo_file:src/foo.py", "def foo(): pass")]
-    assert find_citation_pairs({}, non_paper) == []
-    assert find_keyword_overlap({}, non_paper) == []
-    assert find_method_chains(non_paper, None, None, "", "") == []
-    assert find_dataset_pairs(non_paper, None, None, "", "") == []

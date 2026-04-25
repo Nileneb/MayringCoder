@@ -87,9 +87,7 @@ def _cmd_cleanup(args: argparse.Namespace, repo_url: str) -> None:
 
 def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str, model: str) -> None:
     wid = args.workspace_id or "default"
-    from src.api.dependencies import get_conn, get_chroma
-    from src.memory.wiki import generate_wiki
-    generate_wiki(get_conn(), get_chroma(), repo_url, ollama_url, model, wid, doc_type=args.wiki_type)
+    from src.api.dependencies import get_conn
     try:
         from src.analysis.context import load_overview_cache_raw
         from src.wiki_v2.clustering import ClusterEngine
