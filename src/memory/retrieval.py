@@ -19,6 +19,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+from src.memory.db_adapter import DBAdapter
 from src.memory.schema import Chunk, RetrievalRecord
 from src.memory.store import get_chunk, kv_get, get_feedback_score
 
@@ -62,7 +63,7 @@ _RECENCY_DECAY_DAYS = 30.0
 # ---------------------------------------------------------------------------
 
 def _scope_filter(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     repo: str | None = None,
     categories: list[str] | None = None,
     source_type: str | None = None,
@@ -220,7 +221,7 @@ def _rerank(
     vector_scores: dict[str, float],
     symbolic_scores: dict[str, float],
     top_k: int,
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     affinity_source_id: str | None = None,
     source_type_map: dict[str, str] | None = None,
     session_compacted: bool = False,
@@ -285,7 +286,7 @@ def _rerank(
 
 def search(
     query: str,
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     chroma_collection: Any,
     ollama_url: str,
     opts: dict | None = None,

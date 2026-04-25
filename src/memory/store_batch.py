@@ -1,21 +1,22 @@
 """Batch-commit context manager for SQLite connections (#68)."""
 from __future__ import annotations
 
-import sqlite3
 import threading as _threading
+
+from src.memory.db_adapter import DBAdapter
 from contextlib import contextmanager
 
 _batch_local = _threading.local()
 
 
-def _batch_depth(conn: sqlite3.Connection) -> int:
+def _batch_depth(conn: DBAdapter) -> int:
     reg = getattr(_batch_local, "depth_map", None)
     if reg is None:
         return 0
     return reg.get(id(conn), 0)
 
 
-def _batch_bump(conn: sqlite3.Connection, delta: int) -> int:
+def _batch_bump(conn: DBAdapter, delta: int) -> int:
     reg = getattr(_batch_local, "depth_map", None)
     if reg is None:
         reg = {}
@@ -28,7 +29,7 @@ def _batch_bump(conn: sqlite3.Connection, delta: int) -> int:
 
 
 @contextmanager
-def batch_context(conn: sqlite3.Connection):
+def batch_context(conn: DBAdapter):
     """Defer commits until block end; rollback on exception. Nested-safe."""
     is_outer = _batch_depth(conn) == 0
     _batch_bump(conn, +1)
@@ -44,6 +45,6 @@ def batch_context(conn: sqlite3.Connection):
         _batch_bump(conn, -1)
 
 
-def _maybe_commit(conn: sqlite3.Connection) -> None:
+def _maybe_commit(conn: DBAdapter) -> None:
     if _batch_depth(conn) == 0:
         conn.commit()

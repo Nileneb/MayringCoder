@@ -6,17 +6,16 @@ Used by both server.py and mcp.py to avoid code duplication.
 from __future__ import annotations
 from typing import Any
 
-import sqlite3
-
+from src.memory.db_adapter import DBAdapter
 from src.memory.ingest import get_or_create_chroma_collection
 from src.memory.store import init_memory_db
 
 # Process-scoped lazy singletons
-_conn: sqlite3.Connection | None = None
+_conn: DBAdapter | None = None
 _chroma = None
 
 
-def get_conn() -> sqlite3.Connection:
+def get_conn() -> DBAdapter:
     """Return the shared SQLite memory DB connection (lazy singleton)."""
     global _conn
     if _conn is None:

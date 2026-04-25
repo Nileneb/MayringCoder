@@ -19,16 +19,13 @@ app.dependency_overrides[get_workspace] = _fake_ws
 @pytest.fixture(autouse=True)
 def _reset_conn(tmp_path, monkeypatch):
     """Each test gets a fresh SQLite DB with check_same_thread=False for async TestClient."""
-    import sqlite3 as _sqlite3
+    from src.memory.db_adapter import DBAdapter
     from src.memory.store import _init_schema
     db_path = tmp_path / "test.db"
-    conn = _sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.row_factory = _sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    _init_schema(conn)
-    monkeypatch.setattr(_deps, "_conn", conn)
-    yield conn
+    adapter = DBAdapter.create(db_path, check_same_thread=False)
+    _init_schema(adapter)
+    monkeypatch.setattr(_deps, "_conn", adapter)
+    yield adapter
     monkeypatch.setattr(_deps, "_conn", None)
 
 
