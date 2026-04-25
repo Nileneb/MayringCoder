@@ -22,7 +22,10 @@ from src.api.routes.models import (
 router = APIRouter(tags=["memory"])
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
+
+def _model(task: str = "mayring_code") -> str:
+    from src.model_router import ModelRouter
+    return ModelRouter(_OLLAMA_URL).resolve(task)
 
 
 @router.post("/pi-task")
@@ -40,7 +43,7 @@ async def pi_task(
             lambda: run_task_with_memory(
                 task=request.task,
                 ollama_url=_OLLAMA_URL,
-                model=_OLLAMA_MODEL,
+                model=_model("analysis"),
                 repo_slug=_repo_slug,
                 system_prompt=request.system_prompt,
                 timeout=request.timeout,
@@ -80,7 +83,7 @@ async def memory_put(
         source_dict = {"source_id": request.source_id, "source_type": request.source_type,
                        "repo": request.repo, "path": request.path}
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
-                             _OLLAMA_URL, _OLLAMA_MODEL, {"categorize": request.categorize},
+                             _OLLAMA_URL, _model("mayring_code"), {"categorize": request.categorize},
                              workspace_id)
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
@@ -115,7 +118,7 @@ async def conversation_micro_batch(
 
         summary = (
             request.presumarized
-            or _summarize_turns(turns_dicts, "", _OLLAMA_URL, _OLLAMA_MODEL)
+            or _summarize_turns(turns_dicts, "", _OLLAMA_URL, _model("mayring_code"))
         )
         content = (
             f"# Session {first_ts or 'unbekannt'} | {request.workspace_slug}\n\n"
@@ -132,7 +135,7 @@ async def conversation_micro_batch(
         }
         result = _run_ingest(
             source_dict, content, _get_conn(), _get_chroma(),
-            _OLLAMA_URL, _OLLAMA_MODEL,
+            _OLLAMA_URL, _model("mayring_code"),
             {"categorize": True, "codebook": "social", "mode": "hybrid"},
             workspace_id,
         )

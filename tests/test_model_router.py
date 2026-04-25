@@ -31,21 +31,25 @@ class TestModelRouterDefaults:
             router = ModelRouter("http://localhost:11434")
         assert router.resolve("vision") == "qwen2.5vl:3b"
 
-    def test_resolve_empty_model_falls_back_to_env(self, monkeypatch):
+    def test_resolve_empty_model_returns_fallback_not_env(self, monkeypatch):
         monkeypatch.setenv("OLLAMA_MODEL", "my-env-model:latest")
         with patch("src.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
-        # analysis model is "" by default → should return env var
+        router._routes["analysis"].model = ""
+        router._routes["analysis"].fallback = "mayring-qwen3:2b"
+        # OLLAMA_MODEL env must NOT bleed through — fallback from config is used
         result = router.resolve("analysis")
-        assert result == "my-env-model:latest"
+        assert result == "mayring-qwen3:2b"
+        assert result != "my-env-model:latest"
 
-    def test_resolve_unknown_task_returns_env_model(self, monkeypatch):
+    def test_resolve_unknown_task_returns_empty_not_env(self, monkeypatch):
         monkeypatch.setenv("OLLAMA_MODEL", "fallback-model")
         with patch("src.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
-        assert router.resolve("nonexistent_task") == "fallback-model"
+        # Unknown task → empty string, NEVER env var
+        assert router.resolve("nonexistent_task") == ""
 
 
 class TestModelRouterAvailability:
@@ -89,14 +93,13 @@ class TestModelRouterAvailability:
         assert mock_get.call_count == 1
 
     def test_is_available_false_for_empty_model(self, monkeypatch):
-        # Test-Isolation: verhindert dass eine lokale .env (via load_dotenv in
-        # src.api.server) OLLAMA_MODEL pollutet — is_available würde sonst das
-        # echte lokale Ollama abfragen und True zurückgeben.
-        monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+        monkeypatch.setenv("OLLAMA_MODEL", "some-model-that-should-be-ignored")
         with patch("src.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         router._routes["analysis"].model = ""
+        router._routes["analysis"].fallback = ""
+        # empty model + empty fallback → not available even if OLLAMA_MODEL env is set
         assert router.is_available("analysis") is False
 
 
