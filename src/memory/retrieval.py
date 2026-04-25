@@ -393,9 +393,9 @@ def search(
         except Exception as exc:
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
 
-    # Stage 3b: optional LLM pre-filter (opt-in via opts["llm_prefilter"]=True)
-    if opts.get("llm_prefilter") and ollama_url and candidates:
-        llm_model = opts.get("llm_prefilter_model", "mayring-qwen3:2b")
+    # Stage 3b: LLM pre-filter — auto-activates when candidates > 10
+    if (opts.get("llm_prefilter") or len(candidates) > 10) and ollama_url and candidates:
+        llm_model = opts.get("llm_prefilter_model", "qwen2.5-coder:7b")
         llm_s = _llm_relevance_scores(query, candidates, ollama_url, model=llm_model)
         candidates.sort(key=lambda c: llm_s.get(c.chunk_id, 0.5), reverse=True)
         candidates = candidates[:max(top_k * 2, 6)]

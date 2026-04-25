@@ -188,7 +188,7 @@ def get_endpoint_for_request(
     Precedence:
       1. User-JWT-Claims (per-User BYO-Provider via /settings/ai-model)
       2. Workspace-LLM-Endpoints (Admin-Override via /einstellungen/llm-endpoints)
-      3. Platform default (OLLAMA_URL + OLLAMA_MODEL)
+      3. Platform default (OLLAMA_URL, Modell via ModelRouter)
 
     Raises:
       LlmKeyUnavailableError — wenn der User einen Key hinterlegen müsste, aber

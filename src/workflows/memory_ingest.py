@@ -233,5 +233,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         slug = _repo_slug(repo_url)
         for f in files:
             on_post_ingest(wid, slug, f"repo:{repo_url}:{f['filename']}", chroma=chroma)
-    except Exception:
-        pass
+    except Exception as _wiki_exc:
+        import logging as _wlog
+        _wlog.warning("wiki_hook failed: %s", _wiki_exc)
+        print(f"[STAGE] wiki_hook_error detail={_wiki_exc}")

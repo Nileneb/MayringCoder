@@ -58,8 +58,24 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 "source_affinity": source_affinity,
                 "workspace_id": ws,
             }
-            return _run_search(query, _get_conn(), _get_chroma(), None,
-                               opts, char_budget, session_compacted=compacted)
+            result = _run_search(query, _get_conn(), _get_chroma(), None,
+                                 opts, char_budget, session_compacted=compacted)
+            try:
+                import json as _json
+                from datetime import datetime, timezone
+                _ids = _json.dumps([r.get("chunk_id", "") for r in result.get("results", [])])
+                _conn = _get_conn()
+                _conn.execute(
+                    "INSERT INTO context_feedback_log"
+                    " (trigger_ids,context_text,was_referenced,led_to_retrieval,relevance_score,captured_at)"
+                    " VALUES (?,?,0,0,0.0,?)",
+                    (_ids, result.get("prompt_context", "")[:2000],
+                     datetime.now(timezone.utc).isoformat()),
+                )
+                _conn.commit()
+            except Exception:
+                pass  # non-critical; never block the search result
+            return result
         except Exception as exc:
             return {"error": str(exc), "results": [], "prompt_context": ""}
 
