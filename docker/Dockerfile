@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY prompts/ ./prompts/
 COPY codebooks/ ./codebooks/
+COPY config/ ./config/
 # tools/ enthält tools.conversation_watcher (Watcher-Daemon auf User-Laptops,
 # Entry-Point aus dem Dashboard) und tools.ingest_conversations (wird
 # server-side von POST /conversation/micro-batch für die Summary-Generierung

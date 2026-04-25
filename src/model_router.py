@@ -26,12 +26,12 @@ _ROOT = Path(__file__).parent.parent
 _CONFIG_PATH = _ROOT / "config" / "model_routes.yaml"
 
 _DEFAULTS: dict[str, dict] = {
-    "mayring_code":   {"model": "mayring-qwen3:2b",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
-    "mayring_social": {"model": "mayring-qwen3:2b",  "fallback": "mistral:7b-instruct","timeout": 240},
-    "mayring_hybrid": {"model": "mayring-qwen3:2b",  "fallback": "mistral:7b-instruct","timeout": 240},
-    "vision":         {"model": "qwen2.5vl:3b",      "fallback": "",                  "timeout": 120},
-    "analysis":       {"model": "mayring-qwen3:2b",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
-    "embedding":      {"model": "nomic-embed-text",  "fallback": "nomic-embed-text",  "timeout": 60},
+    "mayring_code":   {"model": "mistral:7b-instruct", "fallback": "qwen2.5-coder:7b",  "timeout": 240},
+    "mayring_social": {"model": "mistral:7b-instruct", "fallback": "qwen2.5-coder:7b",  "timeout": 240},
+    "mayring_hybrid": {"model": "mayring-qwen3:2b",    "fallback": "mistral:7b-instruct","timeout": 240},
+    "vision":         {"model": "qwen2.5vl:3b",        "fallback": "",                  "timeout": 120},
+    "analysis":       {"model": "mistral:7b-instruct", "fallback": "qwen2.5-coder:7b",  "timeout": 240},
+    "embedding":      {"model": "nomic-embed-text",    "fallback": "nomic-embed-text",  "timeout": 60},
 }
 
 
