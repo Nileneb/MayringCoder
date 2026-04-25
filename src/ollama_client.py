@@ -11,11 +11,14 @@ Public API:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from typing import Any
 
 import httpx
+
+_SSL_VERIFY: bool = os.getenv("OLLAMA_SSL_VERIFY", "true").lower() not in ("false", "0", "no")
 
 _GENERATE_MAX_RETRIES = 3
 _GENERATE_RETRY_DELAYS = (2, 5, 10)
@@ -76,7 +79,7 @@ def generate(
         try:
             if stream:
                 chunks: list[str] = []
-                with httpx.stream("POST", f"{base}/api/generate", json=body, timeout=timeout) as resp:
+                with httpx.stream("POST", f"{base}/api/generate", json=body, timeout=timeout, verify=_SSL_VERIFY) as resp:
                     resp.raise_for_status()
                     for line in resp.iter_lines():
                         if not line:
@@ -90,7 +93,7 @@ def generate(
                             break
                 return "".join(chunks)
             else:
-                resp = httpx.post(f"{base}/api/generate", json=body, timeout=timeout)
+                resp = httpx.post(f"{base}/api/generate", json=body, timeout=timeout, verify=_SSL_VERIFY)
                 resp.raise_for_status()
                 return resp.json().get("response", "")
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
@@ -120,6 +123,7 @@ def embed_batch(
             f"{url.rstrip('/')}/api/embed",
             json={"model": model, "input": texts},
             timeout=timeout,
+            verify=_SSL_VERIFY,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -156,6 +160,7 @@ def embed_single(
                 f"{base}/api/embeddings",
                 json={"model": model, "prompt": text},
                 timeout=timeout,
+                verify=_SSL_VERIFY,
             )
             resp.raise_for_status()
             return resp.json()["embedding"]
@@ -200,7 +205,7 @@ def chat(
     if keep_alive is not None:
         body["keep_alive"] = keep_alive
 
-    resp = httpx.post(f"{url.rstrip('/')}/api/chat", json=body, timeout=timeout)
+    resp = httpx.post(f"{url.rstrip('/')}/api/chat", json=body, timeout=timeout, verify=_SSL_VERIFY)
     resp.raise_for_status()
     return resp.json()
 
@@ -216,7 +221,7 @@ def check_ollama(url: str) -> tuple[bool, list[str]]:
     except Exception:
         pass
     try:
-        resp = httpx.get(url.rstrip("/") + "/api/tags", timeout=3.0)
+        resp = httpx.get(url.rstrip("/") + "/api/tags", timeout=3.0, verify=_SSL_VERIFY)
         if resp.status_code == 200:
             models = [m.get("name", "") for m in resp.json().get("models", []) if m.get("name")]
             return True, models

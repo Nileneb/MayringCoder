@@ -34,6 +34,8 @@ EMBEDDING_MODEL = "nomic-embed-text"   # Ollama embedding model (offline)
 
 # Ollama
 OLLAMA_TIMEOUT = 240
+import os as _os
+OLLAMA_SSL_VERIFY: bool = _os.getenv("OLLAMA_SSL_VERIFY", "true").lower() not in ("false", "0", "no")
 
 # gitingest content separator (48 "=" characters, per gitingest source)
 INGEST_SEPARATOR = "=" * 48

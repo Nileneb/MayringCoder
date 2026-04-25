@@ -1,0 +1,32 @@
+[
+  {
+    "cluster_id": "cluster-0",
+    "name": "api",
+    "description": "",
+    "rationale": "",
+    "strategy_used": "louvain",
+    "members": [
+      "src/api/f0.py",
+      "src/api/f1.py",
+      "src/api/f2.py",
+      "src/api/f3.py",
+      "src/api/f4.py"
+    ],
+    "member_count": 5
+  },
+  {
+    "cluster_id": "cluster-1",
+    "name": "memory",
+    "description": "",
+    "rationale": "",
+    "strategy_used": "louvain",
+    "members": [
+      "src/memory/f0.py",
+      "src/memory/f1.py",
+      "src/memory/f2.py",
+      "src/memory/f3.py",
+      "src/memory/f4.py"
+    ],
+    "member_count": 5
+  }
+]

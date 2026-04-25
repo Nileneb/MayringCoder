@@ -1,0 +1,13 @@
+[
+  {
+    "cluster_id": "cluster-0",
+    "name": "main.py",
+    "description": "",
+    "rationale": "",
+    "strategy_used": "louvain",
+    "members": [
+      "src/main.py"
+    ],
+    "member_count": 1
+  }
+]
