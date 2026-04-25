@@ -111,7 +111,28 @@ def register_memory_tools(mcp: FastMCP) -> None:
             {chunk_id, recorded: True}
         """
         try:
-            add_feedback(_get_conn(), chunk_id, signal, metadata or {})
+            import json as _json
+            enriched = dict(metadata or {})
+            conn = _get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT id, context_text FROM context_feedback_log"
+                    " WHERE json_extract(trigger_ids, '$') LIKE ?"
+                    " ORDER BY id DESC LIMIT 1",
+                    (f"%{chunk_id}%",),
+                ).fetchone()
+                if row:
+                    log_id, context_text = row
+                    if "query_context" not in enriched and context_text:
+                        enriched["query_context"] = context_text[:500]
+                    conn.execute(
+                        "UPDATE context_feedback_log SET was_referenced=1 WHERE id=?",
+                        (log_id,),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+            add_feedback(conn, chunk_id, signal, enriched)
             invalidate_query_cache()
             return {"chunk_id": chunk_id, "recorded": True}
         except Exception as exc:
