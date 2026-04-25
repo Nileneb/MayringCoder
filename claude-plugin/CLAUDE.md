@@ -32,3 +32,28 @@ mcp__claude_ai_Memory__conversation_ingest(
 ```
 mcp__claude_ai_Memory__put(content="<Erkenntnis>", source_id="<kontext:datei>", workspace_id="<slug>")
 ```
+
+## 6. Aufgaben an Pi-Agent delegieren
+
+Für rechenintensive oder memory-gestützte Aufgaben den Pi-Agent nutzen:
+```
+mcp__claude_ai_Memory__pi_task(
+  task="<Aufgabenbeschreibung>",
+  repo_slug="<repo-slug>",
+  timeout=180.0
+)
+```
+
+**Wann pi_task nutzen:**
+- Code-Analyse einzelner Dateien oder Module
+- PICO-Suchterme aus Projektkontext entwickeln
+- Konventionen und Muster aus dem Memory abrufen und anwenden
+- Zusammenfassungen mit vollständigem Projektkontext erstellen
+
+**Wann NICHT pi_task:**
+- Architekturentscheidungen (Claude selbst hat breiteren Kontext)
+- Multi-File-Refactoring (braucht Claudes direkten Datei-Zugriff)
+- Wenn kein Ollama lokal läuft (pi_task schlägt mit `{"error": "..."}` fehl — dann selbst antworten)
+
+**Hinweis:** pi_task läuft über `pi_server.py` (Port 8091, lokal) und nutzt Ollama + Memory.
+Wenn `{"error": "..."}` zurückkommt, ist entweder Ollama oder pi_server.py nicht gestartet.

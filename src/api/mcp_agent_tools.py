@@ -34,9 +34,9 @@ def register_agent_tools(mcp: FastMCP) -> None:
     ) -> dict:
         """Run a free-form task using the Pi-Agent with memory-augmented reasoning.
 
-        The Pi-Agent searches workspace memory for relevant context, injects it
-        into the system prompt (ambient context), and can issue up to 5
-        search_memory tool calls during reasoning. Requires Ollama to be reachable.
+        Routes through pi_server.py (PI_AGENT_URL, default http://localhost:8091/task)
+        so the MCP server does not need direct Ollama access. Falls back to direct
+        Ollama call only if PI_AGENT_URL is explicitly set to "direct".
 
         Args:
             task: Free-form task or question
@@ -46,11 +46,47 @@ def register_agent_tools(mcp: FastMCP) -> None:
             workspace_id: Tenant namespace for memory scope (default: from JWT)
 
         Returns:
-            {result: str, workspace_id: str} or {error: str}
+            {result: str, workspace_id: str} or {error: str, hint: str}
         """
+        import httpx
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        pi_url = os.getenv("PI_AGENT_URL", "http://localhost:8091")
+
+        if pi_url.lower() != "direct":
+            try:
+                resp = httpx.post(
+                    f"{pi_url}/task",
+                    json={
+                        "task": task,
+                        "repo_slug": repo_slug,
+                        "system_prompt": system_prompt,
+                        "timeout": timeout,
+                    },
+                    headers={"Authorization": f"Bearer {_current_raw_jwt() or ''}"},
+                    timeout=timeout + 10,
+                )
+                resp.raise_for_status()
+                return {**resp.json(), "workspace_id": ws}
+            except httpx.ConnectError:
+                return {
+                    "error": f"Pi-Server nicht erreichbar ({pi_url})",
+                    "hint": "pi_server.py starten: cd MayringCoder && .venv/bin/python -m src.agents.pi_server",
+                }
+            except Exception as exc:
+                return {"error": str(exc), "hint": "Pi-Server-Fehler"}
+
+        # Fallback: direct Ollama call (only when PI_AGENT_URL=direct)
+        try:
+            resp = httpx.get(f"{_OLLAMA_URL}/api/tags", timeout=3.0)
+            if resp.status_code != 200:
+                raise httpx.HTTPStatusError("", request=resp.request, response=resp)
+        except Exception:
+            return {
+                "error": "Ollama nicht erreichbar",
+                "hint": f"Ollama starten: ollama serve  (erwartet unter {_OLLAMA_URL})",
+            }
         try:
             from src.agents.pi import run_task_with_memory
-            ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
             result = run_task_with_memory(
                 task=task,
                 ollama_url=_OLLAMA_URL,
