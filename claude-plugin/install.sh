@@ -27,6 +27,7 @@ fi
 SETTINGS="$HOME/.claude/settings.json"
 HOOK_SCRIPT="$DEST/hooks/start_watcher.py"
 COMPACT_SCRIPT="$HOME/Desktop/MayringCoder/tools/postcompact_hook.py"
+STOP_SCRIPT="$DEST/hooks/stop_hook.py"
 
 python3 - <<PYEOF
 import json, os, sys
@@ -34,9 +35,13 @@ import json, os, sys
 settings_path = os.path.expanduser("$SETTINGS")
 hook_script = "$HOOK_SCRIPT"
 compact_script = "$COMPACT_SCRIPT"
+stop_script = "$STOP_SCRIPT"
 
-with open(settings_path) as f:
-    cfg = json.load(f)
+try:
+    with open(settings_path) as f:
+        cfg = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    cfg = {}
 
 hooks = cfg.setdefault("hooks", {})
 
@@ -69,6 +74,21 @@ if not already_compact:
     print("Hook hinzugefügt: PostCompact → postcompact_hook.py")
 else:
     print("Hook bereits vorhanden: PostCompact")
+
+# Stop — unbeurteilte injizierte Chunks → signal=neutral
+hooks.setdefault("Stop", [])
+stop_hook = {"type": "command", "command": f"python3 {stop_script}"}
+stop_entry = {"matcher": "", "hooks": [stop_hook]}
+already_stop = any(
+    any(h.get("command", "").endswith("stop_hook.py")
+        for h in e.get("hooks", []))
+    for e in hooks["Stop"]
+)
+if not already_stop:
+    hooks["Stop"].append(stop_entry)
+    print("Hook hinzugefügt: Stop → stop_hook.py")
+else:
+    print("Hook bereits vorhanden: Stop")
 
 with open(settings_path, "w") as f:
     json.dump(cfg, f, indent=2)
