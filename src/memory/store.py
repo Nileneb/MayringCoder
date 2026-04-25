@@ -106,6 +106,8 @@ def _migrate_schema(conn: DBAdapter) -> None:
     migrations = {
         "sources": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+            ("visibility", "TEXT NOT NULL DEFAULT 'private'"),
+            ("org_id", "TEXT DEFAULT NULL"),
         ],
         "chunks": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
@@ -130,7 +132,9 @@ def _init_schema(conn: DBAdapter) -> None:
             branch          TEXT NOT NULL DEFAULT 'main',
             "commit"        TEXT NOT NULL DEFAULT '',
             content_hash    TEXT NOT NULL DEFAULT '',
-            captured_at     TEXT NOT NULL
+            captured_at     TEXT NOT NULL,
+            visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public')),
+            org_id          TEXT DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -268,14 +272,15 @@ def _init_schema(conn: DBAdapter) -> None:
 # ---------------------------------------------------------------------------
 
 def upsert_source(
-    conn: DBAdapter, source: Source, workspace_id: str = "default"
+    conn: DBAdapter, source: Source, workspace_id: str = "default",
+    visibility: str = "private", org_id: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO sources
             (source_id, source_type, repo, path, branch, "commit", content_hash,
-             captured_at, workspace_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             captured_at, workspace_id, visibility, org_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET
             source_type  = excluded.source_type,
             repo         = excluded.repo,
@@ -284,12 +289,14 @@ def upsert_source(
             "commit"     = excluded."commit",
             content_hash = excluded.content_hash,
             captured_at  = excluded.captured_at,
-            workspace_id = excluded.workspace_id
+            workspace_id = excluded.workspace_id,
+            visibility   = excluded.visibility,
+            org_id       = excluded.org_id
         """,
         (
             source.source_id, source.source_type, source.repo, source.path,
             source.branch, source.commit, source.content_hash, source.captured_at,
-            workspace_id,
+            workspace_id, visibility, org_id,
         ),
     )
     _maybe_commit(conn)
@@ -319,9 +326,10 @@ def get_source(conn: DBAdapter, source_id: str) -> Source | None:
 # ---------------------------------------------------------------------------
 
 def insert_chunk(
-    conn: DBAdapter, chunk: Chunk, workspace_id: str = "default"
+    conn: DBAdapter, chunk: Chunk, workspace_id: str | None = None,
 ) -> None:
     """Insert a new chunk. category_labels stored as comma-joined string."""
+    _ws = workspace_id if workspace_id is not None else chunk.workspace_id
     labels_str = ",".join(chunk.category_labels)
     conn.execute(
         """
@@ -347,7 +355,7 @@ def insert_chunk(
             chunk.category_version, chunk.embedding_model, chunk.embedding_id,
             chunk.quality_score, chunk.dedup_key,
             chunk.category_source, chunk.category_confidence,
-            chunk.created_at, chunk.superseded_by, int(chunk.is_active), workspace_id,
+            chunk.created_at, chunk.superseded_by, int(chunk.is_active), _ws,
         ),
     )
     _maybe_commit(conn)

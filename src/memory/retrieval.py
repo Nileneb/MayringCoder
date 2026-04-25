@@ -68,6 +68,7 @@ def _scope_filter(
     categories: list[str] | None = None,
     source_type: str | None = None,
     workspace_id: str | None = None,
+    org_id: str | None = None,
 ) -> list[str]:
     """Return chunk_ids of active chunks matching hard scope filters."""
     query = """
@@ -76,10 +77,15 @@ def _scope_filter(
         JOIN sources s ON c.source_id = s.source_id
         WHERE c.is_active = 1
     """
-    params: list[str] = []
+    params: list = []
 
     if workspace_id:
-        query += " AND c.workspace_id = ?"
+        query += (
+            " AND (s.visibility = 'public'"
+            " OR (s.visibility = 'org' AND s.org_id = ?)"
+            " OR (s.visibility = 'private' AND c.workspace_id = ?))"
+        )
+        params.append(org_id)
         params.append(workspace_id)
     if repo:
         query += " AND s.repo = ?"
@@ -310,6 +316,7 @@ def search(
     affinity_source_id: str | None = opts.get("source_affinity")
     include_text: bool = bool(opts.get("include_text", True))
     workspace_id: str | None = opts.get("workspace_id")
+    org_id: str | None = opts.get("org_id")
 
     # Query-Cache check — hit: re-hydrate from SQLite and return early
     _ck = _cache_key(query, opts, session_compacted)
@@ -331,7 +338,7 @@ def search(
     # Stage 1: scope filter
     candidate_ids = _scope_filter(
         conn, repo=repo, categories=categories, source_type=source_type,
-        workspace_id=workspace_id,
+        workspace_id=workspace_id, org_id=org_id,
     )
     if not candidate_ids:
         return []

@@ -150,3 +150,8 @@ class WikiConflictResolveRequest(BaseModel):
     source: str
     target: str
     user_id: str = "api"
+
+
+class PatchVisibilityRequest(BaseModel):
+    visibility: str
+    org_id: str | None = None

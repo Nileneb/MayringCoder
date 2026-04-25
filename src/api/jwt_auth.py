@@ -33,6 +33,7 @@ class TokenInfo:
     llm_requires_key: bool = False    # True → Worker muss Key via Callback holen
     sub: str | None = None            # User-ID, wird für Key-Cache genutzt
     iat: int | None = None            # Issued-at, Teil des Key-Cache-Keys
+    org_id: str | None = None         # Org membership, for shared-memory visibility
 
     @property
     def is_admin(self) -> bool:
@@ -116,6 +117,7 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     raw_requires_key = payload.get("llm_requires_key", False)
     sub_raw = payload.get("sub")
     iat_raw = payload.get("iat")
+    org_id_raw = payload.get("org_id")
 
     return TokenInfo(
         workspace_id=workspace_id,
@@ -126,6 +128,7 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
         llm_requires_key=bool(raw_requires_key),
         sub=str(sub_raw) if sub_raw is not None else None,
         iat=int(iat_raw) if isinstance(iat_raw, (int, float)) else None,
+        org_id=str(org_id_raw) if org_id_raw else None,
     )
 
 
