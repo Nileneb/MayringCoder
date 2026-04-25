@@ -335,6 +335,21 @@ async def wiki_diff(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/wiki/feedback-matrix")
+async def wiki_feedback_matrix(
+    limit: int = 50,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Return per-chunk feedback aggregation (positive/negative/neutral counts + net_score)."""
+    try:
+        from src.api.dependencies import get_conn
+        from src.wiki_v2.store import get_feedback_matrix
+        matrix = get_feedback_matrix(get_conn(), limit=limit)
+        return {"workspace_id": workspace_id, "limit": limit, "matrix": matrix}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/wiki/team")
 async def wiki_team_activity(
     workspace_id: str = Depends(get_workspace),

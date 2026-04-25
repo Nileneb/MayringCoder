@@ -222,3 +222,49 @@ def get_clusters(conn: sqlite3.Connection, workspace_id: str) -> list[Cluster]:
             members=[m["id"] for m in members_rows],
         ))
     return result
+
+
+def get_feedback_matrix(memory_conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    """Return feedback aggregated per chunk, joined with source/category info.
+
+    Args:
+        memory_conn: Connection to the main memory DB (contains chunk_feedback + chunks).
+        limit: Max chunks to return (ordered by total feedback desc).
+
+    Returns:
+        List of {chunk_id, source_id, category_labels, positive, negative, neutral, net_score}
+    """
+    rows = memory_conn.execute(
+        """
+        SELECT
+            cf.chunk_id,
+            COALESCE(c.source_id, '') AS source_id,
+            COALESCE(c.category_labels, '') AS category_labels,
+            SUM(CASE WHEN cf.signal = 'positive' THEN 1 ELSE 0 END) AS positive,
+            SUM(CASE WHEN cf.signal = 'negative' THEN 1 ELSE 0 END) AS negative,
+            SUM(CASE WHEN cf.signal NOT IN ('positive','negative') THEN 1 ELSE 0 END) AS neutral,
+            COUNT(*) AS total
+        FROM chunk_feedback cf
+        LEFT JOIN chunks c ON c.chunk_id = cf.chunk_id
+        GROUP BY cf.chunk_id
+        ORDER BY total DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        pos = r[3] if isinstance(r, tuple) else r["positive"]
+        neg = r[4] if isinstance(r, tuple) else r["negative"]
+        total = r[6] if isinstance(r, tuple) else r["total"]
+        net = round((pos - neg) / max(total, 1), 2)
+        result.append({
+            "chunk_id": r[0] if isinstance(r, tuple) else r["chunk_id"],
+            "source_id": r[1] if isinstance(r, tuple) else r["source_id"],
+            "category_labels": r[2] if isinstance(r, tuple) else r["category_labels"],
+            "positive": pos,
+            "negative": neg,
+            "neutral": r[5] if isinstance(r, tuple) else r["neutral"],
+            "net_score": net,
+        })
+    return result
