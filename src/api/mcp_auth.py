@@ -50,17 +50,20 @@ class JWTAuthMiddleware:
 
     Token via: Authorization: Bearer <jwt>  or  X-Auth-Token: <jwt>
     Admin access: JWT claim `scope: ["admin"]`.
+
+    auth_enabled overrides the module-level _AUTH_ENABLED (useful for tests).
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: Any, *, auth_enabled: bool | None = None) -> None:
         self._app = app
+        self._auth_enabled = _AUTH_ENABLED if auth_enabled is None else auth_enabled
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
 
-        if not _AUTH_ENABLED:
+        if not self._auth_enabled:
             _TOKEN_CTX.set(None)
             _RAW_JWT_CTX.set(None)
             await self._app(scope, receive, send)

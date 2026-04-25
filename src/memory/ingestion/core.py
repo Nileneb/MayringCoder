@@ -176,6 +176,7 @@ def ingest(
                 source_type=source.source_type,
                 conn=conn,
                 router=router,
+                workspace_id=workspace_id,
             )
 
         new_chunk_ids: list[str] = []

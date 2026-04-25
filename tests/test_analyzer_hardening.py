@@ -79,27 +79,29 @@ class TestParseLlmJsonDelimiters:
 # _ollama_generate — system_prompt parameter
 # ---------------------------------------------------------------------------
 
-class TestOllamaGenerateSystemPrompt:
-    def _make_mock_response(self, text="ok"):
-        """Create a mock httpx streaming context."""
-        line = json.dumps({"response": text, "done": True})
-        mock_resp = MagicMock()
-        mock_resp.iter_lines.return_value = iter([line])
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_resp.raise_for_status = MagicMock()
-        return mock_resp
+def _make_mock_response(text="ok"):
+    line = json.dumps({"response": text, "done": True})
+    mock_resp = MagicMock()
+    mock_resp.iter_lines.return_value = iter([line])
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status = MagicMock()
+    return mock_resp
 
+
+def _capturing_stream(captured: dict):
+    def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
+        captured["json"] = json
+        return _make_mock_response()
+    return fake_stream
+
+
+class TestOllamaGenerateSystemPrompt:
     def test_system_prompt_included_in_request(self):
         from src.analysis.analyzer import _ollama_generate
 
         captured = {}
-
-        def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
-            captured["json"] = json
-            return self._make_mock_response()
-
-        with patch("src.analysis.analyzer.httpx.stream", side_effect=fake_stream):
+        with patch("src.analysis.analyzer.httpx.stream", side_effect=_capturing_stream(captured)):
             _ollama_generate("user content", "http://localhost", "model", "test",
                              system_prompt="system instructions")
 
@@ -111,12 +113,7 @@ class TestOllamaGenerateSystemPrompt:
         from src.analysis.analyzer import _ollama_generate
 
         captured = {}
-
-        def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
-            captured["json"] = json
-            return self._make_mock_response()
-
-        with patch("src.analysis.analyzer.httpx.stream", side_effect=fake_stream):
+        with patch("src.analysis.analyzer.httpx.stream", side_effect=_capturing_stream(captured)):
             _ollama_generate("user content", "http://localhost", "model", "test")
 
         assert "system" not in captured["json"]
@@ -125,12 +122,7 @@ class TestOllamaGenerateSystemPrompt:
         from src.analysis.analyzer import _ollama_generate
 
         captured = {}
-
-        def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
-            captured["json"] = json
-            return self._make_mock_response()
-
-        with patch("src.analysis.analyzer.httpx.stream", side_effect=fake_stream):
+        with patch("src.analysis.analyzer.httpx.stream", side_effect=_capturing_stream(captured)):
             _ollama_generate("user content", "http://localhost", "model", "test",
                              system_prompt=None)
 
