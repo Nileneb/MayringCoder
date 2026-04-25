@@ -276,7 +276,8 @@ def main() -> None:
     if args.batch_delay is not None:
         set_batch_delay(args.batch_delay)
 
-    if not repo_url and not (args.ingest_issues or args.ingest_images or args.pi_task or args.generate_wiki):
+    if not repo_url and not (args.ingest_issues or args.ingest_images or args.pi_task or args.generate_wiki
+                              or getattr(args, "generate_training_data", None)):
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")
         sys.exit(1)
 
