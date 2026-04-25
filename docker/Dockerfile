@@ -16,7 +16,7 @@ COPY codebooks/ ./codebooks/
 # server-side von POST /conversation/micro-batch für die Summary-Generierung
 # importiert). Ohne diesen COPY scheitern beide Paths mit ModuleNotFoundError.
 COPY tools/ ./tools/
-COPY checker.py run.sh ./
+COPY run.sh ./
 
 RUN mkdir -p /app/cache /app/reports
 
