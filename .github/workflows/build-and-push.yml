@@ -50,20 +50,6 @@ jobs:
           provenance: false
           sbom: false
 
-      - name: Build and push watcher
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./docker/Dockerfile.watcher
-          push: true
-          tags: |
-            nileneb/mayring-watcher:latest
-            nileneb/mayring-watcher:${{ github.sha }}
-          cache-from: type=gha,scope=mayring-watcher
-          cache-to: type=gha,mode=max,scope=mayring-watcher
-          provenance: false
-          sbom: false
-
       - name: Trigger deploy in app.linn.games
         uses: actions/github-script@v9
         with:
