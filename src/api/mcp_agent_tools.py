@@ -15,9 +15,9 @@ from src.api.mcp_auth import (
 )
 
 
-def _model() -> str:
+def _model(task: str = "analysis") -> str:
     from src.model_router import ModelRouter
-    return ModelRouter(_OLLAMA_URL).resolve("analysis") or "mayring-qwen3:2b"
+    return ModelRouter(_OLLAMA_URL).resolve(task) or "mayring-qwen3:2b"
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.memory_service import run_ingest as _run_ingest
 
@@ -90,7 +90,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             result = run_task_with_memory(
                 task=task,
                 ollama_url=_OLLAMA_URL,
-                model=_model(),
+                model=_model("complex"),
                 repo_slug=repo_slug,
                 system_prompt=system_prompt,
                 timeout=timeout,
