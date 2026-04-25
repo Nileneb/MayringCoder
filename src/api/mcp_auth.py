@@ -12,7 +12,6 @@ _AUTH_ENABLED  = os.getenv("MCP_AUTH_ENABLED", "false").lower() in ("true", "1",
 _OAUTH_BASE_URL = os.getenv("MCP_OAUTH_BASE_URL", "https://mcp.linn.games")
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-_MODEL      = os.environ.get("OLLAMA_MODEL", "")
 
 _TOKEN_CTX: contextvars.ContextVar["TokenInfo | None"] = contextvars.ContextVar(
     "token_info", default=None

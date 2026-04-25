@@ -31,7 +31,6 @@ router = APIRouter(tags=["jobs"])
 
 _ROOT = Path(__file__).parent.parent.parent.parent
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
 
 
 async def _run_with_v2_postingest(

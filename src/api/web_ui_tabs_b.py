@@ -291,7 +291,6 @@ def build_settings_tab(app: gr.Blocks) -> None:
         gr.Markdown("## Modell-Router Konfiguration")
         gr.Markdown(
             "Weise jeder Aufgabe ein spezifisches Ollama-Modell zu. "
-            "**Leer** = globales Modell aus ENV (`OLLAMA_MODEL`). "
             "Änderungen sofort aktiv, via **Speichern** dauerhaft."
         )
 

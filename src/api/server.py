@@ -15,7 +15,7 @@ Required env:
     JWT_ISSUER            — expected `iss` claim (default: https://app.linn.games)
     JWT_AUDIENCE          — expected `aud` claim (default: mayringcoder)
     OLLAMA_URL            — Ollama endpoint (default three.linn.games)
-    OLLAMA_MODEL          — default model (e.g. gemma4:e4b)
+    EMBED_BATCH_SIZE      — embedding batch size (default 32)
 """
 
 from __future__ import annotations

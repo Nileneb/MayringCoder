@@ -15,7 +15,10 @@ router = APIRouter(tags=["duel"])
 
 _ROOT = Path(__file__).parent.parent.parent.parent
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
+
+def _judge_default() -> str:
+    from src.model_router import ModelRouter
+    return ModelRouter(_OLLAMA_URL).resolve("analysis")
 
 
 async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> None:
@@ -91,7 +94,7 @@ async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> Non
 
     if request.judge:
         job["progress"] = "judging"
-        _judge_model = request.judge_model or _OLLAMA_MODEL
+        _judge_model = request.judge_model or _judge_default()
         verdict = await loop.run_in_executor(
             None, _judge, request.task, result_a, result_b, _judge_model
         )
@@ -141,7 +144,7 @@ async def benchmark_tasks(
         raise HTTPException(status_code=404, detail=f"No tasks for category={request.category!r}")
 
     _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
-    _judge_model = request.judge_model or _OLLAMA_MODEL
+    _judge_model = request.judge_model or _judge_default()
     results = []
 
     def _score_answer(task_text: str, answer: str, keywords: list[str]) -> dict:

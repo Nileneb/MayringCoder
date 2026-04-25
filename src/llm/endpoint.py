@@ -60,10 +60,12 @@ _cache_lock = threading.Lock()
 
 
 def _platform_default() -> LLMEndpoint:
+    from src.model_router import ModelRouter
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     return LLMEndpoint(
         provider="platform",
-        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-        model=os.getenv("OLLAMA_MODEL", ""),
+        base_url=ollama_url,
+        model=ModelRouter(ollama_url).resolve("analysis"),
     )
 
 
@@ -142,7 +144,7 @@ def _endpoint_from_claims(
     from src.llm.key_callback import LlmKeyUnavailableError, fetch_user_key
 
     provider = _JWT_PROVIDER_MAP.get(token_info.llm_provider, "platform")
-    model = (token_info.llm_model or os.getenv("OLLAMA_MODEL", "")).strip()
+    model = (token_info.llm_model or "").strip()
     base_url = (token_info.llm_endpoint or "").strip().rstrip("/")
 
     api_key: str | None = None

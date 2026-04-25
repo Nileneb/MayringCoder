@@ -24,7 +24,11 @@ from src.ollama_client import generate as _ollama_generate
 # ---------------------------------------------------------------------------
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-_MODEL = os.environ.get("TURB_MODEL", "mistral:7b-instruct")
+
+
+def _default_model() -> str:
+    from src.model_router import ModelRouter
+    return ModelRouter(_OLLAMA_URL).resolve("analysis") or "mayring-qwen3:2b"
 
 THRESHOLD_SKIP = 0.20
 THRESHOLD_HIGH_ONLY = 0.50
@@ -129,7 +133,7 @@ Code ({file}, Zeile {start}-{end}):
 
 
 def categorize_chunk_llm(chunk: Chunk, model: str | None = None) -> Chunk:
-    _model = model or _MODEL
+    _model = model or _default_model()
     prompt = _CATEGORIZE_PROMPT.format(
         file=Path(chunk.file).name, start=chunk.start_line,
         end=chunk.end_line, code=chunk.code[:2000],
@@ -283,7 +287,7 @@ def deep_analyze_hotzone(
             "severity": "high" if score > 0.7 else "medium",
             "confidence": "high",
         }
-    _model = model or _MODEL
+    _model = model or _default_model()
     lines = Path(filepath).read_text(encoding="utf-8", errors="replace").splitlines()
     code = "\n".join(lines[max(0, start - 1):end])
     prompt = _DEEP_PROMPT.format(
