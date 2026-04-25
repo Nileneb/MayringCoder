@@ -35,13 +35,10 @@ def _ollama_ps(ollama_url: str) -> dict:
 
 
 def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
-    if router is not None and not model:
-        if router.is_available("embedding"):
-            model = router.resolve("embedding")
+    if router is None:
+        router = ModelRouter(ollama_url=ollama_url)
 
-    _ingest_model = model
-    if router is not None:
-        _ingest_model = router.resolve_with_fallback("mayring_code") or model
+    _ingest_model = router.resolve_with_fallback("mayring_code") or model
     print(f"[populate-memory] Modell: {_ingest_model} (Task: mayring_code)")
 
     from src.gpu_metrics import format_summary, parse_metrics, start_monitoring, stop_monitoring
