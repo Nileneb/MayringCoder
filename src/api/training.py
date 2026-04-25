@@ -378,3 +378,28 @@ async def _run_finetune(job_id: str) -> None:
 async def finetune_status() -> dict:
     """Return current finetune job status."""
     return _finetune_job.copy()
+
+
+@router.post("/generate")
+async def generate_training_data(
+    pipeline: str = "memory",
+    workspace_id: str = "default",
+    limit: int = 500,
+) -> dict:
+    """Run a training-data pipeline synchronously and return stats.
+
+    pipeline: "memory" | "kategorie"
+    """
+    if pipeline not in ("memory", "kategorie"):
+        raise HTTPException(status_code=400, detail="pipeline must be 'memory' or 'kategorie'")
+
+    try:
+        if pipeline == "kategorie":
+            from src.training.kategorie_coaching import run, DEFAULT_OUTPUT
+            result = run(workspace_id=workspace_id, output_path=DEFAULT_OUTPUT, limit=limit)
+        else:
+            from src.training.memory_context_generator import run, DEFAULT_OUTPUT
+            result = run(workspace_id=workspace_id, output_path=DEFAULT_OUTPUT, limit=limit)
+        return {"pipeline": pipeline, **result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

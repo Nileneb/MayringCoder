@@ -204,20 +204,35 @@ def _cmd_turbulence(args: argparse.Namespace, repo_url: str, ollama_url: str) ->
 
 
 def _cmd_generate_training_data(args: argparse.Namespace) -> None:
-    from src.training.memory_context_generator import run as run_memory_gen, DEFAULT_OUTPUT
     wid = getattr(args, "workspace_id", "default") or "default"
-    result = run_memory_gen(
-        workspace_id=wid,
-        output_path=DEFAULT_OUTPUT,
-        skip_feedback=getattr(args, "skip_auto_feedback", False),
-        limit=getattr(args, "training_limit", 500),
-    )
-    print(
-        f"[training] workspace={result['workspace_id']} | "
-        f"feedback_written={result['feedback_written']} | "
-        f"pairs_written={result['pairs_written']} | "
-        f"output={result['output']}"
-    )
+    pipeline = args.generate_training_data
+
+    if pipeline == "kategorie":
+        from src.training.kategorie_coaching import run as run_kategorie, DEFAULT_OUTPUT as KAT_OUT
+        result = run_kategorie(
+            workspace_id=wid,
+            output_path=KAT_OUT,
+            limit=getattr(args, "training_limit", 1000),
+        )
+        print(
+            f"[training:kategorie] workspace={result['workspace_id']} | "
+            f"pairs_written={result['pairs_written']} | "
+            f"output={result['output']}"
+        )
+    else:
+        from src.training.memory_context_generator import run as run_memory_gen, DEFAULT_OUTPUT
+        result = run_memory_gen(
+            workspace_id=wid,
+            output_path=DEFAULT_OUTPUT,
+            skip_feedback=getattr(args, "skip_auto_feedback", False),
+            limit=getattr(args, "training_limit", 500),
+        )
+        print(
+            f"[training:memory] workspace={result['workspace_id']} | "
+            f"feedback_written={result['feedback_written']} | "
+            f"pairs_written={result['pairs_written']} | "
+            f"output={result['output']}"
+        )
 
 
 def main() -> None:

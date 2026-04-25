@@ -126,10 +126,10 @@ def parse_args() -> argparse.Namespace:
                    help="Freier Auftrag an Pi mit Memory-Zugriff.")
     p.add_argument("--workspace-id", default="default", metavar="ID",
                    help="Tenant workspace für Multi-Tenancy (Standard: 'default').")
-    p.add_argument("--generate-training-data", choices=["memory"], metavar="PIPELINE",
-                   help="Training-Daten generieren. 'memory' = Memory-Context-Injection Pipeline "
-                        "(Issue #87): erzeugt auto-Feedback für Chunks + JSONL-Paare in "
-                        "cache/finetuning/memory_context_pairs.jsonl")
+    p.add_argument("--generate-training-data", choices=["memory", "kategorie"], metavar="PIPELINE",
+                   help="Training-Daten generieren. 'memory' = Memory-Context-Injection, "
+                        "'kategorie' = Kategorie-Coaching (Issue #87). "
+                        "Outputs: cache/finetuning/*.jsonl")
     p.add_argument("--skip-auto-feedback", action="store_true",
                    help="--generate-training-data memory: Feedback-Schreiben überspringen (read-only)")
     p.add_argument("--training-limit", type=int, default=500, metavar="N",
