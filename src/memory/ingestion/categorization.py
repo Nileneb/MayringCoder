@@ -175,6 +175,7 @@ def mayring_categorize(
     source_type: str = "repo_file",
     conn: Any = None,
     router: "ModelRouter | None" = None,
+    workspace_id: str = "default",
 ) -> "list[Chunk]":
     """Assign Mayring category labels to each chunk via LLM.
 
@@ -206,7 +207,9 @@ def mayring_categorize(
 
     for chunk in chunks:
         try:
+            import time
             prompt = f"Text chunk:\n\n{chunk.text[:1200]}"
+            _t0 = time.monotonic()
             response = _ollama_generate(
                 prompt=prompt,
                 ollama_url=ollama_url,
@@ -214,6 +217,21 @@ def mayring_categorize(
                 label=f"mayring:{chunk.chunk_id[:8]}",
                 system_prompt=system_prompt,
             )
+            _elapsed_ms = int((time.monotonic() - _t0) * 1000)
+            if conn is not None:
+                try:
+                    from src.memory.store import log_llm_call
+                    log_llm_call(
+                        conn=conn,
+                        call_type="categorization",
+                        model=model,
+                        prompt=prompt,
+                        response=response,
+                        duration_ms=_elapsed_ms,
+                        workspace_id=workspace_id,
+                    )
+                except Exception:
+                    pass
             # The hybrid prompt asks for `Kategorien: a, b, c` — extract that
             # line if present, otherwise treat the full response as a raw list
             # (backwards-compat with older deductive/inductive templates).

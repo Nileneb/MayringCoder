@@ -67,9 +67,8 @@ def test_api_post_retries_on_401_with_fresh_token(monkeypatch):
             return _response({"error": "unauth"}, 401)
         return _response({"ok": True}, 200)
 
-    import src.api.web_ui_helpers as _wh
     monkeypatch.setattr(web_ui._httpx, "post", _post)
-    monkeypatch.setattr(_wh, "_api_url", "http://api-test")
+    web_ui.set_runtime_urls("http://localhost:11434", "http://api-test")
 
     out = web_ui._api_post("memory/search", {"query": "x"}, "old.jwt")
     assert out["ok"] is True
@@ -86,9 +85,8 @@ def test_api_post_gives_up_when_refresh_fails(monkeypatch):
             return _response({}, 401)  # refresh denied
         return _response({"error": "unauth"}, 401)
 
-    import src.api.web_ui_helpers as _wh
     monkeypatch.setattr(web_ui._httpx, "post", _post)
-    monkeypatch.setattr(_wh, "_api_url", "http://api-test")
+    web_ui.set_runtime_urls("http://localhost:11434", "http://api-test")
 
     out = web_ui._api_post("memory/search", {"query": "x"}, "old.jwt")
     assert "abgelaufen" in out["error"].lower() or "neu einloggen" in out["error"].lower()

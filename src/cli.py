@@ -242,7 +242,11 @@ def main() -> None:
 
     repo_url = args.repo or os.getenv("GITHUB_REPO", "")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    _needs_llm = (
+    _is_non_llm_path = (
+        getattr(args, "populate_memory", False)
+        or getattr(args, "generate_training_data", None)
+    )
+    _needs_llm = not _is_non_llm_path and (
         args.mode in ("analyze", "overview")
         or (args.mode == "turbulence" and args.llm)
         or args.resolve_model_only
