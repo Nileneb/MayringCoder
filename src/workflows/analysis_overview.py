@@ -39,13 +39,23 @@ def _run_overview(
     existing_cache = load_overview_cache_raw(repo_url) or {}
 
     # Only re-analyze files whose content changed since the last overview run.
+    # Migration: existing cache entries without content_hash are trusted as-is
+    # and get their hash stamped now — avoids full re-scan on first run after deploy.
     changed_files: list[dict] = []
     unchanged_filenames: list[str] = []
     for f in files:
         h = _content_hash(f["content"])
         cached = existing_cache.get(f["filename"])
-        if cached and cached.get("content_hash") == h:
-            unchanged_filenames.append(f["filename"])
+        if cached:
+            if cached.get("content_hash") == h:
+                unchanged_filenames.append(f["filename"])
+            elif "content_hash" not in cached:
+                # Old cache entry — trust existing LLM result, stamp hash for future diffs.
+                existing_cache[f["filename"]]["content_hash"] = h
+                unchanged_filenames.append(f["filename"])
+            else:
+                f["content_hash"] = h
+                changed_files.append(f)
         else:
             f["content_hash"] = h
             changed_files.append(f)
