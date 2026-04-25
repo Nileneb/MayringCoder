@@ -62,6 +62,7 @@ def health() -> dict:
 
 @app.get("/stats/summary")
 def stats_summary() -> dict:
+    from src.api.job_queue import _JOBS
     conn = _get_conn()
     active = conn.execute("SELECT COUNT(*) FROM chunks WHERE is_active=1").fetchone()[0]
     total  = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -90,12 +91,24 @@ def stats_summary() -> dict:
             "ORDER BY created_at DESC LIMIT 20"
         ).fetchall()
     ]
+    recent_jobs = [
+        {
+            "job_id":     j["job_id"],
+            "status":     j["status"],
+            "started_at": j.get("started_at"),
+            "stages":     j.get("stages", {}),
+            "progress":   j.get("progress"),
+            "v2_jobs":    {k: _JOBS.get(v, {}).get("status") for k, v in j.get("v2_jobs", {}).items()},
+        }
+        for j in sorted(_JOBS.values(), key=lambda x: x.get("started_at", ""), reverse=True)[:5]
+    ]
     return {
-        "chunks":    {"active": active, "total": total},
-        "sources":   {"count": sources},
-        "feedback":  feedback_summary,
-        "ingestion": {"last_hour": last_hour, "last_24h": last_24h},
-        "recent_ops": recent,
+        "chunks":      {"active": active, "total": total},
+        "sources":     {"count": sources},
+        "feedback":    feedback_summary,
+        "ingestion":   {"last_hour": last_hour, "last_24h": last_24h},
+        "recent_ops":  recent,
+        "recent_jobs": recent_jobs,
     }
 
 
