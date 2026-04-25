@@ -50,6 +50,8 @@ class DBAdapter:
 
     def get_columns(self, table: str) -> set[str]:
         """Return column names via PRAGMA table_info (SQLite-specific)."""
+        if not table.isidentifier():
+            raise ValueError(f"Invalid table name: {table!r}")
         return {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
     def changes(self) -> int:
