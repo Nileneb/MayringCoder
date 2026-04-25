@@ -240,7 +240,9 @@ async def _drive(mw, scope_type="http", token=None, bearer=False):
 
 def _load_middleware(monkeypatch, enabled: bool):
     import src.api.mcp as mod
+    import src.api.mcp_auth as auth_mod
     monkeypatch.setattr(mod, "_AUTH_ENABLED", enabled)
+    monkeypatch.setattr(auth_mod, "_AUTH_ENABLED", enabled)
     from src.api.mcp import _JWTAuthMiddleware
     return _JWTAuthMiddleware(AsyncMock())
 

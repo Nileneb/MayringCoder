@@ -37,6 +37,7 @@ except ImportError:
 from src.api.dependencies import get_conn as _get_conn
 from src.api.training import router as _training_router
 from src.api.routes import memory, wiki, jobs, duel, reports
+from src.api.job_queue import _JOBS, run_checker_job as _run_checker_job
 
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 

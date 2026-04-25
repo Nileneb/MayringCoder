@@ -73,7 +73,7 @@ def mock_cache(tmp_path: Path):
     overview_path = cache_dir / overview_filename
     overview_path.write_text(json.dumps(overview_data, ensure_ascii=False), encoding="utf-8")
 
-    with patch("src.analysis.context.CACHE_DIR", cache_dir):
+    with patch("src.analysis.context_cache.CACHE_DIR", cache_dir):
         yield {
             "cache_dir": cache_dir,
             "overview_path": overview_path,

@@ -110,7 +110,7 @@ class TestBuildFileIndex:
         embedder.CACHE_DIR = tmp_path
 
         files = [_make_file("a.py"), _make_file("b.py")]
-        with patch("src.analysis.context._embed_texts", side_effect=_fake_embed):
+        with patch("src.analysis.context_embedfilter._embed_texts", side_effect=_fake_embed):
             index = build_file_index(files, "http://localhost:11434", repo_url="")
         assert len(index) == 2
         assert {e["filename"] for e in index} == {"a.py", "b.py"}
@@ -122,7 +122,7 @@ class TestBuildFileIndex:
         embedder.CACHE_DIR = tmp_path
 
         files = [_make_file("x.py", "hello")]
-        with patch("src.analysis.context._embed_texts", side_effect=_fake_embed):
+        with patch("src.analysis.context_embedfilter._embed_texts", side_effect=_fake_embed):
             index = build_file_index(files, "http://localhost:11434", repo_url="")
         assert isinstance(index[0]["embedding"], list)
         assert len(index[0]["embedding"]) == 2
@@ -130,8 +130,10 @@ class TestBuildFileIndex:
     def test_cache_is_written_and_reused(self, tmp_path):
         from src import config as cfg
         from src.analysis import context as embedder
+        import src.analysis.context_embedfilter as _emb_filter
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
+        _emb_filter.CACHE_DIR = tmp_path
 
         files = [_make_file("z.py", "code")]
         call_count = {"n": 0}
@@ -141,7 +143,7 @@ class TestBuildFileIndex:
             return _fake_embed(texts, url)
 
         repo = "https://github.com/test/repo"
-        with patch("src.analysis.context._embed_texts", side_effect=counting_embed):
+        with patch("src.analysis.context_embedfilter._embed_texts", side_effect=counting_embed):
             build_file_index(files, "http://localhost:11434", repo_url=repo)
             # Second call — should hit cache, not call embed again
             build_file_index(files, "http://localhost:11434", repo_url=repo)
@@ -151,8 +153,10 @@ class TestBuildFileIndex:
     def test_force_reindex_bypasses_cache(self, tmp_path):
         from src import config as cfg
         from src.analysis import context as embedder
+        import src.analysis.context_embedfilter as _emb_filter
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
+        _emb_filter.CACHE_DIR = tmp_path
 
         files = [_make_file("f.py")]
         call_count = {"n": 0}
@@ -162,7 +166,7 @@ class TestBuildFileIndex:
             return _fake_embed(texts, url)
 
         repo = "https://github.com/test/repo2"
-        with patch("src.analysis.context._embed_texts", side_effect=counting_embed):
+        with patch("src.analysis.context_embedfilter._embed_texts", side_effect=counting_embed):
             build_file_index(files, "http://localhost:11434", repo_url=repo)
             build_file_index(files, "http://localhost:11434", repo_url=repo, force=True)
 
@@ -171,8 +175,10 @@ class TestBuildFileIndex:
     def test_cache_invalidated_on_file_set_change(self, tmp_path):
         from src import config as cfg
         from src.analysis import context as embedder
+        import src.analysis.context_embedfilter as _emb_filter
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
+        _emb_filter.CACHE_DIR = tmp_path
 
         files_v1 = [_make_file("a.py")]
         files_v2 = [_make_file("a.py"), _make_file("b.py")]
@@ -183,7 +189,7 @@ class TestBuildFileIndex:
             return _fake_embed(texts, url)
 
         repo = "https://github.com/test/repo3"
-        with patch("src.analysis.context._embed_texts", side_effect=counting_embed):
+        with patch("src.analysis.context_embedfilter._embed_texts", side_effect=counting_embed):
             build_file_index(files_v1, "http://localhost:11434", repo_url=repo)
             build_file_index(files_v2, "http://localhost:11434", repo_url=repo)
 
@@ -200,11 +206,13 @@ class TestFilterByEmbedding:
     def _run_filter(self, files, query, top_k=10, threshold=None, tmp_path=None):
         from src import config as cfg
         from src.analysis import context as embedder
+        import src.analysis.context_embedfilter as _emb_filter
         if tmp_path is not None:
             cfg.CACHE_DIR = tmp_path
             embedder.CACHE_DIR = tmp_path
+            _emb_filter.CACHE_DIR = tmp_path
 
-        with patch("src.analysis.context._embed_texts", side_effect=_fake_embed):
+        with patch("src.analysis.context_embedfilter._embed_texts", side_effect=_fake_embed):
             return filter_by_embedding(
                 files=files,
                 query=query,

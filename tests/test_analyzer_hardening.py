@@ -95,7 +95,7 @@ class TestOllamaGenerateSystemPrompt:
 
         captured = {}
 
-        def fake_stream(method, url, json=None, timeout=None):
+        def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
             captured["json"] = json
             return self._make_mock_response()
 
@@ -112,7 +112,7 @@ class TestOllamaGenerateSystemPrompt:
 
         captured = {}
 
-        def fake_stream(method, url, json=None, timeout=None):
+        def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
             captured["json"] = json
             return self._make_mock_response()
 
@@ -126,7 +126,7 @@ class TestOllamaGenerateSystemPrompt:
 
         captured = {}
 
-        def fake_stream(method, url, json=None, timeout=None):
+        def fake_stream(method, url, json=None, timeout=None, verify=None, **kwargs):
             captured["json"] = json
             return self._make_mock_response()
 
