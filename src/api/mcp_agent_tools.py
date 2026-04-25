@@ -83,7 +83,8 @@ def register_agent_tools(mcp: FastMCP) -> None:
         Args:
             source:      Repo URL (e.g. "https://github.com/nileneb/MayringCoder")
                          or text content (conversation summary, file content, insight)
-            source_type: "auto" | "repo" | "text"  (default: "auto")
+            source_type: "auto" | "repo" | "text" | "conversation_summary" | "session_knowledge"
+                         | "note" | "paper" (default: "auto")
             source_id:   Dedup key for text sources (e.g. "session-memory:2026-04-25-topic")
             workspace_id: Tenant namespace (default: from JWT)
 
@@ -121,9 +122,10 @@ def register_agent_tools(mcp: FastMCP) -> None:
             try:
                 import hashlib
                 sid = source_id or f"text:{ws}:{hashlib.sha256(source[:64].encode()).hexdigest()[:12]}"
+                _stype = source_type if source_type not in ("auto", "text") else "knowledge"
                 source_dict = {
                     "source_id": sid,
-                    "source_type": "knowledge",
+                    "source_type": _stype,
                     "repo": ws,
                     "path": sid,
                     "content_hash": "sha256:" + hashlib.sha256(source.encode()).hexdigest()[:16],
