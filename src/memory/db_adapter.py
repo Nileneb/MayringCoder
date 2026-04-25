@@ -42,6 +42,9 @@ class DBAdapter:
     def commit(self) -> None:
         self._conn.commit()
 
+    def rollback(self) -> None:
+        self._conn.rollback()
+
     def close(self) -> None:
         self._conn.close()
 
