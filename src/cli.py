@@ -191,10 +191,12 @@ def _cmd_generate_ambient(args: argparse.Namespace, repo_url: str, ollama_url: s
 
 
 def _cmd_turbulence(args: argparse.Namespace, repo_url: str, ollama_url: str) -> None:
+    if args.model and not args.llm:
+        args.llm = True
     turb_model = (
         resolve_model(ollama_url, cli_model=args.model, env_model=os.getenv("TURB_MODEL"))
         if args.llm
-        else (args.model or os.getenv("TURB_MODEL", "mistral:7b-instruct"))
+        else (os.getenv("TURB_MODEL", "mistral:7b-instruct"))
     )
     os.environ["OLLAMA_URL"] = ollama_url
     os.environ["TURB_MODEL"] = turb_model
