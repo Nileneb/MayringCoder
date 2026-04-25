@@ -145,7 +145,7 @@ def main() -> None:
         print(f"\nTesten:")
         print(f'  ollama run {args.name} "Analysiere diese PHP-Datei: ..."')
         print(f"\nIn MayringCoder nutzen:")
-        print(f"  OLLAMA_MODEL={args.name} .venv/bin/python checker.py --repo ...")
+        print(f"  .venv/bin/python -m src.cli --repo ...")
     else:
         print(f"  Ollama-Fehler: {result.stderr}")
         print(f"\n  Manuell registrieren:")

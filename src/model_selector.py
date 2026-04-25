@@ -36,7 +36,7 @@ def prompt_user_for_model(available_models: list[str]) -> str:
     """Display a numbered menu of models and return the user's selection.
 
     All display output goes to stderr so that stdout stays clean for shell
-    command substitution (e.g. OLLAMA_MODEL=$(checker.py --resolve-model-only)).
+    command substitution.
     Falls back to the first model in the list on invalid input after 3 attempts.
     """
     print("\nKein Modell konfiguriert. Verfügbare Ollama-Modelle:", file=sys.stderr)

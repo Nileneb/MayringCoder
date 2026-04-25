@@ -1,18 +1,9 @@
-"""MayringCoder Pipeline — **Direkt-Executor** (kein HTTP).
+"""MayringCoder Pipeline — Direkt-Executor (kein HTTP).
 
-Rollen-Abgrenzung (siehe Issue #66 Phase 5):
-  - `python -m src.cli`  — DIESE DATEI. Wird vom API-Server als
-                           subprocess gestartet (src.api.job_queue.
-                           run_checker_job). Ruft src/workflows/*
-                           direkt auf, greift lokal auf memory.db,
-                           chromadb und ollama zu. Keine Remote-Auth.
-  - `src/pipeline.py`    — 40-LOC BC-Shim, re-exportiert dieses Modul
-                           unter altem Namen für bestehende Aufrufer.
-  - `checker.py`         — HTTP-Client (remote), ruft den API-Server,
-                           nicht dieses Modul.
+Wird vom API-Server als subprocess gestartet (src.api.job_queue.run_checker_job).
+Greift direkt auf memory.db, chromadb und ollama zu. Keine Remote-Auth.
 
-Wer ingesten oder analysieren will ohne Server: direkt hier entlang.
-Wer gegen den Prod-Server arbeitet: nutz stattdessen `checker.py`.
+src/pipeline.py — BC-Shim, re-exportiert dieses Modul unter altem Namen.
 """
 
 import argparse
