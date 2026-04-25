@@ -23,11 +23,24 @@ from src.training.base import get_training_conn, write_jsonl
 _FINETUNING_DIR = CACHE_DIR / "finetuning"
 DEFAULT_OUTPUT = _FINETUNING_DIR / "kategorie_coaching_pairs.jsonl"
 
+try:
+    from src.memory.ingestion.categorization import _resolve_codebook as _cb
+    _CODE_CATEGORIES: list[str] = _cb("code", "repo_file")
+except Exception:
+    _CODE_CATEGORIES = [
+        "api", "data_access", "domain", "infrastructure", "auth",
+        "middleware", "providers", "listeners", "ui", "config",
+        "utils", "tests", "integration", "caching", "logging",
+        "validation", "serialization", "error_handling", "security", "scheduling",
+    ]
+
 _SYSTEM_PROMPT = (
-    "Du bist ein Mayring-Analysator. Deine Aufgabe: Weise dem gegebenen Code-Chunk "
-    "passende Kategorien zu. Mögliche Kategorien: Daten, UI, Sicherheit, KI, Logik, Config, "
-    "Routing, Auth, Test, Migration, Modell, Service, Event, Queue, Cache.\n"
-    "Antworte NUR mit kommaseparierten Kategorie-Labels, z.B.: 'Logik, Auth'"
+    "Du analysierst Code-Ausschnitte nach Mayrings Reduktions-Modell und klassifizierst ihre Funktion.\n\n"
+    "Anker-Kategorien: " + ", ".join(_CODE_CATEGORIES) + "\n\n"
+    "REGELN:\n"
+    "- Bestehende Kategorien ohne Prefix nutzen\n"
+    "- Neue Themen mit [neu]-Prefix markieren\n"
+    "- Antworte NUR mit kommaseparierten Labels, z.B.: api, auth"
 )
 
 
