@@ -4,21 +4,20 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from src.memory.db_adapter import DBAdapter
+
 from src.wiki_v2.models import WikiNode, WikiEdge, Cluster
 
 
-def init_wiki_db(db_path: Path) -> sqlite3.Connection:
+def init_wiki_db(db_path: Path) -> DBAdapter:
     """Create/open wiki_v2.db and ensure schema exists."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    conn.row_factory = sqlite3.Row
-    _init_schema(conn)
-    return conn
+    adapter = DBAdapter.create(db_path, check_same_thread=False)
+    _init_schema(adapter)
+    return adapter
 
 
-def _init_schema(conn: sqlite3.Connection) -> None:
+def _init_schema(conn: DBAdapter) -> None:
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS wiki_nodes (
         id TEXT NOT NULL,
@@ -85,7 +84,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 # --- Node CRUD ---
 
 def log_contribution(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     workspace_id: str,
     user_id: str,
     action: str,
@@ -98,7 +97,7 @@ def log_contribution(
     conn.commit()
 
 
-def upsert_node(conn: sqlite3.Connection, node: WikiNode, user_id: str = "system") -> None:
+def upsert_node(conn: DBAdapter, node: WikiNode, user_id: str = "system") -> None:
     conn.execute(
         """INSERT INTO wiki_nodes (id, repo_slug, workspace_id, type, cluster_id,
            labels_json, summary, turbulence_tier, loc, updated_at)
@@ -114,7 +113,7 @@ def upsert_node(conn: sqlite3.Connection, node: WikiNode, user_id: str = "system
     log_contribution(conn, node.workspace_id, user_id, "upsert_node", node.id)
 
 
-def get_node(conn: sqlite3.Connection, node_id: str, workspace_id: str) -> WikiNode | None:
+def get_node(conn: DBAdapter, node_id: str, workspace_id: str) -> WikiNode | None:
     row = conn.execute(
         "SELECT * FROM wiki_nodes WHERE id=? AND workspace_id=?", (node_id, workspace_id)
     ).fetchone()
@@ -129,7 +128,7 @@ def get_node(conn: sqlite3.Connection, node_id: str, workspace_id: str) -> WikiN
     )
 
 
-def get_all_nodes(conn: sqlite3.Connection, workspace_id: str) -> list[WikiNode]:
+def get_all_nodes(conn: DBAdapter, workspace_id: str) -> list[WikiNode]:
     rows = conn.execute(
         "SELECT * FROM wiki_nodes WHERE workspace_id=?", (workspace_id,)
     ).fetchall()
@@ -144,7 +143,7 @@ def get_all_nodes(conn: sqlite3.Connection, workspace_id: str) -> list[WikiNode]
 
 # --- Edge CRUD ---
 
-def add_edge(conn: sqlite3.Connection, edge: WikiEdge) -> None:
+def add_edge(conn: DBAdapter, edge: WikiEdge) -> None:
     try:
         conn.execute(
             """INSERT INTO wiki_edges (source, target, repo_slug, workspace_id, type, weight, context, validated)
@@ -159,7 +158,7 @@ def add_edge(conn: sqlite3.Connection, edge: WikiEdge) -> None:
         pass
 
 
-def get_edges(conn: sqlite3.Connection, workspace_id: str,
+def get_edges(conn: DBAdapter, workspace_id: str,
               node_id: str | None = None, edge_type: str | None = None) -> list[WikiEdge]:
     q = "SELECT * FROM wiki_edges WHERE workspace_id=?"
     params: list[Any] = [workspace_id]
@@ -177,13 +176,13 @@ def get_edges(conn: sqlite3.Connection, workspace_id: str,
     ) for r in rows]
 
 
-def get_edges_by_type(conn: sqlite3.Connection, workspace_id: str, edge_type: str) -> list[WikiEdge]:
+def get_edges_by_type(conn: DBAdapter, workspace_id: str, edge_type: str) -> list[WikiEdge]:
     return get_edges(conn, workspace_id, edge_type=edge_type)
 
 
 # --- Cluster CRUD ---
 
-def upsert_cluster(conn: sqlite3.Connection, cluster: Cluster, user_id: str = "system") -> None:
+def upsert_cluster(conn: DBAdapter, cluster: Cluster, user_id: str = "system") -> None:
     conn.execute(
         """INSERT INTO wiki_clusters (cluster_id, repo_slug, workspace_id, name, description, rationale, strategy_used, member_count)
            VALUES (?,?,?,?,?,?,?,?)
@@ -204,7 +203,7 @@ def upsert_cluster(conn: sqlite3.Connection, cluster: Cluster, user_id: str = "s
     log_contribution(conn, cluster.workspace_id, user_id, "upsert_cluster", cluster.cluster_id)
 
 
-def get_clusters(conn: sqlite3.Connection, workspace_id: str) -> list[Cluster]:
+def get_clusters(conn: DBAdapter, workspace_id: str) -> list[Cluster]:
     rows = conn.execute(
         "SELECT * FROM wiki_clusters WHERE workspace_id=?", (workspace_id,)
     ).fetchall()
@@ -224,7 +223,7 @@ def get_clusters(conn: sqlite3.Connection, workspace_id: str) -> list[Cluster]:
     return result
 
 
-def get_feedback_matrix(memory_conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
     """Return feedback aggregated per chunk, joined with source/category info.
 
     Args:

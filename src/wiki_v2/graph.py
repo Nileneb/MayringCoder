@@ -6,6 +6,7 @@ from pathlib import Path
 import os as _os_g
 from src.config import CACHE_DIR, WIKI_DIR
 from src.wiki_v2.models import WikiNode, WikiEdge, Cluster
+from src.memory.db_adapter import DBAdapter
 from src.wiki_v2 import store as _store
 from src.wiki_v2._path_utils import confined_path
 
@@ -15,7 +16,7 @@ class WikiGraph:
         self.workspace_id = _os_g.path.basename(workspace_id.replace('/', '_').replace('\\', '_'))
         self.repo_slug = repo_slug
         self._db_path = db_path or (CACHE_DIR / "wiki_v2.db")
-        self._conn = _store.init_wiki_db(self._db_path)
+        self._conn: DBAdapter = _store.init_wiki_db(self._db_path)
 
     def upsert_node(self, node: WikiNode) -> None:
         _store.upsert_node(self._conn, node)
