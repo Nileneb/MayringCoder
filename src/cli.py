@@ -227,13 +227,12 @@ def main() -> None:
 
     repo_url = args.repo or os.getenv("GITHUB_REPO", "")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    _env_model = (os.getenv("OLLAMA_MODEL") or "").strip() or None
     _needs_llm = (
         args.mode in ("analyze", "overview")
         or (args.mode == "turbulence" and args.llm)
         or args.resolve_model_only
     )
-    model = resolve_model(ollama_url, args.model, _env_model) if _needs_llm else (args.model or _env_model or "")
+    model = resolve_model(ollama_url, args.model, None) if _needs_llm else (args.model or "")
 
     if args.resolve_model_only:
         print(model)

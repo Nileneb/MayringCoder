@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.api import mcp as mcp_mod
+from src.api import mcp_auth as mcp_mod
 from src.api.jwt_auth import TokenInfo
 from src.memory.retrieval import _scope_filter
 from src.memory.schema import Chunk, Source

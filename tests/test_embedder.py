@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.analysis.context import (
+from src.analysis.context_embedfilter import (
     _cosine_similarity,
     _file_snippet,
     _index_path,

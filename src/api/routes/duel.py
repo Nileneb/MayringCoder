@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -21,9 +22,27 @@ def _judge_default() -> str:
     return ModelRouter(_OLLAMA_URL).resolve("analysis")
 
 
+def _run_judge(task: str, answer_a: str, answer_b: str, judge_model: str) -> dict:
+    from src import ollama_client as _oc
+    _prompt = (
+        f"Aufgabe: {task}\n\n"
+        f"Antwort A:\n{answer_a[:1500]}\n\n"
+        f"Antwort B:\n{answer_b[:1500]}\n\n"
+        "Bewerte beide Antworten sachlich. Antworte NUR mit validem JSON (kein Markdown, keine Erklärung):\n"
+        '{"winner":"A","score_a":8,"score_b":6,"reasoning":"..."}'
+    )
+    try:
+        raw = _oc.generate(_OLLAMA_URL, judge_model, _prompt, num_predict=512, keep_alive="0")
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        return json.loads(raw)
+    except Exception as exc:
+        return {"winner": "tie", "score_a": 0, "score_b": 0, "reasoning": f"Judge-Fehler: {exc}"}
+
+
 async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> None:
     """Sequential execution of Pi-task on both models, optional judge + baseline."""
-    import json as _json
     from src.agents.pi import run_task_with_memory
     _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
     loop = asyncio.get_event_loop()
@@ -43,27 +62,6 @@ async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> Non
         except Exception as exc:
             out = f"[Fehler] {exc}"
         return out, round((time.monotonic() - t0) * 1000, 1)
-
-    def _judge(task: str, answer_a: str, answer_b: str, judge_model: str) -> dict:
-        from src import ollama_client as _oc
-        _prompt = (
-            f"Aufgabe: {task}\n\n"
-            f"Antwort A:\n{answer_a[:1500]}\n\n"
-            f"Antwort B:\n{answer_b[:1500]}\n\n"
-            "Bewerte beide Antworten sachlich. Antworte NUR mit validem JSON (kein Markdown, keine Erklärung):\n"
-            '{"winner":"A","score_a":8,"score_b":6,"reasoning":"..."}'
-        )
-        try:
-            raw = _oc.generate(
-                _OLLAMA_URL, judge_model, _prompt,
-                num_predict=512, keep_alive="0",
-            )
-            raw = raw.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`").lstrip("json").strip()
-            return _json.loads(raw)
-        except Exception as exc:
-            return {"winner": "tie", "score_a": 0, "score_b": 0, "reasoning": f"Judge-Fehler: {exc}"}
 
     job = _JOBS.get(job_id)
     if not job:
@@ -96,7 +94,7 @@ async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> Non
         job["progress"] = "judging"
         _judge_model = request.judge_model or _judge_default()
         verdict = await loop.run_in_executor(
-            None, _judge, request.task, result_a, result_b, _judge_model
+            None, _run_judge, request.task, result_a, result_b, _judge_model
         )
         job["verdict"] = verdict
 
@@ -126,11 +124,9 @@ async def benchmark_tasks(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Run task suite on two models, score each answer and return comparison report."""
-    import json as _json
     import yaml
     from pathlib import Path as _Path
     from src.agents.pi import run_task_with_memory
-    from src import ollama_client as _oc
 
     suite_path = _Path(__file__).parent.parent.parent.parent / "benchmarks" / "task_suite.yaml"
     if not suite_path.exists():
@@ -151,23 +147,6 @@ async def benchmark_tasks(
         hit = sum(1 for kw in keywords if kw.lower() in answer.lower())
         keyword_score = round(hit / len(keywords), 2) if keywords else 1.0
         return {"keyword_hits": hit, "keyword_total": len(keywords), "keyword_score": keyword_score}
-
-    def _judge(task_text: str, answer_a: str, answer_b: str) -> dict:
-        _prompt = (
-            f"Aufgabe: {task_text}\n\n"
-            f"Antwort A:\n{answer_a[:1200]}\n\n"
-            f"Antwort B:\n{answer_b[:1200]}\n\n"
-            "Bewerte beide Antworten sachlich. Antworte NUR mit validem JSON:\n"
-            '{"winner":"A","score_a":8,"score_b":6,"reasoning":"..."}'
-        )
-        try:
-            raw = _oc.generate(_OLLAMA_URL, _judge_model, _prompt, num_predict=512, keep_alive="0")
-            raw = raw.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`").lstrip("json").strip()
-            return _json.loads(raw)
-        except Exception as exc:
-            return {"winner": "tie", "score_a": 0, "score_b": 0, "reasoning": f"Judge-Fehler: {exc}"}
 
     loop = asyncio.get_event_loop()
 
@@ -205,7 +184,7 @@ async def benchmark_tasks(
 
         score_a = _score_answer(task_text, ans_a, keywords)
         score_b = _score_answer(task_text, ans_b, keywords)
-        verdict = await loop.run_in_executor(None, _judge, task_text, ans_a, ans_b)
+        verdict = await loop.run_in_executor(None, _run_judge, task_text, ans_a, ans_b, _judge_model)
 
         results.append({
             "task_id": tid,

@@ -68,7 +68,7 @@ _active_batch_delay: float = BATCH_DELAY_SECONDS
 
 
 def set_max_chars_per_file(limit: int) -> None:
-    """Override per-file truncation limit at runtime (called once from checker.py)."""
+    """Override per-file truncation limit at runtime (called once from src/cli.py)."""
     global _active_max_chars_per_file
     _active_max_chars_per_file = max(1, int(limit))
 

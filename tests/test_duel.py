@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
-from src.api.server import DuelRequest, _run_duel
+from src.api.routes.duel import _run_duel
+from src.api.routes.models import DuelRequest
 from src.api.job_queue import make_job as _make_job, _JOBS
 
 

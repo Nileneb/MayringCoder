@@ -22,7 +22,7 @@ try:
         add_feedback,
         get_chunks_by_source,
     )
-    from src.memory.ingest import ingest, get_or_create_chroma_collection, ingest_conversation_summary
+    from src.memory.ingest import ingest, ingest_conversation_summary
     from src.memory.retrieval import search
     from src.memory.schema import Source, Chunk
     from src.github import parse_github_input, GitHubInputError

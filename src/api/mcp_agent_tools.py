@@ -9,11 +9,15 @@ from mcp.server.fastmcp import FastMCP
 
 from src.api.mcp_auth import (
     _OLLAMA_URL,
-    _MODEL,
     _enforce_tenant,
     _effective_workspace_id,
     _current_raw_jwt,
 )
+
+
+def _model() -> str:
+    from src.model_router import ModelRouter
+    return ModelRouter(_OLLAMA_URL).resolve("analysis") or "mayring-qwen3:2b"
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.memory_service import run_ingest as _run_ingest
 
@@ -50,7 +54,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             result = run_task_with_memory(
                 task=task,
                 ollama_url=_OLLAMA_URL,
-                model=_MODEL,
+                model=_model(),
                 repo_slug=repo_slug,
                 system_prompt=system_prompt,
                 timeout=timeout,
@@ -126,7 +130,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 }
                 result = _run_ingest(
                     source_dict, source, _get_conn(), _get_chroma(),
-                    _OLLAMA_URL, _MODEL, {"categorize": True}, ws,
+                    _OLLAMA_URL, _model(), {"categorize": True}, ws,
                 )
                 # Post-ingest: wiki + ambient (fire-and-forget, non-critical)
                 try:
@@ -165,7 +169,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             model_b: Second model name (e.g. "qwen3:2b")
             repo_slug: Optional repo scope for memory search
             judge: Whether to auto-judge both answers (default True)
-            judge_model: Model for judging (default: server OLLAMA_MODEL)
+            judge_model: Model for judging (default: ModelRouter 'analysis' task)
             no_memory_baseline: Also run both models WITHOUT memory for comparison
             timeout: Per-model timeout in seconds
             workspace_id: Tenant namespace (default: from JWT)
@@ -220,7 +224,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             model_b: Second model name
             category: Filter by category (None = all tasks)
             repo_slug: Optional repo scope for memory search
-            judge_model: Model used for judging (default: server OLLAMA_MODEL)
+            judge_model: Model used for judging (default: ModelRouter 'analysis' task)
             timeout: Per-task per-model timeout in seconds
             workspace_id: Tenant namespace (default: from JWT)
 

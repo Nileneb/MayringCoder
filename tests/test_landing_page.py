@@ -7,7 +7,7 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from src.api.mcp import _landing_page
+from src.api.mcp_oauth import _landing_page
 
 
 def _app() -> TestClient:

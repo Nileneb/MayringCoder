@@ -1,4 +1,4 @@
-"""Tests for src/ingest_github_issues.py and --ingest-issues in checker.py."""
+"""Tests for --ingest-issues in src/cli.py and src/workflows/issue_ingest.py."""
 from unittest.mock import MagicMock, patch
 import json
 import pytest
@@ -145,7 +145,7 @@ class TestFetchIssuesGuards:
 
 
 # ---------------------------------------------------------------------------
-# _run_ingest_issues() in checker.py
+# run_ingest_issues() in src/workflows/issue_ingest.py
 # ---------------------------------------------------------------------------
 
 class TestRunIngestIssues:

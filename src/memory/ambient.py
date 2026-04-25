@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.memory.store import batch_context
+from src.memory.store_batch import batch_context
 
 @dataclass
 class TriggerResult:

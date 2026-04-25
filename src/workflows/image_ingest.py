@@ -12,7 +12,8 @@ def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | N
     from src.memory.ingest import run_image_ingest
 
     repo_url = args.ingest_images
-    vision_model = getattr(args, "vision_model", "qwen2.5vl:3b")
+    _default_vision = ModelRouter(ollama_url).resolve("vision") or "qwen2.5vl:3b"
+    vision_model = getattr(args, "vision_model", None) or _default_vision
     max_images = getattr(args, "max_images", 50)
     do_force = getattr(args, "force_reingest", False)
 

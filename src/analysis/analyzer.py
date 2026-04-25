@@ -31,7 +31,7 @@ _training_run_id: str = "default"
 
 
 def configure_training_log(path: Path | str, run_id: str = "default") -> None:
-    """Enable training-data logging. Call once from checker.py when --log-training-data is set.
+    """Enable training-data logging. Call once from src/cli.py when --log-training-data is set.
 
     Each LLM call in analyze_file() and overview_file() will append a JSONL
     entry to *path*. The file is created if it does not exist.

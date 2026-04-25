@@ -10,7 +10,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.analysis.context import _build_rag_query, enrich_findings_with_rag
+from src.analysis.context_rag import _build_rag_query, enrich_findings_with_rag
 
 
 # ---------------------------------------------------------------------------
