@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.memory.db_adapter import DBAdapter
 from src.memory.store_batch import batch_context
 
 @dataclass
@@ -63,7 +64,7 @@ _STICKY_RE = re.compile(r'\[sticky\]', re.IGNORECASE)
 def _score_entry(
     entry_text: str,
     captured_at_iso: str,
-    conn: Any,
+    conn: DBAdapter,
     half_life_days: float = 14.0,
 ) -> float:
     """Score a snapshot entry on [0.0, ~1.5] range.
@@ -111,7 +112,7 @@ def _score_entry(
 
 
 def _score_snapshot_entries(
-    conn: Any,
+    conn: DBAdapter,
     entries: list[tuple[str, str]],
 ) -> list[tuple[str, float]]:
     """Return entries ranked by score descending. Ties broken by original order."""
@@ -120,7 +121,7 @@ def _score_snapshot_entries(
     return [(text, score) for _, text, score in indexed]
 
 
-def _load_recent_conversations(conn: Any, repo_slug: str, limit: int = 5) -> list[tuple[str, str]]:
+def _load_recent_conversations(conn: DBAdapter, repo_slug: str, limit: int = 5) -> list[tuple[str, str]]:
     """Lade die letzten N Conversation-Summaries aus SQLite."""
     rows = conn.execute(
         """SELECT c.text, s.captured_at FROM chunks c
@@ -135,7 +136,7 @@ def _load_recent_conversations(conn: Any, repo_slug: str, limit: int = 5) -> lis
     return [(r[0][:500], r[1] or "") for r in rows]
 
 
-def _load_recent_issues(conn: Any, repo_slug: str, limit: int = 10) -> list[tuple[str, str]]:
+def _load_recent_issues(conn: DBAdapter, repo_slug: str, limit: int = 10) -> list[tuple[str, str]]:
     """Lade die letzten N Issue-Summaries aus SQLite."""
     rows = conn.execute(
         """SELECT c.text, s.captured_at FROM chunks c
@@ -168,7 +169,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na > 0 and nb > 0 else 0.0
 
 
-def _is_trigger_active(trigger_id: str, conn: Any) -> bool:
+def _is_trigger_active(trigger_id: str, conn: DBAdapter) -> bool:
     """Returns True if trigger is active or not yet in trigger_stats."""
     row = conn.execute(
         "SELECT is_active FROM trigger_stats WHERE trigger_id = ?", (trigger_id,)
@@ -181,7 +182,7 @@ def trigger_scan(
     keyword_index: dict[str, list[str]],
     cluster_embs: dict[str, list[float]],
     ollama_url: str,
-    conn: Any = None,
+    conn: DBAdapter | None = None,
     threshold: float = 0.75,
     max_tokens: int = 400,
 ) -> TriggerResult:
@@ -243,7 +244,7 @@ def compute_feedback(
     llm_response: str,
     trigger_ids: list[str],
     led_to_retrieval: bool,
-    conn: Any,
+    conn: DBAdapter,
     ollama_url: str,
 ) -> ContextFeedback:
     """Compute implicit feedback by embedding-cosine context vs. response.
@@ -292,7 +293,7 @@ def compute_feedback(
 def update_trigger_stats(
     trigger_ids: list[str],
     was_referenced: bool,
-    conn: Any,
+    conn: DBAdapter,
     deactivate_threshold: float = 0.10,
     min_fires_for_deactivation: int = 50,
 ) -> None:
@@ -325,7 +326,7 @@ def update_trigger_stats(
 
 
 def generate_ambient_snapshot(
-    conn: Any,
+    conn: DBAdapter,
     ollama_url: str,
     model: str,
     repo_slug: str = "",
@@ -385,7 +386,7 @@ def generate_ambient_snapshot(
     return snapshot_text
 
 
-def load_ambient_snapshot(conn: Any, repo_slug: str = "") -> str | None:
+def load_ambient_snapshot(conn: DBAdapter, repo_slug: str = "") -> str | None:
     """Lade den letzten Ambient-Snapshot aus SQLite."""
     source_id = f"ambient:{repo_slug or 'global'}:snapshot"
     row = conn.execute(
@@ -424,7 +425,7 @@ def _safe_cache_file(cache_dir: Path, repo_slug: str, suffix: str) -> Path | Non
 
 def build_context(
     task: str,
-    conn: Any,
+    conn: DBAdapter,
     ollama_url: str,
     repo_slug: str = "",
     _out_trigger_ids: list | None = None,

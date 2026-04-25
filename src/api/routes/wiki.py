@@ -157,8 +157,8 @@ async def wiki_rebuild(
             db = WikiGraph(_safe_wid_rb, _safe_slug_rb, CACHE_DIR / "wiki_v2.db")
             oc_path = _cp(CACHE_DIR, f"{_safe_slug_rb}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
-            import sqlite3
-            conn = sqlite3.connect(str(CACHE_DIR / "memory.db"))
+            from src.memory.db_adapter import DBAdapter
+            conn = DBAdapter.create(CACHE_DIR / "memory.db")
             detector = EdgeDetector()
             edges = detector.detect_from_overview(oc, conn, _safe_wid_rb, _safe_slug_rb)
             conn.close()

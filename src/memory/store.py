@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.memory.db_adapter import DBAdapter
+
 from src.config import CACHE_DIR
 from src.memory.store_batch import batch_context, _maybe_commit, _batch_depth
 
@@ -79,7 +81,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def init_memory_db(db_path: Path | None = None) -> sqlite3.Connection:
+def init_memory_db(db_path: Path | None = None) -> DBAdapter:
     """Create or open memory.db and ensure all tables + indexes exist.
 
     check_same_thread=False ist nötig weil die cachende Verbindung in web_ui.py
@@ -94,20 +96,18 @@ def init_memory_db(db_path: Path | None = None) -> sqlite3.Connection:
     """
     path = db_path or MEMORY_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    _init_schema(conn)
-    return conn
+    adapter = DBAdapter.create(path, check_same_thread=False)
+    _init_schema(adapter)
+    return adapter
 
 
-def _migrate_schema(conn: sqlite3.Connection) -> None:
+def _migrate_schema(conn: DBAdapter) -> None:
     """Add missing columns to existing DBs (idempotent migrations)."""
     migrations = {
         "sources": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+            ("visibility", "TEXT NOT NULL DEFAULT 'private'"),
+            ("org_id", "TEXT DEFAULT NULL"),
         ],
         "chunks": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
@@ -116,13 +116,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         ],
     }
     for table, columns in migrations.items():
-        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        existing = conn.get_columns(table)
         for col_name, col_def in columns:
             if col_name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
 
 
-def _init_schema(conn: sqlite3.Connection) -> None:
+def _init_schema(conn: DBAdapter) -> None:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sources (
             source_id       TEXT PRIMARY KEY,
@@ -132,7 +132,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             branch          TEXT NOT NULL DEFAULT 'main',
             "commit"        TEXT NOT NULL DEFAULT '',
             content_hash    TEXT NOT NULL DEFAULT '',
-            captured_at     TEXT NOT NULL
+            captured_at     TEXT NOT NULL,
+            visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public')),
+            org_id          TEXT DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -270,14 +272,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 def upsert_source(
-    conn: sqlite3.Connection, source: Source, workspace_id: str = "default"
+    conn: DBAdapter, source: Source, workspace_id: str = "default",
+    visibility: str = "private", org_id: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO sources
             (source_id, source_type, repo, path, branch, "commit", content_hash,
-             captured_at, workspace_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             captured_at, workspace_id, visibility, org_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET
             source_type  = excluded.source_type,
             repo         = excluded.repo,
@@ -286,18 +289,20 @@ def upsert_source(
             "commit"     = excluded."commit",
             content_hash = excluded.content_hash,
             captured_at  = excluded.captured_at,
-            workspace_id = excluded.workspace_id
+            workspace_id = excluded.workspace_id,
+            visibility   = excluded.visibility,
+            org_id       = excluded.org_id
         """,
         (
             source.source_id, source.source_type, source.repo, source.path,
             source.branch, source.commit, source.content_hash, source.captured_at,
-            workspace_id,
+            workspace_id, visibility, org_id,
         ),
     )
     _maybe_commit(conn)
 
 
-def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
+def get_source(conn: DBAdapter, source_id: str) -> Source | None:
     row = conn.execute(
         "SELECT * FROM sources WHERE source_id = ?", (source_id,)
     ).fetchone()
@@ -321,9 +326,10 @@ def get_source(conn: sqlite3.Connection, source_id: str) -> Source | None:
 # ---------------------------------------------------------------------------
 
 def insert_chunk(
-    conn: sqlite3.Connection, chunk: Chunk, workspace_id: str = "default"
+    conn: DBAdapter, chunk: Chunk, workspace_id: str | None = None,
 ) -> None:
     """Insert a new chunk. category_labels stored as comma-joined string."""
+    _ws = workspace_id if workspace_id is not None else chunk.workspace_id
     labels_str = ",".join(chunk.category_labels)
     conn.execute(
         """
@@ -349,13 +355,13 @@ def insert_chunk(
             chunk.category_version, chunk.embedding_model, chunk.embedding_id,
             chunk.quality_score, chunk.dedup_key,
             chunk.category_source, chunk.category_confidence,
-            chunk.created_at, chunk.superseded_by, int(chunk.is_active), workspace_id,
+            chunk.created_at, chunk.superseded_by, int(chunk.is_active), _ws,
         ),
     )
     _maybe_commit(conn)
 
 
-def get_chunk(conn: sqlite3.Connection, chunk_id: str, active_only: bool = True) -> Chunk | None:
+def get_chunk(conn: DBAdapter, chunk_id: str, active_only: bool = True) -> Chunk | None:
     query = "SELECT * FROM chunks WHERE chunk_id = ?"
     if active_only:
         query += " AND is_active = 1"
@@ -366,7 +372,7 @@ def get_chunk(conn: sqlite3.Connection, chunk_id: str, active_only: bool = True)
 
 
 def get_chunks_by_source(
-    conn: sqlite3.Connection, source_id: str, active_only: bool = True
+    conn: DBAdapter, source_id: str, active_only: bool = True
 ) -> list[Chunk]:
     query = "SELECT * FROM chunks WHERE source_id = ?"
     params: list = [source_id]
@@ -378,7 +384,7 @@ def get_chunks_by_source(
 
 
 def find_by_text_hash(
-    conn: sqlite3.Connection, text_hash: str, workspace_id: str = "default"
+    conn: DBAdapter, text_hash: str, workspace_id: str = "default"
 ) -> Chunk | None:
     """Exact dedup: return first active chunk with this text_hash in workspace, or None."""
     row = conn.execute(
@@ -389,7 +395,7 @@ def find_by_text_hash(
 
 
 def supersede_chunk(
-    conn: sqlite3.Connection, old_chunk_id: str, new_chunk_id: str
+    conn: DBAdapter, old_chunk_id: str, new_chunk_id: str
 ) -> None:
     """Mark old chunk as inactive, point superseded_by to new chunk."""
     conn.execute(
@@ -400,7 +406,7 @@ def supersede_chunk(
 
 
 def deactivate_chunks_by_source(
-    conn: sqlite3.Connection, source_id: str
+    conn: DBAdapter, source_id: str
 ) -> int:
     """Set is_active=0 for all active chunks of source_id. Returns count."""
     conn.execute(
@@ -408,7 +414,7 @@ def deactivate_chunks_by_source(
         (source_id,),
     )
     _maybe_commit(conn)
-    return conn.execute("SELECT changes()").fetchone()[0]
+    return conn.changes()
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +422,7 @@ def deactivate_chunks_by_source(
 # ---------------------------------------------------------------------------
 
 def add_feedback(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     chunk_id: str,
     signal: str,
     metadata: dict | None = None,
@@ -431,7 +437,7 @@ def add_feedback(
     _maybe_commit(conn)
 
 
-def get_feedback_score(conn: sqlite3.Connection, chunk_id: str) -> float:
+def get_feedback_score(conn: DBAdapter, chunk_id: str) -> float:
     """Net feedback: 0.5=neutral, 1.0=nur positiv, 0.0=nur negativ."""
     rows = conn.execute(
         "SELECT signal FROM chunk_feedback WHERE chunk_id = ?",
@@ -449,7 +455,7 @@ def get_feedback_score(conn: sqlite3.Connection, chunk_id: str) -> float:
 # ---------------------------------------------------------------------------
 
 def log_ingestion_event(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     source_id: str,
     event_type: str,
     payload: dict,
@@ -468,13 +474,13 @@ def log_ingestion_event(
 # Utility
 # ---------------------------------------------------------------------------
 
-def get_active_chunk_count(conn: sqlite3.Connection) -> int:
+def get_active_chunk_count(conn: DBAdapter) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM chunks WHERE is_active = 1"
     ).fetchone()[0]
 
 
-def get_source_count(conn: sqlite3.Connection) -> int:
+def get_source_count(conn: DBAdapter) -> int:
     return conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
 
 
@@ -483,7 +489,7 @@ def get_source_count(conn: sqlite3.Connection) -> int:
 # ---------------------------------------------------------------------------
 
 def add_source_ref(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     canonical_chunk_id: str,
     source_id: str,
     workspace_id: str = "default",
@@ -501,7 +507,7 @@ def add_source_ref(
 
 
 def get_source_refs(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     canonical_chunk_id: str,
 ) -> list[str]:
     """Return all source_ids that share the same text as canonical_chunk_id."""
@@ -513,7 +519,7 @@ def get_source_refs(
 
 
 def log_llm_call(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     call_type: str,
     model: str,
     prompt: str,

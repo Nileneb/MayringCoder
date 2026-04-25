@@ -23,6 +23,81 @@ else
     echo "Warnung: superpowers-Plugin nicht gefunden — Skills nicht installiert"
 fi
 
+# Hooks in ~/.claude/settings.json eintragen (UserPromptSubmit + PostCompact)
+SETTINGS="$HOME/.claude/settings.json"
+HOOK_SCRIPT="$DEST/hooks/start_watcher.py"
+COMPACT_SCRIPT="$HOME/Desktop/MayringCoder/tools/postcompact_hook.py"
+
+python3 - <<PYEOF
+import json, os, sys
+
+settings_path = os.path.expanduser("$SETTINGS")
+hook_script = "$HOOK_SCRIPT"
+compact_script = "$COMPACT_SCRIPT"
+
+with open(settings_path) as f:
+    cfg = json.load(f)
+
+hooks = cfg.setdefault("hooks", {})
+
+# UserPromptSubmit — Watcher starten
+hooks.setdefault("UserPromptSubmit", [])
+watcher_hook = {"type": "command", "command": f"python3 {hook_script}"}
+watcher_entry = {"matcher": "", "hooks": [watcher_hook]}
+already = any(
+    any(h.get("command", "").endswith("start_watcher.py")
+        for h in e.get("hooks", []))
+    for e in hooks["UserPromptSubmit"]
+)
+if not already:
+    hooks["UserPromptSubmit"].append(watcher_entry)
+    print("Hook hinzugefügt: UserPromptSubmit → start_watcher.py")
+else:
+    print("Hook bereits vorhanden: UserPromptSubmit")
+
+# PostCompact — Summary ingesten
+hooks.setdefault("PostCompact", [])
+compact_hook = {"type": "command", "command": f"python3 {compact_script}"}
+compact_entry = {"matcher": "", "hooks": [compact_hook]}
+already_compact = any(
+    any(h.get("command", "").endswith("postcompact_hook.py")
+        for h in e.get("hooks", []))
+    for e in hooks["PostCompact"]
+)
+if not already_compact:
+    hooks["PostCompact"].append(compact_entry)
+    print("Hook hinzugefügt: PostCompact → postcompact_hook.py")
+else:
+    print("Hook bereits vorhanden: PostCompact")
+
+with open(settings_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+
+# Auth-Token einrichten (von app.linn.games, NICHT MCP_SERVICE_TOKEN)
+HOOK_JWT="$HOME/.config/mayring/hook.jwt"
 echo ""
-echo "MAYRING_JWT in der Shell setzen:"
-echo "  export MAYRING_JWT=<Token von app.linn.games/mayring/watcher>"
+if [ -f "$HOOK_JWT" ] && [ -s "$HOOK_JWT" ]; then
+    echo "Token bereits vorhanden: $HOOK_JWT"
+else
+    echo "=== Mayring JWT einrichten ==="
+    echo "1. Öffne: https://app.linn.games/mayring/watcher"
+    xdg-open "https://app.linn.games/mayring/watcher" 2>/dev/null || \
+        open "https://app.linn.games/mayring/watcher" 2>/dev/null || true
+    echo "2. Melde dich an und kopiere deinen JWT."
+    echo ""
+    read -rsp "JWT hier einfügen (unsichtbar): " JWT_INPUT
+    echo
+    if [ -n "$JWT_INPUT" ]; then
+        mkdir -p "$(dirname "$HOOK_JWT")"
+        printf '%s' "$JWT_INPUT" > "$HOOK_JWT"
+        chmod 600 "$HOOK_JWT"
+        echo "Token gespeichert: $HOOK_JWT"
+    else
+        echo "Kein Token eingegeben — später eintragen:"
+        echo "  printf '%s' '<JWT>' > ~/.config/mayring/hook.jwt && chmod 600 ~/.config/mayring/hook.jwt"
+    fi
+fi
+echo ""
+echo "Watcher-Log: ~/.cache/mayryngcoder/watcher.log"

@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from src.memory.db_adapter import DBAdapter
 from src.wiki_v2.models import WikiEdge
 
 
@@ -52,7 +53,7 @@ class EdgeDetector:
     def detect_from_overview(
         self,
         overview_cache: dict,
-        conn: Any,
+        conn: DBAdapter,
         workspace_id: str,
         repo_slug: str,
     ) -> list[WikiEdge]:
@@ -185,7 +186,7 @@ class EdgeDetector:
                     edges.append(WikiEdge(a, b, slug, wid, "shared_type", 0.8, type_name))
         return edges
 
-    def _detect_label_cooccurrence(self, conn: Any, oc: dict, wid: str, slug: str) -> list[WikiEdge]:
+    def _detect_label_cooccurrence(self, conn: DBAdapter, oc: dict, wid: str, slug: str) -> list[WikiEdge]:
         try:
             rows = conn.execute(
                 "SELECT source_id, category_labels FROM chunks WHERE is_active=1 AND category_labels != '' AND workspace_id=?",

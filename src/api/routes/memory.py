@@ -16,6 +16,7 @@ from src.api.routes.models import (
     MemoryPutRequest,
     MemoryReindexRequest,
     MemorySearchRequest,
+    PatchVisibilityRequest,
     PiTaskRequest,
 )
 
@@ -325,3 +326,26 @@ async def ingest_alias(
 ) -> dict:
     """Alias for /memory/put — used by Laravel MayringMcpClient."""
     return await memory_put(request, workspace_id)
+
+
+@router.patch("/sources/{source_id}/visibility")
+async def patch_source_visibility(
+    source_id: str,
+    request: PatchVisibilityRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Update visibility (and optionally org_id) for a source."""
+    if request.visibility not in ("private", "org", "public"):
+        raise HTTPException(status_code=400, detail="visibility must be private|org|public")
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT source_id FROM sources WHERE source_id = ?", (source_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="source not found")
+    conn.execute(
+        "UPDATE sources SET visibility = ?, org_id = ? WHERE source_id = ?",
+        (request.visibility, request.org_id, source_id),
+    )
+    conn.commit()
+    return {"source_id": source_id, "visibility": request.visibility, "org_id": request.org_id}

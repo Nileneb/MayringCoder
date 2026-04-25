@@ -30,6 +30,8 @@ class Source:
     commit: str = ""
     content_hash: str = ""  # sha256 of raw source content
     captured_at: str = field(default_factory=lambda: _now_iso())
+    visibility: str = "private"   # "private" | "org" | "public"
+    org_id: str | None = None
 
     @staticmethod
     def make_id(repo: str, path: str) -> str:
@@ -46,11 +48,15 @@ class Source:
             "commit": self.commit,
             "content_hash": self.content_hash,
             "captured_at": self.captured_at,
+            "visibility": self.visibility,
+            "org_id": self.org_id,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Source":
-        return cls(**{k: d.get(k, "") for k in cls.__dataclass_fields__})
+        data = {k: d.get(k, "") for k in cls.__dataclass_fields__}
+        data["org_id"] = d.get("org_id")  # None when absent or NULL
+        return cls(**data)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +86,7 @@ class Chunk:
     category_source: str = ""     # "deductive"|"inductive"|"hybrid"|"fallback"|"manual"|""
     category_confidence: float = 0.0
     created_at: str = field(default_factory=lambda: _now_iso())
+    workspace_id: str = "default"
     superseded_by: str | None = None
     is_active: bool = True
 
@@ -115,6 +122,7 @@ class Chunk:
             "created_at": self.created_at,
             "superseded_by": self.superseded_by,
             "is_active": self.is_active,
+            "workspace_id": self.workspace_id,
         }
 
     @classmethod

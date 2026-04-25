@@ -1,7 +1,8 @@
 """Tests for ambient context layer (src/memory/ambient.py)."""
-import sqlite3
 import pytest
 from pathlib import Path
+
+from src.memory.db_adapter import DBAdapter
 
 from src.memory.ambient import (
     _load_recent_conversations,
@@ -15,14 +16,12 @@ from src.memory.ambient import (
 )
 
 
-def _init_test_db() -> sqlite3.Connection:
+def _init_test_db() -> DBAdapter:
     """Create an in-memory test DB with full schema."""
     from src.memory.store import _init_schema
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    _init_schema(conn)
-    return conn
+    adapter = DBAdapter.memory()
+    _init_schema(adapter)
+    return adapter
 
 
 class TestLoadRecentConversations:

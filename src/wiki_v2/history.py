@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json
 import sqlite3
+
+from src.memory.db_adapter import DBAdapter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -86,7 +88,7 @@ class WikiHistory:
 
     def timeline(
         self,
-        conn: sqlite3.Connection,
+        conn: DBAdapter,
         workspace_id: str,
         limit: int = 20,
     ) -> list[SnapshotSummary]:
@@ -117,7 +119,7 @@ class WikiHistory:
 
     def diff(
         self,
-        conn: sqlite3.Connection,
+        conn: DBAdapter,
         workspace_id: str,
         from_date: str,
         to_date: str,
@@ -170,7 +172,7 @@ class WikiHistory:
 
     def cleanup(
         self,
-        conn: sqlite3.Connection,
+        conn: DBAdapter,
         workspace_id: str,
         keep: int = 20,
     ) -> int:
@@ -192,7 +194,7 @@ class WikiHistory:
 
 
 def team_activity(
-    conn: sqlite3.Connection,
+    conn: DBAdapter,
     workspace_id: str,
     days: int = 30,
     from_date: str = "",

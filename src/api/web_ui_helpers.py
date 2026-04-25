@@ -33,7 +33,7 @@ try:
 except Exception as exc:
     _IMPORT_ERROR = str(exc)
 
-_conn: sqlite3.Connection | None = None
+_conn: "DBAdapter | None" = None
 _chroma_collection: Any = None
 _ollama_url: str = "http://localhost:11434"
 _api_url: str = "http://localhost:8080"
@@ -45,7 +45,7 @@ def set_runtime_urls(ollama_url: str, api_url: str) -> None:
     _api_url = api_url
 
 
-def _get_conn() -> sqlite3.Connection | None:
+def _get_conn() -> "DBAdapter | None":
     global _conn
     if _conn is not None:
         return _conn
