@@ -33,27 +33,36 @@ mcp__claude_ai_Memory__conversation_ingest(
 mcp__claude_ai_Memory__put(content="<Erkenntnis>", source_id="<kontext:datei>", workspace_id="<slug>")
 ```
 
-## 6. Aufgaben an Pi-Agent delegieren
+## 6. Pi-Agent Dispatch Policy (default-first)
 
-Für rechenintensive oder memory-gestützte Aufgaben den Pi-Agent nutzen:
+**Regel: Bei jeder Coding-Aufgabe zuerst pi_task verwenden. Claude-eigene Subagents sind der Fallback, nicht der Default.**
+
 ```
-mcp__claude_ai_Memory__pi_task(
+mcp__memory-agents__pi_task(
   task="<Aufgabenbeschreibung>",
   repo_slug="<repo-slug>",
   timeout=180.0
 )
 ```
 
-**Wann pi_task nutzen:**
-- Code-Analyse einzelner Dateien oder Module
-- PICO-Suchterme aus Projektkontext entwickeln
-- Konventionen und Muster aus dem Memory abrufen und anwenden
-- Zusammenfassungen mit vollständigem Projektkontext erstellen
+### pi_task verwenden für
+- Konkrete Implementierungsaufgaben (Datei lesen, Funktion patchen, Bug fixen)
+- "Find the file / locate the function / patch this bug"
+- Iterative Loops: Tests laufen lassen → fixen → wiederholen
+- Repo-/Konventionsfragen mit Memory-Kontext
+- Code-Analyse, Refactors, TODOs abarbeiten
 
-**Wann NICHT pi_task:**
-- Architekturentscheidungen (Claude selbst hat breiteren Kontext)
-- Multi-File-Refactoring (braucht Claudes direkten Datei-Zugriff)
-- Wenn kein Ollama lokal läuft (pi_task schlägt mit `{"error": "..."}` fehl — dann selbst antworten)
+### pi_task NICHT verwenden für
+- Reine Architektur-/Strategieentscheidungen ohne Code-Arbeit
+- Multi-File-Refactoring das direkten Dateizugriff von Claude braucht
+- Sensitive Secrets oder Credentials
+- Wenn pi_task fehlschlägt (`{"error": "..."}`) — dann selbst antworten und Fehler nennen
 
-**Hinweis:** pi_task läuft über `pi_server.py` (Port 8091, lokal) und nutzt Ollama + Memory.
-Wenn `{"error": "..."}` zurückkommt, ist entweder Ollama oder pi_server.py nicht gestartet.
+### Wie pi_task funktioniert
+pi_task via MCP (`memory-agents` Server) ruft `run_task_with_memory()` direkt auf — kein pi_server.py nötig.
+Voraussetzung: Ollama läuft lokal (`http://localhost:11434`), PI_AGENT_URL=direct (Standardwert in local_mcp.py).
+
+`pi_server.py` (Port 8091) ist ein optionaler HTTP-Proxy für nicht-MCP-Clients — nicht für Claude Code nötig.
+
+Wenn `{"error": "Ollama nicht erreichbar"}` → Ollama fehlt lokal.
+Wenn Tool `mcp__memory-agents__pi_task` nicht existiert → `memory-agents` MCP-Server nicht registriert (install.sh neu ausführen).

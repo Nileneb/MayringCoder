@@ -32,11 +32,13 @@ def register_agent_tools(mcp: FastMCP) -> None:
         timeout: float = 180.0,
         workspace_id: str | None = None,
     ) -> dict:
-        """Run a free-form task using the Pi-Agent with memory-augmented reasoning.
+        """DEFAULT delegation tool for implementation tasks — use this FIRST before Claude subagents.
 
-        Routes through pi_server.py (PI_AGENT_URL, default http://localhost:8091/task)
-        so the MCP server does not need direct Ollama access. Falls back to direct
-        Ollama call only if PI_AGENT_URL is explicitly set to "direct".
+        Use pi_task for: concrete code changes, file analysis, bug fixes, iterative test loops,
+        repo convention lookups, TODOs. Only fall back to Claude subagents when pi_task fails
+        or the task requires frontier-level reasoning / direct file writes.
+
+        Runs via local Ollama + synced memory DB (PI_AGENT_URL=direct, no pi_server.py needed).
 
         Args:
             task: Free-form task or question
