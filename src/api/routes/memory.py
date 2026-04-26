@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading as _threading
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,6 +24,21 @@ from src.api.routes.models import (
 router = APIRouter(tags=["memory"])
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+
+def _bg_wiki_rebuild(workspace_id: str) -> None:
+    try:
+        from src.wiki_v2.graph import WikiGraph
+        from src.wiki_v2.edge_detector import EdgeDetector
+        from src.wiki_v2.clustering import ClusterEngine
+        conn = _get_conn()
+        wiki_db = WikiGraph(workspace_id=workspace_id, repo_slug="")
+        edges = EdgeDetector().detect_from_overview({}, conn, workspace_id, "")
+        for e in edges:
+            wiki_db.add_edge(e)
+        ClusterEngine().cluster(wiki_db, strategy="louvain")
+    except Exception:
+        pass
 
 def _model(task: str = "mayring_code") -> str:
     from src.model_router import ModelRouter
@@ -86,6 +102,12 @@ async def memory_put(
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
                              _OLLAMA_URL, _model("mayring_code"), {"categorize": request.categorize},
                              workspace_id)
+        if source_dict.get("source_type") == "paper":
+            _threading.Thread(
+                target=_bg_wiki_rebuild,
+                args=(workspace_id,),
+                daemon=True,
+            ).start()
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
