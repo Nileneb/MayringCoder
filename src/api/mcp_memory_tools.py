@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 from mcp.server.fastmcp import FastMCP
 
-from src.api.mcp_auth import _enforce_tenant
+from src.api.mcp_auth import _enforce_tenant, _effective_workspace_id, _current_raw_jwt
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
-from src.api.memory_service import run_search as _run_search
+from src.api.memory_service import run_search as _run_search, run_ingest as _run_ingest
 from src.memory.retrieval import invalidate_query_cache
 from src.memory.store import (
     add_feedback,
@@ -93,6 +95,91 @@ def register_memory_tools(mcp: FastMCP) -> None:
             return {"source_id": source_id, "deactivated_count": count}
         except Exception as exc:
             return {"error": str(exc)}
+
+    @mcp.tool()
+    def ingest(
+        source: str,
+        source_type: str = "auto",
+        source_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Ingest any source into memory and run the full analysis pipeline.
+
+        One call handles everything: chunk → embed → categorize (Mayring) →
+        wiki update → ambient snapshot. Dedup via content hash — unchanged
+        content is skipped automatically.
+
+        source_type auto-detection (when "auto"):
+        - GitHub/GitLab URL or git@ → repo pipeline (async, returns job_id)
+        - Everything else → text pipeline (sync, returns chunk info)
+
+        Args:
+            source:      Repo URL (e.g. "https://github.com/nileneb/MayringCoder")
+                         or text content (conversation summary, file content, insight)
+            source_type: "auto" | "repo" | "text" | "conversation_summary" |
+                         "session_knowledge" | "note" | "paper" (default: "auto")
+            source_id:   Dedup key for text sources (e.g. "session-memory:2026-04-25-topic")
+            workspace_id: Tenant namespace (default: from JWT)
+
+        Returns:
+            repo: {job_id, status, repo, workspace_id}
+            text: {source_id, chunk_ids, workspace_id}
+        """
+        import hashlib
+        import httpx
+
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
+        _jwt = _current_raw_jwt()
+        headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
+
+        is_repo = source_type == "repo" or (
+            source_type == "auto" and (
+                source.startswith("https://github.com")
+                or source.startswith("https://gitlab.com")
+                or source.startswith("git@")
+            )
+        )
+
+        if is_repo:
+            try:
+                resp = httpx.post(
+                    f"{_api}/populate",
+                    json={"repo": source},
+                    headers=headers,
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                return {**resp.json(), "workspace_id": ws}
+            except Exception as exc:
+                return {"error": str(exc), "workspace_id": ws}
+        else:
+            try:
+                ollama_url = os.getenv("OLLAMA_URL", "http://three.linn.games:11434")
+                model = os.getenv("MAYRING_MODEL", "qwen2.5-coder:7b")
+                sid = source_id or f"text:{ws}:{hashlib.sha256(source[:64].encode()).hexdigest()[:12]}"
+                _stype = source_type if source_type not in ("auto", "text") else "knowledge"
+                source_dict = {
+                    "source_id": sid,
+                    "source_type": _stype,
+                    "repo": ws,
+                    "path": sid,
+                    "content_hash": "sha256:" + hashlib.sha256(source.encode()).hexdigest()[:16],
+                }
+                result = _run_ingest(
+                    source_dict, source, _get_conn(), _get_chroma(),
+                    ollama_url, model, {"categorize": True}, ws,
+                )
+                try:
+                    httpx.post(f"{_api}/wiki/generate",
+                               json={"workspace_id": ws}, headers=headers, timeout=5.0)
+                    httpx.post(f"{_api}/ambient/snapshot",
+                               json={"repo": ws}, headers=headers, timeout=5.0)
+                except Exception:
+                    pass
+                return {"source_id": sid, "workspace_id": ws, **result}
+            except Exception as exc:
+                return {"error": str(exc), "workspace_id": ws}
 
     @mcp.tool()
     def feedback(
