@@ -10,6 +10,19 @@ mkdir -p "$DEST"
 cp -r "$PLUGIN_DIR/." "$DEST/"
 echo "Plugin installiert: $DEST"
 
+# Python-Umgebung einrichten (benötigt für memory-agents MCP-Server)
+VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$MAYRING_DIR/.venv/bin/python"}"
+VENV_DIR="$(dirname "$(dirname "$VENV_PYTHON")")"
+
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "Erstelle virtuelle Umgebung: $VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+fi
+
+echo "Installiere Abhängigkeiten aus requirements.txt..."
+"$VENV_DIR/bin/pip" install -q -r "$MAYRING_DIR/requirements.txt"
+echo "Abhängigkeiten installiert."
+
 # Skills in superpowers-Cache kopieren (überleben Superpowers-Updates nicht — daher hier)
 SP_SKILLS="$HOME/.claude/plugins/cache/claude-plugins-official/superpowers"
 SP_VERSION=$(ls "$SP_SKILLS" 2>/dev/null | sort -V | tail -1)

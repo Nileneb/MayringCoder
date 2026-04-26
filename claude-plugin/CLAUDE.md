@@ -18,19 +18,21 @@ mcp__claude_ai_Memory__search_memory(query="<Task>", workspace_id="<slug>", comp
 - Irrelevant → `mcp__claude_ai_Memory__feedback(chunk_id="...", signal="negative")`
 
 ## 4. Session-Zusammenfassung speichern (Sessionende / nach Großaufgabe)
-Ersetzt den Docker-Watcher. Zusammenfassung direkt übergeben, kein Ollama nötig:
 ```
-mcp__claude_ai_Memory__conversation_ingest(
-  turns=[{"role":"assistant","content":"<was wurde entschieden/gebaut>","timestamp":"<ISO>"}],
-  session_id="<YYYY-MM-DD-kurzbeschreibung>",
-  workspace_slug="<slug>",
-  presumarized="<2-3 Satz Zusammenfassung: Was wurde gemacht, welche Entscheidungen, welche Dateien>"
+mcp__claude_ai_Memory__ingest(
+  source="<was wurde entschieden/gebaut — 2-3 Sätze: Entscheidungen, geänderte Dateien, Ergebnisse>",
+  source_id="session:<YYYY-MM-DD-kurzbeschreibung>",
+  workspace_id="<slug>"
 )
 ```
 
 ## 5. Einzelne Erkenntnis direkt speichern
 ```
-mcp__claude_ai_Memory__put(content="<Erkenntnis>", source_id="<kontext:datei>", workspace_id="<slug>")
+mcp__claude_ai_Memory__ingest(
+  source="<Erkenntnis als vollständiger Satz>",
+  source_id="context:<datei-oder-thema>",
+  workspace_id="<slug>"
+)
 ```
 
 ## 6. Pi-Agent Dispatch Policy (default-first)
