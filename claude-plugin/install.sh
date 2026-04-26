@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_DIR="$(dirname "$PLUGIN_DIR")/tools"
+MAYRING_DIR="$(dirname "$PLUGIN_DIR")"
+TOOLS_DIR="$MAYRING_DIR/tools"
 
 # Plugin-Dateien
 DEST="$HOME/.claude/plugins/mayring-coder"
@@ -110,6 +111,39 @@ with open(settings_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PYEOF
+
+# Lokalen MCP-Agent-Server in ~/.claude/settings.json eintragen (memory-agents)
+# Konfigurierbarer Pfad zum Python-Interpreter des virtuellen Environments:
+# Standard ist "$MAYRING_DIR/.venv/bin/python", kann aber via MAYRING_VENV_PYTHON überschrieben werden.
+VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$MAYRING_DIR/.venv/bin/python"}"
+python3 - <<MCPEOF
+import json, os, sys
+
+settings_path = os.path.expanduser("$SETTINGS")
+mayring_dir = "$MAYRING_DIR"
+venv_python = "$VENV_PYTHON"
+
+try:
+    with open(settings_path) as f:
+        cfg = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    cfg = {}
+
+mcp_servers = cfg.setdefault("mcpServers", {})
+if "memory-agents" not in mcp_servers:
+    mcp_servers["memory-agents"] = {
+        "command": venv_python,
+        "args": ["-m", "src.api.local_mcp"],
+        "cwd": mayring_dir,
+    }
+    print("MCP-Server hinzugefügt: memory-agents (lokaler Agent-Server)")
+else:
+    print("MCP-Server bereits vorhanden: memory-agents")
+
+with open(settings_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+MCPEOF
 
 # Auth-Token einrichten via OAuth PKCE (vollautomatisch, kein Copy-Paste)
 HOOK_JWT="$HOME/.config/mayring/hook.jwt"

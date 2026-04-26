@@ -45,7 +45,6 @@ load_dotenv(_ROOT / ".env")
 
 from src.api.mcp_auth import JWTAuthMiddleware, _AUTH_ENABLED, _OAUTH_BASE_URL
 from src.api.mcp_memory_tools import register_memory_tools
-from src.api.mcp_agent_tools import register_agent_tools
 from src.api.mcp_oauth import PathNormMiddleware, build_starlette_routes
 
 # Backward-compat aliases for tests that import with underscore prefix
@@ -63,7 +62,7 @@ mcp = FastMCP(
 )
 
 register_memory_tools(mcp)
-register_agent_tools(mcp)
+# Agent tools (pi_task, duel, etc.) live in local_mcp.py — see Issue #107
 
 
 def main() -> None:
