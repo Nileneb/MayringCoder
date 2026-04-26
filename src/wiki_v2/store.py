@@ -267,3 +267,53 @@ def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
             "net_score": net,
         })
     return result
+
+
+def get_task_feedback_matrix(
+    memory_conn: DBAdapter,
+    limit: int = 50,
+    query_filter: str | None = None,
+) -> list[dict]:
+    """Return feedback grouped by query/task context.
+
+    Each entry represents one query session with the list of chunks
+    that were rated (positive/negative/neutral) during that query.
+
+    Returns:
+        List of {query, chunks: [{chunk_id, source_id, signal, created_at}]}
+    """
+    where = "WHERE json_extract(cf.metadata, '$.query_context') IS NOT NULL"
+    params: list = []
+    if query_filter:
+        where += " AND json_extract(cf.metadata, '$.query_context') LIKE ?"
+        params.append(f"%{query_filter}%")
+
+    rows = memory_conn.execute(
+        f"""
+        SELECT
+            json_extract(cf.metadata, '$.query_context') AS query,
+            cf.chunk_id,
+            COALESCE(c.source_id, '') AS source_id,
+            cf.signal,
+            cf.created_at
+        FROM chunk_feedback cf
+        LEFT JOIN chunks c ON c.chunk_id = cf.chunk_id
+        {where}
+        ORDER BY cf.created_at DESC
+        LIMIT ?
+        """,
+        params + [limit],
+    ).fetchall()
+
+    tasks: dict[str, dict] = {}
+    for r in rows:
+        query = r[0] if isinstance(r, tuple) else r["query"]
+        if query not in tasks:
+            tasks[query] = {"query": query, "chunks": []}
+        tasks[query]["chunks"].append({
+            "chunk_id": r[1] if isinstance(r, tuple) else r["chunk_id"],
+            "source_id": r[2] if isinstance(r, tuple) else r["source_id"],
+            "signal": r[3] if isinstance(r, tuple) else r["signal"],
+            "created_at": r[4] if isinstance(r, tuple) else r["created_at"],
+        })
+    return list(tasks.values())
