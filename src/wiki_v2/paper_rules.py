@@ -41,8 +41,8 @@ def _call_ollama(text: str, instruction: str, ollama_url: str, model: str) -> li
         method="POST",
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=30)
-        raw = json.loads(resp.read()).get("response", "[]")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = json.loads(resp.read()).get("response", "[]")
         m = re.search(r"\[.*?\]", raw, re.DOTALL)
         if m:
             return json.loads(m.group())

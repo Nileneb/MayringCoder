@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import threading as _threading
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -33,12 +36,12 @@ def _bg_wiki_rebuild(workspace_id: str) -> None:
         from src.wiki_v2.clustering import ClusterEngine
         conn = _get_conn()
         wiki_db = WikiGraph(workspace_id=workspace_id, repo_slug="")
-        edges = EdgeDetector().detect_from_overview({}, conn, workspace_id, "")
+        edges = EdgeDetector(ollama_url=_OLLAMA_URL).detect_from_overview({}, conn, workspace_id, "")
         for e in edges:
             wiki_db.add_edge(e)
         ClusterEngine().cluster(wiki_db, strategy="louvain")
     except Exception:
-        pass
+        _log.exception("Background wiki rebuild failed for workspace_id=%s", workspace_id)
 
 def _model(task: str = "mayring_code") -> str:
     from src.model_router import ModelRouter
