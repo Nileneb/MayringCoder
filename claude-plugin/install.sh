@@ -113,7 +113,9 @@ with open(settings_path, "w") as f:
 PYEOF
 
 # Lokalen MCP-Agent-Server in ~/.claude/settings.json eintragen (memory-agents)
-VENV_PYTHON="$MAYRING_DIR/.venv/bin/python"
+# Konfigurierbarer Pfad zum Python-Interpreter des virtuellen Environments:
+# Standard ist "$MAYRING_DIR/.venv/bin/python", kann aber via MAYRING_VENV_PYTHON überschrieben werden.
+VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$MAYRING_DIR/.venv/bin/python"}"
 python3 - <<MCPEOF
 import json, os, sys
 
