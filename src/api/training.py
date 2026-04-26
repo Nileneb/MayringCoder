@@ -42,6 +42,8 @@ _TRAIN_JSONL = _FINETUNING_DIR / "train.jsonl"
 _VAL_JSONL = _FINETUNING_DIR / "val.jsonl"
 _HAIKU_ANNOTATIONS = _CACHE_DIR / "haiku_annotations.jsonl"
 
+_BENCHMARKS_TRAINING_DIR = _ROOT / "benchmarks" / "training_data"
+
 _LANGDOCK_WEBHOOK_SECRET = os.getenv("LANGDOCK_WEBHOOK_SECRET", "")
 _FINETUNE_OUTPUT_DIR = os.getenv("FINETUNE_OUTPUT_DIR", str(_ROOT / "models" / "finetuned"))
 
@@ -81,6 +83,24 @@ def _prompt_hash(messages: list[dict]) -> str:
     """Stable hash for deduplication: sha256 of system+user messages."""
     key = json.dumps([m for m in messages if m.get("role") in ("system", "user")], sort_keys=True)
     return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _normalize_entry(entry: dict) -> dict:
+    """Convert prompt/completion format (pipeline outputs) to messages format."""
+    if "messages" in entry:
+        return entry
+    prompt = entry.get("prompt", "")
+    completion = entry.get("completion", "")
+    if not (prompt and completion):
+        return entry
+    meta = {k: v for k, v in entry.items() if k not in ("prompt", "completion")}
+    return {
+        "messages": [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": completion},
+        ],
+        "_meta": meta,
+    }
 
 
 @router.get("/status")
@@ -212,12 +232,16 @@ async def langdock_webhook(request: Request) -> dict:
 
 @router.post("/merge")
 async def merge_annotations() -> dict:
-    """Merge all annotated batches into cache/finetuning/train.jsonl.
+    """Merge all training sources into cache/finetuning/train.jsonl.
 
-    Sources merged (deduplicated by prompt hash):
-    - cache/langdock_batches/*.jsonl
+    Sources (deduplicated by prompt hash):
     - cache/haiku_annotations.jsonl
+    - cache/langdock_batches/*.jsonl
+    - cache/finetuning/memory_context_pairs.jsonl
+    - cache/finetuning/kategorie_coaching_pairs.jsonl
+    - benchmarks/training_data/*.jsonl
 
+    prompt/completion entries are converted to messages format on the fly.
     Only samples with label != "skip" and quality_score >= 0.5 are included.
     Existing train.jsonl entries are preserved.
     """
@@ -246,6 +270,14 @@ async def merge_annotations() -> dict:
         sources.append(_HAIKU_ANNOTATIONS)
     if _LANGDOCK_BATCHES_DIR.exists():
         sources.extend(sorted(_LANGDOCK_BATCHES_DIR.glob("*.jsonl")))
+    for _pipeline_file in (
+        _FINETUNING_DIR / "memory_context_pairs.jsonl",
+        _FINETUNING_DIR / "kategorie_coaching_pairs.jsonl",
+    ):
+        if _pipeline_file.exists() and _pipeline_file.stat().st_size > 0:
+            sources.append(_pipeline_file)
+    if _BENCHMARKS_TRAINING_DIR.exists():
+        sources.extend(sorted(_BENCHMARKS_TRAINING_DIR.glob("*.jsonl")))
 
     for source_file in _tqdm(sources, desc="Batches mergen", unit="Datei"):
         with source_file.open(encoding="utf-8") as f:
@@ -254,7 +286,7 @@ async def merge_annotations() -> dict:
                 if not line:
                     continue
                 try:
-                    entry = json.loads(line)
+                    entry = _normalize_entry(json.loads(line))
                 except json.JSONDecodeError:
                     continue
 

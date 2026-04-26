@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
 """Generates training data from version-upgrade benchmark results.
 
-Two outputs:
-  1. JSONL pairs for future qwen fine-tuning (upgrade prediction task)
-  2. Memory injection into python_ecosystem workspace so Pi-agent knows
-     which files are high-priority in known packages
+Input:
+    benchmarks/version_upgrade_results/context_*.json     — MayringCoder analysis results
+        per repo: {repo, old_tag, new_tag, prompt_summary, gt_files, shown_files}
+    benchmarks/version_upgrade_results/haiku_output_*.json — Haiku LLM predictions (optional)
+        adds TP/FN breakdown; latest file per repo wins
+
+Processing:
+    1. Load context_*.json (repo → context dict)
+    2. Optionally load haiku_output_*.json to extend with prediction data
+    3. generate_upgrade_predict_pairs() — one pair per repo
+           prompt  = MayringCoder file summaries
+           completion = JSON list of GT files that needed changes
+    4. generate_file_importance_pairs() — one pair per file in prompt
+           prompt  = single-file snippet + repo/version context
+           completion = "high" (GT file) | "low" (not changed)
+    5. Optionally inject GT insights into python_ecosystem workspace memory
+
+Output:
+    benchmarks/training_data/upgrade_predict_<timestamp>.jsonl
+    benchmarks/training_data/file_importance_<timestamp>.jsonl
+    (consumed by POST /api/training/merge → cache/finetuning/train.jsonl)
 
 Usage:
     python benchmarks/training_data_generator.py
