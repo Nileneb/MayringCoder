@@ -99,7 +99,7 @@ def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str,
         slug = _repo_slug_fn(repo_url) if repo_url else wid
         oc = load_overview_cache_raw(repo_url) or {} if repo_url else {}
         db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
-        detector = EdgeDetector()
+        detector = EdgeDetector(ollama_url=ollama_url, model=model)
         edges = detector.detect_from_overview(oc, get_conn(), wid, slug)
         node_ids = set(oc.keys()) | {e.source for e in edges} | {e.target for e in edges}
         for nid in sorted(node_ids):
