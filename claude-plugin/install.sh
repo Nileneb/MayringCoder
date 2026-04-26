@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOOLS_DIR="$(dirname "$PLUGIN_DIR")/tools"
 
 # Plugin-Dateien
 DEST="$HOME/.claude/plugins/mayring-coder"
@@ -26,7 +27,8 @@ fi
 # Hooks in ~/.claude/settings.json eintragen (UserPromptSubmit + PostCompact)
 SETTINGS="$HOME/.claude/settings.json"
 HOOK_SCRIPT="$DEST/hooks/start_watcher.py"
-COMPACT_SCRIPT="$HOME/Desktop/MayringCoder/tools/postcompact_hook.py"
+COMPACT_SCRIPT="$TOOLS_DIR/postcompact_hook.py"
+STOP_SCRIPT="$DEST/hooks/stop_hook.py"
 
 python3 - <<PYEOF
 import json, os, sys
@@ -34,9 +36,13 @@ import json, os, sys
 settings_path = os.path.expanduser("$SETTINGS")
 hook_script = "$HOOK_SCRIPT"
 compact_script = "$COMPACT_SCRIPT"
+stop_script = "$STOP_SCRIPT"
 
-with open(settings_path) as f:
-    cfg = json.load(f)
+try:
+    with open(settings_path) as f:
+        cfg = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    cfg = {}
 
 hooks = cfg.setdefault("hooks", {})
 
@@ -70,34 +76,50 @@ if not already_compact:
 else:
     print("Hook bereits vorhanden: PostCompact")
 
+# Stop — unbeurteilte injizierte Chunks → signal=neutral
+hooks.setdefault("Stop", [])
+stop_hook = {"type": "command", "command": f"python3 {stop_script}"}
+stop_entry = {"matcher": "", "hooks": [stop_hook]}
+already_stop = any(
+    any(h.get("command", "").endswith("stop_hook.py")
+        for h in e.get("hooks", []))
+    for e in hooks["Stop"]
+)
+if not already_stop:
+    hooks["Stop"].append(stop_entry)
+    print("Hook hinzugefügt: Stop → stop_hook.py")
+else:
+    print("Hook bereits vorhanden: Stop")
+
+# UserPromptSubmit — memory_sync background hook
+SYNC_SCRIPT = "$TOOLS_DIR/memory_sync.py"
+sync_hook = {"type": "command", "command": f"python3 {SYNC_SCRIPT}"}
+sync_entry = {"matcher": "", "hooks": [sync_hook]}
+already_sync = any(
+    any(h.get("command", "").endswith("memory_sync.py")
+        for h in e.get("hooks", []))
+    for e in hooks["UserPromptSubmit"]
+)
+if not already_sync:
+    hooks["UserPromptSubmit"].append(sync_entry)
+    print("Hook hinzugefügt: UserPromptSubmit → memory_sync.py")
+else:
+    print("Hook bereits vorhanden: memory_sync.py")
+
 with open(settings_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PYEOF
 
-# Auth-Token einrichten (von app.linn.games, NICHT MCP_SERVICE_TOKEN)
+# Auth-Token einrichten via OAuth PKCE (vollautomatisch, kein Copy-Paste)
 HOOK_JWT="$HOME/.config/mayring/hook.jwt"
+OAUTH_SCRIPT="$TOOLS_DIR/oauth_install.py"
 echo ""
 if [ -f "$HOOK_JWT" ] && [ -s "$HOOK_JWT" ]; then
     echo "Token bereits vorhanden: $HOOK_JWT"
 else
-    echo "=== Mayring JWT einrichten ==="
-    echo "1. Öffne: https://app.linn.games/mayring/watcher"
-    xdg-open "https://app.linn.games/mayring/watcher" 2>/dev/null || \
-        open "https://app.linn.games/mayring/watcher" 2>/dev/null || true
-    echo "2. Melde dich an und kopiere deinen JWT."
-    echo ""
-    read -rsp "JWT hier einfügen (unsichtbar): " JWT_INPUT
-    echo
-    if [ -n "$JWT_INPUT" ]; then
-        mkdir -p "$(dirname "$HOOK_JWT")"
-        printf '%s' "$JWT_INPUT" > "$HOOK_JWT"
-        chmod 600 "$HOOK_JWT"
-        echo "Token gespeichert: $HOOK_JWT"
-    else
-        echo "Kein Token eingegeben — später eintragen:"
-        echo "  printf '%s' '<JWT>' > ~/.config/mayring/hook.jwt && chmod 600 ~/.config/mayring/hook.jwt"
-    fi
+    echo "=== Mayring JWT einrichten (OAuth-Login) ==="
+    python3 "$OAUTH_SCRIPT" --jwt-file "$HOOK_JWT"
 fi
 echo ""
-echo "Watcher-Log: ~/.cache/mayryngcoder/watcher.log"
+echo "Watcher-Log: ~/.cache/mayringcoder/watcher.log"
