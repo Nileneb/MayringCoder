@@ -125,19 +125,21 @@ with open(settings_path, "w") as f:
     f.write("\n")
 PYEOF
 
-# Lokalen MCP-Agent-Server in ~/.claude/settings.json eintragen (memory-agents)
+# Lokalen MCP-Agent-Server in ~/.claude/.mcp.json eintragen (memory-agents)
+# Claude Code liest mcpServers aus ~/.claude/.mcp.json, NICHT aus settings.json.
 # Konfigurierbarer Pfad zum Python-Interpreter des virtuellen Environments:
 # Standard ist "$MAYRING_DIR/.venv/bin/python", kann aber via MAYRING_VENV_PYTHON überschrieben werden.
 VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$MAYRING_DIR/.venv/bin/python"}"
+MCP_JSON="$HOME/.claude/.mcp.json"
 python3 - <<MCPEOF
-import json, os, sys
+import json, os
 
-settings_path = os.path.expanduser("$SETTINGS")
+mcp_json_path = os.path.expanduser("$MCP_JSON")
 mayring_dir = "$MAYRING_DIR"
 venv_python = "$VENV_PYTHON"
 
 try:
-    with open(settings_path) as f:
+    with open(mcp_json_path) as f:
         cfg = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     cfg = {}
@@ -149,11 +151,11 @@ if "memory-agents" not in mcp_servers:
         "args": ["-m", "src.api.local_mcp"],
         "cwd": mayring_dir,
     }
-    print("MCP-Server hinzugefügt: memory-agents (lokaler Agent-Server)")
+    print("MCP-Server hinzugefügt: memory-agents → ~/.claude/.mcp.json")
 else:
     print("MCP-Server bereits vorhanden: memory-agents")
 
-with open(settings_path, "w") as f:
+with open(mcp_json_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 MCPEOF
