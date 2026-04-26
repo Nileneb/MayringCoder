@@ -95,29 +95,15 @@ with open(settings_path, "w") as f:
     f.write("\n")
 PYEOF
 
-# Auth-Token einrichten (von app.linn.games, NICHT MCP_SERVICE_TOKEN)
+# Auth-Token einrichten via OAuth PKCE (vollautomatisch, kein Copy-Paste)
 HOOK_JWT="$HOME/.config/mayring/hook.jwt"
+OAUTH_SCRIPT="$HOME/Desktop/MayringCoder/tools/oauth_install.py"
 echo ""
 if [ -f "$HOOK_JWT" ] && [ -s "$HOOK_JWT" ]; then
     echo "Token bereits vorhanden: $HOOK_JWT"
 else
-    echo "=== Mayring JWT einrichten ==="
-    echo "1. Öffne: https://app.linn.games/mayring/watcher"
-    xdg-open "https://app.linn.games/mayring/watcher" 2>/dev/null || \
-        open "https://app.linn.games/mayring/watcher" 2>/dev/null || true
-    echo "2. Melde dich an und kopiere deinen JWT."
-    echo ""
-    read -rsp "JWT hier einfügen (unsichtbar): " JWT_INPUT
-    echo
-    if [ -n "$JWT_INPUT" ]; then
-        mkdir -p "$(dirname "$HOOK_JWT")"
-        printf '%s' "$JWT_INPUT" > "$HOOK_JWT"
-        chmod 600 "$HOOK_JWT"
-        echo "Token gespeichert: $HOOK_JWT"
-    else
-        echo "Kein Token eingegeben — später eintragen:"
-        echo "  printf '%s' '<JWT>' > ~/.config/mayring/hook.jwt && chmod 600 ~/.config/mayring/hook.jwt"
-    fi
+    echo "=== Mayring JWT einrichten (OAuth-Login) ==="
+    python3 "$OAUTH_SCRIPT" --jwt-file "$HOOK_JWT"
 fi
 echo ""
-echo "Watcher-Log: ~/.cache/mayryngcoder/watcher.log"
+echo "Watcher-Log: ~/.cache/mayringcoder/watcher.log"
