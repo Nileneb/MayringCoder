@@ -538,3 +538,26 @@ def log_llm_call(
          datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# wiki_paper_cache helpers
+# ---------------------------------------------------------------------------
+
+def get_paper_cache(conn: DBAdapter, source_id: str, rule_name: str) -> list | None:
+    row = conn.execute(
+        "SELECT extracted FROM wiki_paper_cache WHERE source_id = ? AND rule_name = ?",
+        (source_id, rule_name),
+    ).fetchone()
+    if row is None:
+        return None
+    return json.loads(row["extracted"])
+
+
+def set_paper_cache(conn: DBAdapter, source_id: str, rule_name: str, extracted: list) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO wiki_paper_cache(source_id, rule_name, extracted, created_at)"
+        " VALUES (?, ?, ?, ?)",
+        (source_id, rule_name, json.dumps(extracted, ensure_ascii=False), _now_iso()),
+    )
+    conn.commit()

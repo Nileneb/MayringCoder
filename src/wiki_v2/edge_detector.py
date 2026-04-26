@@ -50,6 +50,10 @@ def _cosine(a: list, b: list) -> float:
 class EdgeDetector:
     """Erkennt typisierte Edges zwischen Dateien für den Wiki-Graph."""
 
+    def __init__(self, ollama_url: str = "", model: str = "qwen2.5-coder:7b") -> None:
+        self._ollama_url = ollama_url
+        self._model = model
+
     def detect_from_overview(
         self,
         overview_cache: dict,
@@ -66,6 +70,25 @@ class EdgeDetector:
         if conn is not None:
             edges += self._detect_label_cooccurrence(conn, overview_cache, workspace_id, repo_slug)
         edges += self._detect_event_dispatch(overview_cache, workspace_id, repo_slug)
+        if conn is not None:
+            from src.wiki_v2.paper_rules import detect_from_papers
+            from src.memory.schema import Chunk
+            paper_rows = conn.fetchall(
+                """SELECT c.chunk_id, c.source_id, c.text, c.workspace_id, c.created_at,
+                          c.is_active, c.text_hash, c.dedup_key,
+                          c.category_labels, c.category_source, c.category_confidence
+                   FROM chunks c
+                   JOIN sources s ON c.source_id = s.source_id
+                   WHERE s.source_type = 'paper'
+                     AND c.workspace_id = ?
+                     AND c.is_active = 1""",
+                (workspace_id,),
+            )
+            if paper_rows:
+                paper_chunks = [Chunk.from_dict(dict(r)) for r in paper_rows]
+                edges += detect_from_papers(
+                    paper_chunks, conn, self._ollama_url, self._model, workspace_id, repo_slug
+                )
         return self._deduplicate(edges)
 
     def detect_test_coverage(
