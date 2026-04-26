@@ -13,6 +13,9 @@ import hashlib
 import json
 import os
 import sys
+import zoneinfo
+
+_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 import urllib.error
 import urllib.request
 
@@ -79,7 +82,7 @@ token = _read_token()
 if not token:
     sys.exit(0)
 
-ts = datetime.datetime.utcnow().strftime("%Y-%m-%d-%H%M%S")
+ts = datetime.datetime.now(_TZ).strftime("%Y-%m-%d-%H%M%S")
 sid = f"conversation_summary:compact-{ts}-{hashlib.sha256(summary[:64].encode()).hexdigest()[:8]}"
 payload = json.dumps({
     "source_id": sid,
