@@ -150,6 +150,7 @@ if "memory-agents" not in mcp_servers:
         "command": venv_python,
         "args": ["-m", "src.api.local_mcp"],
         "cwd": mayring_dir,
+        "env": {"PYTHONPATH": mayring_dir},
     }
     print("MCP-Server hinzugefügt: memory-agents → ~/.claude/.mcp.json")
 else:
