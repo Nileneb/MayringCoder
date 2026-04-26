@@ -90,6 +90,21 @@ if not already_stop:
 else:
     print("Hook bereits vorhanden: Stop")
 
+# UserPromptSubmit — memory_sync background hook
+SYNC_SCRIPT = "/home/nileneb/Desktop/MayringCoder/tools/memory_sync.py"
+sync_hook = {"type": "command", "command": f"python3 {SYNC_SCRIPT}"}
+sync_entry = {"matcher": "", "hooks": [sync_hook]}
+already_sync = any(
+    any(h.get("command", "").endswith("memory_sync.py")
+        for h in e.get("hooks", []))
+    for e in hooks["UserPromptSubmit"]
+)
+if not already_sync:
+    hooks["UserPromptSubmit"].append(sync_entry)
+    print("Hook hinzugefügt: UserPromptSubmit → memory_sync.py")
+else:
+    print("Hook bereits vorhanden: memory_sync.py")
+
 with open(settings_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
