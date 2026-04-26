@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOOLS_DIR="$(dirname "$PLUGIN_DIR")/tools"
 
 # Plugin-Dateien
 DEST="$HOME/.claude/plugins/mayring-coder"
@@ -26,7 +27,7 @@ fi
 # Hooks in ~/.claude/settings.json eintragen (UserPromptSubmit + PostCompact)
 SETTINGS="$HOME/.claude/settings.json"
 HOOK_SCRIPT="$DEST/hooks/start_watcher.py"
-COMPACT_SCRIPT="$HOME/Desktop/MayringCoder/tools/postcompact_hook.py"
+COMPACT_SCRIPT="$TOOLS_DIR/postcompact_hook.py"
 STOP_SCRIPT="$DEST/hooks/stop_hook.py"
 
 python3 - <<PYEOF
@@ -91,7 +92,7 @@ else:
     print("Hook bereits vorhanden: Stop")
 
 # UserPromptSubmit — memory_sync background hook
-SYNC_SCRIPT = "/home/nileneb/Desktop/MayringCoder/tools/memory_sync.py"
+SYNC_SCRIPT = "$TOOLS_DIR/memory_sync.py"
 sync_hook = {"type": "command", "command": f"python3 {SYNC_SCRIPT}"}
 sync_entry = {"matcher": "", "hooks": [sync_hook]}
 already_sync = any(
@@ -112,7 +113,7 @@ PYEOF
 
 # Auth-Token einrichten via OAuth PKCE (vollautomatisch, kein Copy-Paste)
 HOOK_JWT="$HOME/.config/mayring/hook.jwt"
-OAUTH_SCRIPT="$HOME/Desktop/MayringCoder/tools/oauth_install.py"
+OAUTH_SCRIPT="$TOOLS_DIR/oauth_install.py"
 echo ""
 if [ -f "$HOOK_JWT" ] && [ -s "$HOOK_JWT" ]; then
     echo "Token bereits vorhanden: $HOOK_JWT"
