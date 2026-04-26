@@ -74,8 +74,8 @@ def _set_cursor(conn: sqlite3.Connection, workspace_id: str, cursor: str) -> Non
     conn.commit()
 
 
-def _fetch_changes(token: str, workspace_id: str, since: str) -> dict:
-    params = urllib.parse.urlencode({"since": since, "workspace_id": workspace_id})
+def _fetch_changes(token: str, workspace_id: str, since: str, limit: int = _BATCH_SIZE) -> dict:
+    params = urllib.parse.urlencode({"since": since, "workspace_id": workspace_id, "limit": limit})
     req = urllib.request.Request(
         f"{_API_URL}/memory/changes?{params}",
         headers={"Authorization": f"Bearer {token}"},
@@ -163,7 +163,7 @@ def sync(workspace_id: str, db_path: str, chroma_path: str) -> int:
     total = 0
     while True:
         try:
-            data = _fetch_changes(token, workspace_id, cursor)
+            data = _fetch_changes(token, workspace_id, cursor, limit=_BATCH_SIZE)
         except Exception as e:
             print(f"Fetch error: {e}", file=sys.stderr)
             return 1

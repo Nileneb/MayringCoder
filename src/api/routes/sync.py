@@ -29,9 +29,8 @@ class MemorySyncResponse(BaseModel):
 @router.get("/changes", response_model=MemorySyncResponse)
 def get_changes(
     since: str = Query(..., description="ISO 8601 cursor — only chunks created after this"),
-    workspace_id: str = Query(...),
     limit: int = Query(500, le=2000),
-    _ws: str = Depends(get_workspace),
+    workspace_id: str = Depends(get_workspace),
 ) -> MemorySyncResponse:
     db = _get_conn()
     rows = db.execute(
