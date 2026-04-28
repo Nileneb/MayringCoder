@@ -32,6 +32,8 @@ router = APIRouter(tags=["jobs"])
 _ROOT = Path(__file__).parent.parent.parent.parent
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
+from src import config as _config
+
 
 async def _run_with_v2_postingest(
     job_id: str,
@@ -81,7 +83,7 @@ async def _run_with_v2_postingest(
     _JOBS[job_id]["v2_jobs"] = v2_jobs
 
     async def _overview_then_wiki() -> None:
-        await _run_checker_job(overview_id, ["--repo", repo, "--mode", "overview", "--time-budget", "600"], workspace_id)
+        await _run_checker_job(overview_id, ["--repo", repo, "--mode", "overview", "--time-budget", str(_config.ANALYSIS_TIME_BUDGET)], workspace_id)
         if _JOBS.get(overview_id, {}).get("status") == "done":
             await _run_checker_job(wiki_id, ["--repo", repo, "--generate-wiki"], workspace_id)
         else:

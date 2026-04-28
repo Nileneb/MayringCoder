@@ -37,6 +37,9 @@ OLLAMA_TIMEOUT = 240
 import os as _os
 OLLAMA_SSL_VERIFY: bool = _os.getenv("OLLAMA_SSL_VERIFY", "true").lower() not in ("false", "0", "no")
 
+# Overview-Job Wallclock-Budget in Sekunden (600 war zu klein für große Repos)
+ANALYSIS_TIME_BUDGET: int = int(_os.getenv("ANALYSIS_TIME_BUDGET", "3600"))
+
 # gitingest content separator (48 "=" characters, per gitingest source)
 INGEST_SEPARATOR = "=" * 48
 
