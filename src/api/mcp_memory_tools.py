@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
@@ -133,11 +134,15 @@ def register_memory_tools(mcp: FastMCP) -> None:
         _jwt = _current_raw_jwt()
         headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
 
+        parsed_source = urlparse(source)
+        source_host = (parsed_source.hostname or "").lower()
         is_repo = source_type == "repo" or (
             source_type == "auto" and (
-                source.startswith("https://github.com")
-                or source.startswith("https://gitlab.com")
-                or source.startswith("git@")
+                source.startswith("git@")
+                or (
+                    parsed_source.scheme in {"http", "https"}
+                    and source_host in {"github.com", "gitlab.com"}
+                )
             )
         )
 
