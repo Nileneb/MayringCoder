@@ -10,12 +10,33 @@ _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _DEFAULT_DIR="$HOME/Desktop/MayringCoder"
 
 if [ -f "$_SCRIPT_DIR/../src/api/local_mcp.py" ]; then
+    # Klassisch: aus geklontem Repo
     MAYRING_DIR="$(cd "$_SCRIPT_DIR/.." && pwd)"
 elif [ -f "$_DEFAULT_DIR/src/api/local_mcp.py" ]; then
+    # Repo bereits vorhanden
     MAYRING_DIR="$_DEFAULT_DIR"
 else
-    echo "Klone MayringCoder nach $_DEFAULT_DIR..."
-    git clone https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
+    # Standalone: nur Client-Dateien via sparse checkout holen (kein Server-Code, kein whisper/gradio)
+    echo "Klone MayringCoder (client-only, sparse) nach $_DEFAULT_DIR..."
+    git clone --filter=blob:none --sparse https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
+    git -C "$_DEFAULT_DIR" sparse-checkout set \
+        claude-plugin \
+        src/__init__.py \
+        src/config.py \
+        src/agents/__init__.py \
+        src/agents/pi.py \
+        src/api/__init__.py \
+        src/api/local_mcp.py \
+        src/api/mcp_agent_tools.py \
+        src/api/mcp_auth.py \
+        src/api/dependencies.py \
+        src/api/memory_service.py \
+        src/api/jwt_auth.py \
+        src/memory \
+        tools/memory_sync.py \
+        tools/postcompact_hook.py \
+        tools/oauth_install.py \
+        requirements-client.txt
     MAYRING_DIR="$_DEFAULT_DIR"
 fi
 
@@ -39,8 +60,13 @@ if [ ! -f "$VENV_PYTHON" ]; then
     python3 -m venv "$VENV_DIR"
 fi
 
-echo "Installiere Abhängigkeiten aus requirements.txt..."
-"$VENV_DIR/bin/pip" install -q -r "$MAYRING_DIR/requirements.txt"
+if [ -f "$MAYRING_DIR/requirements-client.txt" ]; then
+    echo "Installiere Client-Abhängigkeiten aus requirements-client.txt..."
+    "$VENV_DIR/bin/pip" install -q -r "$MAYRING_DIR/requirements-client.txt"
+else
+    echo "Installiere Abhängigkeiten aus requirements.txt..."
+    "$VENV_DIR/bin/pip" install -q -r "$MAYRING_DIR/requirements.txt"
+fi
 echo "Abhängigkeiten installiert."
 
 # ── Skills in superpowers-Cache kopieren ─────────────────────────────────────
