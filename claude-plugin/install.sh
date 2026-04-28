@@ -7,7 +7,7 @@ set -e
 #   2. Repo bereits unter ~/Desktop/MayringCoder vorhanden
 #   3. Standalone-Download: Repo wird automatisch nach ~/Desktop/MayringCoder geklont
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-_DEFAULT_DIR="$HOME/Desktop/MayringCoder"
+_DEFAULT_DIR="$HOME/.claude/mayringcoder"
 
 if [ -f "$_SCRIPT_DIR/../src/api/local_mcp.py" ]; then
     # Klassisch: aus geklontem Repo
