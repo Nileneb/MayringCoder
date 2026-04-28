@@ -16,15 +16,21 @@ elif [ -f "$_DEFAULT_DIR/src/api/local_mcp.py" ]; then
     # Repo bereits vorhanden
     MAYRING_DIR="$_DEFAULT_DIR"
 else
-    # Standalone: nur Client-Dateien via sparse checkout holen (kein Server-Code, kein whisper/gradio)
+    # Standalone: nur Client-Dateien via sparse checkout holen (kein Server-Code, kein whisper/gradio).
+    # Pi-Agent (run_task_with_memory) braucht zusätzlich: model_router, ollama_client,
+    # llm/ (LLMEndpoint), analysis/ (analyzer._parse_llm_json) und config/ (model_routes.yaml).
     echo "Klone MayringCoder (client-only, sparse) nach $_DEFAULT_DIR..."
     git clone --filter=blob:none --no-checkout https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
     git -C "$_DEFAULT_DIR" sparse-checkout init --no-cone
     git -C "$_DEFAULT_DIR" sparse-checkout set \
         '/claude-plugin/' \
+        '/config/' \
         '/src/__init__.py' \
         '/src/config.py' \
+        '/src/model_router.py' \
+        '/src/ollama_client.py' \
         '/src/agents/' \
+        '/src/analysis/' \
         '/src/api/__init__.py' \
         '/src/api/local_mcp.py' \
         '/src/api/mcp_agent_tools.py' \
@@ -32,6 +38,7 @@ else
         '/src/api/dependencies.py' \
         '/src/api/memory_service.py' \
         '/src/api/jwt_auth.py' \
+        '/src/llm/' \
         '/src/memory/' \
         '/tools/memory_sync.py' \
         '/tools/postcompact_hook.py' \
