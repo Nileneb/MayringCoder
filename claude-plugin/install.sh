@@ -18,25 +18,26 @@ elif [ -f "$_DEFAULT_DIR/src/api/local_mcp.py" ]; then
 else
     # Standalone: nur Client-Dateien via sparse checkout holen (kein Server-Code, kein whisper/gradio)
     echo "Klone MayringCoder (client-only, sparse) nach $_DEFAULT_DIR..."
-    git clone --filter=blob:none --sparse https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
+    git clone --filter=blob:none --no-checkout https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
+    git -C "$_DEFAULT_DIR" sparse-checkout init --no-cone
     git -C "$_DEFAULT_DIR" sparse-checkout set \
-        claude-plugin \
-        src/__init__.py \
-        src/config.py \
-        src/agents/__init__.py \
-        src/agents/pi.py \
-        src/api/__init__.py \
-        src/api/local_mcp.py \
-        src/api/mcp_agent_tools.py \
-        src/api/mcp_auth.py \
-        src/api/dependencies.py \
-        src/api/memory_service.py \
-        src/api/jwt_auth.py \
-        src/memory \
-        tools/memory_sync.py \
-        tools/postcompact_hook.py \
-        tools/oauth_install.py \
-        requirements-client.txt
+        '/claude-plugin/' \
+        '/src/__init__.py' \
+        '/src/config.py' \
+        '/src/agents/' \
+        '/src/api/__init__.py' \
+        '/src/api/local_mcp.py' \
+        '/src/api/mcp_agent_tools.py' \
+        '/src/api/mcp_auth.py' \
+        '/src/api/dependencies.py' \
+        '/src/api/memory_service.py' \
+        '/src/api/jwt_auth.py' \
+        '/src/memory/' \
+        '/tools/memory_sync.py' \
+        '/tools/postcompact_hook.py' \
+        '/tools/oauth_install.py' \
+        '/requirements-client.txt'
+    git -C "$_DEFAULT_DIR" checkout
     MAYRING_DIR="$_DEFAULT_DIR"
 fi
 
