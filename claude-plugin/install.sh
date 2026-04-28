@@ -1,17 +1,37 @@
 #!/bin/bash
 set -e
-PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-MAYRING_DIR="$(dirname "$PLUGIN_DIR")"
+
+# ── Repo-Erkennung ───────────────────────────────────────────────────────────
+# Drei Fälle:
+#   1. Klassisch: Script aus geklontem Repo (../src/api/local_mcp.py vorhanden)
+#   2. Repo bereits unter ~/Desktop/MayringCoder vorhanden
+#   3. Standalone-Download: Repo wird automatisch nach ~/Desktop/MayringCoder geklont
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_DEFAULT_DIR="$HOME/Desktop/MayringCoder"
+
+if [ -f "$_SCRIPT_DIR/../src/api/local_mcp.py" ]; then
+    MAYRING_DIR="$(cd "$_SCRIPT_DIR/.." && pwd)"
+elif [ -f "$_DEFAULT_DIR/src/api/local_mcp.py" ]; then
+    MAYRING_DIR="$_DEFAULT_DIR"
+else
+    echo "Klone MayringCoder nach $_DEFAULT_DIR..."
+    git clone https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
+    MAYRING_DIR="$_DEFAULT_DIR"
+fi
+
+PLUGIN_DIR="$MAYRING_DIR/claude-plugin"
 TOOLS_DIR="$MAYRING_DIR/tools"
 
-# Plugin-Dateien
+# ── Plugin-Dateien kopieren ──────────────────────────────────────────────────
 DEST="$HOME/.claude/plugins/mayring-coder"
 mkdir -p "$DEST"
 cp -r "$PLUGIN_DIR/." "$DEST/"
 echo "Plugin installiert: $DEST"
 
-# Python-Umgebung einrichten (benötigt für memory-agents MCP-Server)
-VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$HOME/.claude/.venv/bin/python"}"
+# ── Python-Umgebung einrichten ───────────────────────────────────────────────
+# venv liegt unter ~/.claude/plugins/mayring-coder/.venv (co-located mit Plugin).
+# Überschreibbar via MAYRING_VENV_PYTHON.
+VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$DEST/.venv/bin/python"}"
 VENV_DIR="$(dirname "$(dirname "$VENV_PYTHON")")"
 
 if [ ! -f "$VENV_PYTHON" ]; then
@@ -23,7 +43,7 @@ echo "Installiere Abhängigkeiten aus requirements.txt..."
 "$VENV_DIR/bin/pip" install -q -r "$MAYRING_DIR/requirements.txt"
 echo "Abhängigkeiten installiert."
 
-# Skills in superpowers-Cache kopieren (überleben Superpowers-Updates nicht — daher hier)
+# ── Skills in superpowers-Cache kopieren ─────────────────────────────────────
 SP_SKILLS="$HOME/.claude/plugins/cache/claude-plugins-official/superpowers"
 SP_VERSION=$(ls "$SP_SKILLS" 2>/dev/null | sort -V | tail -1)
 if [ -n "$SP_VERSION" ]; then
@@ -38,19 +58,21 @@ else
     echo "Warnung: superpowers-Plugin nicht gefunden — Skills nicht installiert"
 fi
 
-# Hooks in ~/.claude/settings.json eintragen (UserPromptSubmit + PostCompact)
+# ── Hooks in ~/.claude/settings.json eintragen ──────────────────────────────
 SETTINGS="$HOME/.claude/settings.json"
 HOOK_SCRIPT="$DEST/hooks/start_watcher.py"
 COMPACT_SCRIPT="$TOOLS_DIR/postcompact_hook.py"
 STOP_SCRIPT="$DEST/hooks/stop_hook.py"
+SYNC_SCRIPT="$TOOLS_DIR/memory_sync.py"
 
 python3 - <<PYEOF
-import json, os, sys
+import json, os
 
 settings_path = os.path.expanduser("$SETTINGS")
 hook_script = "$HOOK_SCRIPT"
 compact_script = "$COMPACT_SCRIPT"
 stop_script = "$STOP_SCRIPT"
+sync_script = "$SYNC_SCRIPT"
 
 try:
     with open(settings_path) as f:
@@ -62,73 +84,43 @@ hooks = cfg.setdefault("hooks", {})
 
 # UserPromptSubmit — Watcher starten
 hooks.setdefault("UserPromptSubmit", [])
-watcher_hook = {"type": "command", "command": f"python3 {hook_script}"}
-watcher_entry = {"matcher": "", "hooks": [watcher_hook]}
-already = any(
-    any(h.get("command", "").endswith("start_watcher.py")
-        for h in e.get("hooks", []))
-    for e in hooks["UserPromptSubmit"]
-)
-if not already:
-    hooks["UserPromptSubmit"].append(watcher_entry)
+if not any(any(h.get("command", "").endswith("start_watcher.py") for h in e.get("hooks", [])) for e in hooks["UserPromptSubmit"]):
+    hooks["UserPromptSubmit"].append({"matcher": "", "hooks": [{"type": "command", "command": f"python3 {hook_script}"}]})
     print("Hook hinzugefügt: UserPromptSubmit → start_watcher.py")
 else:
-    print("Hook bereits vorhanden: UserPromptSubmit")
+    print("Hook bereits vorhanden: UserPromptSubmit → start_watcher.py")
+
+# UserPromptSubmit — memory_sync
+if not any(any(h.get("command", "").endswith("memory_sync.py") for h in e.get("hooks", [])) for e in hooks["UserPromptSubmit"]):
+    hooks["UserPromptSubmit"].append({"matcher": "", "hooks": [{"type": "command", "command": f"python3 {sync_script}"}]})
+    print("Hook hinzugefügt: UserPromptSubmit → memory_sync.py")
+else:
+    print("Hook bereits vorhanden: UserPromptSubmit → memory_sync.py")
 
 # PostCompact — Summary ingesten
 hooks.setdefault("PostCompact", [])
-compact_hook = {"type": "command", "command": f"python3 {compact_script}"}
-compact_entry = {"matcher": "", "hooks": [compact_hook]}
-already_compact = any(
-    any(h.get("command", "").endswith("postcompact_hook.py")
-        for h in e.get("hooks", []))
-    for e in hooks["PostCompact"]
-)
-if not already_compact:
-    hooks["PostCompact"].append(compact_entry)
+if not any(any(h.get("command", "").endswith("postcompact_hook.py") for h in e.get("hooks", [])) for e in hooks["PostCompact"]):
+    hooks["PostCompact"].append({"matcher": "", "hooks": [{"type": "command", "command": f"python3 {compact_script}"}]})
     print("Hook hinzugefügt: PostCompact → postcompact_hook.py")
 else:
-    print("Hook bereits vorhanden: PostCompact")
+    print("Hook bereits vorhanden: PostCompact → postcompact_hook.py")
 
-# Stop — unbeurteilte injizierte Chunks → signal=neutral
+# Stop — unbeurteilte Chunks → neutral
 hooks.setdefault("Stop", [])
-stop_hook = {"type": "command", "command": f"python3 {stop_script}"}
-stop_entry = {"matcher": "", "hooks": [stop_hook]}
-already_stop = any(
-    any(h.get("command", "").endswith("stop_hook.py")
-        for h in e.get("hooks", []))
-    for e in hooks["Stop"]
-)
-if not already_stop:
-    hooks["Stop"].append(stop_entry)
+if not any(any(h.get("command", "").endswith("stop_hook.py") for h in e.get("hooks", [])) for e in hooks["Stop"]):
+    hooks["Stop"].append({"matcher": "", "hooks": [{"type": "command", "command": f"python3 {stop_script}"}]})
     print("Hook hinzugefügt: Stop → stop_hook.py")
 else:
-    print("Hook bereits vorhanden: Stop")
-
-# UserPromptSubmit — memory_sync background hook
-SYNC_SCRIPT = "$TOOLS_DIR/memory_sync.py"
-sync_hook = {"type": "command", "command": f"python3 {SYNC_SCRIPT}"}
-sync_entry = {"matcher": "", "hooks": [sync_hook]}
-already_sync = any(
-    any(h.get("command", "").endswith("memory_sync.py")
-        for h in e.get("hooks", []))
-    for e in hooks["UserPromptSubmit"]
-)
-if not already_sync:
-    hooks["UserPromptSubmit"].append(sync_entry)
-    print("Hook hinzugefügt: UserPromptSubmit → memory_sync.py")
-else:
-    print("Hook bereits vorhanden: memory_sync.py")
+    print("Hook bereits vorhanden: Stop → stop_hook.py")
 
 with open(settings_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PYEOF
 
-# Lokalen MCP-Agent-Server in ~/.claude/.mcp.json eintragen (memory-agents)
-# Claude Code liest mcpServers aus ~/.claude/.mcp.json, NICHT aus settings.json.
-# venv liegt immer unter ~/.claude/.venv, überschreibbar via MAYRING_VENV_PYTHON.
-VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$HOME/.claude/.venv/bin/python"}"
+# ── MCP-Server in ~/.claude/.mcp.json eintragen ──────────────────────────────
+# command: venv-Python aus Plugin-Verzeichnis
+# cwd: MayringCoder-Repo (src/api/local_mcp.py liegt dort)
 MCP_JSON="$HOME/.claude/.mcp.json"
 python3 - <<MCPEOF
 import json, os
@@ -151,7 +143,7 @@ if "memory-agents" not in mcp_servers:
         "cwd": mayring_dir,
         "env": {"PYTHONPATH": mayring_dir},
     }
-    print("MCP-Server hinzugefügt: memory-agents → ~/.claude/.mcp.json")
+    print(f"MCP-Server hinzugefügt: memory-agents (cwd={mayring_dir})")
 else:
     print("MCP-Server bereits vorhanden: memory-agents")
 
@@ -160,7 +152,7 @@ with open(mcp_json_path, "w") as f:
     f.write("\n")
 MCPEOF
 
-# Auth-Token einrichten via OAuth PKCE (vollautomatisch, kein Copy-Paste)
+# ── Auth-Token einrichten via OAuth PKCE ─────────────────────────────────────
 HOOK_JWT="$HOME/.config/mayring/hook.jwt"
 OAUTH_SCRIPT="$TOOLS_DIR/oauth_install.py"
 echo ""
