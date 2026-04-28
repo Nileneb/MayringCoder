@@ -13,7 +13,7 @@ from src.api.routes.models import (
     WikiEdgeCreateRequest,
     WikiRebuildRequest,
 )
-from src.wiki_v2._path_utils import confined_path as _cp
+from src.wiki_v2._path_utils import confined_path as _cp, safe_workspace_id as _safe_wid
 
 router = APIRouter(tags=["wiki"])
 
@@ -151,9 +151,8 @@ async def wiki_rebuild(
             from src.wiki_v2.edge_detector import EdgeDetector
             from src.wiki_v2.clustering import ClusterEngine
 
-            import os as _os_rb
-            _safe_wid_rb = _os_rb.path.basename(wid.replace('/', '_').replace('\\', '_'))
-            _safe_slug_rb = _os_rb.path.basename(slug.replace('/', '_').replace('\\', '_'))
+            _safe_wid_rb = _safe_wid(wid)
+            _safe_slug_rb = _safe_wid(slug)
             db = WikiGraph(_safe_wid_rb, _safe_slug_rb, CACHE_DIR / "wiki_v2.db")
             oc_path = _cp(CACHE_DIR, f"{_safe_slug_rb}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
