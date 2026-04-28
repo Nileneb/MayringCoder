@@ -11,7 +11,7 @@ cp -r "$PLUGIN_DIR/." "$DEST/"
 echo "Plugin installiert: $DEST"
 
 # Python-Umgebung einrichten (benötigt für memory-agents MCP-Server)
-VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$MAYRING_DIR/.venv/bin/python"}"
+VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$HOME/.claude/.venv/bin/python"}"
 VENV_DIR="$(dirname "$(dirname "$VENV_PYTHON")")"
 
 if [ ! -f "$VENV_PYTHON" ]; then
@@ -127,9 +127,8 @@ PYEOF
 
 # Lokalen MCP-Agent-Server in ~/.claude/.mcp.json eintragen (memory-agents)
 # Claude Code liest mcpServers aus ~/.claude/.mcp.json, NICHT aus settings.json.
-# Konfigurierbarer Pfad zum Python-Interpreter des virtuellen Environments:
-# Standard ist "$MAYRING_DIR/.venv/bin/python", kann aber via MAYRING_VENV_PYTHON überschrieben werden.
-VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$MAYRING_DIR/.venv/bin/python"}"
+# venv liegt immer unter ~/.claude/.venv, überschreibbar via MAYRING_VENV_PYTHON.
+VENV_PYTHON="${MAYRING_VENV_PYTHON:-"$HOME/.claude/.venv/bin/python"}"
 MCP_JSON="$HOME/.claude/.mcp.json"
 python3 - <<MCPEOF
 import json, os
