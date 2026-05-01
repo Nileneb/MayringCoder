@@ -172,16 +172,28 @@ def _llm_relevance_scores(
     ollama_url: str,
     model: str = "mayring-qwen3:2b",
     timeout: float = 10.0,
+    task_context: str | None = None,
 ) -> dict[str, float]:
     """Best-effort: LLM rates relevance of each candidate for query.
-    Returns chunk_id → [0.0, 1.0]. Falls back to 0.5 on any error."""
+    Returns chunk_id → [0.0, 1.0]. Falls back to 0.5 on any error.
+
+    If task_context is provided (e.g. plan/todo content), the PI-advisor sees
+    the broader task description and can judge relevance more accurately than
+    from the query alone.
+    """
     from src.ollama_client import generate as _oll_gen
     scores: dict[str, float] = {}
+    task_block = (
+        f"Task context (what the user is working on):\n{task_context[:600]}\n\n"
+        if task_context else ""
+    )
     for chunk in candidates[:20]:
         prompt = (
+            f"{task_block}"
             f"Query: {query}\n\n"
-            f"Chunk: {chunk.text[:300]}\n\n"
-            "Rate relevance 0.0–1.0. Answer ONLY with the number."
+            f"Memory chunk: {chunk.text[:300]}\n\n"
+            "How relevant is this chunk for the task above? "
+            "Rate 0.0–1.0. Answer ONLY with the number."
         )
         try:
             raw = _oll_gen(
@@ -361,8 +373,13 @@ def search(
     if not candidates:
         return []
 
-    # Stage 2: symbolic scoring
+    # Stage 2: symbolic scoring (optionally enriched with task_context tokens)
+    task_context: str | None = opts.get("task_context")
     query_terms = _tokenize(query)
+    if task_context:
+        # Task-context tokens widen recall — used for symbolic overlap only.
+        # Each token still counts equally, so this won't dilute precision.
+        query_terms = query_terms | _tokenize(task_context)
     symbolic_scores: dict[str, float] = {
         c.chunk_id: _symbolic_score(c, query_terms) for c in candidates
     }
@@ -401,10 +418,16 @@ def search(
         except Exception as exc:
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
 
-    # Stage 3b: LLM pre-filter — auto-activates when candidates > 10
-    if (opts.get("llm_prefilter") or len(candidates) > 10) and ollama_url and candidates:
+    # Stage 3b: PI-advisor LLM pre-filter — auto-activates when candidates > 10
+    # OR when task_context was supplied (plan-driven retrieval benefits most
+    # from semantic re-ranking since the task description is rich).
+    if (opts.get("llm_prefilter") or task_context or len(candidates) > 10) and ollama_url and candidates:
         llm_model = opts.get("llm_prefilter_model", "qwen2.5-coder:7b")
-        llm_s = _llm_relevance_scores(query, candidates, ollama_url, model=llm_model)
+        llm_s = _llm_relevance_scores(
+            query, candidates, ollama_url,
+            model=llm_model,
+            task_context=task_context,
+        )
         candidates.sort(key=lambda c: llm_s.get(c.chunk_id, 0.5), reverse=True)
         candidates = candidates[:max(top_k * 2, 6)]
 

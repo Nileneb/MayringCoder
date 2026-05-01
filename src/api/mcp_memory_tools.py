@@ -32,6 +32,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         char_budget: int = 6000,
         compacted: bool = False,
         workspace_id: str | None = None,
+        task_context: str | None = None,
     ) -> dict:
         """Hybrid 4-stage memory search (scope filter → symbolic → vector → rerank).
 
@@ -46,6 +47,10 @@ def register_memory_tools(mcp: FastMCP) -> None:
             char_budget: Max chars for prompt_context output
             compacted: Set True after /compact to boost conversation_summary chunks
             workspace_id: Tenant namespace filter (None = no filter)
+            task_context: Optional richer task description (e.g. plan/todo content).
+                Used as additional symbolic-scoring signal and as PI-advisor prompt
+                input for sharper relevance ranking. Recommended when invoking from
+                a plan-driven workflow.
 
         Returns:
             {results: list[RetrievalRecord], prompt_context: str}
@@ -60,6 +65,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 "include_text": include_text,
                 "source_affinity": source_affinity,
                 "workspace_id": ws,
+                "task_context": task_context,
             }
             result = _run_search(query, _get_conn(), _get_chroma(), None,
                                  opts, char_budget, session_compacted=compacted)

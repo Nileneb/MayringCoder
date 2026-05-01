@@ -181,9 +181,21 @@ def ingest(
 
         new_chunk_ids: list[str] = []
         deduped_count = 0
+        skipped_filter = 0
         indexed = False
 
+        from src.memory.ingestion.conversation_filter import should_skip_chunk
+
         for chunk in _tqdm(chunks, desc="Chunks embedden", unit="chunk", leave=False):
+            skip, reason = should_skip_chunk(chunk.text, source.source_type)
+            if skip:
+                skipped_filter += 1
+                _log.info(
+                    "pre-ingest filter skipped chunk %s (source=%s): %s",
+                    chunk.chunk_id[:12], source.source_id, reason,
+                )
+                continue
+
             canonical, is_dup = resolve_dedup(conn, chunk, workspace_id=workspace_id)
             if is_dup:
                 deduped_count += 1
@@ -228,7 +240,7 @@ def ingest(
             conn,
             source.source_id,
             "ingest_done",
-            {"chunks": len(new_chunk_ids), "deduped": deduped_count},
+            {"chunks": len(new_chunk_ids), "deduped": deduped_count, "filtered": skipped_filter},
         )
 
     result = {
@@ -236,6 +248,7 @@ def ingest(
         "chunk_ids": new_chunk_ids,
         "indexed": indexed,
         "deduped": deduped_count,
+        "filtered": skipped_filter,
         "superseded": 0,
     }
 
