@@ -131,15 +131,18 @@ def register_agent_tools(mcp: FastMCP) -> None:
             text: {source_id, chunk_ids, workspace_id}
         """
         import httpx
+        from urllib.parse import urlparse
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
         _jwt = _current_raw_jwt()
         headers = {"Authorization": f"Bearer {_jwt}"} if _jwt else {}
 
+        parsed = urlparse(source) if source_type == "auto" else None
+        host = (parsed.hostname or "").lower() if parsed else ""
         is_repo = source_type == "repo" or (
-            source_type == "auto" and (
-                source.startswith("https://github.com")
-                or source.startswith("https://gitlab.com")
+            source_type == "auto"
+            and (
+                (parsed and parsed.scheme == "https" and host in {"github.com", "gitlab.com"})
                 or source.startswith("git@")
             )
         )
