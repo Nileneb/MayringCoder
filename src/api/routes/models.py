@@ -56,6 +56,7 @@ class MemorySearchRequest(BaseModel):
     source_type: str | None = None
     top_k: int = 8
     char_budget: int = 6000
+    task_context: str | None = None
 
 
 class MemoryPutRequest(BaseModel):

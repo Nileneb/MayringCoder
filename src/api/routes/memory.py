@@ -86,6 +86,8 @@ async def memory_search(
             opts["repo"] = request.repo
         if request.source_type:
             opts["source_type"] = request.source_type
+        if request.task_context:
+            opts["task_context"] = request.task_context
         result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
                              opts, request.char_budget)
         return {"workspace_id": workspace_id, **result}
