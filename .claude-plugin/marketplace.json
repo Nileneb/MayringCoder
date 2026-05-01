@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "MayringCoder",
+  "description": "MayringCoder marketplace — Claude Code plugin for hybrid memory retrieval, conversation summary capture, and pi_task dispatch via local MCP.",
+  "owner": {
+    "name": "Benedikt Linn",
+    "email": "benedikt.linn@code.berlin"
+  },
+  "plugins": [
+    {
+      "name": "mayring-coder",
+      "description": "MayringCoder memory integration: hybrid retrieval, conversation summary capture, pi_task dispatch via local MCP.",
+      "category": "memory",
+      "source": "./claude-plugin"
+    }
+  ]
+}

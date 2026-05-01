@@ -190,6 +190,49 @@ cp .env.example .env
 # Edit .env with your repo URL and Ollama settings
 ```
 
+---
+
+## Install as a Claude Code Plugin (via Marketplace)
+
+Wenn du auf einem zweiten Rechner nur den **Memory-Plugin-Teil** willst (Hooks +
+SSE-Memory-MCP + lokales pi_task-MCP), kommt das jetzt sauber über den
+eingebauten Marketplace-Mechanismus:
+
+```bash
+# 1. Marketplace registrieren (lädt aus diesem Repo)
+/plugin marketplace add Nileneb/MayringCoder
+/plugin install mayring-coder@MayringCoder
+
+# 2. Repo lokal klonen — der memory-agents MCP-Server braucht das volle
+#    src/-Tree als cwd (Konvention: $HOME/Desktop/MayringCoder).
+git clone https://github.com/Nileneb/MayringCoder ~/Desktop/MayringCoder
+
+# 3. venv im Plugin-Verzeichnis bootstrappen (~380 MB Deps).
+PLUGIN=~/.claude/plugins/marketplaces/MayringCoder/plugins/mayring-coder
+python3 -m venv "$PLUGIN/.venv"
+"$PLUGIN/.venv/bin/pip" install -r ~/Desktop/MayringCoder/requirements-client.txt
+
+# 4. JWT für mcp.linn.games via OAuth (Browser öffnet sich).
+python3 ~/Desktop/MayringCoder/tools/oauth_install.py \
+        --jwt-file ~/.config/mayring/hook.jwt
+```
+
+**Was kommt automatisch über den Marketplace:**
+- Plugin-Manifest (`.claude-plugin/plugin.json`)
+- Hooks (`SessionStart`, `UserPromptSubmit`, `PostCompact`, `Stop`)
+- Skills (`github-issue-analysis`)
+- MCP-Server-Bindings (`claude_ai_Memory` SSE + `memory-agents` lokales MCP)
+
+**Was ist Bootstrap-Aufgabe (manuell, einmalig):**
+- venv mit `requirements-client.txt`
+- Repo-Klon nach `$HOME/Desktop/MayringCoder` (für `cwd` des memory-agents-MCP)
+- JWT via OAuth (`hook.jwt` in `~/.config/mayring/`)
+
+Alternativ kann `claude-plugin/install.sh` aus dem geklonten Repo (oder aus dem
+installierten Plugin-Verzeichnis) das Bootstrapping zentralisieren — er erkennt
+automatisch, ob er in einem klassischen Klon, im Marketplace-Pfad oder
+standalone läuft.
+
 **Run the full 3-stage pipeline:**
 
 ```bash
