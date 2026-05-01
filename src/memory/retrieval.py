@@ -48,11 +48,12 @@ except ImportError:
     _HAS_EMBED = False
 
 _WEIGHTS = {
-    "vector":          0.45,
-    "symbolic":        0.25,
-    "recency":         0.15,
+    "vector":          0.30,
+    "symbolic":        0.20,
+    "recency":         0.10,
     "source_affinity": 0.10,
     "feedback":        0.05,   # additive ±0.05 Bonus
+    "llm_advisor":     0.25,   # PI-advisor semantic relevance (0.5 = neutral when missing)
 }
 
 _RECENCY_DECAY_DAYS = 30.0
@@ -243,9 +244,16 @@ def _rerank(
     affinity_source_id: str | None = None,
     source_type_map: dict[str, str] | None = None,
     session_compacted: bool = False,
+    llm_scores: dict[str, float] | None = None,
 ) -> list[RetrievalRecord]:
-    """Combine scores and return top_k RetrievalRecords sorted by score_final DESC."""
+    """Combine scores and return top_k RetrievalRecords sorted by score_final DESC.
+
+    llm_scores: optional PI-advisor relevance ratings (chunk_id → [0,1]). Missing
+    chunks default to 0.5 (neutral) so the LLM weight contributes equally and
+    doesn't bias the ranking when scores are unavailable.
+    """
     records: list[RetrievalRecord] = []
+    llm_scores = llm_scores or {}
 
     for chunk in candidates:
         sv = vector_scores.get(chunk.chunk_id, 0.0)
@@ -253,6 +261,7 @@ def _rerank(
         sr = _recency_score(chunk)
         sa = _source_affinity_score(chunk, affinity_source_id)
         sf = get_feedback_score(conn, chunk.chunk_id)
+        sl = llm_scores.get(chunk.chunk_id, 0.5)  # neutral default
 
         score_final = (
             _WEIGHTS["vector"] * sv
@@ -260,6 +269,7 @@ def _rerank(
             + _WEIGHTS["recency"] * sr
             + _WEIGHTS["source_affinity"] * sa
             + _WEIGHTS["feedback"] * (sf * 2.0 - 1.0)   # [0,1]→[-1,1] → ±0.05
+            + _WEIGHTS["llm_advisor"] * sl
         )
 
         # Compaction boost: prefer conversation_summary section chunks
@@ -277,6 +287,8 @@ def _rerank(
             reasons.append("recent_chunk")
         if sa > 0:
             reasons.append("source_affinity_match")
+        if sl > 0.7:
+            reasons.append("llm_advisor_high")
 
         records.append(
             RetrievalRecord(
@@ -418,17 +430,20 @@ def search(
         except Exception as exc:
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
 
-    # Stage 3b: PI-advisor LLM pre-filter — auto-activates when candidates > 10
-    # OR when task_context was supplied (plan-driven retrieval benefits most
-    # from semantic re-ranking since the task description is rich).
+    # Stage 3b: PI-advisor LLM relevance scores — feeds both the candidate
+    # filter (if oversized) AND the final _rerank() weighted formula (0.25
+    # weight on llm_advisor). Auto-activates when candidates > 10 OR
+    # task_context was supplied (plan-driven retrieval benefits most from
+    # semantic re-ranking since the task description is rich).
+    llm_scores: dict[str, float] = {}
     if (opts.get("llm_prefilter") or task_context or len(candidates) > 10) and ollama_url and candidates:
         llm_model = opts.get("llm_prefilter_model", "qwen2.5-coder:7b")
-        llm_s = _llm_relevance_scores(
+        llm_scores = _llm_relevance_scores(
             query, candidates, ollama_url,
             model=llm_model,
             task_context=task_context,
         )
-        candidates.sort(key=lambda c: llm_s.get(c.chunk_id, 0.5), reverse=True)
+        candidates.sort(key=lambda c: llm_scores.get(c.chunk_id, 0.5), reverse=True)
         candidates = candidates[:max(top_k * 2, 6)]
 
     # Build source_type lookup for session_compacted boost
@@ -448,6 +463,7 @@ def search(
         affinity_source_id,
         source_type_map=source_type_map,
         session_compacted=session_compacted,
+        llm_scores=llm_scores,
     )
 
     # Enrich with cross-source refs (same text found in other sources)

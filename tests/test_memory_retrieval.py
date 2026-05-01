@@ -423,3 +423,43 @@ class TestFeedbackRanking:
             conn=conn,
         )
         assert len(records) == 2
+
+    def test_llm_advisor_boosts_high_score(self, tmp_path: Path) -> None:
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:llm.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="aaa")
+        cb = _make_chunk(src.source_id, 1, text="aaa")
+        insert_chunk(conn, ca)
+        insert_chunk(conn, cb)
+        records = _rerank(
+            [ca, cb],
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            top_k=2,
+            conn=conn,
+            llm_scores={ca.chunk_id: 0.9, cb.chunk_id: 0.1},
+        )
+        assert records[0].chunk_id == ca.chunk_id
+        assert "llm_advisor_high" in records[0].reasons
+
+    def test_llm_advisor_missing_is_neutral(self, tmp_path: Path) -> None:
+        """When llm_scores is None or empty, all chunks get default 0.5 — order
+        falls back to other signals (here: stable insertion order)."""
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:nollm.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="x")
+        cb = _make_chunk(src.source_id, 1, text="x")
+        insert_chunk(conn, ca)
+        insert_chunk(conn, cb)
+        records = _rerank(
+            [ca, cb],
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.5},
+            top_k=2,
+            conn=conn,
+            llm_scores=None,
+        )
+        # Both should have identical score_final (no llm bias)
+        assert abs(records[0].score_final - records[1].score_final) < 1e-6
