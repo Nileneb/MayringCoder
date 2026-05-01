@@ -13,7 +13,7 @@ from src.api.routes.models import (
     WikiEdgeCreateRequest,
     WikiRebuildRequest,
 )
-from src.wiki_v2._path_utils import confined_path as _cp
+from src.wiki_v2._path_utils import confined_path as _cp, safe_id
 
 router = APIRouter(tags=["wiki"])
 
@@ -39,7 +39,6 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
     """
     import json as _json
     import time as _time_g
-    import os as _os_g
     from src.config import CACHE_DIR, WIKI_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
 
@@ -49,11 +48,11 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
     wid = workspace_id or slug
     if not wid:
         return {"clusters": [], "edges": [], "activations": [], "error": "invalid workspace_id"}
-    _safe_wid = _os_g.path.basename(wid.replace('/', '_').replace('\\', '_'))
-    _safe_slug = _os_g.path.basename(slug.replace('/', '_').replace('\\', '_')) if slug else _safe_wid
+    _wid_safe = safe_id(wid)
+    _slug_safe = safe_id(slug) if slug else _wid_safe
 
     # --- Try wiki_v2 graph.json first ---
-    graph_path = _cp(WIKI_DIR, _safe_wid, "graph.json")
+    graph_path = _cp(WIKI_DIR, _wid_safe, "graph.json")
     if graph_path.exists():
         data = _json.loads(graph_path.read_text())
         if format == "mermaid":
@@ -87,9 +86,9 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
         return {"clusters": [], "edges": [], "activations": [],
                 "error": f"No wiki found for workspace '{wid}'. Run POST /wiki/rebuild first."}
 
-    _safe_slug = _os_g.path.basename(slug.replace('/', '_').replace('\\', '_'))
-    cluster_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_clusters.json")
-    index_path = _cp(CACHE_DIR, f"{_safe_slug}_wiki_index.json")
+    _slug_safe = safe_id(slug)
+    cluster_path = _cp(CACHE_DIR, f"{_slug_safe}_wiki_clusters.json")
+    index_path = _cp(CACHE_DIR, f"{_slug_safe}_wiki_index.json")
 
     clusters: list[dict] = []
     raw: list[dict] = []
@@ -151,21 +150,20 @@ async def wiki_rebuild(
             from src.wiki_v2.edge_detector import EdgeDetector
             from src.wiki_v2.clustering import ClusterEngine
 
-            import os as _os_rb
-            _safe_wid_rb = _os_rb.path.basename(wid.replace('/', '_').replace('\\', '_'))
-            _safe_slug_rb = _os_rb.path.basename(slug.replace('/', '_').replace('\\', '_'))
-            db = WikiGraph(_safe_wid_rb, _safe_slug_rb, CACHE_DIR / "wiki_v2.db")
-            oc_path = _cp(CACHE_DIR, f"{_safe_slug_rb}_overview_cache.json")
+            _wid_safe = safe_id(wid)
+            _slug_safe = safe_id(slug)
+            db = WikiGraph(_wid_safe, _slug_safe, CACHE_DIR / "wiki_v2.db")
+            oc_path = _cp(CACHE_DIR, f"{_slug_safe}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
             from src.memory.db_adapter import DBAdapter
             conn = DBAdapter.create(CACHE_DIR / "memory.db")
             detector = EdgeDetector()
-            edges = detector.detect_from_overview(oc, conn, _safe_wid_rb, _safe_slug_rb)
+            edges = detector.detect_from_overview(oc, conn, _wid_safe, _slug_safe)
             conn.close()
             from src.wiki_v2.models import WikiNode as _WikiNode
             node_ids = set(oc.keys()) | {e.source for e in edges} | {e.target for e in edges}
             for nid in sorted(node_ids):
-                db.upsert_node(_WikiNode(id=nid, repo_slug=_safe_slug_rb, workspace_id=_safe_wid_rb))
+                db.upsert_node(_WikiNode(id=nid, repo_slug=_slug_safe, workspace_id=_wid_safe))
             for e in edges:
                 db.add_edge(e)
             ollama = request.ollama_url or "http://three.linn.games:11434"

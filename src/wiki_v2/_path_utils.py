@@ -15,6 +15,12 @@ def safe_workspace_id(wid: str | None) -> str:
     return s
 
 
+# Generic alias: same allowed-character policy works for any short identifier
+# (workspace IDs, slugs, codebook names). Use this when sanitizing slugs to
+# avoid the misleading "workspace" framing in reader's eyes.
+safe_id = safe_workspace_id
+
+
 def safe_filename_part(name: str) -> str:
     return _SAFE_NAME_RE.sub('_', name)
 
