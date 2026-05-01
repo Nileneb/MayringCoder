@@ -19,6 +19,24 @@ except ImportError:
 _PROMPTS_DIR: Path = Path(__file__).parent.parent.parent.parent / "prompts"
 _CODEBOOK_DIR: Path = Path(__file__).parent.parent.parent.parent / "codebooks"
 
+def _is_plausible_neu_label(inner: str) -> bool:
+    """Reject obvious gibberish from weak models (e.g. mistral:7b on PHP code).
+
+    A plausible new category is 2–30 chars, alphanumeric/underscore/hyphen
+    only (no spaces, parens, or commentary like 'X (für die Klasse)'). For
+    labels of length ≥ 5 we also reject single-character dominance > 60%
+    (catches 'xxxx', 'aaaaaaa'); shorter abbreviations like 'llm', 'css'
+    are accepted even with repeated letters.
+    """
+    inner = inner.strip().lower()
+    if not (2 <= len(inner) <= 30):
+        return False
+    if not re.fullmatch(r"[a-zäöüß0-9_-]+", inner):
+        return False
+    if len(inner) >= 5 and max((inner.count(c) for c in set(inner)), default=0) > len(inner) * 0.6:
+        return False
+    return True
+
 _ORIGINAL_MAYRING_CATEGORIES: list[str] = [
     "Zusammenfassung",
     "Explikation",
@@ -251,8 +269,10 @@ def mayring_categorize(
                     inner = lbl[len("[neu]"):].strip().lower()
                     if inner in valid_set:
                         validated.append(inner)
-                    else:
+                    elif _is_plausible_neu_label(inner):
                         validated.append(lbl)
+                    # else: schwache Modelle (mistral:7b) halluzinieren Gibberish —
+                    # silently dropped, kein Append.
                 elif lbl.lower() in valid_set:
                     validated.append(lbl.lower())
 

@@ -193,6 +193,95 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 return {"error": str(exc), "workspace_id": ws}
 
     @mcp.tool()
+    def cleanup_hallucinated_categories(
+        workspace_id: str | None = None,
+        dry_run: bool = True,
+        strict: bool = False,
+    ) -> dict:
+        """Remove implausible ``[neu]X`` category labels from chunks.
+
+        Mistral and similar weak models hallucinate new categories during the
+        hybrid-mode categorization. This tool strips obviously-bad ones (length,
+        special chars, single-char dominance for length≥5). Chunks that lose
+        all their valid labels are flagged with category_source='cleanup-pending'
+        for next re-categorization run.
+
+        Args:
+            workspace_id: Limit to one workspace (default: all)
+            dry_run: Preview only, no DB writes (default: True for safety)
+            strict: Remove ALL [neu]X labels regardless of validity (use after
+                    a model upgrade for full re-categorization)
+
+        Returns:
+            {scanned, affected, labels_removed, marked_for_recategorize,
+             dry_run, samples: [{chunk_id, before, after, removed}, ...]}
+        """
+        try:
+            from tools.cleanup_hallucinated_categories import strip_neu_labels
+            ws = _enforce_tenant(workspace_id)
+            conn = _get_conn()
+
+            sql = ("SELECT chunk_id, category_labels FROM chunks "
+                   "WHERE category_labels LIKE '%[neu]%' AND is_active = 1")
+            params: list = []
+            if ws:
+                sql += " AND workspace_id = ?"
+                params.append(ws)
+
+            rows = conn.execute(sql, params).fetchall()
+            scanned = len(rows)
+            affected = 0
+            labels_removed = 0
+            pending = 0
+            samples: list[dict] = []
+
+            for chunk_id, label_csv in rows:
+                cleaned, removed = strip_neu_labels(label_csv or "", strict)
+                if removed == 0:
+                    continue
+                affected += 1
+                labels_removed += removed
+                recategorize = not cleaned.strip()
+                if recategorize:
+                    pending += 1
+                if len(samples) < 20:
+                    samples.append({
+                        "chunk_id": chunk_id,
+                        "before": label_csv,
+                        "after": cleaned,
+                        "removed": removed,
+                        "pending_recategorize": recategorize,
+                    })
+                if not dry_run:
+                    if recategorize:
+                        conn.execute(
+                            "UPDATE chunks SET category_labels = ?, category_confidence = 0.0,"
+                            " category_source = 'cleanup-pending' WHERE chunk_id = ?",
+                            (cleaned, chunk_id),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE chunks SET category_labels = ? WHERE chunk_id = ?",
+                            (cleaned, chunk_id),
+                        )
+
+            if not dry_run:
+                conn.commit()
+                invalidate_query_cache()
+
+            return {
+                "scanned": scanned,
+                "affected": affected,
+                "labels_removed": labels_removed,
+                "marked_for_recategorize": pending,
+                "dry_run": dry_run,
+                "strict": strict,
+                "samples": samples,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    @mcp.tool()
     def feedback(
         chunk_id: str,
         signal: str,
