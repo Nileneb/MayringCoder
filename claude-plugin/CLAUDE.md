@@ -40,7 +40,7 @@ mcp__claude_ai_Memory__ingest(
 **Regel: Bei jeder Coding-Aufgabe zuerst pi_task verwenden. Claude-eigene Subagents sind der Fallback, nicht der Default.**
 
 ```
-mcp__memory-agents__pi_task(
+mcp__plugin_mayring-coder_memory-agents__pi_task(
   task="<Aufgabenbeschreibung>",
   repo_slug="<repo-slug>",
   timeout=180.0
@@ -61,10 +61,12 @@ mcp__memory-agents__pi_task(
 - Wenn pi_task fehlschlägt (`{"error": "..."}`) — dann selbst antworten und Fehler nennen
 
 ### Wie pi_task funktioniert
-pi_task via MCP (`memory-agents` Server) ruft `run_task_with_memory()` direkt auf — kein pi_server.py nötig.
+pi_task via MCP (Plugin `mayring-coder`, Server `memory-agents`) ruft `run_task_with_memory()` direkt auf — kein pi_server.py nötig.
 Voraussetzung: Ollama läuft lokal (`http://localhost:11434`), PI_AGENT_URL=direct (Standardwert in local_mcp.py).
+
+Verwandte Tools desselben Servers: `mcp__plugin_mayring-coder_memory-agents__ingest`, `__duel`, `__benchmark_tasks`.
 
 `pi_server.py` (Port 8091) ist ein optionaler HTTP-Proxy für nicht-MCP-Clients — nicht für Claude Code nötig.
 
 Wenn `{"error": "Ollama nicht erreichbar"}` → Ollama fehlt lokal.
-Wenn Tool `mcp__memory-agents__pi_task` nicht existiert → `memory-agents` MCP-Server nicht registriert (install.sh neu ausführen).
+Wenn Tool `mcp__plugin_mayring-coder_memory-agents__pi_task` nicht existiert → Plugin `mayring-coder@mayring-local` nicht enabled oder MCP-Server nicht gestartet (`claude plugin list`, dann `/reload-plugins` bzw. Restart).

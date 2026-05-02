@@ -2,16 +2,22 @@
 set -e
 
 # ── Repo-Erkennung ───────────────────────────────────────────────────────────
-# Drei Fälle:
+# Vier Fälle:
 #   1. Klassisch: Script aus geklontem Repo (../src/api/local_mcp.py vorhanden)
-#   2. Repo bereits unter ~/Desktop/MayringCoder vorhanden
-#   3. Standalone-Download: Repo wird automatisch nach ~/Desktop/MayringCoder geklont
+#   2. Marketplace-Install: Script läuft aus ~/.claude/plugins/marketplaces/.../mayring-coder/
+#      und Repo liegt schon unter $HOME/Desktop/MayringCoder (Marketplace-Konvention)
+#   3. Default-Dir: Repo bereits unter ~/.claude/mayringcoder/ vorhanden
+#   4. Standalone-Download: Repo wird automatisch nach ~/.claude/mayringcoder/ geklont
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _DEFAULT_DIR="$HOME/.claude/mayringcoder"
+_DESKTOP_DIR="$HOME/Desktop/MayringCoder"
 
 if [ -f "$_SCRIPT_DIR/../src/api/local_mcp.py" ]; then
     # Klassisch: aus geklontem Repo
     MAYRING_DIR="$(cd "$_SCRIPT_DIR/.." && pwd)"
+elif [ -f "$_DESKTOP_DIR/src/api/local_mcp.py" ]; then
+    # Marketplace-Install: claude-plugin/.mcp.json setzt cwd auf $HOME/Desktop/MayringCoder
+    MAYRING_DIR="$_DESKTOP_DIR"
 elif [ -f "$_DEFAULT_DIR/src/api/local_mcp.py" ]; then
     # Repo bereits vorhanden
     MAYRING_DIR="$_DEFAULT_DIR"
@@ -23,6 +29,7 @@ else
     git clone --filter=blob:none --no-checkout https://github.com/Nileneb/MayringCoder "$_DEFAULT_DIR"
     git -C "$_DEFAULT_DIR" sparse-checkout init --no-cone
     git -C "$_DEFAULT_DIR" sparse-checkout set \
+        '/.claude-plugin/' \
         '/claude-plugin/' \
         '/config/' \
         '/src/__init__.py' \

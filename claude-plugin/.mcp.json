@@ -8,14 +8,14 @@
       }
     },
     "memory-agents": {
-      "command": "/home/nileneb/Desktop/MayringCoder/.venv/bin/python",
+      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
       "args": [
         "-m",
         "src.api.local_mcp"
       ],
-      "cwd": "/home/nileneb/Desktop/MayringCoder",
+      "cwd": "${HOME}/Desktop/MayringCoder",
       "env": {
-        "PYTHONPATH": "/home/nileneb/Desktop/MayringCoder"
+        "PYTHONPATH": "${HOME}/Desktop/MayringCoder"
       }
     }
   }
