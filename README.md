@@ -221,12 +221,22 @@ python3 ~/Desktop/MayringCoder/tools/oauth_install.py \
 - Plugin-Manifest (`.claude-plugin/plugin.json`)
 - Hooks (`SessionStart`, `UserPromptSubmit`, `PostCompact`, `Stop`)
 - Skills (`github-issue-analysis`)
-- MCP-Server-Bindings (`claude_ai_Memory` SSE + `memory-agents` lokales MCP)
+- **Lokaler `memory-agents` MCP-Server** (Pi-Agent: `pi_task`, `ingest`,
+  `duel`, `benchmark_tasks`)
 
-**Was ist Bootstrap-Aufgabe (manuell, einmalig):**
-- venv mit `requirements-client.txt`
+**Was NICHT über den Marketplace kommt — und auch nicht soll:**
+- Der **Cloud-Memory-MCP** (`mcp.linn.games/sse`, Tools
+  `mcp__claude_ai_Memory__*`) wird separat über dein **Claude.ai-Profil**
+  verbunden — das Plugin registriert ihn bewusst NICHT in `.mcp.json`,
+  sonst hättest du auf jedem Rechner doppelte Bindings.
+
+**Was ist Bootstrap-Aufgabe (manuell, einmalig pro Maschine):**
+- venv mit `requirements-client.txt` (~380 MB, für den lokalen `memory-agents`-MCP)
 - Repo-Klon nach `$HOME/Desktop/MayringCoder` (für `cwd` des memory-agents-MCP)
-- JWT via OAuth (`hook.jwt` in `~/.config/mayring/`)
+- JWT via OAuth — gebraucht für die **Hooks** (`postcompact_hook.py`,
+  `memory_sync.py` schicken Conversation-Summaries via HTTP an
+  `mcp.linn.games/memory/put`); NICHT für den SSE-Memory-Server, den dein
+  Cloud-Profil schon authentifiziert
 
 Alternativ kann `claude-plugin/install.sh` aus dem geklonten Repo (oder aus dem
 installierten Plugin-Verzeichnis) das Bootstrapping zentralisieren — er erkennt

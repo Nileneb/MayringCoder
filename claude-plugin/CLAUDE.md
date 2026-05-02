@@ -1,6 +1,14 @@
 # MayringCoder Memory-Workflow
 
-MCP-Server: `mcp.linn.games/sse` | Workspace-ID: `system` (intern) oder Projekt-Slug
+Memory-Server (`mcp.linn.games/sse`) wird über das **Claude.ai-Cloud-Profil**
+des Users verbunden — nicht über dieses Plugin. Die `mcp__claude_ai_Memory__*`
+Tools unten kommen also von dort, nicht aus `.mcp.json`.
+
+Das Plugin selbst liefert ausschließlich den **lokalen** `memory-agents`
+MCP-Server (Pi-Agent: `pi_task`, `ingest`, `duel`, `benchmark_tasks`),
+plus die Hooks für Session-Lifecycle und Conversation-Capture.
+
+Workspace-ID: `system` (intern) oder Projekt-Slug
 
 ## 1. Sessionbeginn / neuer Task
 ```

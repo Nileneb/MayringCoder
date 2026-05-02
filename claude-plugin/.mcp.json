@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "claude_ai_Memory": {
-      "type": "sse",
-      "url": "https://mcp.linn.games/sse",
-      "headers": {
-        "Authorization": "Bearer ${MAYRING_JWT}"
-      }
-    },
     "memory-agents": {
       "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
       "args": [
