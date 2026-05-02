@@ -139,7 +139,12 @@ async def wiki_rebuild(
     """Rebuild wiki_v2 graph.json for a workspace: EdgeDetector + ClusterEngine + to_json()."""
     wid = request.workspace_id
     slug = request.repo_slug or wid
-    job_id = _make_job(wid)
+    try:
+        _wid_safe = safe_id(wid)
+        _slug_safe = safe_id(slug)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id or repo_slug") from exc
+    job_id = _make_job(_wid_safe)
 
     async def _do_rebuild() -> None:
         try:
@@ -150,8 +155,6 @@ async def wiki_rebuild(
             from src.wiki_v2.edge_detector import EdgeDetector
             from src.wiki_v2.clustering import ClusterEngine
 
-            _wid_safe = safe_id(wid)
-            _slug_safe = safe_id(slug)
             db = WikiGraph(_wid_safe, _slug_safe, CACHE_DIR / "wiki_v2.db")
             oc_path = _cp(CACHE_DIR, f"{_slug_safe}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
