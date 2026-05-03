@@ -58,6 +58,44 @@ app.include_router(reports.router)
 app.include_router(_sync_router)
 
 
+@app.on_event("startup")
+def _run_pending_schema_migrations() -> None:
+    """Force the idempotent schema migration on the cloud DB at boot.
+
+    The lazy `get_conn()` path *should* trigger this via init_memory_db,
+    but a series of production 500s ("no such column: visibility",
+    "no such column: scope") proved that the live DB pre-dates several
+    schema additions and the lazy path was not reaching them — likely
+    because the connection was set up before the relevant migration was
+    added to the codebase, and never re-initialised.
+    Calling init_memory_db here on every container start is cheap (a
+    no-op when fully migrated) and removes the foot-gun for good.
+
+    Path resolution mirrors `get_conn()` exactly: when MAYRING_LOCAL_DB
+    is set (production), migrate that file; otherwise fall back to the
+    default MEMORY_DB_PATH. Otherwise the startup migration would touch
+    a different file than the request handlers and miss the live DB.
+    """
+    import logging
+    import os
+    from pathlib import Path
+    from src.memory.store import init_memory_db
+    logger = logging.getLogger(__name__)
+    db_path = os.environ.get("MAYRING_LOCAL_DB", "")
+    target = Path(db_path) if db_path else None
+    try:
+        init_memory_db(target).close()
+        logger.info(
+            "server.startup: schema migrations applied at %s",
+            target or "<default MEMORY_DB_PATH>",
+        )
+    except Exception:
+        # Don't block server boot — get_conn() will retry on first request,
+        # and the new defence-in-depth in sync.py / mcp_pi_tools handles the
+        # remaining gap if this step somehow failed.
+        logger.exception("server.startup: schema migration failed (non-fatal)")
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}

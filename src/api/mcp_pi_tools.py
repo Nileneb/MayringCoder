@@ -14,15 +14,70 @@ Tool surface:
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from src.api.mcp_auth import _enforce_tenant, _effective_workspace_id
 
+logger = logging.getLogger(__name__)
+
+
+_PI_JOBS_PHASE2_COLUMNS = (
+    ("scope", "TEXT NOT NULL DEFAULT 'local'"),
+    ("capability_required", "TEXT NOT NULL DEFAULT ''"),
+    ("claimed_by", "TEXT NOT NULL DEFAULT ''"),
+    ("claimed_at", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
+def _ensure_pi_jobs_phase2_columns(db) -> None:
+    """Lazily add Plan-C Phase-2 columns to pi_jobs.
+
+    Defence-in-depth: production hit "no such column: scope" because the
+    cloud DB pre-dates the migration, and the central `_migrate_schema`
+    only fires when `init_memory_db` runs against that DB. The startup
+    hook in server.py covers the happy path; this hook covers the case
+    where the connection was already cached before that hook landed.
+
+    Idempotent: PRAGMA skips if the column is present, ALTER TABLE
+    fails are logged but never raised — so `pi_task_*_cloud` requests
+    never 500 on a half-migrated schema.
+    """
+    try:
+        cols = {r[1] for r in db.execute("PRAGMA table_info(pi_jobs)").fetchall()}
+    except sqlite3.Error:
+        return  # table itself missing — caller will fail visibly, not silently.
+    if not cols:
+        # PRAGMA on a non-existent table returns no rows. Surface that
+        # explicitly: the deployment lost the pi_jobs table entirely and
+        # needs init_memory_db to recreate it. Don't try ALTER TABLE.
+        logger.error(
+            "mcp_pi_tools: pi_jobs table is missing — run init_memory_db()"
+        )
+        return
+    for col_name, col_def in _PI_JOBS_PHASE2_COLUMNS:
+        if col_name not in cols:
+            try:
+                db.execute(f"ALTER TABLE pi_jobs ADD COLUMN {col_name} {col_def}")
+                logger.warning("mcp_pi_tools: applied missing pi_jobs.%s", col_name)
+            except sqlite3.Error as e:
+                logger.error("mcp_pi_tools: failed to add pi_jobs.%s: %s", col_name, e)
+
 
 def register_pi_queue_tools(mcp: FastMCP) -> None:
     """Register the pi-task cloud queue tools onto the FastMCP instance."""
+
+    # One-shot migration at registration time, against the same connection
+    # the tools below will use. Cheap: ALTER TABLE on already-present
+    # columns is a no-op via the PRAGMA pre-check.
+    try:
+        from src.api.dependencies import get_conn as _get_conn
+        _ensure_pi_jobs_phase2_columns(_get_conn())
+    except Exception:
+        logger.exception("mcp_pi_tools: registration-time migration skipped")
 
     @mcp.tool()
     def pi_task_submit_cloud(
