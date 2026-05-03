@@ -123,8 +123,11 @@ def main() -> None:
         "code_challenge_method": "S256",
     })
 
-    print("Browser wird geöffnet …")
-    webbrowser.open(auth_url)
+    print(f"Login-URL (falls Browser nicht öffnet): {auth_url}", file=sys.stderr)
+    try:
+        webbrowser.open(auth_url)
+    except Exception:
+        pass
     print(f"Warte auf Login (max {_TIMEOUT_SECONDS}s) …")
 
     if not server_done.wait(timeout=_TIMEOUT_SECONDS):
