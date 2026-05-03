@@ -13,7 +13,7 @@ mayring_social:
   timeout: 240
 
 mayring_hybrid:
-  model: "mayring-qwen3:2b"
+  model: "qwen3.5:2b"
   fallback: "mistral:7b-instruct"
   timeout: 240
 

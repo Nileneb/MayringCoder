@@ -185,7 +185,7 @@ class TestMayringCategorizeRouter:
 
         router = MagicMock()
         router.is_available.return_value = True
-        router.resolve.return_value = "mayringqwen:latest"
+        router.resolve.return_value = "qwen2.5-coder:7b"
 
         chunk = Chunk(
             chunk_id="chk_test_001",
@@ -217,7 +217,7 @@ class TestMayringCategorizeRouter:
 
         router.is_available.assert_called_with("mayring_code")
         router.resolve.assert_called_with("mayring_code")
-        assert captured_models == ["mayringqwen:latest"]
+        assert captured_models == ["qwen2.5-coder:7b"]
 
     def test_explicit_model_not_overridden_by_router(self):
         """Explicit model wins over router."""
@@ -226,7 +226,7 @@ class TestMayringCategorizeRouter:
 
         router = MagicMock()
         router.is_available.return_value = True
-        router.resolve.return_value = "mayringqwen:latest"
+        router.resolve.return_value = "qwen2.5-coder:7b"
 
         chunk = Chunk(
             chunk_id="chk_test_002",

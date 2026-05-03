@@ -41,7 +41,7 @@ flowchart TD
 
     subgraph Stage2["Stage 2 — Analyze"]
         G[SQLite Diff\ncache/repo.db] --> H{Changed?}
-        H -- yes --> MR["Model Router\nsrc/model_router.py\nmayring_code → mayringqwen:latest\nfallback: llama3.1:8b"]
+        H -- yes --> MR["Model Router\nsrc/model_router.py\nmayring_code → mistral:7b-instruct\nfallback: qwen2.5-coder:7b"]
         MR --> I[LLM Analysis\nOllama stream]
         I --> J[JSON Parser]
         J -- fail --> K[Regex Fallback\nextractor.py]
@@ -112,7 +112,7 @@ sequenceDiagram
     Worker->>MR: resolve("mayring_code")
     MR->>Ollama: GET /api/tags (Verfügbarkeits-Check, 30s TTL)
     Ollama-->>MR: Modellliste
-    MR-->>Worker: "mayringqwen:latest"
+    MR-->>Worker: "mistral:7b-instruct"
 
     Worker->>Ollama: POST /api/generate (stream, mayring_categorize)
     Ollama-->>Worker: Token-Stream → Kategorie-Label
@@ -140,7 +140,7 @@ sequenceDiagram
 | `fetch_repo` | GitHub URL / Dateipfad | Rohdatei-Dicts via gitingest | — | Dateianzahl, Repo-Größe |
 | `split` | gitingest-Text | `[{path, content, size}]` | — | Datei-Splitgrenzen |
 | `categorize_files` | Datei-Dicts + codebook.yaml | `{category, priority}` pro Datei | — | Kategorieverteilung |
-| `analyze_files` | Dateiinhalt + Prompt | Findings-JSON | `mayring_code` → mayringqwen:latest | Ollama-Stream-Tokens |
+| `analyze_files` | Dateiinhalt + Prompt | Findings-JSON | `mayring_code` → mistral:7b-instruct | Ollama-Stream-Tokens |
 | `structural_chunk` | Quelltext | `[{chunk_text, chunk_index}]` | — | Chunk-Anzahl |
 | `mayring_categorize` | Chunk + Codebook | Kategorie-Label | `mayring_hybrid` → llama3.1:8b | Label pro Chunk |
 | `_embed_texts` | Texte (Liste) | float[384]-Vektoren | `embedding` → nomic-embed-text | Embedding-Dauer |
