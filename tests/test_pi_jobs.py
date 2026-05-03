@@ -196,6 +196,73 @@ def test_worker_disabled_via_env(monkeypatch) -> None:
     pi_worker.stop()
 
 
+# ----- Ollama URL resolver (per-job / config / env / default) ---------------
+
+
+def test_resolve_ollama_url_default(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MAYRING_OLLAMA_CONFIG", str(tmp_path / "missing.conf"))
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
+    assert pi_worker._resolve_ollama_url("") == "http://localhost:11434"
+
+
+def test_resolve_ollama_url_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MAYRING_OLLAMA_CONFIG", str(tmp_path / "missing.conf"))
+    monkeypatch.setenv("OLLAMA_URL", "http://laptop.lan:11434")
+    assert pi_worker._resolve_ollama_url("") == "http://laptop.lan:11434"
+
+
+def test_resolve_ollama_url_config_file_overrides_env(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Config file overrides ENV — runtime switch without restart."""
+    cfg = tmp_path / "ollama.conf"
+    cfg.write_text("https://three.linn.games\n")
+    monkeypatch.setenv("MAYRING_OLLAMA_CONFIG", str(cfg))
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    assert pi_worker._resolve_ollama_url("") == "https://three.linn.games"
+
+
+def test_resolve_ollama_url_config_file_skips_comments(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    cfg = tmp_path / "ollama.conf"
+    cfg.write_text("# pinned to remote GPU\nhttps://three.linn.games\n")
+    monkeypatch.setenv("MAYRING_OLLAMA_CONFIG", str(cfg))
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    assert pi_worker._resolve_ollama_url("") == "https://three.linn.games"
+
+
+def test_resolve_ollama_url_per_job_wins_over_everything(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    cfg = tmp_path / "ollama.conf"
+    cfg.write_text("https://three.linn.games\n")
+    monkeypatch.setenv("MAYRING_OLLAMA_CONFIG", str(cfg))
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    assert (
+        pi_worker._resolve_ollama_url("https://ollama.cloud")
+        == "https://ollama.cloud"
+    )
+
+
+def test_resolve_ollama_url_runtime_switch(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Rewriting the config file flips backends — no restart needed."""
+    cfg = tmp_path / "ollama.conf"
+    monkeypatch.setenv("MAYRING_OLLAMA_CONFIG", str(cfg))
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+
+    cfg.write_text("https://three.linn.games\n")
+    assert pi_worker._resolve_ollama_url("") == "https://three.linn.games"
+
+    cfg.write_text("https://ollama.cloud\n")
+    assert pi_worker._resolve_ollama_url("") == "https://ollama.cloud"
+
+    cfg.unlink()
+    assert pi_worker._resolve_ollama_url("") == "http://localhost:11434"
+
+
 # ----- Phase 2: cloud-scope jobs -------------------------------------------
 
 
