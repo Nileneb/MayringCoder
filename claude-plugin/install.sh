@@ -35,7 +35,7 @@ echo "Installing client dependencies..."
 JWT_FILE="$HOME/.config/mayring/hook.jwt"
 if [ ! -s "$JWT_FILE" ]; then
     echo "Setting up Mayring hook JWT (OAuth PKCE)..."
-    python3 "$REPO_ROOT/tools/oauth_install.py" --jwt-file "$JWT_FILE"
+    "$VENV_DIR/bin/python" "$REPO_ROOT/tools/oauth_install.py" --jwt-file "$JWT_FILE"
 else
     echo "JWT already present: $JWT_FILE"
 fi

@@ -43,8 +43,12 @@ def _repo_root(plugin_root: str) -> str:
     return plugin_root
 
 
+def _venv_python(venv_dir: str) -> str:
+    return os.path.join(venv_dir, "bin", "python")
+
+
 def _venv_is_healthy(venv_dir: str) -> bool:
-    py = os.path.join(venv_dir, "bin", "python")
+    py = _venv_python(venv_dir)
     pip = os.path.join(venv_dir, "bin", "pip")
     if not (os.path.isfile(py) and os.path.isfile(pip)):
         return False
@@ -58,18 +62,24 @@ def _ensure_venv(plugin_root: str, repo_root: str) -> None:
     if _venv_is_healthy(venv_dir):
         return
     if not os.path.isfile(requirements):
+        print(
+            f"MayringCoder bootstrap: skipped (no {requirements}); is the marketplace clone complete?",
+            file=sys.stderr,
+        )
         return
     print(
         f"MayringCoder bootstrap: creating venv at {venv_dir} (one-time, ~30-60s)",
         file=sys.stderr,
     )
     try:
-        subprocess.run(
+        # Trusted args: sys.executable is Python's own path; venv_dir derives
+        # from CLAUDE_PLUGIN_ROOT (or this file's location). No user-controlled input.
+        subprocess.run(  # nosec B603
             [sys.executable, "-m", "venv", "--clear", venv_dir],
             check=True,
             capture_output=True,
         )
-        subprocess.run(
+        subprocess.run(  # nosec B603
             [os.path.join(venv_dir, "bin", "pip"), "install", "-q", "-r", requirements],
             check=True,
             capture_output=True,
@@ -82,25 +92,31 @@ def _ensure_venv(plugin_root: str, repo_root: str) -> None:
         )
 
 
-def _ensure_jwt(repo_root: str) -> None:
+def _ensure_jwt(repo_root: str, python_executable: str) -> None:
     if os.path.isfile(JWT_FILE) and os.path.getsize(JWT_FILE) > 0:
         return
     oauth_script = os.path.join(repo_root, "tools", "oauth_install.py")
     if not os.path.isfile(oauth_script):
+        print(
+            f"MayringCoder bootstrap: JWT setup skipped (no {oauth_script}); marketplace clone incomplete?",
+            file=sys.stderr,
+        )
         return
     print(
         "MayringCoder bootstrap: opening browser for hook JWT (OAuth PKCE)",
         file=sys.stderr,
     )
     try:
-        subprocess.run(
-            [sys.executable, oauth_script, "--jwt-file", JWT_FILE],
+        # Trusted args: python_executable is the venv (or sys.executable);
+        # oauth_script and JWT_FILE are module-controlled paths.
+        subprocess.run(  # nosec B603
+            [python_executable, oauth_script, "--jwt-file", JWT_FILE],
             check=True,
             timeout=180,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         print(
-            f"MayringCoder bootstrap: JWT setup skipped — run manually: python3 {oauth_script}",
+            f"MayringCoder bootstrap: JWT setup skipped — run manually: {python_executable} {oauth_script}",
             file=sys.stderr,
         )
 
@@ -109,7 +125,9 @@ def _bootstrap_if_needed() -> None:
     plugin_root = _plugin_root()
     repo_root = _repo_root(plugin_root)
     _ensure_venv(plugin_root, repo_root)
-    _ensure_jwt(repo_root)
+    venv_dir = os.path.join(plugin_root, ".venv")
+    python_executable = _venv_python(venv_dir) if _venv_is_healthy(venv_dir) else sys.executable
+    _ensure_jwt(repo_root, python_executable)
 
 
 def _load_token() -> str:

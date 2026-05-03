@@ -126,8 +126,8 @@ def main() -> None:
     print(f"Login-URL (falls Browser nicht öffnet): {auth_url}", file=sys.stderr)
     try:
         webbrowser.open(auth_url)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"webbrowser.open() fehlgeschlagen ({e}) — bitte URL manuell öffnen.", file=sys.stderr)
     print(f"Warte auf Login (max {_TIMEOUT_SECONDS}s) …")
 
     if not server_done.wait(timeout=_TIMEOUT_SECONDS):
