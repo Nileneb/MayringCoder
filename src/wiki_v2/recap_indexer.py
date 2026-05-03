@@ -94,27 +94,35 @@ def _chunks_for_axis(
     if not issue_key:
         return []
 
-    where = ["igio_axis = ?", "is_active = 1"]
-    params: list = [axis]
-    if workspace_id:
-        where.append("workspace_id = ?")
-        params.append(workspace_id)
-    where.append(
-        "(source_id LIKE ? OR source_id LIKE ? OR text LIKE ? OR text LIKE ?)"
-    )
-    params.extend([
+    # Issue-touch heuristic packed as four parameterised LIKE clauses — every
+    # value is bound, no concatenation. Two static SQL strings cover the
+    # optional workspace filter without joining WHERE fragments.
+    issue_patterns = (
         f"%issue-{issue_key}%",
         f"%issues/{issue_key}%",
         f"%#{issue_key}%",
         f"%issue {issue_key}%",
-    ])
-    sql = (
-        "SELECT chunk_id, source_id, text, category_labels, igio_axis, igio_confidence "
-        f"FROM chunks WHERE {' AND '.join(where)} "
-        "ORDER BY igio_confidence DESC, created_at DESC LIMIT ?"
     )
-    params.append(limit)
-    rows = conn.execute(sql, tuple(params)).fetchall()
+    if workspace_id:
+        rows = conn.execute(
+            "SELECT chunk_id, source_id, text, category_labels, igio_axis, "
+            "igio_confidence FROM chunks "
+            "WHERE igio_axis = ? AND is_active = 1 AND workspace_id = ? "
+            "AND (source_id LIKE ? OR source_id LIKE ? "
+            "     OR text LIKE ? OR text LIKE ?) "
+            "ORDER BY igio_confidence DESC, created_at DESC LIMIT ?",
+            (axis, workspace_id, *issue_patterns, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT chunk_id, source_id, text, category_labels, igio_axis, "
+            "igio_confidence FROM chunks "
+            "WHERE igio_axis = ? AND is_active = 1 "
+            "AND (source_id LIKE ? OR source_id LIKE ? "
+            "     OR text LIKE ? OR text LIKE ?) "
+            "ORDER BY igio_confidence DESC, created_at DESC LIMIT ?",
+            (axis, *issue_patterns, limit),
+        ).fetchall()
     return [_to_chunk(r) for r in rows]
 
 
@@ -252,15 +260,21 @@ def discover_issue_ids(conn: DBAdapter, workspace_id: str | None = None) -> list
 
     Lets callers ask "which issues do I have data for" without scanning text.
     """
-    where = ["source_type = 'github_issue'"]
-    params: list = []
+    # Two fixed SQL strings — workspace_id is the only optional filter and
+    # rides on a placeholder. No string concatenation of caller input into
+    # the query body; satisfies the opengrep raw-query audit.
     if workspace_id:
-        where.append("workspace_id = ?")
-        params.append(workspace_id)
-    rows = conn.execute(
-        f"SELECT DISTINCT source_id FROM sources WHERE {' AND '.join(where)}",
-        tuple(params),
-    ).fetchall()
+        rows = conn.execute(
+            "SELECT DISTINCT source_id FROM sources "
+            "WHERE source_type = 'github_issue' AND workspace_id = ?",
+            (workspace_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT DISTINCT source_id FROM sources "
+            "WHERE source_type = 'github_issue'",
+            (),
+        ).fetchall()
     out: set[str] = set()
     pattern = re.compile(r"issue[s]?[/_-](\d+)", re.I)
     for r in rows:

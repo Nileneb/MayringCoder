@@ -146,6 +146,41 @@ def test_parse_verdict_remaps_common_aliases(alias: str, canonical: str) -> None
     assert v.confidence < 1.0  # penalised for non-canonical token
 
 
+def test_parse_verdict_alias_low_confidence_clamps_to_zero() -> None:
+    """Alias confidence below the penalty must clamp to 0.0, not go negative."""
+    raw = json.dumps({"axis": "tests", "confidence": 0.05, "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == "outcome"
+    assert v.confidence == 0.0
+
+
+def test_parse_verdict_alias_missing_confidence_stays_zero() -> None:
+    """Missing confidence + alias penalty must not produce a negative value."""
+    raw = json.dumps({"axis": "tests", "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == "outcome"
+    assert v.confidence == 0.0
+
+
+def test_parse_verdict_strips_fence_with_trailing_whitespace() -> None:
+    """Closing fence followed by whitespace must still parse cleanly."""
+    raw = '```json\n{"axis": "outcome", "confidence": 0.7, "rationale": "x"}\n```   \n'
+    v = _parse_verdict(raw)
+    assert v is not None and v.axis == "outcome"
+
+
+def test_parse_verdict_strips_fence_with_trailing_text() -> None:
+    """Trailing prose after the closing fence is also tolerated."""
+    raw = (
+        '```json\n{"axis": "issue", "confidence": 0.8, "rationale": "x"}\n'
+        '```\n\nLet me know if you need more.'
+    )
+    v = _parse_verdict(raw)
+    assert v is not None and v.axis == "issue"
+
+
 def test_parse_verdict_unknown_axis_still_rejected() -> None:
     """Aliases are an allow-list, not a free-for-all."""
     raw = json.dumps({"axis": "improvement", "confidence": 0.9, "rationale": "x"})
