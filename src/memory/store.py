@@ -117,6 +117,14 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("igio_confidence", "REAL NOT NULL DEFAULT 0.0"),
             ("igio_classified_at", "TEXT NOT NULL DEFAULT ''"),
         ],
+        # pi_jobs Phase 2: cloud-routable jobs need a worker_id, capability,
+        # and a scope marker so local-only and cloud-routable rows can coexist.
+        "pi_jobs": [
+            ("scope", "TEXT NOT NULL DEFAULT 'local'"),
+            ("capability_required", "TEXT NOT NULL DEFAULT ''"),
+            ("claimed_by", "TEXT NOT NULL DEFAULT ''"),
+            ("claimed_at", "TEXT NOT NULL DEFAULT ''"),
+        ],
     }
     for table, columns in migrations.items():
         existing = conn.get_columns(table)
@@ -224,23 +232,28 @@ def _init_schema(conn: DBAdapter) -> None:
         );
 
         CREATE TABLE IF NOT EXISTS pi_jobs (
-            job_id          TEXT PRIMARY KEY,
-            task_text       TEXT NOT NULL,
-            repo_slug       TEXT NOT NULL DEFAULT '',
-            workspace_id    TEXT NOT NULL DEFAULT 'default',
-            status          TEXT NOT NULL DEFAULT 'queued',
-            prefer          TEXT NOT NULL DEFAULT 'auto',
-            ollama_url      TEXT NOT NULL DEFAULT '',
-            model           TEXT NOT NULL DEFAULT '',
-            result_json     TEXT NOT NULL DEFAULT '',
-            error           TEXT NOT NULL DEFAULT '',
-            timeout_s       REAL NOT NULL DEFAULT 180.0,
-            created_at      TEXT NOT NULL,
-            started_at      TEXT NOT NULL DEFAULT '',
-            finished_at     TEXT NOT NULL DEFAULT ''
+            job_id              TEXT PRIMARY KEY,
+            task_text           TEXT NOT NULL,
+            repo_slug           TEXT NOT NULL DEFAULT '',
+            workspace_id        TEXT NOT NULL DEFAULT 'default',
+            status              TEXT NOT NULL DEFAULT 'queued',
+            prefer              TEXT NOT NULL DEFAULT 'auto',
+            ollama_url          TEXT NOT NULL DEFAULT '',
+            model               TEXT NOT NULL DEFAULT '',
+            result_json         TEXT NOT NULL DEFAULT '',
+            error               TEXT NOT NULL DEFAULT '',
+            timeout_s           REAL NOT NULL DEFAULT 180.0,
+            scope               TEXT NOT NULL DEFAULT 'local',
+            capability_required TEXT NOT NULL DEFAULT '',
+            claimed_by          TEXT NOT NULL DEFAULT '',
+            claimed_at          TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            started_at          TEXT NOT NULL DEFAULT '',
+            finished_at         TEXT NOT NULL DEFAULT ''
         );
 
         CREATE INDEX IF NOT EXISTS idx_pi_jobs_status ON pi_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_pi_jobs_scope ON pi_jobs(scope);
         CREATE INDEX IF NOT EXISTS idx_pi_jobs_created ON pi_jobs(created_at);
 
         CREATE TABLE IF NOT EXISTS context_feedback_log (
