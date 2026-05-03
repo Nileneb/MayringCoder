@@ -349,6 +349,72 @@ def test_cloud_tools_register_without_error() -> None:
     register_pi_queue_tools(mcp)  # must not raise
 
 
+# ----- Defence-in-depth: pi_jobs phase-2 column lazy migration -----------
+
+
+def test_ensure_pi_jobs_phase2_columns_adds_missing(tmp_path: Path) -> None:
+    """Legacy DB without scope/capability_required/claimed_by/claimed_at —
+    helper applies the missing columns idempotently."""
+    import sqlite3
+    from src.api.mcp_pi_tools import _ensure_pi_jobs_phase2_columns
+
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE pi_jobs (job_id TEXT PRIMARY KEY, task_text TEXT, "
+        "status TEXT DEFAULT 'queued', created_at TEXT NOT NULL)"
+    )
+    cols_before = {r[1] for r in conn.execute("PRAGMA table_info(pi_jobs)").fetchall()}
+    assert "scope" not in cols_before
+
+    _ensure_pi_jobs_phase2_columns(conn)
+    cols_after = {r[1] for r in conn.execute("PRAGMA table_info(pi_jobs)").fetchall()}
+    assert {"scope", "capability_required", "claimed_by", "claimed_at"} <= cols_after
+
+    # Idempotent — second call is a no-op.
+    _ensure_pi_jobs_phase2_columns(conn)
+
+
+def test_ensure_pi_jobs_phase2_columns_handles_missing_table(
+    tmp_path: Path, caplog,
+) -> None:
+    """If pi_jobs table is gone entirely, the helper logs and returns —
+    must NOT crash, must NOT silently mask the deployment problem."""
+    import logging
+    import sqlite3
+    from src.api.mcp_pi_tools import _ensure_pi_jobs_phase2_columns
+
+    conn = sqlite3.connect(tmp_path / "no-table.db")
+    with caplog.at_level(logging.ERROR, logger="src.api.mcp_pi_tools"):
+        _ensure_pi_jobs_phase2_columns(conn)
+    assert any("pi_jobs table is missing" in r.message for r in caplog.records)
+
+
+def test_server_startup_runs_schema_migration(monkeypatch, tmp_path: Path) -> None:
+    """The FastAPI startup hook in server.py calls init_memory_db so
+    legacy DBs get migrated on every boot."""
+    monkeypatch.setenv("MAYRING_LOCAL_DB", str(tmp_path / "fresh.db"))
+
+    # Reset cached singleton so the test gets a clean import path.
+    import src.api.dependencies as deps
+    deps._conn = None
+
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+
+    with TestClient(app) as client:
+        # Hitting any endpoint forces lifespan startup.
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+    # The schema migration must have created the pi_jobs table with phase-2 cols.
+    import sqlite3
+    cols = {r[1] for r in sqlite3.connect(tmp_path / "fresh.db").execute(
+        "PRAGMA table_info(pi_jobs)"
+    ).fetchall()}
+    assert {"scope", "capability_required", "claimed_by", "claimed_at"} <= cols
+
+
 # ----- Tenant scoping (cross-workspace isolation) -------------------------
 
 
