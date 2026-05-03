@@ -25,31 +25,75 @@ if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     CLAUDE_PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
 
-# When Claude Code installs a plugin, the cache directory holds ONLY
-# claude-plugin/* — the repo-level src/, requirements-client.txt, tools/
-# live in the marketplace clone (or a dev clone). Try the well-known
-# layouts in order and pick the first one that has src/api/local_mcp.py.
+# Where is the repo with src/api/local_mcp.py? Two derivations + one
+# user override. NO hardcoded user-specific paths.
+#
+#   1. Walk up from CLAUDE_PLUGIN_ROOT looking for src/api/local_mcp.py.
+#      This handles BOTH layouts Claude Code uses without naming any
+#      marketplace explicitly:
+#        - Cache layout:       cache/<MARKETPLACE>/<plugin>/<v>/    (..  is mayring-coder/, not the repo)
+#        - Marketplace layout: marketplaces/<MARKETPLACE>/claude-plugin (..  IS the repo)
+#      The walk descends from CLAUDE_PLUGIN_ROOT, then ascends parents and
+#      siblings under plugins/marketplaces/<same-name>/, so it discovers
+#      the marketplace clone whatever the marketplace is called.
+#
+#   2. $MAYRING_REPO — explicit override for dev clones living anywhere.
+#      Wins over auto-discovery.
+#
+# An empty $MAYRING_REPO simply means "auto-discover".
+
 _find_repo_root() {
-    local candidate
-    for candidate in \
-        "${MAYRING_REPO:-}" \
-        "$CLAUDE_PLUGIN_ROOT/.." \
-        "$HOME/.claude/plugins/marketplaces/MayringCoder" \
-        "$HOME/Desktop/MayringCoder" \
-        "$HOME/.claude/mayringcoder"
-    do
-        if [ -n "$candidate" ] && [ -f "$candidate/src/api/local_mcp.py" ]; then
-            (cd "$candidate" && pwd)
+    local p
+
+    # 1. Explicit user override always wins.
+    if [ -n "${MAYRING_REPO:-}" ] && [ -f "$MAYRING_REPO/src/api/local_mcp.py" ]; then
+        (cd "$MAYRING_REPO" && pwd)
+        return 0
+    fi
+
+    # 2. Walk up from CLAUDE_PLUGIN_ROOT — handles legacy marketplace layout
+    #    (where ../ IS the repo) plus any future layout that ever puts the
+    #    repo within an ancestor. Stops at /.
+    p="$CLAUDE_PLUGIN_ROOT"
+    while [ "$p" != "/" ] && [ -n "$p" ]; do
+        if [ -f "$p/src/api/local_mcp.py" ]; then
+            (cd "$p" && pwd)
             return 0
         fi
+        p="$(dirname "$p")"
     done
+
+    # 3. Find the marketplace clone purely from the cache path. The cache
+    #    layout is .../plugins/cache/<MARKET>/<plugin>/<v>/ — derive
+    #    <MARKET>, then check .../plugins/marketplaces/<MARKET>/.
+    if [[ "$CLAUDE_PLUGIN_ROOT" == */plugins/cache/*/*/* ]]; then
+        # Strip the trailing /<plugin>/<v> segments to land on
+        # .../plugins/cache/<MARKET>; basename of that is <MARKET>.
+        local market_path market
+        market_path="$(dirname "$(dirname "$CLAUDE_PLUGIN_ROOT")")"
+        market="$(basename "$market_path")"
+        local guess="${market_path%/cache/$market}/marketplaces/$market"
+        if [ -f "$guess/src/api/local_mcp.py" ]; then
+            (cd "$guess" && pwd)
+            return 0
+        fi
+    fi
+
     return 1
 }
 
 REPO_ROOT="$(_find_repo_root)" || {
-    echo "run_local_mcp: no repo with src/api/local_mcp.py found." >&2
-    echo "  Tried: \$MAYRING_REPO, \$CLAUDE_PLUGIN_ROOT/.., ~/.claude/plugins/marketplaces/MayringCoder, ~/Desktop/MayringCoder, ~/.claude/mayringcoder" >&2
-    echo "  Fix: clone the repo and set MAYRING_REPO=/path/to/MayringCoder, OR re-run /plugin marketplace add Nileneb/MayringCoder" >&2
+    echo "run_local_mcp: cannot locate the MayringCoder repo (src/api/local_mcp.py)." >&2
+    echo "  Searched (in this order):" >&2
+    echo "    1. \$MAYRING_REPO  →  ${MAYRING_REPO:-(unset)}" >&2
+    echo "    2. ancestors of CLAUDE_PLUGIN_ROOT  →  $CLAUDE_PLUGIN_ROOT" >&2
+    if [[ "$CLAUDE_PLUGIN_ROOT" == */plugins/cache/*/*/* ]]; then
+        local _mp _name
+        _mp="$(dirname "$(dirname "$CLAUDE_PLUGIN_ROOT")")"
+        _name="$(basename "$_mp")"
+        echo "    3. derived marketplace clone  →  ${_mp%/cache/$_name}/marketplaces/$_name" >&2
+    fi
+    echo "  Fix: \`export MAYRING_REPO=/path/to/MayringCoder-clone\` and restart Claude Code." >&2
     exit 1
 }
 
