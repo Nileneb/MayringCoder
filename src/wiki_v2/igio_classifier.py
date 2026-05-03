@@ -67,20 +67,45 @@ def _fast_classify(text: str) -> IgioVerdict | None:
     return None
 
 
-_PROMPT_SYSTEM = """You classify text snippets into exactly one of four content
-axes. Respond with strict JSON only — no prose, no markdown.
+_PROMPT_SYSTEM = """You classify a text snippet into EXACTLY ONE of four
+content axes. Respond with strict JSON only — no prose, no markdown fences.
 
-Axes:
+The four axes (these are the ONLY valid `axis` values):
   issue        — surfaces a problem, bug, missing piece, or open question
   goal         — names a desired state, target, or success criterion
   intervention — describes a change, implementation, refactor, or action taken
   outcome      — reports a result, effect, test outcome, or measurable evidence
 
+DO NOT use other words like "tests", "testing", "test", "fix", "bug", or
+"implementation". A test function reporting pass/fail is `outcome`. A bug
+report or open question is `issue`. A code change or refactor is
+`intervention`. A goal statement is `goal`.
+
 If the snippet does not fit any axis, return axis="" with low confidence.
 
-Output schema:
-  {"axis": "<one of: issue|goal|intervention|outcome|>", "confidence": <0.0-1.0>, "rationale": "<one short sentence>"}
+Output schema (no other keys, no nested objects):
+  {"axis": "<issue|goal|intervention|outcome|>", "confidence": <0.0-1.0>, "rationale": "<one short sentence>"}
 """
+
+# Common LLM-produced near-misses → canonical axis. The LLM keeps suggesting
+# "tests"/"testing" for test functions even when the prompt forbids it; rather
+# than discarding 20% of throughput we accept the synonym at a slight
+# confidence penalty.
+_AXIS_ALIASES: dict[str, str] = {
+    "test": "outcome",
+    "tests": "outcome",
+    "testing": "outcome",
+    "result": "outcome",
+    "results": "outcome",
+    "fix": "intervention",
+    "fixes": "intervention",
+    "refactor": "intervention",
+    "implementation": "intervention",
+    "bug": "issue",
+    "problem": "issue",
+    "question": "issue",
+}
+_ALIAS_PENALTY = 0.1
 
 
 def _build_user_prompt(text: str, category_labels: list[str]) -> str:
@@ -93,33 +118,62 @@ def _build_user_prompt(text: str, category_labels: list[str]) -> str:
     )
 
 
-_JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}", re.S)
+def _strip_markdown_fence(raw: str) -> str:
+    """Strip a leading ```json … ``` fence if the LLM wrapped its reply."""
+    if not raw.startswith("```"):
+        return raw
+    body = raw.lstrip("`").lstrip()
+    # Drop optional language tag on the first line
+    if "\n" in body:
+        first, rest = body.split("\n", 1)
+        if not first.strip().startswith("{"):
+            body = rest
+    if body.endswith("```"):
+        body = body[:-3]
+    return body.strip()
 
 
 def _parse_verdict(raw: str) -> IgioVerdict | None:
-    raw = raw.strip()
+    """Parse the LLM reply into an IgioVerdict, or None on failure.
+
+    Tolerates: leading/trailing prose, ```json fences, and JSON objects with
+    nested arrays or braces inside `rationale`. Strategy: slice from the first
+    `{` to the matching last `}` (greedy), then a single json.loads.
+    """
+    raw = _strip_markdown_fence(raw.strip())
     if not raw:
         return None
-    candidates = [raw]
-    m = _JSON_BLOCK_RE.search(raw)
-    if m and m.group(0) != raw:
-        candidates.append(m.group(0))
-    for cand in candidates:
-        try:
-            obj = json.loads(cand)
-        except json.JSONDecodeError:
-            continue
-        axis = str(obj.get("axis", "")).strip().lower()
-        if axis and axis not in VALID_AXES:
-            continue
-        try:
-            conf = float(obj.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            conf = 0.0
-        rationale = str(obj.get("rationale", ""))[:200]
-        return IgioVerdict(axis=axis, confidence=max(0.0, min(1.0, conf)),
-                           rationale=rationale)
-    return None
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    axis = str(obj.get("axis", "")).strip().lower()
+    aliased = False
+    if axis and axis not in VALID_AXES:
+        mapped = _AXIS_ALIASES.get(axis)
+        if mapped is None:
+            return None
+        axis = mapped
+        aliased = True
+    try:
+        conf = float(obj.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    if aliased:
+        conf = max(0.0, conf - _ALIAS_PENALTY)
+    rationale_raw = obj.get("rationale", "")
+    rationale = (str(rationale_raw) if rationale_raw is not None else "")[:200]
+    return IgioVerdict(
+        axis=axis,
+        confidence=max(0.0, min(1.0, conf)),
+        rationale=rationale,
+    )
 
 
 def classify_chunk(

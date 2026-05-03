@@ -82,6 +82,76 @@ def test_parse_verdict_clamps_confidence() -> None:
     assert v is not None and v.confidence == 1.0
 
 
+def test_parse_verdict_missing_confidence_defaults_zero() -> None:
+    raw = json.dumps({"axis": "issue", "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None and v.confidence == 0.0
+
+
+def test_parse_verdict_non_numeric_confidence_defaults_zero() -> None:
+    raw = json.dumps({"axis": "issue", "confidence": "high", "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None and v.confidence == 0.0
+
+
+def test_parse_verdict_missing_rationale_yields_empty_string() -> None:
+    raw = json.dumps({"axis": "outcome", "confidence": 0.6})
+    v = _parse_verdict(raw)
+    assert v is not None and v.rationale == ""
+
+
+def test_parse_verdict_truncates_long_rationale() -> None:
+    long = "y" * 500
+    raw = json.dumps({"axis": "outcome", "confidence": 0.6, "rationale": long})
+    v = _parse_verdict(raw)
+    assert v is not None and len(v.rationale) == 200
+
+
+def test_parse_verdict_handles_nested_objects_in_rationale() -> None:
+    """Slice-based extraction must survive nested JSON inside the value."""
+    raw = (
+        '{"axis": "intervention", "confidence": 0.7, '
+        '"rationale": "patched {auth, session} flow", "extra": [1, 2, 3]}'
+    )
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == "intervention"
+    assert "auth" in v.rationale
+
+
+def test_parse_verdict_strips_markdown_fence() -> None:
+    raw = '```json\n{"axis": "goal", "confidence": 0.9, "rationale": "x"}\n```'
+    v = _parse_verdict(raw)
+    assert v is not None and v.axis == "goal"
+
+
+@pytest.mark.parametrize(
+    "alias,canonical",
+    [
+        ("tests", "outcome"),
+        ("testing", "outcome"),
+        ("test", "outcome"),
+        ("fix", "intervention"),
+        ("refactor", "intervention"),
+        ("bug", "issue"),
+    ],
+)
+def test_parse_verdict_remaps_common_aliases(alias: str, canonical: str) -> None:
+    """qwen models keep emitting 'tests' for test fns even when the prompt
+    forbids it. Re-map well-known near-misses to the canonical axis."""
+    raw = json.dumps({"axis": alias, "confidence": 1.0, "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == canonical
+    assert v.confidence < 1.0  # penalised for non-canonical token
+
+
+def test_parse_verdict_unknown_axis_still_rejected() -> None:
+    """Aliases are an allow-list, not a free-for-all."""
+    raw = json.dumps({"axis": "improvement", "confidence": 0.9, "rationale": "x"})
+    assert _parse_verdict(raw) is None
+
+
 def test_parse_verdict_handles_empty_axis() -> None:
     raw = json.dumps({"axis": "", "confidence": 0.1, "rationale": "uncertain"})
     v = _parse_verdict(raw)
@@ -167,8 +237,65 @@ def test_migration_adds_igio_columns_idempotently(tmp_path: Path) -> None:
     assert {"igio_axis", "igio_confidence", "igio_classified_at"} <= cols
 
 
-def test_migration_preserves_existing_data(tmp_path: Path) -> None:
-    """Running the migration on an existing memory.db must not drop rows."""
+def test_migration_preserves_existing_rows_hermetic(tmp_path: Path) -> None:
+    """Hermetic: build a pre-IGIO chunks table, migrate, assert rows survive."""
+    from src.memory.store import init_memory_db
+
+    db = tmp_path / "memory.db"
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE sources (
+            source_id     TEXT PRIMARY KEY,
+            source_type   TEXT NOT NULL DEFAULT 'repo_file',
+            repo          TEXT NOT NULL DEFAULT '',
+            path          TEXT NOT NULL DEFAULT '',
+            branch        TEXT NOT NULL DEFAULT 'main',
+            "commit"      TEXT NOT NULL DEFAULT '',
+            content_hash  TEXT NOT NULL DEFAULT '',
+            captured_at   TEXT NOT NULL
+        );
+        CREATE TABLE chunks (
+            chunk_id          TEXT PRIMARY KEY,
+            source_id         TEXT NOT NULL,
+            chunk_level       TEXT NOT NULL DEFAULT 'file',
+            ordinal           INTEGER NOT NULL DEFAULT 0,
+            start_offset      INTEGER NOT NULL DEFAULT 0,
+            end_offset        INTEGER NOT NULL DEFAULT 0,
+            text              TEXT NOT NULL DEFAULT '',
+            text_hash         TEXT NOT NULL DEFAULT '',
+            summary           TEXT NOT NULL DEFAULT '',
+            category_labels   TEXT NOT NULL DEFAULT '',
+            category_version  TEXT NOT NULL DEFAULT 'mayring-inductive-v1',
+            embedding_model   TEXT NOT NULL DEFAULT 'nomic-embed-text',
+            embedding_id      TEXT NOT NULL DEFAULT '',
+            quality_score     REAL NOT NULL DEFAULT 0.0,
+            dedup_key         TEXT NOT NULL DEFAULT '',
+            created_at        TEXT NOT NULL,
+            is_active         INTEGER NOT NULL DEFAULT 1
+        );
+    """)
+    conn.executemany(
+        "INSERT INTO sources (source_id, captured_at) VALUES (?, ?)",
+        [(f"src_{i}", "2026-01-01") for i in range(3)],
+    )
+    conn.executemany(
+        "INSERT INTO chunks (chunk_id, source_id, text, created_at) VALUES (?, ?, ?, ?)",
+        [(f"chk_{i}", f"src_{i}", f"text {i}", "2026-01-01") for i in range(3)],
+    )
+    conn.commit()
+    conn.close()
+
+    init_memory_db(db).close()
+
+    conn = sqlite3.connect(db)
+    after = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+    assert after == 3
+    assert {"igio_axis", "igio_confidence", "igio_classified_at"} <= cols
+
+
+def test_migration_preserves_existing_data_realdb(tmp_path: Path) -> None:
+    """Optional integration check against the real cache/memory.db."""
     from src.memory.store import init_memory_db
 
     real_db = Path(__file__).resolve().parent.parent / "cache" / "memory.db"

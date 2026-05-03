@@ -90,6 +90,10 @@ def parse_args() -> argparse.Namespace:
                    help="Max. Anzahl Chunks pro --classify-igio Lauf (Standard: 200).")
     p.add_argument("--igio-min-confidence", type=float, default=0.5, metavar="X",
                    help="Verdicts unter dieser Konfidenz werden als unklassifiziert behandelt (Standard: 0.5).")
+    p.add_argument("--generate-recap", metavar="ISSUE",
+                   help="Recap-MD für ein Issue rendern (issue id, ohne #).")
+    p.add_argument("--recap-out", metavar="PATH", default=None,
+                   help="Output-Pfad für --generate-recap (Default: wiki/<workspace>/recap-<issue>.md).")
     p.add_argument("--rebuild-transitions", action="store_true",
                    help="Scan conversation-summaries + rebuild Markov topic-transition matrix")
     p.add_argument("--wiki-type", choices=["code", "paper"], default="code",

@@ -132,6 +132,9 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     Reads `chunks` rows where `igio_axis = ''` and `is_active = 1`, runs
     `classify_chunk()` per row, persists the verdict back to the row when the
     confidence clears `--igio-min-confidence`.
+
+    DBAdapter wraps sqlite3 with `row_factory = sqlite3.Row`, so rows are
+    Mapping-like and we always use key access.
     """
     from src.config import CACHE_DIR
     from src.memory.store import init_memory_db
@@ -167,17 +170,16 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     counts: dict[str, int] = {a: 0 for a in ("issue", "goal", "intervention", "outcome", "")}
     persisted = 0
     for r in rows:
-        cid = r["chunk_id"] if hasattr(r, "__getitem__") else r[0]
-        text = r["text"] if hasattr(r, "__getitem__") else r[1]
-        cats_raw = r["category_labels"] if hasattr(r, "__getitem__") else r[2]
-        cats = [c for c in (cats_raw or "").split(",") if c]
-        verdict = classify_chunk(text, cats, ollama_url=ollama_url, model=model)
+        cats = [c for c in (r["category_labels"] or "").split(",") if c]
+        verdict = classify_chunk(
+            r["text"], cats, ollama_url=ollama_url, model=model,
+        )
         counts[verdict.axis] = counts.get(verdict.axis, 0) + 1
         if verdict.axis and verdict.confidence >= threshold:
             conn.execute(
                 "UPDATE chunks SET igio_axis = ?, igio_confidence = ?, "
                 "igio_classified_at = ? WHERE chunk_id = ?",
-                (verdict.axis, verdict.confidence, now_iso(), cid),
+                (verdict.axis, verdict.confidence, now_iso(), r["chunk_id"]),
             )
             persisted += 1
 
@@ -188,6 +190,36 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
         f"issue={counts.get('issue',0)} goal={counts.get('goal',0)} "
         f"intervention={counts.get('intervention',0)} outcome={counts.get('outcome',0)} "
         f"unclassified={counts.get('',0)}"
+    )
+
+
+def _cmd_generate_recap(args: argparse.Namespace) -> None:
+    """Render a markdown recap for a single issue id."""
+    from src.config import CACHE_DIR, WIKI_DIR
+    from src.memory.store import init_memory_db
+    from src.wiki_v2.recap_indexer import build_recap
+    from src.wiki_v2.recap_renderer import render_recap
+
+    issue_id = str(getattr(args, "generate_recap", "") or "").strip().lstrip("#")
+    if not issue_id:
+        print("Fehler: --generate-recap erwartet eine Issue-ID.")
+        return
+    workspace = getattr(args, "workspace_id", None) or "default"
+
+    conn = init_memory_db(CACHE_DIR / "memory.db")
+    recap = build_recap(issue_id, conn=conn, workspace_id=workspace)
+    conn.close()
+
+    md = render_recap(recap)
+    out_arg = getattr(args, "recap_out", None)
+    out_path = Path(out_arg) if out_arg else (WIKI_DIR / workspace / f"recap-{issue_id}.md")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(md, encoding="utf-8")
+    print(
+        f"[recap] issue=#{issue_id} workspace={workspace} → {out_path} "
+        f"(issue:{len(recap.issue_chunks)} interv:{len(recap.intervention_chunks)} "
+        f"out:{len(recap.outcome_chunks)} plans:{len(recap.plans)} "
+        f"commits:{len(recap.commits)})"
     )
 
 
@@ -348,6 +380,7 @@ def main() -> None:
 
     if not repo_url and not (args.ingest_issues or args.ingest_images or args.pi_task or args.generate_wiki
                               or getattr(args, "classify_igio", False)
+                              or getattr(args, "generate_recap", None)
                               or getattr(args, "generate_training_data", None)):
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")
         sys.exit(1)
@@ -401,6 +434,7 @@ def main() -> None:
     if args.populate_memory:                           run_populate_memory(args, repo_url, ollama_url, model); sys.exit(0)
     if args.generate_wiki:                             _cmd_generate_wiki(args, repo_url, ollama_url, model);  sys.exit(0)
     if getattr(args, "classify_igio", False):          _cmd_classify_igio(args, ollama_url, model);            sys.exit(0)
+    if getattr(args, "generate_recap", None):          _cmd_generate_recap(args);                              sys.exit(0)
     if getattr(args, "wiki_history", False):           _cmd_wiki_history(args);                               sys.exit(0)
     if getattr(args, "wiki_team_activity", False):     _cmd_wiki_team_activity(args);                         sys.exit(0)
     if getattr(args, "wiki_history_cleanup", None) is not None: _cmd_wiki_history_cleanup(args);              sys.exit(0)
