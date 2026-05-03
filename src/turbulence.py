@@ -28,7 +28,7 @@ _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
 def _default_model() -> str:
     from src.model_router import ModelRouter
-    return ModelRouter(_OLLAMA_URL).resolve("analysis") or "mayring-qwen3:2b"
+    return ModelRouter(_OLLAMA_URL).resolve("analysis") or "qwen2.5-coder:7b"
 
 THRESHOLD_SKIP = 0.20
 THRESHOLD_HIGH_ONLY = 0.50

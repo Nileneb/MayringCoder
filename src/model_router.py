@@ -28,7 +28,7 @@ _CONFIG_PATH = _ROOT / "config" / "model_routes.yaml"
 _DEFAULTS: dict[str, dict] = {
     "mayring_code":   {"model": "mistral:7b-instruct",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
     "mayring_social": {"model": "mistral:7b-instruct",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
-    "mayring_hybrid": {"model": "mayring-qwen3:2b",     "fallback": "mistral:7b-instruct","timeout": 240},
+    "mayring_hybrid": {"model": "qwen3.5:2b",           "fallback": "mistral:7b-instruct","timeout": 240},
     "vision":         {"model": "qwen2.5vl:3b",         "fallback": "",                  "timeout": 120},
     "analysis":       {"model": "mistral:7b-instruct",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
     "complex":        {"model": "qwen3.5:35b-a3b",      "fallback": "mistral:7b-instruct","timeout": 480},
@@ -48,7 +48,7 @@ class ModelRouter:
 
     Usage:
         router = ModelRouter(ollama_url="http://localhost:11434")
-        model = router.resolve("mayring_code")      # "mayringqwen:latest" if available
+        model = router.resolve("mayring_code")      # default mistral:7b-instruct
         if router.is_available("vision"):
             caption = caption_image(path, router.resolve("vision"))
     """

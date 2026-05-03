@@ -171,7 +171,7 @@ def _llm_relevance_scores(
     query: str,
     candidates: list[Chunk],
     ollama_url: str,
-    model: str = "mayring-qwen3:2b",
+    model: str = "qwen2.5-coder:7b",
     timeout: float = 10.0,
     task_context: str | None = None,
 ) -> dict[str, float]:

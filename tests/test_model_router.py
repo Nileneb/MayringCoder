@@ -37,10 +37,10 @@ class TestModelRouterDefaults:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         router._routes["analysis"].model = ""
-        router._routes["analysis"].fallback = "mayring-qwen3:2b"
+        router._routes["analysis"].fallback = "qwen3.5:2b"
         # OLLAMA_MODEL env must NOT bleed through — fallback from config is used
         result = router.resolve("analysis")
-        assert result == "mayring-qwen3:2b"
+        assert result == "qwen3.5:2b"
         assert result != "my-env-model:latest"
 
     def test_resolve_unknown_task_returns_empty_not_env(self, monkeypatch):
