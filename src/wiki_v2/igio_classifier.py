@@ -121,11 +121,12 @@ def _build_user_prompt(text: str, category_labels: list[str]) -> str:
 def _strip_markdown_fence(raw: str) -> str:
     """Strip a leading ```json … ``` fence if the LLM wrapped its reply.
 
-    Tolerant by design — trims trailing whitespace and accepts arbitrary text
-    after the closing fence (some models append "Let me know if…" prose).
-    Strategy: detect leading fence, drop optional language tag, then trim from
-    the LAST ``` onwards. Strict endswith() would silently lose otherwise-
-    valid fenced JSON.
+    Tolerates leading whitespace before the opening fence, language tags,
+    trailing whitespace and arbitrary prose after the closing fence. The
+    closing fence is only recognised when it appears at the START of a line
+    (the body of the fence has been seen) — a stray ``` inside the JSON
+    payload (e.g. as part of a markdown example in a string value) will not
+    be treated as the closing fence.
     """
     if not raw.lstrip().startswith("```"):
         return raw
@@ -136,9 +137,15 @@ def _strip_markdown_fence(raw: str) -> str:
         if not first.strip().startswith("{"):
             body = rest
     body = body.rstrip()
-    last_fence = body.rfind("```")
-    if last_fence != -1:
-        body = body[:last_fence]
+    # Closing fence must be on its own line — search for "\n```" anchor.
+    # Falls back to the bare last "```" only when nothing follows it (i.e.
+    # the body literally ends with the fence), which can never be embedded
+    # JSON content.
+    line_anchored = body.rfind("\n```")
+    if line_anchored != -1:
+        body = body[:line_anchored]
+    elif body.endswith("```"):
+        body = body[:-3]
     return body.strip()
 
 
