@@ -122,10 +122,12 @@ def register_pi_queue_tools(mcp: FastMCP) -> None:
     def pi_task_status_cloud(
         job_id: str, workspace_id: str | None = None,
     ) -> dict:
-        """Read-only snapshot of a cloud-routed pi-task job."""
+        """Read-only snapshot of a cloud-routed pi-task job, scoped to the
+        caller's tenant. Foreign jobs report as "not found" so the row's
+        existence cannot be probed cross-tenant."""
         from src.agents import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        job = pi_jobs.get_job(job_id)
+        job = pi_jobs.get_job(job_id, workspace_id=ws)
         if job is None:
             return {"error": "not found", "job_id": job_id, "workspace_id": ws}
         d = job.to_dict()
@@ -139,7 +141,7 @@ def register_pi_queue_tools(mcp: FastMCP) -> None:
             "claimed_at": d["claimed_at"],
             "started_at": d["started_at"],
             "finished_at": d["finished_at"],
-            "workspace_id": ws,
+            "workspace_id": d["workspace_id"],
         }
 
     @mcp.tool()
@@ -148,11 +150,14 @@ def register_pi_queue_tools(mcp: FastMCP) -> None:
         limit: int = 10,
         workspace_id: str | None = None,
     ) -> dict:
-        """List recent CLOUD-scope pi-task jobs (default: 10 newest)."""
+        """List recent CLOUD-scope pi-task jobs scoped to the caller's tenant."""
         from src.agents import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         jobs = pi_jobs.list_recent(
-            only_active=only_active, scope="cloud", limit=max(1, min(50, limit)),
+            only_active=only_active,
+            scope="cloud",
+            workspace_id=ws,
+            limit=max(1, min(50, limit)),
         )
         return {
             "jobs": [

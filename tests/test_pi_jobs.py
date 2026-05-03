@@ -280,3 +280,39 @@ def test_cloud_tools_register_without_error() -> None:
     from src.api.mcp_pi_tools import register_pi_queue_tools
     mcp = FastMCP("test")
     register_pi_queue_tools(mcp)  # must not raise
+
+
+# ----- Tenant scoping (cross-workspace isolation) -------------------------
+
+
+def test_get_job_scoped_by_workspace_returns_none_for_other_tenant(db: Path) -> None:
+    """A caller with workspace=alpha must NOT be able to read a job in beta."""
+    job = pi_jobs.insert_job("secret", workspace_id="beta", db_path=db)
+    assert pi_jobs.get_job(job.job_id, workspace_id="alpha", db_path=db) is None
+    assert pi_jobs.get_job(job.job_id, workspace_id="beta", db_path=db) is not None
+
+
+def test_get_job_unscoped_still_reads_any_row(db: Path) -> None:
+    """Internal callers (worker loops) may omit workspace_id."""
+    job = pi_jobs.insert_job("internal", workspace_id="beta", db_path=db)
+    assert pi_jobs.get_job(job.job_id, db_path=db) is not None
+
+
+def test_list_recent_scoped_by_workspace(db: Path) -> None:
+    pi_jobs.insert_job("alpha-1", workspace_id="alpha", db_path=db)
+    pi_jobs.insert_job("alpha-2", workspace_id="alpha", db_path=db)
+    pi_jobs.insert_job("beta-1", workspace_id="beta", db_path=db)
+    alpha = pi_jobs.list_recent(workspace_id="alpha", db_path=db)
+    assert {j.task_text for j in alpha} == {"alpha-1", "alpha-2"}
+    beta = pi_jobs.list_recent(workspace_id="beta", db_path=db)
+    assert {j.task_text for j in beta} == {"beta-1"}
+
+
+def test_list_recent_combines_workspace_and_scope_filters(db: Path) -> None:
+    pi_jobs.insert_job("alpha-local", workspace_id="alpha", db_path=db)
+    pi_jobs.insert_cloud_job("alpha-cloud", workspace_id="alpha", db_path=db)
+    pi_jobs.insert_cloud_job("beta-cloud", workspace_id="beta", db_path=db)
+    out = pi_jobs.list_recent(
+        scope="cloud", workspace_id="alpha", db_path=db,
+    )
+    assert {j.task_text for j in out} == {"alpha-cloud"}

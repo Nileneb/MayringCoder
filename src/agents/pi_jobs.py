@@ -292,12 +292,26 @@ def fail_job(job_id: str, error: str, *, db_path: Path | None = None) -> None:
         conn.close()
 
 
-def get_job(job_id: str, *, db_path: Path | None = None) -> PiJob | None:
+def get_job(
+    job_id: str,
+    *,
+    workspace_id: str | None = None,
+    db_path: Path | None = None,
+) -> PiJob | None:
+    """Read a single job. When `workspace_id` is set, only return the row when
+    it belongs to that tenant — otherwise return None (treat foreign jobs as
+    "not found" so a caller cannot probe for their existence)."""
     conn = _conn(db_path)
     try:
-        row = conn.execute(
-            "SELECT * FROM pi_jobs WHERE job_id=?", (job_id,),
-        ).fetchone()
+        if workspace_id:
+            row = conn.execute(
+                "SELECT * FROM pi_jobs WHERE job_id=? AND workspace_id=?",
+                (job_id, workspace_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM pi_jobs WHERE job_id=?", (job_id,),
+            ).fetchone()
     finally:
         conn.close()
     return _row_to_job(row) if row else None
@@ -307,34 +321,32 @@ def list_recent(
     *,
     only_active: bool = False,
     scope: str | None = None,
+    workspace_id: str | None = None,
     limit: int = 10,
     db_path: Path | None = None,
 ) -> list[PiJob]:
+    """Return recent jobs. When `workspace_id` is set, the result is scoped
+    to that tenant — every MCP-facing caller MUST pass it. Internal callers
+    (worker loops) may omit it deliberately."""
+    where = []
+    params: list = []
+    if only_active:
+        where.append("status IN ('queued', 'running')")
+    if scope:
+        where.append("scope=?")
+        params.append(scope)
+    if workspace_id:
+        where.append("workspace_id=?")
+        params.append(workspace_id)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
     conn = _conn(db_path)
     try:
-        if only_active and scope:
-            rows = conn.execute(
-                "SELECT * FROM pi_jobs WHERE status IN ('queued', 'running') "
-                "AND scope=? ORDER BY created_at DESC LIMIT ?",
-                (scope, limit),
-            ).fetchall()
-        elif only_active:
-            rows = conn.execute(
-                "SELECT * FROM pi_jobs WHERE status IN ('queued', 'running') "
-                "ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        elif scope:
-            rows = conn.execute(
-                "SELECT * FROM pi_jobs WHERE scope=? "
-                "ORDER BY created_at DESC LIMIT ?",
-                (scope, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM pi_jobs ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM pi_jobs{where_sql} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
     finally:
         conn.close()
     return [_row_to_job(r) for r in rows]

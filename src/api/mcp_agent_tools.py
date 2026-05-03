@@ -155,16 +155,17 @@ def register_agent_tools(mcp: FastMCP) -> None:
     def pi_task_status(job_id: str, workspace_id: str | None = None) -> dict:
         """Return the current state of a pi-task job.
 
+        Scoped to the caller's effective workspace — a job belonging to
+        another tenant is reported as "not found" so its existence cannot
+        be probed cross-tenant.
+
         Result envelope:
             {"job_id", "status", "result", "error",
              "started_at", "finished_at", "workspace_id"}
-
-        `result` is the JSON-decoded payload when status == "completed",
-        otherwise None.
         """
         from src.agents import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        job = pi_jobs.get_job(job_id)
+        job = pi_jobs.get_job(job_id, workspace_id=ws)
         if job is None:
             return {"error": "not found", "job_id": job_id, "workspace_id": ws}
         d = job.to_dict()
@@ -175,7 +176,10 @@ def register_agent_tools(mcp: FastMCP) -> None:
             "error": d["error"],
             "started_at": d["started_at"],
             "finished_at": d["finished_at"],
-            "workspace_id": ws,
+            # The row is now scoped to `ws`, so its workspace_id matches.
+            # Echo the row's value explicitly so the response can never claim
+            # a workspace the row doesn't belong to.
+            "workspace_id": d["workspace_id"],
         }
 
     @mcp.tool()
@@ -184,13 +188,18 @@ def register_agent_tools(mcp: FastMCP) -> None:
         limit: int = 10,
         workspace_id: str | None = None,
     ) -> dict:
-        """List recent pi-task jobs (default: 10 newest, all statuses).
+        """List recent pi-task jobs scoped to the caller's workspace.
 
-        Set `only_active=True` to see only queued+running jobs.
+        Set `only_active=True` to see only queued+running jobs. Only jobs
+        belonging to the caller's tenant are returned.
         """
         from src.agents import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        jobs = pi_jobs.list_recent(only_active=only_active, limit=max(1, min(50, limit)))
+        jobs = pi_jobs.list_recent(
+            only_active=only_active,
+            workspace_id=ws,
+            limit=max(1, min(50, limit)),
+        )
         return {
             "jobs": [
                 {
