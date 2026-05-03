@@ -125,6 +125,33 @@ def test_parse_verdict_strips_markdown_fence() -> None:
     assert v is not None and v.axis == "goal"
 
 
+@pytest.mark.parametrize(
+    "alias,canonical",
+    [
+        ("tests", "outcome"),
+        ("testing", "outcome"),
+        ("test", "outcome"),
+        ("fix", "intervention"),
+        ("refactor", "intervention"),
+        ("bug", "issue"),
+    ],
+)
+def test_parse_verdict_remaps_common_aliases(alias: str, canonical: str) -> None:
+    """qwen models keep emitting 'tests' for test fns even when the prompt
+    forbids it. Re-map well-known near-misses to the canonical axis."""
+    raw = json.dumps({"axis": alias, "confidence": 1.0, "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == canonical
+    assert v.confidence < 1.0  # penalised for non-canonical token
+
+
+def test_parse_verdict_unknown_axis_still_rejected() -> None:
+    """Aliases are an allow-list, not a free-for-all."""
+    raw = json.dumps({"axis": "improvement", "confidence": 0.9, "rationale": "x"})
+    assert _parse_verdict(raw) is None
+
+
 def test_parse_verdict_handles_empty_axis() -> None:
     raw = json.dumps({"axis": "", "confidence": 0.1, "rationale": "uncertain"})
     v = _parse_verdict(raw)

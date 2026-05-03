@@ -67,20 +67,45 @@ def _fast_classify(text: str) -> IgioVerdict | None:
     return None
 
 
-_PROMPT_SYSTEM = """You classify text snippets into exactly one of four content
-axes. Respond with strict JSON only — no prose, no markdown.
+_PROMPT_SYSTEM = """You classify a text snippet into EXACTLY ONE of four
+content axes. Respond with strict JSON only — no prose, no markdown fences.
 
-Axes:
+The four axes (these are the ONLY valid `axis` values):
   issue        — surfaces a problem, bug, missing piece, or open question
   goal         — names a desired state, target, or success criterion
   intervention — describes a change, implementation, refactor, or action taken
   outcome      — reports a result, effect, test outcome, or measurable evidence
 
+DO NOT use other words like "tests", "testing", "test", "fix", "bug", or
+"implementation". A test function reporting pass/fail is `outcome`. A bug
+report or open question is `issue`. A code change or refactor is
+`intervention`. A goal statement is `goal`.
+
 If the snippet does not fit any axis, return axis="" with low confidence.
 
-Output schema:
-  {"axis": "<one of: issue|goal|intervention|outcome|>", "confidence": <0.0-1.0>, "rationale": "<one short sentence>"}
+Output schema (no other keys, no nested objects):
+  {"axis": "<issue|goal|intervention|outcome|>", "confidence": <0.0-1.0>, "rationale": "<one short sentence>"}
 """
+
+# Common LLM-produced near-misses → canonical axis. The LLM keeps suggesting
+# "tests"/"testing" for test functions even when the prompt forbids it; rather
+# than discarding 20% of throughput we accept the synonym at a slight
+# confidence penalty.
+_AXIS_ALIASES: dict[str, str] = {
+    "test": "outcome",
+    "tests": "outcome",
+    "testing": "outcome",
+    "result": "outcome",
+    "results": "outcome",
+    "fix": "intervention",
+    "fixes": "intervention",
+    "refactor": "intervention",
+    "implementation": "intervention",
+    "bug": "issue",
+    "problem": "issue",
+    "question": "issue",
+}
+_ALIAS_PENALTY = 0.1
 
 
 def _build_user_prompt(text: str, category_labels: list[str]) -> str:
@@ -129,12 +154,19 @@ def _parse_verdict(raw: str) -> IgioVerdict | None:
     if not isinstance(obj, dict):
         return None
     axis = str(obj.get("axis", "")).strip().lower()
+    aliased = False
     if axis and axis not in VALID_AXES:
-        return None
+        mapped = _AXIS_ALIASES.get(axis)
+        if mapped is None:
+            return None
+        axis = mapped
+        aliased = True
     try:
         conf = float(obj.get("confidence", 0.0))
     except (TypeError, ValueError):
         conf = 0.0
+    if aliased:
+        conf = max(0.0, conf - _ALIAS_PENALTY)
     rationale_raw = obj.get("rationale", "")
     rationale = (str(rationale_raw) if rationale_raw is not None else "")[:200]
     return IgioVerdict(
