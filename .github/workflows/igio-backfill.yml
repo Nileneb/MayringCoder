@@ -1,0 +1,69 @@
+name: IGIO backfill (cloud memory.db)
+
+# Manually-dispatchable workflow that classifies a batch of unclassified chunks
+# in the cloud-side memory.db on mcp.linn.games. Runs the same code path as the
+# local `python -m src.cli --classify-igio` command, so behaviour stays identical.
+#
+# Trigger from a workstation:
+#   gh workflow run igio-backfill.yml -f limit=200 -f model=qwen2.5-coder:7b
+#
+# Required repository secrets:
+#   MAYRING_HOST              SSH host (e.g. user@u-server)
+#   MAYRING_SSH_KEY           Private key with shell access to MAYRING_HOST
+#   MAYRING_KNOWN_HOSTS       Output of `ssh-keyscan -H mcp.linn.games` (one or more lines)
+#
+# Why SSH instead of an API call: the cloud memory.db is mounted into the
+# `mayring-mcp` container and the canonical write path is `init_memory_db()`
+# inside that process — there is no remote MCP tool that updates `igio_axis`,
+# so we exec the existing CLI in-place.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max chunks to classify in this run (matches --igio-limit)"
+        required: false
+        default: "200"
+      model:
+        description: "Ollama model used by the classifier"
+        required: false
+        default: "qwen2.5-coder:7b"
+      min_confidence:
+        description: "Drop verdicts below this confidence (matches --igio-min-confidence)"
+        required: false
+        default: "0.5"
+      workspace_id:
+        description: "Optional workspace filter (leave empty for all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.MAYRING_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.MAYRING_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Run --classify-igio inside mayring-mcp container
+        env:
+          HOST: ${{ secrets.MAYRING_HOST }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          MODEL: ${{ github.event.inputs.model }}
+          CONF: ${{ github.event.inputs.min_confidence }}
+          WS: ${{ github.event.inputs.workspace_id }}
+        run: |
+          set -euo pipefail
+          # Build the in-container command.  --workspace-id is optional.
+          CMD="python -m src.cli --classify-igio --igio-limit ${LIMIT} --igio-min-confidence ${CONF} --model ${MODEL}"
+          if [ -n "${WS}" ]; then
+            CMD="${CMD} --workspace-id ${WS}"
+          fi
+          echo "Running: docker exec mayring-mcp ${CMD}"
+          ssh -o BatchMode=yes "${HOST}" "docker exec mayring-mcp ${CMD}"
