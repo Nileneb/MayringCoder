@@ -93,33 +93,55 @@ def _build_user_prompt(text: str, category_labels: list[str]) -> str:
     )
 
 
-_JSON_BLOCK_RE = re.compile(r"\{[^{}]*\}", re.S)
+def _strip_markdown_fence(raw: str) -> str:
+    """Strip a leading ```json … ``` fence if the LLM wrapped its reply."""
+    if not raw.startswith("```"):
+        return raw
+    body = raw.lstrip("`").lstrip()
+    # Drop optional language tag on the first line
+    if "\n" in body:
+        first, rest = body.split("\n", 1)
+        if not first.strip().startswith("{"):
+            body = rest
+    if body.endswith("```"):
+        body = body[:-3]
+    return body.strip()
 
 
 def _parse_verdict(raw: str) -> IgioVerdict | None:
-    raw = raw.strip()
+    """Parse the LLM reply into an IgioVerdict, or None on failure.
+
+    Tolerates: leading/trailing prose, ```json fences, and JSON objects with
+    nested arrays or braces inside `rationale`. Strategy: slice from the first
+    `{` to the matching last `}` (greedy), then a single json.loads.
+    """
+    raw = _strip_markdown_fence(raw.strip())
     if not raw:
         return None
-    candidates = [raw]
-    m = _JSON_BLOCK_RE.search(raw)
-    if m and m.group(0) != raw:
-        candidates.append(m.group(0))
-    for cand in candidates:
-        try:
-            obj = json.loads(cand)
-        except json.JSONDecodeError:
-            continue
-        axis = str(obj.get("axis", "")).strip().lower()
-        if axis and axis not in VALID_AXES:
-            continue
-        try:
-            conf = float(obj.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            conf = 0.0
-        rationale = str(obj.get("rationale", ""))[:200]
-        return IgioVerdict(axis=axis, confidence=max(0.0, min(1.0, conf)),
-                           rationale=rationale)
-    return None
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    axis = str(obj.get("axis", "")).strip().lower()
+    if axis and axis not in VALID_AXES:
+        return None
+    try:
+        conf = float(obj.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    rationale_raw = obj.get("rationale", "")
+    rationale = (str(rationale_raw) if rationale_raw is not None else "")[:200]
+    return IgioVerdict(
+        axis=axis,
+        confidence=max(0.0, min(1.0, conf)),
+        rationale=rationale,
+    )
 
 
 def classify_chunk(
