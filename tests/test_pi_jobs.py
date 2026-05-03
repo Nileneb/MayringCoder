@@ -194,3 +194,89 @@ def test_worker_disabled_via_env(monkeypatch) -> None:
     assert pi_worker.start() is False
     assert pi_worker._is_running() is True  # marked started, but no thread
     pi_worker.stop()
+
+
+# ----- Phase 2: cloud-scope jobs -------------------------------------------
+
+
+def test_local_claim_ignores_cloud_jobs(db: Path) -> None:
+    """A cloud-scope job must not be picked up by the local worker."""
+    pi_jobs.insert_cloud_job("cloud-only", capability_required="local-gpu", db_path=db)
+    assert pi_jobs.claim_next(db_path=db) is None
+
+
+def test_claim_cloud_next_requires_capability(db: Path) -> None:
+    pi_jobs.insert_cloud_job(
+        "needs-gpu", capability_required="local-gpu", db_path=db,
+    )
+    no_gpu = pi_jobs.claim_cloud_next("wkr_no", capabilities=["cpu"], db_path=db)
+    assert no_gpu is None
+    gpu = pi_jobs.claim_cloud_next("wkr_yes", capabilities=["local-gpu"], db_path=db)
+    assert gpu is not None
+    assert gpu.claimed_by == "wkr_yes"
+    assert gpu.scope == "cloud"
+    assert gpu.status == "running"
+
+
+def test_claim_cloud_next_no_required_matches_any_worker(db: Path) -> None:
+    pi_jobs.insert_cloud_job("any", db_path=db)
+    j = pi_jobs.claim_cloud_next("wkr_any", capabilities=[], db_path=db)
+    assert j is not None and j.claimed_by == "wkr_any"
+
+
+def test_claim_cloud_next_returns_none_when_empty(db: Path) -> None:
+    assert pi_jobs.claim_cloud_next("wkr", db_path=db) is None
+
+
+def test_claim_cloud_next_atomic_under_concurrency(db: Path) -> None:
+    pi_jobs.insert_cloud_job(
+        "only-one", capability_required="local-gpu", db_path=db,
+    )
+
+    import threading
+    results: list = []
+    barrier = threading.Barrier(2)
+
+    def worker(wid: str) -> None:
+        barrier.wait()
+        results.append(
+            pi_jobs.claim_cloud_next(wid, capabilities=["local-gpu"], db_path=db)
+        )
+
+    threads = [
+        threading.Thread(target=worker, args=(f"wkr_{i}",)) for i in range(2)
+    ]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+
+    claimed = [r for r in results if r is not None]
+    assert len(claimed) == 1
+
+
+def test_claim_cloud_next_filters_by_workspace(db: Path) -> None:
+    pi_jobs.insert_cloud_job("ws-a", workspace_id="alpha", db_path=db)
+    pi_jobs.insert_cloud_job("ws-b", workspace_id="beta", db_path=db)
+    j = pi_jobs.claim_cloud_next("wkr", workspace_id="beta", db_path=db)
+    assert j is not None and j.task_text == "ws-b"
+
+
+def test_list_recent_filter_by_scope(db: Path) -> None:
+    pi_jobs.insert_job("local-1", db_path=db)
+    pi_jobs.insert_cloud_job("cloud-1", db_path=db)
+    cloud_only = pi_jobs.list_recent(scope="cloud", db_path=db)
+    assert {j.task_text for j in cloud_only} == {"cloud-1"}
+    local_only = pi_jobs.list_recent(scope="local", db_path=db)
+    assert {j.task_text for j in local_only} == {"local-1"}
+
+
+def test_insert_cloud_job_rejects_invalid_prefer(db: Path) -> None:
+    with pytest.raises(ValueError):
+        pi_jobs.insert_cloud_job("x", prefer="nope", db_path=db)
+
+
+def test_cloud_tools_register_without_error() -> None:
+    """`register_pi_queue_tools` is callable and adds tools to the MCP."""
+    from mcp.server.fastmcp import FastMCP
+    from src.api.mcp_pi_tools import register_pi_queue_tools
+    mcp = FastMCP("test")
+    register_pi_queue_tools(mcp)  # must not raise
