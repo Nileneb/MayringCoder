@@ -12,7 +12,6 @@ import json
 import os
 import sqlite3
 import sys
-import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -165,29 +164,6 @@ def sync(workspace_id: str, db_path: str, chroma_path: str) -> int:
     while True:
         try:
             data = _fetch_changes(token, workspace_id, cursor, limit=_BATCH_SIZE)
-        except urllib.error.HTTPError as e:
-            # Server-side hiccups (5xx, 404 on legacy endpoints, …) must NOT
-            # block the user's prompt. The hook fires on every UserPromptSubmit
-            # and a 500 from /memory/changes used to surface as a red error
-            # line on every prompt. Log to stderr, exit 0.
-            if e.code >= 500 or e.code == 404:
-                print(
-                    f"memory_sync: skipping sync — {_API_URL}/memory/changes "
-                    f"returned HTTP {e.code} (transient or endpoint missing)",
-                    file=sys.stderr,
-                )
-                return 0
-            # 4xx (bad JWT, wrong workspace) is a real config issue — surface.
-            print(f"Fetch error: HTTP {e.code} {e.reason}", file=sys.stderr)
-            return 1
-        except urllib.error.URLError as e:
-            # Network down / DNS / connection refused — non-fatal.
-            print(
-                f"memory_sync: skipping sync — network unreachable "
-                f"({e.reason})",
-                file=sys.stderr,
-            )
-            return 0
         except Exception as e:
             print(f"Fetch error: {e}", file=sys.stderr)
             return 1

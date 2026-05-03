@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+import logging
+import sqlite3
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from src.api.auth import get_workspace
 from src.api.dependencies import get_chroma as _get_chroma, get_conn as _get_conn
 
 router = APIRouter(prefix="/memory", tags=["sync"])
+logger = logging.getLogger(__name__)
 
 
 class ChunkSyncItem(BaseModel):
@@ -26,6 +30,29 @@ class MemorySyncResponse(BaseModel):
     chunks: list[ChunkSyncItem]
 
 
+def _ensure_visibility_column(db) -> None:
+    """If the cloud DB was created before the visibility migration landed,
+    `s.visibility` is NaN and the SELECT below fails with `no such column`.
+    The migration is in src.memory.store but only fires when init_memory_db
+    is called. Production was deployed before that migration was added, so
+    the column may be missing on the live DB. Add it lazily here so a
+    legacy DB still answers /memory/changes — idempotent: ALTER TABLE
+    re-applied raises OperationalError which we swallow."""
+    try:
+        cols = {r[1] for r in db.execute("PRAGMA table_info(sources)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "visibility" not in cols:
+        try:
+            db.execute(
+                "ALTER TABLE sources ADD COLUMN visibility "
+                "TEXT NOT NULL DEFAULT 'private'"
+            )
+            logger.warning("sync: applied missing visibility column on sources")
+        except sqlite3.Error as e:
+            logger.error("sync: failed to add visibility column: %s", e)
+
+
 @router.get("/changes", response_model=MemorySyncResponse)
 def get_changes(
     since: str = Query(..., description="ISO 8601 cursor — only chunks created after this"),
@@ -33,20 +60,29 @@ def get_changes(
     workspace_id: str = Depends(get_workspace),
 ) -> MemorySyncResponse:
     db = _get_conn()
-    rows = db.execute(
-        """
-        SELECT c.chunk_id, c.source_id, c.text, c.workspace_id,
-               c.created_at, c.is_active, c.text_hash, c.dedup_key
-        FROM chunks c
-        JOIN sources s ON c.source_id = s.source_id
-        WHERE c.created_at > ?
-          AND (s.visibility = 'public'
-               OR (s.visibility = 'private' AND c.workspace_id = ?))
-        ORDER BY c.created_at ASC
-        LIMIT ?
-        """,
-        (since, workspace_id, limit),
-    ).fetchall()
+    _ensure_visibility_column(db)
+
+    try:
+        rows = db.execute(
+            """
+            SELECT c.chunk_id, c.source_id, c.text, c.workspace_id,
+                   c.created_at, c.is_active, c.text_hash, c.dedup_key
+            FROM chunks c
+            JOIN sources s ON c.source_id = s.source_id
+            WHERE c.created_at > ?
+              AND (s.visibility = 'public'
+                   OR (s.visibility = 'private' AND c.workspace_id = ?))
+            ORDER BY c.created_at ASC
+            LIMIT ?
+            """,
+            (since, workspace_id, limit),
+        ).fetchall()
+    except sqlite3.Error as e:
+        # Don't 500 — that hits the client's UserPromptSubmit hook on every
+        # keystroke. Surface the real DB error to the response so the client
+        # log shows what's actually broken.
+        logger.exception("sync: SQL query failed")
+        raise HTTPException(status_code=503, detail=f"DB query failed: {e}") from e
 
     if not rows:
         return MemorySyncResponse(cursor=since, chunks=[])
@@ -56,11 +92,16 @@ def get_changes(
     try:
         col = _get_chroma()
         result = col.get(ids=chunk_ids, include=["embeddings"])
-        for cid, emb in zip(result["ids"], result["embeddings"]):
+        ids = result.get("ids") or []
+        embs = result.get("embeddings") or []
+        for cid, emb in zip(ids, embs):
             if emb is not None:
+                # Coerce numpy.ndarray (chromadb >=0.5) to plain list.
                 embedding_map[cid] = list(emb)
     except Exception:
-        pass
+        # Non-fatal: chunks still flow back without embeddings, the client
+        # can re-embed locally. Logged with stack so the cause is visible.
+        logger.exception("sync: chroma fetch failed — continuing without embeddings")
 
     items = [
         ChunkSyncItem(
