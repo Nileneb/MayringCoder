@@ -113,6 +113,9 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
             ("category_source", "TEXT NOT NULL DEFAULT ''"),
             ("category_confidence", "REAL NOT NULL DEFAULT 0.0"),
+            ("igio_axis", "TEXT NOT NULL DEFAULT ''"),
+            ("igio_confidence", "REAL NOT NULL DEFAULT 0.0"),
+            ("igio_classified_at", "TEXT NOT NULL DEFAULT ''"),
         ],
     }
     for table, columns in migrations.items():

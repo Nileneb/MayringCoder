@@ -126,6 +126,71 @@ def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str,
         print(f"Wiki 2.0 update skipped: {_e}")
 
 
+def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) -> None:
+    """Backfill IGIO axes for unclassified active chunks.
+
+    Reads `chunks` rows where `igio_axis = ''` and `is_active = 1`, runs
+    `classify_chunk()` per row, persists the verdict back to the row when the
+    confidence clears `--igio-min-confidence`.
+    """
+    from src.config import CACHE_DIR
+    from src.memory.store import init_memory_db
+    from src.wiki_v2.igio_classifier import classify_chunk, now_iso
+
+    if not model:
+        print("Fehler: --classify-igio braucht ein --model.")
+        return
+
+    limit = max(1, int(getattr(args, "igio_limit", 200)))
+    threshold = float(getattr(args, "igio_min_confidence", 0.5))
+    workspace = getattr(args, "workspace_id", None)
+
+    conn = init_memory_db(CACHE_DIR / "memory.db")
+    where = ["igio_axis = ''", "is_active = 1", "text != ''"]
+    params: list = []
+    if workspace:
+        where.append("workspace_id = ?")
+        params.append(workspace)
+    sql = (
+        f"SELECT chunk_id, text, category_labels FROM chunks "
+        f"WHERE {' AND '.join(where)} "
+        f"ORDER BY created_at DESC LIMIT ?"
+    )
+    params.append(limit)
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    if not rows:
+        print(f"[igio] Nichts zu klassifizieren (workspace={workspace or 'all'}).")
+        conn.close()
+        return
+
+    print(f"[igio] {len(rows)} Chunks → Klassifikator (model={model})")
+    counts: dict[str, int] = {a: 0 for a in ("issue", "goal", "intervention", "outcome", "")}
+    persisted = 0
+    for r in rows:
+        cid = r["chunk_id"] if hasattr(r, "__getitem__") else r[0]
+        text = r["text"] if hasattr(r, "__getitem__") else r[1]
+        cats_raw = r["category_labels"] if hasattr(r, "__getitem__") else r[2]
+        cats = [c for c in (cats_raw or "").split(",") if c]
+        verdict = classify_chunk(text, cats, ollama_url=ollama_url, model=model)
+        counts[verdict.axis] = counts.get(verdict.axis, 0) + 1
+        if verdict.axis and verdict.confidence >= threshold:
+            conn.execute(
+                "UPDATE chunks SET igio_axis = ?, igio_confidence = ?, "
+                "igio_classified_at = ? WHERE chunk_id = ?",
+                (verdict.axis, verdict.confidence, now_iso(), cid),
+            )
+            persisted += 1
+
+    conn.commit()
+    conn.close()
+    print(
+        f"[igio] persisted={persisted}/{len(rows)} | "
+        f"issue={counts.get('issue',0)} goal={counts.get('goal',0)} "
+        f"intervention={counts.get('intervention',0)} outcome={counts.get('outcome',0)} "
+        f"unclassified={counts.get('',0)}"
+    )
+
+
 def _cmd_wiki_history(args: argparse.Namespace) -> None:
     import sqlite3 as _sq
     from src.wiki_v2.history import WikiHistory
@@ -250,6 +315,7 @@ def main() -> None:
         args.mode in ("analyze", "overview")
         or (args.mode == "turbulence" and args.llm)
         or args.resolve_model_only
+        or getattr(args, "classify_igio", False)
     )
     model = resolve_model(ollama_url, args.model, None) if _needs_llm else (args.model or "")
 
@@ -281,6 +347,7 @@ def main() -> None:
         set_batch_delay(args.batch_delay)
 
     if not repo_url and not (args.ingest_issues or args.ingest_images or args.pi_task or args.generate_wiki
+                              or getattr(args, "classify_igio", False)
                               or getattr(args, "generate_training_data", None)):
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")
         sys.exit(1)
@@ -333,6 +400,7 @@ def main() -> None:
     # Pipeline commands
     if args.populate_memory:                           run_populate_memory(args, repo_url, ollama_url, model); sys.exit(0)
     if args.generate_wiki:                             _cmd_generate_wiki(args, repo_url, ollama_url, model);  sys.exit(0)
+    if getattr(args, "classify_igio", False):          _cmd_classify_igio(args, ollama_url, model);            sys.exit(0)
     if getattr(args, "wiki_history", False):           _cmd_wiki_history(args);                               sys.exit(0)
     if getattr(args, "wiki_team_activity", False):     _cmd_wiki_team_activity(args);                         sys.exit(0)
     if getattr(args, "wiki_history_cleanup", None) is not None: _cmd_wiki_history_cleanup(args);              sys.exit(0)

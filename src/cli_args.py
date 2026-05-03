@@ -84,6 +84,12 @@ def parse_args() -> argparse.Namespace:
     p.set_defaults(memory_categorize=True)
     p.add_argument("--generate-wiki", action="store_true",
                    help="Verknüpfungswiki aus Overview-Cache + Memory erzeugen (cache/<slug>_wiki.md)")
+    p.add_argument("--classify-igio", action="store_true",
+                   help="Backfill: IGIO-Achse (issue/goal/intervention/outcome) für unklassifizierte Chunks setzen.")
+    p.add_argument("--igio-limit", type=int, default=200, metavar="N",
+                   help="Max. Anzahl Chunks pro --classify-igio Lauf (Standard: 200).")
+    p.add_argument("--igio-min-confidence", type=float, default=0.5, metavar="X",
+                   help="Verdicts unter dieser Konfidenz werden als unklassifiziert behandelt (Standard: 0.5).")
     p.add_argument("--rebuild-transitions", action="store_true",
                    help="Scan conversation-summaries + rebuild Markov topic-transition matrix")
     p.add_argument("--wiki-type", choices=["code", "paper"], default="code",
