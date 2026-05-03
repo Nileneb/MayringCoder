@@ -87,7 +87,15 @@ def _execute(job: PiJob, *, on_cloud_complete=None) -> None:
     """
     try:
         from src.agents.pi import run_task_with_memory
-        ollama = job.ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")
+        # The pi-agent reads/writes files on THIS device's filesystem and
+        # the LLM call must hit a backend reachable from THIS process. So
+        # we always use the worker's own OLLAMA_URL (default localhost).
+        # `job.ollama_url` is captured at submit-time and may point at a
+        # different machine — it's a routing hint for the cloud queue,
+        # not an instruction for the executor. Using it here would either
+        # 503 (network unreachable) or — worse — silently exfiltrate
+        # local prompts to a foreign Ollama.
+        ollama = os.getenv("OLLAMA_URL", "http://localhost:11434")
         result = run_task_with_memory(
             task=job.task_text,
             ollama_url=ollama,
