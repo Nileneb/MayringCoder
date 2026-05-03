@@ -39,6 +39,11 @@ os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
 os.environ.setdefault("MAYRING_LOCAL_DB", str(_local_cache / "memory.db"))
 os.environ.setdefault("MAYRING_LOCAL_CHROMA", str(_local_cache / "chroma"))
 os.environ.setdefault("PI_AGENT_URL", "direct")
+# The plugin runs on a user device — there is no FastAPI on localhost:8090
+# unless the user explicitly started `python -m src.main`. The agent tools
+# (ingest, duel, benchmark_tasks) need a real REST endpoint, so default to
+# the cloud API. Override locally with MAYRING_API_URL=http://localhost:8090.
+os.environ.setdefault("MAYRING_API_URL", "https://mcp.linn.games")
 
 from src.api.mcp_agent_tools import register_agent_tools  # noqa: E402
 from src.memory.store import init_memory_db  # noqa: E402
