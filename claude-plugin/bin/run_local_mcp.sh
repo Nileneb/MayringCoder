@@ -25,7 +25,34 @@ if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     CLAUDE_PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
 
-REPO_ROOT="$(cd "$CLAUDE_PLUGIN_ROOT/.." && pwd)"
+# When Claude Code installs a plugin, the cache directory holds ONLY
+# claude-plugin/* — the repo-level src/, requirements-client.txt, tools/
+# live in the marketplace clone (or a dev clone). Try the well-known
+# layouts in order and pick the first one that has src/api/local_mcp.py.
+_find_repo_root() {
+    local candidate
+    for candidate in \
+        "${MAYRING_REPO:-}" \
+        "$CLAUDE_PLUGIN_ROOT/.." \
+        "$HOME/.claude/plugins/marketplaces/MayringCoder" \
+        "$HOME/Desktop/MayringCoder" \
+        "$HOME/.claude/mayringcoder"
+    do
+        if [ -n "$candidate" ] && [ -f "$candidate/src/api/local_mcp.py" ]; then
+            (cd "$candidate" && pwd)
+            return 0
+        fi
+    done
+    return 1
+}
+
+REPO_ROOT="$(_find_repo_root)" || {
+    echo "run_local_mcp: no repo with src/api/local_mcp.py found." >&2
+    echo "  Tried: \$MAYRING_REPO, \$CLAUDE_PLUGIN_ROOT/.., ~/.claude/plugins/marketplaces/MayringCoder, ~/Desktop/MayringCoder, ~/.claude/mayringcoder" >&2
+    echo "  Fix: clone the repo and set MAYRING_REPO=/path/to/MayringCoder, OR re-run /plugin marketplace add Nileneb/MayringCoder" >&2
+    exit 1
+}
+
 VENV_DIR="$CLAUDE_PLUGIN_ROOT/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 REQ_FILE="$REPO_ROOT/requirements-client.txt"
