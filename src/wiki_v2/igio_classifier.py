@@ -119,17 +119,26 @@ def _build_user_prompt(text: str, category_labels: list[str]) -> str:
 
 
 def _strip_markdown_fence(raw: str) -> str:
-    """Strip a leading ```json … ``` fence if the LLM wrapped its reply."""
-    if not raw.startswith("```"):
+    """Strip a leading ```json … ``` fence if the LLM wrapped its reply.
+
+    Tolerant by design — trims trailing whitespace and accepts arbitrary text
+    after the closing fence (some models append "Let me know if…" prose).
+    Strategy: detect leading fence, drop optional language tag, then trim from
+    the LAST ``` onwards. Strict endswith() would silently lose otherwise-
+    valid fenced JSON.
+    """
+    if not raw.lstrip().startswith("```"):
         return raw
-    body = raw.lstrip("`").lstrip()
+    body = raw.lstrip().lstrip("`").lstrip()
     # Drop optional language tag on the first line
     if "\n" in body:
         first, rest = body.split("\n", 1)
         if not first.strip().startswith("{"):
             body = rest
-    if body.endswith("```"):
-        body = body[:-3]
+    body = body.rstrip()
+    last_fence = body.rfind("```")
+    if last_fence != -1:
+        body = body[:last_fence]
     return body.strip()
 
 

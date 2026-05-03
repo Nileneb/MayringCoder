@@ -149,18 +149,24 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     workspace = getattr(args, "workspace_id", None)
 
     conn = init_memory_db(CACHE_DIR / "memory.db")
-    where = ["igio_axis = ''", "is_active = 1", "text != ''"]
-    params: list = []
+    # Two static SQL paths — workspace_id is the only optional filter, toggled
+    # on the SQL itself rather than concatenating WHERE fragments. Avoids the
+    # opengrep "execute-raw-query" lint without changing behaviour.
     if workspace:
-        where.append("workspace_id = ?")
-        params.append(workspace)
-    sql = (
-        f"SELECT chunk_id, text, category_labels FROM chunks "
-        f"WHERE {' AND '.join(where)} "
-        f"ORDER BY created_at DESC LIMIT ?"
-    )
-    params.append(limit)
-    rows = conn.execute(sql, tuple(params)).fetchall()
+        rows = conn.execute(
+            "SELECT chunk_id, text, category_labels FROM chunks "
+            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
+            "AND workspace_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (workspace, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT chunk_id, text, category_labels FROM chunks "
+            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     if not rows:
         print(f"[igio] Nichts zu klassifizieren (workspace={workspace or 'all'}).")
         conn.close()
