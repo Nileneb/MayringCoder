@@ -92,13 +92,17 @@ def _ensure_venv(plugin_root: str, repo_root: str) -> None:
         )
 
 
+def _have_jwt() -> bool:
+    return os.path.isfile(JWT_FILE) and os.path.getsize(JWT_FILE) > 0
+
+
 def _ensure_jwt(repo_root: str, python_executable: str) -> None:
-    if os.path.isfile(JWT_FILE) and os.path.getsize(JWT_FILE) > 0:
+    if _have_jwt():
         return
     oauth_script = os.path.join(repo_root, "tools", "oauth_install.py")
     if not os.path.isfile(oauth_script):
         print(
-            f"MayringCoder bootstrap: JWT setup skipped (no {oauth_script}); marketplace clone incomplete?",
+            "MayringCoder bootstrap: JWT setup skipped (oauth_install.py missing in repo)",
             file=sys.stderr,
         )
         return
@@ -107,8 +111,8 @@ def _ensure_jwt(repo_root: str, python_executable: str) -> None:
         file=sys.stderr,
     )
     try:
-        # Trusted args: python_executable is the venv (or sys.executable);
-        # oauth_script and JWT_FILE are module-controlled paths.
+        # Trusted argv: python_executable resolves from venv-or-sys.executable,
+        # oauth_script + JWT_FILE are module constants — no user input.
         subprocess.run(  # nosec B603
             [python_executable, oauth_script, "--jwt-file", JWT_FILE],
             check=True,
@@ -116,7 +120,7 @@ def _ensure_jwt(repo_root: str, python_executable: str) -> None:
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         print(
-            f"MayringCoder bootstrap: JWT setup skipped — run manually: {python_executable} {oauth_script}",
+            "MayringCoder bootstrap: JWT setup failed — run tools/oauth_install.py manually",
             file=sys.stderr,
         )
 
