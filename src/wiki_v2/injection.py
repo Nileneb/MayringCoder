@@ -98,28 +98,36 @@ class WikiContextInjector:
         if not filename:
             return ""
         # Anchor on a path separator so `auth.py` doesn't match `oauth.py`
-        # or `auth.py.bak`. A filename containing `/` is treated as a
-        # path fragment and used verbatim.
-        like_pattern = (
-            f"%{filename}%" if "/" in filename else f"%/{filename}"
-        )
+        # or `auth.py.bak`. Two parallel patterns so root-level files at
+        # `repo:owner/name:auth.py` are matched too:
+        #   - `%/auth.py`   → files under a directory
+        #   - `%:auth.py`   → files at the repo root
+        # A filename containing `/` is treated as a path fragment used verbatim.
+        if "/" in filename:
+            like_pattern = f"%{filename}%"
+            like_alt = like_pattern   # same pattern, repeated to keep SQL shape
+        else:
+            like_pattern = f"%/{filename}"
+            like_alt = f"%:{filename}"
         # Static SQL strings + parameterised values — opengrep raw-query
         # audit clean.
         if workspace_id:
             count_sql = (
                 "SELECT igio_axis, COUNT(*) AS n FROM chunks "
                 "WHERE igio_axis != '' AND is_active = 1 "
-                "AND source_id LIKE ? AND workspace_id = ? "
+                "AND (source_id LIKE ? OR source_id LIKE ?) "
+                "AND workspace_id = ? "
                 "GROUP BY igio_axis"
             )
-            count_params: tuple = (like_pattern, workspace_id)
+            count_params: tuple = (like_pattern, like_alt, workspace_id)
         else:
             count_sql = (
                 "SELECT igio_axis, COUNT(*) AS n FROM chunks "
-                "WHERE igio_axis != '' AND is_active = 1 AND source_id LIKE ? "
+                "WHERE igio_axis != '' AND is_active = 1 "
+                "AND (source_id LIKE ? OR source_id LIKE ?) "
                 "GROUP BY igio_axis"
             )
-            count_params = (like_pattern,)
+            count_params = (like_pattern, like_alt)
         counts = memory_conn.execute(count_sql, count_params).fetchall()
         if not counts:
             return ""
@@ -132,18 +140,19 @@ class WikiContextInjector:
                 sample_sql = (
                     "SELECT substr(text, 1, 100) AS preview, igio_confidence "
                     "FROM chunks WHERE igio_axis = ? AND is_active = 1 "
-                    "AND source_id LIKE ? AND workspace_id = ? "
+                    "AND (source_id LIKE ? OR source_id LIKE ?) "
+                    "AND workspace_id = ? "
                     "ORDER BY igio_confidence DESC LIMIT 1"
                 )
-                sample_params: tuple = (axis, like_pattern, workspace_id)
+                sample_params: tuple = (axis, like_pattern, like_alt, workspace_id)
             else:
                 sample_sql = (
                     "SELECT substr(text, 1, 100) AS preview, igio_confidence "
                     "FROM chunks WHERE igio_axis = ? AND is_active = 1 "
-                    "AND source_id LIKE ? "
+                    "AND (source_id LIKE ? OR source_id LIKE ?) "
                     "ORDER BY igio_confidence DESC LIMIT 1"
                 )
-                sample_params = (axis, like_pattern)
+                sample_params = (axis, like_pattern, like_alt)
             sample = memory_conn.execute(sample_sql, sample_params).fetchone()
             if sample:
                 preview = (sample["preview"] or "").replace("\n", " ").strip()

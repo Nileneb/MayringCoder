@@ -164,6 +164,17 @@ def test_parse_verdict_alias_missing_confidence_stays_zero() -> None:
     assert v.confidence == 0.0
 
 
+def test_parse_verdict_alias_confidence_equal_to_penalty_clamps_to_zero() -> None:
+    """Boundary case: confidence exactly equal to _ALIAS_PENALTY (0.1)
+    must produce 0.0 — not a near-zero positive — so the clamp semantics
+    are unambiguous if the penalty constant is ever tuned."""
+    raw = json.dumps({"axis": "tests", "confidence": 0.1, "rationale": "x"})
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == "outcome"
+    assert v.confidence == 0.0
+
+
 def test_parse_verdict_strips_fence_with_trailing_whitespace() -> None:
     """Closing fence followed by whitespace must still parse cleanly."""
     raw = '```json\n{"axis": "outcome", "confidence": 0.7, "rationale": "x"}\n```   \n'
@@ -179,6 +190,28 @@ def test_parse_verdict_strips_fence_with_trailing_text() -> None:
     )
     v = _parse_verdict(raw)
     assert v is not None and v.axis == "issue"
+
+
+def test_parse_verdict_strips_fence_with_leading_whitespace() -> None:
+    """Leading spaces/newlines before the opening fence must still parse."""
+    raw = '   \n```json\n{"axis": "goal", "confidence": 0.6, "rationale": "x"}\n```'
+    v = _parse_verdict(raw)
+    assert v is not None and v.axis == "goal"
+
+
+def test_parse_verdict_keeps_backticks_inside_rationale() -> None:
+    """A stray triple-backtick inside the rationale (e.g. a markdown example)
+    must NOT be treated as the closing fence — the closer is line-anchored."""
+    raw = (
+        '```json\n'
+        '{"axis": "intervention", "confidence": 0.7, '
+        '"rationale": "Example shown as ``` snippet ``` inside text"}\n'
+        '```'
+    )
+    v = _parse_verdict(raw)
+    assert v is not None
+    assert v.axis == "intervention"
+    assert "snippet" in v.rationale
 
 
 def test_parse_verdict_unknown_axis_still_rejected() -> None:
