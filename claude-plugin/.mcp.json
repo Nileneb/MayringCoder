@@ -6,9 +6,9 @@
         "-m",
         "src.api.local_mcp"
       ],
-      "cwd": "${HOME}/Desktop/MayringCoder",
+      "cwd": "${CLAUDE_PLUGIN_ROOT}/..",
       "env": {
-        "PYTHONPATH": "${HOME}/Desktop/MayringCoder"
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/.."
       }
     }
   }
