@@ -223,6 +223,26 @@ def _init_schema(conn: DBAdapter) -> None:
             last_fired   TEXT NOT NULL DEFAULT ''
         );
 
+        CREATE TABLE IF NOT EXISTS pi_jobs (
+            job_id          TEXT PRIMARY KEY,
+            task_text       TEXT NOT NULL,
+            repo_slug       TEXT NOT NULL DEFAULT '',
+            workspace_id    TEXT NOT NULL DEFAULT 'default',
+            status          TEXT NOT NULL DEFAULT 'queued',
+            prefer          TEXT NOT NULL DEFAULT 'auto',
+            ollama_url      TEXT NOT NULL DEFAULT '',
+            model           TEXT NOT NULL DEFAULT '',
+            result_json     TEXT NOT NULL DEFAULT '',
+            error           TEXT NOT NULL DEFAULT '',
+            timeout_s       REAL NOT NULL DEFAULT 180.0,
+            created_at      TEXT NOT NULL,
+            started_at      TEXT NOT NULL DEFAULT '',
+            finished_at     TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pi_jobs_status ON pi_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_pi_jobs_created ON pi_jobs(created_at);
+
         CREATE TABLE IF NOT EXISTS context_feedback_log (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             trigger_ids      TEXT NOT NULL,

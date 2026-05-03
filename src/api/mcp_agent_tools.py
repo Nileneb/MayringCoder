@@ -102,6 +102,113 @@ def register_agent_tools(mcp: FastMCP) -> None:
             return {"error": str(exc)}
 
     @mcp.tool()
+    def pi_task_start(
+        task: str,
+        repo_slug: str | None = None,
+        prefer: str = "auto",
+        ollama_url: str | None = None,
+        model: str | None = None,
+        timeout: float = 180.0,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Submit a pi-task asynchronously. Returns immediately with a job_id.
+
+        The local worker thread (started at MCP-server boot) picks the job up,
+        runs `run_task_with_memory()` on the configured Ollama backend, and
+        persists the result. Poll `pi_task_status(job_id)` to retrieve it.
+
+        Args:
+            task: Free-form task description.
+            repo_slug: Repository slug for memory scope filtering.
+            prefer: "auto" | "local" | "cloud" — routing hint (Phase 2 honours it;
+                Phase 1 always runs locally).
+            ollama_url: Override the default OLLAMA_URL for this single job.
+            model: Override the resolved model for this single job.
+            timeout: Per-LLM-request timeout (seconds).
+            workspace_id: Tenant namespace (default: from JWT).
+
+        Returns:
+            {"job_id": "pij_...", "status": "queued", "workspace_id": "..."}
+        """
+        from src.agents import pi_jobs
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        if prefer not in pi_jobs.VALID_PREFER:
+            return {
+                "error": f"prefer must be one of {pi_jobs.VALID_PREFER}",
+                "workspace_id": ws,
+            }
+        try:
+            job = pi_jobs.insert_job(
+                task_text=task,
+                repo_slug=repo_slug or "",
+                workspace_id=ws,
+                prefer=prefer,
+                ollama_url=ollama_url or "",
+                model=model or _model("complex"),
+                timeout_s=timeout,
+            )
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
+        return {"job_id": job.job_id, "status": "queued", "workspace_id": ws}
+
+    @mcp.tool()
+    def pi_task_status(job_id: str, workspace_id: str | None = None) -> dict:
+        """Return the current state of a pi-task job.
+
+        Result envelope:
+            {"job_id", "status", "result", "error",
+             "started_at", "finished_at", "workspace_id"}
+
+        `result` is the JSON-decoded payload when status == "completed",
+        otherwise None.
+        """
+        from src.agents import pi_jobs
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        job = pi_jobs.get_job(job_id)
+        if job is None:
+            return {"error": "not found", "job_id": job_id, "workspace_id": ws}
+        d = job.to_dict()
+        return {
+            "job_id": d["job_id"],
+            "status": d["status"],
+            "result": d["result"],
+            "error": d["error"],
+            "started_at": d["started_at"],
+            "finished_at": d["finished_at"],
+            "workspace_id": ws,
+        }
+
+    @mcp.tool()
+    def pi_task_list(
+        only_active: bool = False,
+        limit: int = 10,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """List recent pi-task jobs (default: 10 newest, all statuses).
+
+        Set `only_active=True` to see only queued+running jobs.
+        """
+        from src.agents import pi_jobs
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        jobs = pi_jobs.list_recent(only_active=only_active, limit=max(1, min(50, limit)))
+        return {
+            "jobs": [
+                {
+                    "job_id": j.job_id,
+                    "status": j.status,
+                    "task_preview": j.task_text[:120],
+                    "created_at": j.created_at,
+                    "started_at": j.started_at,
+                    "finished_at": j.finished_at,
+                    "model": j.model,
+                    "prefer": j.prefer,
+                }
+                for j in jobs
+            ],
+            "workspace_id": ws,
+        }
+
+    @mcp.tool()
     def ingest(
         source: str,
         source_type: str = "auto",
