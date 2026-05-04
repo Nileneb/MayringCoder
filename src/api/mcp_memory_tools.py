@@ -67,7 +67,8 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 "workspace_id": ws,
                 "task_context": task_context,
             }
-            result = _run_search(query, _get_conn(), _get_chroma(), None,
+            result = _run_search(query, _get_conn(), _get_chroma(),
+                                 os.getenv("OLLAMA_URL", "http://three.linn.games:11434"),
                                  opts, char_budget, session_compacted=compacted)
             try:
                 import json as _json
