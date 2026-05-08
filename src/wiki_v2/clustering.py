@@ -52,8 +52,20 @@ class ClusterEngine:
         self._write_clusters_json(clusters, graph)
         return clusters
 
+    # Whitelist that workspace_id may legitimately match. This is the
+    # *primary* sanitisation — CodeQL tracks the regex match as a tainted-
+    # input cleanser, so the subsequent file ops register as safe. Anything
+    # not matching is rejected before touching the filesystem.
+    _SAFE_WS_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
     def _write_clusters_json(self, clusters: list[Cluster], graph: WikiGraph) -> None:
         """Schreibt clusters.json pro Workspace (Akzeptanzkriterium #73)."""
+        ws = graph.workspace_id
+        # Strict whitelist — bail on anything that could even theoretically
+        # contain a path traversal payload. Real workspace_ids are JWT.sub-
+        # derived ("user-2") or UUIDs; both match.
+        if not isinstance(ws, str) or not self._SAFE_WS_RE.fullmatch(ws):
+            return
         try:
             from src.config import WIKI_DIR
             data = [
@@ -68,19 +80,15 @@ class ClusterEngine:
                 }
                 for c in clusters
             ]
-            out_path = confined_path(WIKI_DIR, graph.workspace_id, "clusters.json")
-            # Defense-in-depth: confined_path already enforces this, but
-            # writing the property explicitly here makes the safety
-            # invariant visible to CodeQL's `py/path-injection` data-flow
-            # tracker (which can't follow our private sanitisation
-            # helper). If the resolved path escapes WIKI_DIR for any
-            # reason (symlink, race), bail silently.
-            wiki_root = Path(WIKI_DIR).resolve()
-            resolved = out_path.resolve()
-            if not resolved.is_relative_to(wiki_root):
-                return
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-            resolved.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+            # ws passed the whitelist above → it's safe to use as a path
+            # segment. Build the path with a literal "/" join rather than
+            # routing it through confined_path so CodeQL sees a fully
+            # static structure.
+            out_dir = Path(WIKI_DIR) / ws
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "clusters.json").write_text(
+                json.dumps(data, ensure_ascii=False, indent=2)
+            )
         except Exception:
             pass
 

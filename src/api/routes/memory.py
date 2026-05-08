@@ -324,6 +324,32 @@ async def memory_feedback(
         )
     from src.memory.store import add_feedback, get_chunks_by_source
 
+    def _mark_referenced(chunk_ids: list[str]) -> None:
+        """Bridge to context_feedback_log: when feedback comes in, the
+        injection events that surfaced these chunks are flagged
+        was_referenced=1. Without this hook the dashboard's Memory-
+        Effizienz quote (referenced/injections) stays near zero — every
+        positive/negative the user gives via REST was invisible to the
+        injection-effectiveness counter, only the legacy MCP-tool path
+        wired this up.
+        """
+        if not chunk_ids:
+            return
+        try:
+            conn = _get_conn()
+            for cid in chunk_ids:
+                # Match on substring of the JSON-array trigger_ids — the
+                # log stores `["chk_a", "chk_b", ...]`. LIKE %"<id>"%
+                # is good enough; collisions are functionally harmless.
+                conn.execute(
+                    "UPDATE context_feedback_log SET was_referenced = 1 "
+                    "WHERE was_referenced = 0 AND trigger_ids LIKE ?",
+                    (f'%"{cid}"%',),
+                )
+            conn.commit()
+        except Exception:
+            pass  # never block feedback on log-bookkeeping
+
     # Slug-tolerance (Issue #138 — solution B): the SessionStart inject
     # surfaces source_id strings like "github-issue:mayringcoder:jwt-..." but
     # used to demand the opaque chunk_id for /feedback. Now we accept either:
@@ -340,6 +366,10 @@ async def memory_feedback(
             )
         for ch in chunks:
             add_feedback(_get_conn(), ch.chunk_id, request.signal, request.metadata or {})
+        # Positive feedback flips referenced flag — chunks the user found
+        # useful retroactively count toward Memory-Effizienz quote.
+        if request.signal == "positive":
+            _mark_referenced([ch.chunk_id for ch in chunks])
         return {
             "workspace_id": workspace_id,
             "source_id": cid,
@@ -348,6 +378,8 @@ async def memory_feedback(
             "recorded": True,
         }
     add_feedback(_get_conn(), cid, request.signal, request.metadata or {})
+    if request.signal == "positive":
+        _mark_referenced([cid])
     return {"workspace_id": workspace_id, "chunk_id": cid, "recorded": True}
 
 
