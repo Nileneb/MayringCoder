@@ -16,6 +16,8 @@ Run:
     python tools/smoke_test_production.py
     python tools/smoke_test_production.py --fail-fast
     python tools/smoke_test_production.py --skip mcp_health     # skip a check by id
+    python tools/smoke_test_production.py --alert-on-fail        # open GitHub issue
+                                                                  # if anything fails
 
 Exit codes:
     0  — all checks PASS
@@ -265,6 +267,83 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
+    """End-to-end: write a real inject-state file, drive _auto_feedback,
+    verify DB-side feedback rows actually got written.
+
+    Catches the exact bug-class that hid for hours: hook code looked fine
+    in unit tests, was silently failing in production because the wiring
+    (state-file path) didn't match what claude-code wrote.
+    """
+    import importlib.util
+    import os as _os
+    from pathlib import Path
+
+    # Pre: count chunk_feedback rows via /stats/summary
+    pre_code, pre, _ = _http("GET", f"{api}/stats/summary", token)
+    if pre_code != 200:
+        return CheckResult("stop_hook_e2e", False, f"pre summary http={pre_code}")
+    pre_total = ((pre or {}).get("feedback", {}).get("positive", 0)
+                 + (pre or {}).get("feedback", {}).get("negative", 0))
+
+    # Get 2 real chunks via search to feed into the hook
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "stop hook smoke", "top_k": 2,
+              "include_text": False, "llm_prefilter": False},
+    )
+    if code != 200 or len(body.get("results", [])) < 2:
+        return CheckResult("stop_hook_e2e", False,
+                           f"could not get 2 chunks for e2e: http={code}")
+    pairs = [(r["chunk_id"], r["source_id"]) for r in body["results"][:2]]
+
+    # Find the stop_hook.py module and import it
+    repo_root = Path(__file__).resolve().parent.parent
+    hook_path = repo_root / "claude-plugin" / "hooks" / "stop_hook.py"
+    if not hook_path.exists():
+        return CheckResult("stop_hook_e2e", False,
+                           f"stop_hook.py not at {hook_path}")
+    spec = importlib.util.spec_from_file_location("stop_hook_smoke", hook_path)
+    sh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sh)
+
+    # Write the state file the way memory_inject would
+    session_id = f"smoke-e2e-{int(time.time())}"
+    state_dir = Path(_os.path.expanduser("~/.config/mayring/inject-state"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / f"{session_id}.json"
+    state_file.write_text(json.dumps({"chunks": [
+        {"chunk_id": c, "source_id": s} for c, s in pairs
+    ]}))
+
+    # Drive the actual auto_feedback function — same path the live hook
+    # takes when claude-code fires Stop. This will POST to /memory/feedback
+    # for each chunk.
+    fake_turns = [
+        {"role": "user", "content": "smoke e2e test prompt", "timestamp": ""},
+        {"role": "assistant",
+         "content": "smoke e2e test response — no source paths mentioned",
+         "timestamp": ""},
+    ]
+    sh._auto_feedback(fake_turns, session_id, token)
+
+    # State file should be cleared
+    state_cleared = not state_file.exists()
+
+    # Post: count again, expect +len(pairs)
+    time.sleep(1)
+    post_code, post, _ = _http("GET", f"{api}/stats/summary", token)
+    post_total = ((post or {}).get("feedback", {}).get("positive", 0)
+                  + (post or {}).get("feedback", {}).get("negative", 0))
+    delta = post_total - pre_total
+    return CheckResult(
+        "stop_hook_e2e",
+        delta >= len(pairs) and state_cleared,
+        f"pre_total={pre_total}  post_total={post_total}  delta={delta} "
+        f"(expected ≥{len(pairs)})  state_cleared={state_cleared}",
+    )
+
+
 def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     """A search must increment context_feedback_log injections_24h.
     Catches the regression where /memory/search bypassed this table."""
@@ -301,9 +380,66 @@ ALL_CHECKS = [
     ("feedback_slug_resolution",      check_feedback_slug_resolution),
     ("feedback_count_delta",          check_feedback_count_moves),
     ("micro_batch_indexes",           check_micro_batch_indexes),
+    ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Alerting — open a GitHub issue when something fails
+# ---------------------------------------------------------------------------
+
+def _open_github_issue(failed: list[CheckResult], elapsed: float) -> bool:
+    """Open a tracking issue in Nileneb/MayringCoder. Uses gh CLI.
+
+    GitHub auto-emails the repo owner on new issues — that's the
+    alerting channel. No watchdog daemon needed, no Telegram bot,
+    no PagerDuty: the alert is the issue itself.
+    """
+    import subprocess
+    title = f"smoke FAIL ({len(failed)}/{len(failed)}) — {time.strftime('%Y-%m-%d %H:%M %Z')}"
+    body_lines = [
+        "Automated post-deploy smoke test detected failures in production.",
+        "",
+        f"**Elapsed:** {elapsed:.1f}s",
+        f"**Failed checks:** {len(failed)}",
+        "",
+        "## Failures",
+        "",
+    ]
+    for r in failed:
+        body_lines += [f"### `{r.name}`", "", "```", r.detail or "(no detail)", "```", ""]
+    body_lines += [
+        "---",
+        "",
+        "Generated by `tools/smoke_test_production.py --alert-on-fail`.",
+        "Re-run locally to reproduce: `python tools/smoke_test_production.py`",
+    ]
+    body = "\n".join(body_lines)
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "create",
+                "--repo", "Nileneb/MayringCoder",
+                "--title", title,
+                "--body", body,
+                "--label", "smoke-failure",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            print(f"# alert: opened issue → {result.stdout.strip()}")
+            return True
+        print(f"# alert: gh issue create failed: {result.stderr.strip()}",
+              file=sys.stderr)
+    except FileNotFoundError:
+        print("# alert: 'gh' CLI not installed — skipping issue creation",
+              file=sys.stderr)
+    except Exception as e:
+        print(f"# alert: could not open issue: {type(e).__name__}: {e}",
+              file=sys.stderr)
+    return False
 
 
 def main() -> int:
@@ -313,6 +449,8 @@ def main() -> int:
     p.add_argument("--fail-fast", action="store_true")
     p.add_argument("--skip", action="append", default=[],
                    help="check id to skip (repeatable)")
+    p.add_argument("--alert-on-fail", action="store_true",
+                   help="open a GitHub issue when any check fails (uses gh CLI)")
     args = p.parse_args()
 
     token = _load_token()
@@ -351,6 +489,8 @@ def main() -> int:
     print(f"# {len(results) - len(failed)}/{len(results)} passed  ({elapsed:.1f}s total)")
     if failed:
         print(f"# FAIL: {', '.join(r.name for r in failed)}")
+        if args.alert_on_fail:
+            _open_github_issue(failed, elapsed)
         return 1
     print("# all good — every critical path is actually working in prod")
     return 0

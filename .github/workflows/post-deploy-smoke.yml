@@ -1,0 +1,70 @@
+name: Post-deploy smoke (production)
+
+# When this fires:
+#   - 90 seconds after every push to master (gives auto-deploy time to land)
+#   - manual `Run workflow` button on the Actions tab
+#   - daily cron sweep at 06:00 UTC so we catch silent regressions overnight
+#
+# What it does:
+#   - Runs tools/smoke_test_production.py against https://mcp.linn.games
+#   - On failure: opens a labelled "smoke-failure" issue in this repo
+#     → GitHub auto-emails repo subscribers, that IS the alert channel
+#
+# Why no Telegram/PagerDuty/Uptime-Kuma: GitHub Issues already have all
+# three (notification, deduplication via title, history). Use what's there.
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write   # for `gh issue create` on failure
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for auto-deploy to complete
+        if: github.event_name == 'push'
+        run: |
+          # Auto-deploy needs ~90s after push to land in production. We
+          # poll the new commit hash via /health response or just sleep.
+          # Sleep is the lazy-but-reliable choice.
+          sleep 90
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Materialise hook JWT from secret
+        env:
+          MAYRING_HOOK_JWT: ${{ secrets.MAYRING_HOOK_JWT }}
+        run: |
+          if [ -z "$MAYRING_HOOK_JWT" ]; then
+            echo "::error::MAYRING_HOOK_JWT secret is not set — add it under repo Settings → Secrets"
+            exit 1
+          fi
+          mkdir -p ~/.config/mayring
+          printf '%s' "$MAYRING_HOOK_JWT" > ~/.config/mayring/hook.jwt
+          chmod 600 ~/.config/mayring/hook.jwt
+
+      - name: Run smoke test
+        id: smoke
+        run: |
+          set +e
+          python tools/smoke_test_production.py --alert-on-fail
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail the workflow if smoke failed
+        if: steps.smoke.outputs.exit_code != '0'
+        run: |
+          echo "::error::Smoke test failed — see issue created above"
+          exit 1
