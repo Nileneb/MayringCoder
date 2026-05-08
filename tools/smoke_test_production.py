@@ -974,6 +974,40 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_pi_second_opinion_endpoint(api: str, token: str) -> CheckResult:
+    """Issue #139 acceptance: ``pi_second_opinion`` is reachable from the
+    Pi-Agent via tool-use. We can't drive the MCP tool over HTTP, but the
+    REST mirror at ``/wiki/second-opinion`` shares the WikiSecondOpinion
+    code path. Probing it with ``dry_run=true`` proves the validator
+    pipeline (workspace lookup, graph load, target resolution) works
+    without burning Ollama time on a known-missing cluster_id.
+
+    Pass: route exists AND properly returns 404 for a missing target.
+    Fail: 500 (crash), 401/403 (auth wired wrong), or anything that says
+    'Not Found' as a path-level 404 (which would mean the route itself
+    isn't registered).
+    """
+    code, body, _ = _http(
+        "POST", f"{api}/wiki/second-opinion", token,
+        body={
+            "target_id": "smoke-nonexistent-cluster",
+            "scope": "cluster",
+            "dry_run": True,
+        },
+    )
+    detail = (body or {}).get("detail") if isinstance(body, dict) else None
+    target_missing = (
+        code == 404 and isinstance(detail, str)
+        and "cluster not found" in detail.lower()
+    )
+    return CheckResult(
+        "pi_second_opinion_endpoint",
+        target_missing,
+        f"http={code}  detail={detail!r} (must be 404 'cluster not found' "
+        f"= route exists + validator pipeline reached the lookup)",
+    )
+
+
 def check_model_router_runtime(api: str, token: str) -> CheckResult:
     """Issue #140 acceptance: ModelRouter routes are mutable at runtime
     via /stats/admin/model-routes. Service token gets admin scope.
@@ -1057,6 +1091,7 @@ ALL_CHECKS = [
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
+    ("pi_second_opinion_endpoint",    check_pi_second_opinion_endpoint),
 ]
 
 

@@ -47,6 +47,7 @@ from src.api.mcp_auth import JWTAuthMiddleware, _AUTH_ENABLED, _OAUTH_BASE_URL
 from src.api.mcp_memory_tools import register_memory_tools
 from src.api.mcp_oauth import PathNormMiddleware, build_starlette_routes
 from src.api.mcp_pi_tools import register_pi_queue_tools
+from src.api.mcp_second_opinion import register_second_opinion_tools
 
 # Backward-compat aliases for tests that import with underscore prefix
 _JWTAuthMiddleware = JWTAuthMiddleware
@@ -64,6 +65,7 @@ mcp = FastMCP(
 
 register_memory_tools(mcp)
 register_pi_queue_tools(mcp)
+register_second_opinion_tools(mcp)
 # Other agent tools (pi_task synchronous, duel, etc.) live in local_mcp.py
 # — see Issue #107. The cloud queue tools above are the multi-device hand-off.
 

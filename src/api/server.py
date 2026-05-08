@@ -64,6 +64,8 @@ from src.api.routes import igio_admin as _igio_admin
 app.include_router(_igio_admin.router)
 from src.api.routes import model_router_admin as _model_router_admin
 app.include_router(_model_router_admin.router)
+from src.api.routes import wiki_second_opinion as _wiki_second_opinion
+app.include_router(_wiki_second_opinion.router)
 
 
 @app.on_event("startup")

@@ -46,6 +46,7 @@ os.environ.setdefault("PI_AGENT_URL", "direct")
 os.environ.setdefault("MAYRING_API_URL", "https://mcp.linn.games")
 
 from src.api.mcp_agent_tools import register_agent_tools  # noqa: E402
+from src.api.mcp_second_opinion import register_second_opinion_tools  # noqa: E402
 from src.memory.store import init_memory_db  # noqa: E402
 from src.agents import pi_worker  # noqa: E402
 
@@ -55,6 +56,7 @@ init_memory_db(_local_db).close()
 
 mcp = FastMCP("memory-agents")
 register_agent_tools(mcp)
+register_second_opinion_tools(mcp)
 
 # Start the background worker loop. Idempotent — start() is a no-op if the
 # loop is already running. Disable via PI_ASYNC_DISABLED=1 (used in tests).
