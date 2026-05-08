@@ -236,6 +236,90 @@ def test_empty_token_rejected(configured_env):
     assert jwt_auth.validate_jwt_token("") is None
 
 
+# ---------------------------------------------------------------------------
+# JWTAuthMiddleware — public-path bypass (docker healthcheck must not 401)
+# ---------------------------------------------------------------------------
+
+def test_health_endpoint_bypasses_auth(configured_env, monkeypatch):
+    """Without this, container healthchecks get 401 → exit 22 → "unhealthy"
+    even though the service is actually up. The mayring-mcp container ran
+    in this state silently for weeks before the fix."""
+    from unittest.mock import AsyncMock
+    from src.api.mcp_auth import JWTAuthMiddleware
+
+    inner = AsyncMock()
+    mw = JWTAuthMiddleware(inner, auth_enabled=True)
+
+    async def _drive_path(path: str):
+        scope = {"type": "http", "path": path, "headers": []}
+        sent: list[dict] = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        async def receive():
+            return {"type": "http.request"}
+
+        await mw(scope, receive, send)
+        return sent, inner
+
+    sent, inner_mock = anyio.run(_drive_path, "/health")
+    assert sent == []  # no 401 response sent — request flowed through
+    inner_mock.assert_awaited_once()
+
+
+def test_oauth_well_known_bypasses_auth(configured_env):
+    from unittest.mock import AsyncMock
+    from src.api.mcp_auth import JWTAuthMiddleware
+
+    inner = AsyncMock()
+    mw = JWTAuthMiddleware(inner, auth_enabled=True)
+
+    async def _drive():
+        scope = {"type": "http", "path": "/.well-known/oauth-authorization-server", "headers": []}
+        sent: list[dict] = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        async def receive():
+            return {"type": "http.request"}
+
+        await mw(scope, receive, send)
+        return sent
+
+    sent = anyio.run(_drive)
+    assert sent == []
+    inner.assert_awaited_once()
+
+
+def test_protected_path_still_requires_token(configured_env):
+    """Make sure the bypass list doesn't accidentally swallow other paths."""
+    from unittest.mock import AsyncMock
+    from src.api.mcp_auth import JWTAuthMiddleware
+
+    inner = AsyncMock()
+    mw = JWTAuthMiddleware(inner, auth_enabled=True)
+
+    async def _drive():
+        scope = {"type": "http", "path": "/memory/search", "headers": []}
+        sent: list[dict] = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        async def receive():
+            return {"type": "http.request"}
+
+        await mw(scope, receive, send)
+        return sent
+
+    sent = anyio.run(_drive)
+    # No bearer token → 401 sent, inner never called
+    assert sent and sent[0]["status"] == 401
+    inner.assert_not_awaited()
+
+
 def test_sub_trimmed(configured_env):
     """Whitespace around sub is stripped before workspace_id derivation."""
     token = _sign(

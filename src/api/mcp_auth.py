@@ -70,8 +70,27 @@ class JWTAuthMiddleware:
         self._app = app
         self._auth_enabled = _AUTH_ENABLED if auth_enabled is None else auth_enabled
 
+    # Paths that the docker healthcheck and OAuth flow need *without* a
+    # bearer token. Without this, the container's `curl /health` probe gets
+    # 401, exits non-zero, and Docker marks the container "unhealthy" — the
+    # MCP-mayring container ran in that state silently for weeks because
+    # nothing actually depends on the unhealthy flag.
+    _PUBLIC_PATHS: frozenset[str] = frozenset({
+        "/health",
+        "/healthz",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource",
+    })
+
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if path in self._PUBLIC_PATHS:
+            _TOKEN_CTX.set(None)
+            _RAW_JWT_CTX.set(None)
             await self._app(scope, receive, send)
             return
 

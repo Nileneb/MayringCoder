@@ -92,7 +92,9 @@ def seeded_db(tmp_path, monkeypatch) -> sqlite3.Connection:
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run() each call: simpler than juggling a shared loop, and
+    # Python 3.13 deprecates get_event_loop() outside an existing loop.
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +238,7 @@ def test_activations_returns_recent_searches(monkeypatch):
     )
     mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=("admin",)))
     try:
-        res = asyncio.get_event_loop().run_until_complete(
-            dashboard.activations(workspace_id="user-2")
-        )
+        res = asyncio.run(dashboard.activations(workspace_id="user-2"))
         assert len(res["activations"]) == 2
     finally:
         mcp_mod._TOKEN_CTX.set(None)
@@ -257,9 +257,7 @@ def test_activations_tenant_filters_to_own_workspace(monkeypatch):
     )
     mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=()))
     try:
-        res = asyncio.get_event_loop().run_until_complete(
-            dashboard.activations(workspace_id="user-2")
-        )
+        res = asyncio.run(dashboard.activations(workspace_id="user-2"))
         assert len(res["activations"]) == 1
         assert res["activations"][0]["query"] == "q1"
     finally:

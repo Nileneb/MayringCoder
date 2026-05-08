@@ -70,7 +70,10 @@ async def recent_ops(
 # 2. job history  →  in-memory _JOBS dict (now JSON-persisted at shutdown)
 # ---------------------------------------------------------------------------
 
-@router.get("/jobs/history")
+# Path is /stats/jobs-history rather than /jobs/history because jobs.py owns
+# /jobs/{job_id} as a catch-all path-param — registering /jobs/history would
+# either be shadowed by it or shadow it depending on include order, both bad.
+@router.get("/stats/jobs-history")
 async def jobs_history(
     status: str | None = None,
     limit: int = 50,
@@ -255,7 +258,11 @@ async def topic_flow(
 # 7. pi-agent task queue  →  pi_jobs
 # ---------------------------------------------------------------------------
 
-@router.get("/pi/tasks")
+# Path is /stats/pi-tasks (not /pi/tasks): the production nginx whitelist
+# only matches `pi-task|pi_task` as top-level segments, so /pi/... falls
+# through to the default location and gets routed to the MCP server
+# (404). /stats/* is already whitelisted.
+@router.get("/stats/pi-tasks")
 async def pi_tasks(
     status: str | None = None,
     limit: int = 50,
