@@ -42,7 +42,12 @@ from src.config import CACHE_DIR
 
 DEFAULT_IN = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
 DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"
-FEATURES = ("v", "s", "r", "a", "f")
+# 6 features explicitly logged in stage_scores. The earlier 5-feature
+# set used ``f`` (score_final) which is a linear combination of the
+# others — LogReg learned a negative weight on ``v`` to cancel f's
+# vector contribution, making the weights uninterpretable. Replacing
+# ``f`` with the two missing direct signals (sf, sl) breaks that.
+FEATURES = ("v", "s", "r", "a", "sf", "sl")
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 

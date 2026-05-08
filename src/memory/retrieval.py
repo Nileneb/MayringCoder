@@ -333,11 +333,14 @@ def _rerank(
                 score_v1 = min(1.0, score_v1 + 0.10)
 
         if rr_version == "v2" and rr_model is not None:
-            # The 5-feature linear model is trained on per-stage signals
-            # plus the v1 score itself (so v2 is a calibrator on top of
-            # the existing pipeline, not a from-scratch replacement).
+            # 6-feature linear model on per-stage signals: vector,
+            # symbolic, recency, source-affinity, feedback, llm-advisor.
+            # No score_final feedback-loop here — that caused the
+            # multikollinearity in the first training run (see
+            # cache/rerank_v2.json from 22:44). Result is a v2 score
+            # whose weights are interpretable per-stage.
             score_final = score_v2(
-                {"v": sv_eff, "s": ss, "r": sr, "a": sa, "f": score_v1},
+                {"v": sv_eff, "s": ss, "r": sr, "a": sa, "sf": sf, "sl": sl},
                 rr_model,
             )
         else:
@@ -366,6 +369,8 @@ def _rerank(
                 score_symbolic=ss,
                 score_recency=sr,
                 score_source_affinity=sa,
+                score_feedback=sf,
+                score_llm=sl,
                 score_final=score_final,
                 reasons=reasons,
                 source_id=chunk.source_id,

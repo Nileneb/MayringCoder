@@ -64,11 +64,18 @@ def run_search(
             # work in metric queries.
             _stage = _json.dumps({
                 r.chunk_id: {
-                    "v": round(getattr(r, "score_vector", 0.0) or 0.0, 4),
-                    "s": round(getattr(r, "score_symbolic", 0.0) or 0.0, 4),
-                    "r": round(getattr(r, "score_recency", 0.0) or 0.0, 4),
-                    "a": round(getattr(r, "score_source_affinity", 0.0) or 0.0, 4),
-                    "f": round(getattr(r, "score_final", 0.0) or 0.0, 4),
+                    "v":  round(getattr(r, "score_vector", 0.0) or 0.0, 4),
+                    "s":  round(getattr(r, "score_symbolic", 0.0) or 0.0, 4),
+                    "r":  round(getattr(r, "score_recency", 0.0) or 0.0, 4),
+                    "a":  round(getattr(r, "score_source_affinity", 0.0) or 0.0, 4),
+                    # New v2 features — direct feedback & LLM signals so
+                    # the trained reranker doesn't have to subtract them
+                    # back out of `f`. v2 trainer drops `f` to break the
+                    # collinearity (negative vector weight in v1's first
+                    # training run came from this).
+                    "sf": round(getattr(r, "score_feedback", 0.5) or 0.5, 4),
+                    "sl": round(getattr(r, "score_llm", 0.5) or 0.5, 4),
+                    "f":  round(getattr(r, "score_final", 0.0) or 0.0, 4),
                 }
                 for r in results
             })

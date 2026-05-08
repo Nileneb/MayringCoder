@@ -70,6 +70,30 @@ def _label_map(conn: sqlite3.Connection, days: int) -> dict[str, int]:
     return out
 
 
+FEATURES_OUT = ("v", "s", "r", "a", "sf", "sl")
+
+
+def _normalize_features(feats: dict) -> dict | None:
+    """Return a 6-key dict {v, s, r, a, sf, sl}.
+
+    Old logs (before the v2-feature-set commit) only have {v, s, r, a, f}.
+    For backward compat we synthesize sf=0.5 (neutral) and sl=0.5 (neutral)
+    when the new keys are missing — those rows still contribute to the
+    model fit, just without the new signal. New logs have all 6.
+    """
+    if not isinstance(feats, dict):
+        return None
+    out = {
+        "v":  float(feats.get("v",  0.0) or 0.0),
+        "s":  float(feats.get("s",  0.0) or 0.0),
+        "r":  float(feats.get("r",  0.0) or 0.0),
+        "a":  float(feats.get("a",  0.0) or 0.0),
+        "sf": float(feats.get("sf", 0.5) if "sf" in feats else 0.5),
+        "sl": float(feats.get("sl", 0.5) if "sl" in feats else 0.5),
+    }
+    return out
+
+
 def export(
     db_path: Path, out: Path, days: int, negative_mode: str,
 ) -> int:
@@ -96,8 +120,8 @@ def export(
                 except (TypeError, ValueError):
                     continue
                 for cid in chunks:
-                    feats = stage.get(cid)
-                    if not isinstance(feats, dict):
+                    feats = _normalize_features(stage.get(cid))
+                    if feats is None:
                         continue
                     lbl = labels.get(cid, 0)
                     if lbl == -1:

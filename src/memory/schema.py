@@ -228,6 +228,11 @@ class RetrievalRecord:
     score_symbolic: float = 0.0
     score_recency: float = 0.0
     score_source_affinity: float = 0.0
+    # Memory-Injection v2.0 — explicit logging of feedback + LLM signals
+    # so the trained reranker can use them as features (avoids the
+    # multi-collinearity that arises from feeding score_final back in).
+    score_feedback: float = 0.5     # [0,1]; 0.5 = neutral when no feedback
+    score_llm: float = 0.5          # [0,1]; 0.5 = neutral when advisor off
     score_final: float = 0.0
     reasons: list[str] = field(default_factory=list)
     source_id: str = ""
@@ -243,6 +248,8 @@ class RetrievalRecord:
             "score_symbolic": round(self.score_symbolic, 4),
             "score_recency": round(self.score_recency, 4),
             "score_source_affinity": round(self.score_source_affinity, 4),
+            "score_feedback": round(self.score_feedback, 4),
+            "score_llm": round(self.score_llm, 4),
             "score_final": round(self.score_final, 4),
             "reasons": self.reasons,
             "source_id": self.source_id,

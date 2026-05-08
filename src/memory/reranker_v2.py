@@ -32,7 +32,12 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-_FEATURES = ("v", "s", "r", "a", "f")
+# Memory-Injection v2.0 — explicit per-stage features. ``f`` (score_final)
+# was the original 5th feature but caused multi-collinearity (negative
+# weight on ``v`` because ``f`` already contained 0.30*v). Replaced with
+# ``sf`` (feedback signal) + ``sl`` (LLM advisor) so the model gets the
+# full v1 signal set without any single feature being a sum of the others.
+_FEATURES = ("v", "s", "r", "a", "sf", "sl")
 _LOCK = threading.Lock()
 _CACHED_MODEL: dict[str, Any] | None = None
 _CACHED_MTIME: float = 0.0
