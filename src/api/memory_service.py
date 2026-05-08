@@ -62,9 +62,28 @@ def run_search(
             # train a learned reranker (Issue #87 Pipeline 2). Logged for
             # every search; missing fields default to 0 so old rows still
             # work in metric queries.
+            # CRITICAL: log the SAME value the runtime score_v2 sees, or the
+            # trained weights are off. _rerank() uses sv_eff (stretched
+            # per-query so the best Chroma hit reaches 1.0) for ranking,
+            # but RetrievalRecord.score_vector stores sv_raw (typically
+            # [0, 0.5]) for the API response. If we log sv_raw and infer on
+            # sv_eff the model learns on the wrong value range — that's the
+            # real reason 'v' came out negative in the first two training
+            # runs. We now log sv_eff under the 'v' key (model feature),
+            # and keep sv_raw under 'v_raw' for diagnostics only.
+            #
+            # Per-query sv_eff = sv_raw / max(sv_raw across results); the
+            # max-normalisation is the same one _rerank() applies.
+            _vmax = max(
+                (getattr(r, "score_vector", 0.0) or 0.0) for r in results
+            )
+            def _sv_eff(r):
+                raw = getattr(r, "score_vector", 0.0) or 0.0
+                return raw / _vmax if _vmax > 0 else 0.0
             _stage = _json.dumps({
                 r.chunk_id: {
-                    "v":  round(getattr(r, "score_vector", 0.0) or 0.0, 4),
+                    "v":  round(_sv_eff(r), 4),
+                    "v_raw": round(getattr(r, "score_vector", 0.0) or 0.0, 4),
                     "s":  round(getattr(r, "score_symbolic", 0.0) or 0.0, 4),
                     "r":  round(getattr(r, "score_recency", 0.0) or 0.0, 4),
                     "a":  round(getattr(r, "score_source_affinity", 0.0) or 0.0, 4),
