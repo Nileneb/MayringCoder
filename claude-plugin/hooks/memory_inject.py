@@ -147,26 +147,30 @@ def main() -> None:
         sections.append("\n### Vorherige Sessions / Decisions")
         sections.append(conv_ctx)
 
-    # Collect all chunk_ids across all lenses for feedback reference
-    all_chunk_ids: list[str] = []
+    # Pair each chunk with its source_id so the Stop hook can classify
+    # positive/negative automatically (path match against the assistant
+    # answer). Format is parsed by stop_hook._CHUNK_LINE_RE — keep stable.
+    seen_ids: set[str] = set()
+    chunk_pairs: list[tuple[str, str]] = []
     for r in (primary, ambient, conv):
         for chunk in (r.get("results") or []):
             cid = chunk.get("chunk_id", "")
-            if cid and cid not in all_chunk_ids:
-                all_chunk_ids.append(cid)
+            sid = chunk.get("source_id", "")
+            if cid and cid not in seen_ids:
+                seen_ids.add(cid)
+                chunk_pairs.append((cid, sid))
 
     chunk_id_hint = ""
-    if all_chunk_ids:
+    if chunk_pairs:
         chunk_id_hint = (
-            "\n\n_Chunk-IDs für `mcp__claude_ai_Memory__feedback`:_\n"
-            + "\n".join(f"- `{cid}`" for cid in all_chunk_ids[:8])
+            "\n\n_Injected chunks (auto-feedback by Stop hook):_\n"
+            + "\n".join(f"- `{cid}` : `{sid}`" for cid, sid in chunk_pairs[:8])
         )
 
     print(
         f"## Memory-Kontext für diesen Prompt\n\n"
         + "\n\n".join(sections)
         + chunk_id_hint
-        + "\n\n_Pflicht: Nach Task `mcp__claude_ai_Memory__feedback` für genutzte Chunks._"
     )
 
 

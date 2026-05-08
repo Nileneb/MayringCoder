@@ -140,3 +140,75 @@ def test_extract_returns_only_when_both_sides_present(stop_hook, tmp_path):
     ])
     pair = stop_hook.extract_last_turn_pair(str(transcript))
     assert pair == [{"role": "user", "content": "lone question", "timestamp": ""}]
+
+
+# ---------------------------------------------------------------------------
+# Auto-feedback parser + classifier
+# ---------------------------------------------------------------------------
+
+def test_extract_injected_chunks_parses_inject_block(stop_hook):
+    user_text = """## Memory-Kontext für diesen Prompt
+
+### Code/Findings
+some context here
+
+_Injected chunks (auto-feedback by Stop hook):_
+- `chk_9d411417cecd75ec` : `repo:https://github.com/x/y:src/agents/pi.py`
+- `chk_2ad33a9cca1c128a` : `ambient:mayringcoder:snapshot`
+"""
+    pairs = stop_hook.extract_injected_chunks(user_text)
+    assert pairs == [
+        ("chk_9d411417cecd75ec", "repo:https://github.com/x/y:src/agents/pi.py"),
+        ("chk_2ad33a9cca1c128a", "ambient:mayringcoder:snapshot"),
+    ]
+
+
+def test_extract_injected_chunks_dedups(stop_hook):
+    text = "- `chk_aaaaaaaaaaaaaaaa` : `s1`\n- `chk_aaaaaaaaaaaaaaaa` : `s2`"
+    assert stop_hook.extract_injected_chunks(text) == [("chk_aaaaaaaaaaaaaaaa", "s1")]
+
+
+def test_extract_injected_chunks_empty_on_no_block(stop_hook):
+    assert stop_hook.extract_injected_chunks("just a normal prompt") == []
+    assert stop_hook.extract_injected_chunks("") == []
+
+
+def test_classify_positive_on_full_path(stop_hook):
+    src = "repo:https://github.com/x/y:src/agents/pi.py"
+    answer = "I edited src/agents/pi.py to fix the loop."
+    assert stop_hook.classify_chunk_relevance(src, answer) == "positive"
+
+
+def test_classify_positive_on_basename(stop_hook):
+    src = "repo:https://github.com/x/y:src/agents/pi.py"
+    answer = "Look at pi.py for context."
+    assert stop_hook.classify_chunk_relevance(src, answer) == "positive"
+
+
+def test_classify_negative_when_path_unmentioned(stop_hook):
+    src = "repo:https://github.com/x/y:src/agents/pi.py"
+    answer = "Ich habe keine Ahnung was du willst."
+    assert stop_hook.classify_chunk_relevance(src, answer) == "negative"
+
+
+def test_classify_negative_on_too_short_basename(stop_hook):
+    """Avoid matching `a.py` against the letter `a` in the answer."""
+    src = "repo:x:a.py"
+    answer = "wir tun a und b"
+    assert stop_hook.classify_chunk_relevance(src, answer) == "negative"
+
+
+def test_classify_handles_non_repo_source_ids(stop_hook):
+    """ambient/conversation_summary/note source_ids — same logic on tail."""
+    assert stop_hook.classify_chunk_relevance(
+        "conversation:mayringcoder:abc123",
+        "context recap: refer back to mayringcoder session abc123",
+    ) == "positive"
+    assert stop_hook.classify_chunk_relevance(
+        "ambient:foo:snapshot", "completely unrelated"
+    ) == "negative"
+
+
+def test_classify_negative_on_empty_inputs(stop_hook):
+    assert stop_hook.classify_chunk_relevance("", "anything") == "negative"
+    assert stop_hook.classify_chunk_relevance("repo:x:y.py", "") == "negative"
