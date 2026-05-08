@@ -15,7 +15,7 @@ from src.api.mcp_auth import (
 )
 
 
-def _model(task: str = "analysis") -> str:
+def _model(task: str = "text") -> str:
     from src.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve(task) or "qwen2.5-coder:7b"
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
@@ -92,7 +92,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             result = run_task_with_memory(
                 task=task,
                 ollama_url=_OLLAMA_URL,
-                model=_model("complex"),
+                model=_model("text"),
                 repo_slug=repo_slug,
                 system_prompt=system_prompt,
                 timeout=timeout,
@@ -144,7 +144,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 workspace_id=ws,
                 prefer=prefer,
                 ollama_url=ollama_url or "",
-                model=model or _model("complex"),
+                model=model or _model("text"),
                 timeout_s=timeout,
             )
         except Exception as exc:
@@ -328,7 +328,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             model_b: Second model name (e.g. "qwen3:2b")
             repo_slug: Optional repo scope for memory search
             judge: Whether to auto-judge both answers (default True)
-            judge_model: Model for judging (default: ModelRouter 'analysis' task)
+            judge_model: Model for judging (default: ModelRouter 'text' task)
             no_memory_baseline: Also run both models WITHOUT memory for comparison
             timeout: Per-model timeout in seconds
             workspace_id: Tenant namespace (default: from JWT)
@@ -383,7 +383,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             model_b: Second model name
             category: Filter by category (None = all tasks)
             repo_slug: Optional repo scope for memory search
-            judge_model: Model used for judging (default: ModelRouter 'analysis' task)
+            judge_model: Model used for judging (default: ModelRouter 'text' task)
             timeout: Per-task per-model timeout in seconds
             workspace_id: Tenant namespace (default: from JWT)
 

@@ -205,10 +205,8 @@ def mayring_categorize(
         conn: optional SQLite connection for error logging
         router: optional ModelRouter for task-based model selection
     """
-    if router is not None and not model:
-        _task = "mayring_code" if source_type == "repo_file" else "mayring_social"
-        if router.is_available(_task):
-            model = router.resolve(_task)
+    if router is not None and not model and router.is_available("text"):
+        model = router.resolve("text")
 
     if not model or not ollama_url:
         return chunks

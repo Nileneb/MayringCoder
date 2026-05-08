@@ -38,8 +38,8 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     if router is None:
         router = ModelRouter(ollama_url=ollama_url)
 
-    _ingest_model = router.resolve_with_fallback("mayring_code") or model
-    print(f"[populate-memory] Modell: {_ingest_model} (Task: mayring_code)")
+    _ingest_model = router.resolve_with_fallback("text") or model
+    print(f"[populate-memory] Modell: {_ingest_model} (Task: text)")
 
     from src.gpu_metrics import format_summary, parse_metrics, start_monitoring, stop_monitoring
     from src.memory.ingest import get_or_create_chroma_collection, ingest

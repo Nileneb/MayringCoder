@@ -50,8 +50,8 @@ def run_analysis(
 ) -> None:
     """Haupt-Analyse-Pipeline."""
     if router is not None and not model:
-        if router.is_available("analysis"):
-            model = router.resolve("analysis")
+        if router.is_available("text"):
+            model = router.resolve("text")
 
     token = os.getenv("GITHUB_TOKEN") or None
     prompt_path = Path(args.prompt) if args.prompt else None

@@ -26,13 +26,9 @@ _ROOT = Path(__file__).parent.parent
 _CONFIG_PATH = _ROOT / "config" / "model_routes.yaml"
 
 _DEFAULTS: dict[str, dict] = {
-    "mayring_code":   {"model": "mistral:7b-instruct",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
-    "mayring_social": {"model": "mistral:7b-instruct",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
-    "mayring_hybrid": {"model": "qwen3.5:2b",           "fallback": "mistral:7b-instruct","timeout": 240},
-    "vision":         {"model": "qwen2.5vl:3b",         "fallback": "",                  "timeout": 120},
-    "analysis":       {"model": "mistral:7b-instruct",  "fallback": "qwen2.5-coder:7b",  "timeout": 240},
-    "complex":        {"model": "qwen3.5:35b-a3b",      "fallback": "mistral:7b-instruct","timeout": 480},
-    "embedding":      {"model": "nomic-embed-text",     "fallback": "nomic-embed-text",  "timeout": 60},
+    "text":      {"model": "mistral:7b-instruct", "fallback": "qwen2.5-coder:7b", "timeout": 240},
+    "vision":    {"model": "qwen2.5vl:3b",        "fallback": "",                 "timeout": 120},
+    "embedding": {"model": "nomic-embed-text",    "fallback": "nomic-embed-text", "timeout": 60},
 }
 
 
@@ -48,20 +44,17 @@ class ModelRouter:
 
     Usage:
         router = ModelRouter(ollama_url="http://localhost:11434")
-        model = router.resolve("mayring_code")      # default mistral:7b-instruct
+        model = router.resolve("text")      # all Mayring categorization + analysis
         if router.is_available("vision"):
             caption = caption_image(path, router.resolve("vision"))
+
+    Tasks are intentionally minimal: text/vision/embedding cover all real model
+    interface differences. Mayring mode (deduktiv/induktiv/hybrid) is a prompt-
+    template choice, not a model choice — the codebook drives what gets labeled,
+    the model just executes the categorization.
     """
 
-    TASKS: list[str] = [
-        "mayring_code",
-        "mayring_social",
-        "mayring_hybrid",
-        "vision",
-        "analysis",
-        "complex",
-        "embedding",
-    ]
+    TASKS: list[str] = ["text", "vision", "embedding"]
 
     def __init__(self, ollama_url: str = "http://localhost:11434") -> None:
         self._ollama_url = ollama_url.rstrip("/")

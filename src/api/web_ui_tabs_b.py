@@ -304,12 +304,9 @@ def build_settings_tab(app: gr.Blocks) -> None:
 
         route_inputs = []
         task_labels = {
-            "mayring_code": "Code-Analyse (mayring_code)",
-            "mayring_social": "Sozialforschung (mayring_social)",
-            "mayring_hybrid": "Hybrid-Modus (mayring_hybrid)",
-            "vision": "Bild-Captioning (vision)",
-            "analysis": "Allgemeine Analyse (analysis)",
-            "embedding": "Embeddings (embedding)",
+            "text":      "Text — Mayring-Kategorisierung + Analyse + Pi-Tasks",
+            "vision":    "Vision — Bild-Captioning",
+            "embedding": "Embedding — Vektoren für Memory-Search",
         }
 
         for task in (ModelRouter.TASKS if _router_available else []):

@@ -132,10 +132,8 @@ def ingest(
             except Exception:
                 pass  # fall through to generic pipeline with source_type=image
 
-    if router is not None and not model:
-        _task = "mayring_code" if source.source_type == "repo_file" else "mayring_social"
-        if router.is_available(_task):
-            model = router.resolve(_task)
+    if router is not None and not model and router.is_available("text"):
+        model = router.resolve("text")
 
     defaults = _INGEST_DEFAULTS.get(source.source_type, _INGEST_DEFAULT_FALLBACK)
     effective = {**defaults, **opts}

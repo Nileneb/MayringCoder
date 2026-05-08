@@ -65,7 +65,7 @@ def _platform_default() -> LLMEndpoint:
     return LLMEndpoint(
         provider="platform",
         base_url=ollama_url,
-        model=ModelRouter(ollama_url).resolve("analysis"),
+        model=ModelRouter(ollama_url).resolve("text"),
     )
 
 

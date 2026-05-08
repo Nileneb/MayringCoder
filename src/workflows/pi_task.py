@@ -7,8 +7,8 @@ from src.model_router import ModelRouter
 
 def run_pi_task(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
     if router is not None and not model:
-        if router.is_available("analysis"):
-            model = router.resolve("analysis")
+        if router.is_available("text"):
+            model = router.resolve("text")
 
     from src.agents.pi import run_task_with_memory
 

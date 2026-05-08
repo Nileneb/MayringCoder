@@ -215,8 +215,8 @@ class TestMayringCategorizeRouter:
                 router=router,
             )
 
-        router.is_available.assert_called_with("mayring_code")
-        router.resolve.assert_called_with("mayring_code")
+        router.is_available.assert_called_with("text")
+        router.resolve.assert_called_with("text")
         assert captured_models == ["qwen2.5-coder:7b"]
 
     def test_explicit_model_not_overridden_by_router(self):

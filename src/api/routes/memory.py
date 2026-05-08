@@ -43,7 +43,7 @@ def _bg_wiki_rebuild(workspace_id: str) -> None:
     except Exception:
         _log.exception("Background wiki rebuild failed for workspace_id=%s", workspace_id)
 
-def _model(task: str = "mayring_code") -> str:
+def _model(task: str = "text") -> str:
     from src.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve(task)
 
@@ -63,7 +63,7 @@ async def pi_task(
             lambda: run_task_with_memory(
                 task=request.task,
                 ollama_url=_OLLAMA_URL,
-                model=_model("analysis"),
+                model=_model("text"),
                 repo_slug=_repo_slug,
                 system_prompt=request.system_prompt,
                 timeout=request.timeout,
@@ -105,7 +105,7 @@ async def memory_put(
         source_dict = {"source_id": request.source_id, "source_type": request.source_type,
                        "repo": request.repo, "path": request.path}
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
-                             _OLLAMA_URL, _model("mayring_code"), {"categorize": request.categorize},
+                             _OLLAMA_URL, _model("text"), {"categorize": request.categorize},
                              workspace_id)
         if source_dict.get("source_type") == "paper":
             _threading.Thread(
@@ -146,7 +146,7 @@ async def conversation_micro_batch(
 
         summary = (
             request.presumarized
-            or _summarize_turns(turns_dicts, "", _OLLAMA_URL, _model("mayring_code"))
+            or _summarize_turns(turns_dicts, "", _OLLAMA_URL, _model("text"))
         )
         content = (
             f"# Session {first_ts or 'unbekannt'} | {request.workspace_slug}\n\n"
@@ -163,7 +163,7 @@ async def conversation_micro_batch(
         }
         result = _run_ingest(
             source_dict, content, _get_conn(), _get_chroma(),
-            _OLLAMA_URL, _model("mayring_code"),
+            _OLLAMA_URL, _model("text"),
             {"categorize": True, "codebook": "social", "mode": "hybrid"},
             workspace_id,
         )

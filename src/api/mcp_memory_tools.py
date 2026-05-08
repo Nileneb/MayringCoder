@@ -90,6 +90,97 @@ def register_memory_tools(mcp: FastMCP) -> None:
             return {"error": str(exc), "results": [], "prompt_context": ""}
 
     @mcp.tool()
+    def ingest_status(job_id: str, workspace_id: str | None = None) -> dict:
+        """Poll the status of a repo-ingest job (returned by `ingest()` for repo URLs).
+
+        Returns the same payload as GET /jobs/{job_id} but tenant-scoped via the
+        MCP session JWT — no Bearer token wrangling. Use this to verify whether
+        an ingest job is queued, running, done, or has errored.
+
+        Args:
+            job_id: The job_id from a prior `ingest(<repo_url>)` call.
+            workspace_id: Tenant namespace (default: from JWT).
+
+        Returns:
+            {
+              "job_id": str,
+              "status": "queued" | "running" | "done" | "error",
+              "started_at": ISO timestamp,
+              "progress": {"current": int, "total": int} | None,
+              "stages": {<stage_name>: {"detail": str, "ts": ISO}, ...},
+              "v2_jobs": {label: child_job_id, ...},   # populate triggers wiki/ambient/etc
+              "output": str (last 4kb on done/error)
+            }
+        """
+        try:
+            from src.api.job_queue import get_job as _get_job
+            ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+            job = _get_job(job_id)
+            if not job:
+                return {"error": "job not found", "job_id": job_id}
+            if job.get("workspace_id") != ws:
+                return {"error": "job not found", "job_id": job_id}
+            output = job.get("output") or ""
+            return {
+                "job_id": job_id,
+                "status": job.get("status"),
+                "started_at": job.get("started_at"),
+                "progress": job.get("progress"),
+                "stages": job.get("stages") or {},
+                "v2_jobs": job.get("v2_jobs") or {},
+                "output": output[-4096:] if output else "",
+                "workspace_id": ws,
+            }
+        except Exception as exc:
+            return {"error": str(exc), "job_id": job_id}
+
+    @mcp.tool()
+    def ingest_jobs(limit: int = 20, workspace_id: str | None = None) -> dict:
+        """List recent ingest/analysis jobs for the caller's workspace.
+
+        Returns the most recent jobs sorted by started_at desc. Use this when
+        you launched multiple `ingest()` calls in parallel and want a single
+        overview instead of polling each job_id individually.
+
+        Args:
+            limit: Max jobs to return (default 20, max 100).
+            workspace_id: Tenant namespace (default: from JWT).
+
+        Returns:
+            {"jobs": [{job_id, status, started_at, progress, stages_summary}, ...],
+             "total": int}
+        """
+        try:
+            from src.api.job_queue import _JOBS
+            ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+            n = max(1, min(int(limit), 100))
+            mine = [
+                {**j, "job_id": jid}
+                for jid, j in _JOBS.items()
+                if j.get("workspace_id") == ws
+            ]
+            mine.sort(key=lambda j: j.get("started_at") or "", reverse=True)
+            top = mine[:n]
+            jobs = []
+            for j in top:
+                stages = j.get("stages") or {}
+                stages_summary = ", ".join(
+                    f"{name}:{(s.get('ts') or '')[11:19]}"
+                    for name, s in list(stages.items())[-3:]
+                )
+                jobs.append({
+                    "job_id": j["job_id"],
+                    "status": j.get("status"),
+                    "started_at": j.get("started_at"),
+                    "progress": j.get("progress"),
+                    "stages_summary": stages_summary,
+                    "v2_jobs": j.get("v2_jobs") or {},
+                })
+            return {"jobs": jobs, "total": len(mine), "workspace_id": ws}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    @mcp.tool()
     def invalidate(source_id: str) -> dict:
         """Deactivate all memory chunks for a source (use when source is deleted/outdated).
 

@@ -36,10 +36,10 @@ class TestModelRouterDefaults:
         with patch("src.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
-        router._routes["analysis"].model = ""
-        router._routes["analysis"].fallback = "qwen3.5:2b"
+        router._routes["text"].model = ""
+        router._routes["text"].fallback = "qwen3.5:2b"
         # OLLAMA_MODEL env must NOT bleed through — fallback from config is used
-        result = router.resolve("analysis")
+        result = router.resolve("text")
         assert result == "qwen3.5:2b"
         assert result != "my-env-model:latest"
 
@@ -97,16 +97,16 @@ class TestModelRouterAvailability:
         with patch("src.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
-        router._routes["analysis"].model = ""
-        router._routes["analysis"].fallback = ""
+        router._routes["text"].model = ""
+        router._routes["text"].fallback = ""
         # empty model + empty fallback → not available even if OLLAMA_MODEL env is set
-        assert router.is_available("analysis") is False
+        assert router.is_available("text") is False
 
 
 class TestModelRouterConfig:
     def test_load_config_from_yaml(self, tmp_path):
         yaml_content = """
-mayring_code:
+text:
   model: "custom-model:v2"
   fallback: "llama3.1:8b"
   timeout: 300
@@ -119,8 +119,8 @@ mayring_code:
             router = ModelRouter("http://localhost:11434")
 
         router.load_config(cfg_file)
-        assert router.resolve("mayring_code") == "custom-model:v2"
-        assert router._routes["mayring_code"].timeout == 300
+        assert router.resolve("text") == "custom-model:v2"
+        assert router._routes["text"].timeout == 300
 
     def test_to_dict_contains_all_tasks(self):
         with patch("src.model_router._CONFIG_PATH") as mock_path:

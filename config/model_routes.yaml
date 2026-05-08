@@ -1,31 +1,20 @@
 # MayringCoder Model Router Configuration
-# Maps each task type to a specific Ollama model.
-# Change at runtime via the Web-UI Einstellungen tab — NOT via OLLAMA_MODEL env var.
+# Three tasks cover all real model-interface differences:
+#   text:      all Mayring categorization, analysis, pi_task — chat API
+#   vision:    image captioning — multimodal API
+#   embedding: vector store — /api/embed
+# Mayring mode (deduktiv/induktiv/hybrid) is a prompt-template choice, not a
+# model choice — set via codebook profile, not here.
 
-mayring_code:
+text:
   model: "mistral:7b-instruct"
   fallback: "qwen2.5-coder:7b"
-  timeout: 240
-
-mayring_social:
-  model: "mistral:7b-instruct"
-  fallback: "qwen2.5-coder:7b"
-  timeout: 240
-
-mayring_hybrid:
-  model: "qwen3.5:2b"
-  fallback: "mistral:7b-instruct"
   timeout: 240
 
 vision:
   model: "qwen2.5vl:3b"
   fallback: ""
   timeout: 120
-
-analysis:
-  model: "mistral:7b-instruct"
-  fallback: "qwen2.5-coder:7b"
-  timeout: 240
 
 embedding:
   model: "nomic-embed-text"

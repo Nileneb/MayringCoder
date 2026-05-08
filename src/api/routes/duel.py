@@ -19,7 +19,7 @@ _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 def _judge_default() -> str:
     from src.model_router import ModelRouter
-    return ModelRouter(_OLLAMA_URL).resolve("analysis")
+    return ModelRouter(_OLLAMA_URL).resolve("text")
 
 
 def _run_judge(task: str, answer_a: str, answer_b: str, judge_model: str) -> dict:
