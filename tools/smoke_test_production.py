@@ -989,6 +989,40 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_wiki_history_returns_snapshots(api: str, token: str) -> CheckResult:
+    """Issue #78 deepening: previous wiki_p8_history accepted 200/404/422.
+    Real acceptance: snapshots are persisted on every wiki rebuild +
+    each one has node_count, edge_count, cluster_count, created_at.
+
+    Pass: /wiki/history returns 200 with a 'snapshots' array. The list
+    can be empty (no rebuilds yet) — but the SHAPE of any returned
+    snapshot must include the expected fields. 404 / 500 = regression.
+    """
+    code, body, _ = _http("GET", f"{api}/wiki/history?limit=5", token)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("wiki_history_returns_snapshots", False,
+                           f"http={code} body={body}")
+    snaps = body.get("snapshots")
+    if not isinstance(snaps, list):
+        return CheckResult("wiki_history_returns_snapshots", False,
+                           f"snapshots not a list: {type(snaps).__name__}")
+    if not snaps:
+        return CheckResult(
+            "wiki_history_returns_snapshots", True,
+            "empty snapshots list (no rebuild yet) — shape OK",
+        )
+    needed = {"snapshot_id", "trigger", "node_count", "edge_count",
+              "cluster_count", "created_at"}
+    s = snaps[0]
+    missing = needed - set(s.keys()) if isinstance(s, dict) else needed
+    return CheckResult(
+        "wiki_history_returns_snapshots",
+        not missing,
+        f"snapshots={len(snaps)}  newest_keys={list(s.keys())[:8] if isinstance(s, dict) else '?'}  "
+        f"missing={missing}",
+    )
+
+
 def check_categorization_call_type_logged(api: str, token: str) -> CheckResult:
     """Issue #101 deepening: previous categorization_logging only
     asserted llm_calls_log has activity in 24h — could pass on
@@ -1560,6 +1594,7 @@ ALL_CHECKS = [
     ("categorization_call_type_logged", check_categorization_call_type_logged),
     ("chunk_metadata_complete",       check_chunk_metadata_complete),
     ("rag_function_search_finds_source", check_rag_function_search_finds_source),
+    ("wiki_history_returns_snapshots",check_wiki_history_returns_snapshots),
     ("pi_second_opinion_endpoint",    check_pi_second_opinion_endpoint),
     ("retrieval_metrics_endpoint",    check_retrieval_metrics_endpoint),
     ("retrieval_stage_attribution",   check_retrieval_stage_attribution),
