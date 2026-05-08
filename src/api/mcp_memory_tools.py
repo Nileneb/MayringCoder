@@ -62,10 +62,10 @@ def register_memory_tools(mcp: FastMCP) -> None:
             {results: list[RetrievalRecord], prompt_context: str}
         """
         try:
-            from src.memory.schema import canonicalize_repo_url
+            from src.memory.schema import canonicalize_url
             ws = _enforce_tenant(workspace_id)
             opts = {
-                "repo": canonicalize_repo_url(repo) if repo else repo,
+                "repo": canonicalize_url(repo) if repo else repo,
                 "categories": categories,
                 "source_type": source_type,
                 "top_k": top_k,
@@ -237,7 +237,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         """
         import hashlib
         import httpx
-        from src.memory.schema import canonicalize_repo_url
+        from src.memory.schema import canonicalize_url
 
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
@@ -260,7 +260,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
             try:
                 resp = httpx.post(
                     f"{_api}/populate",
-                    json={"repo": canonicalize_repo_url(source)},
+                    json={"repo": canonicalize_url(source)},
                     headers=headers,
                     timeout=30.0,
                 )

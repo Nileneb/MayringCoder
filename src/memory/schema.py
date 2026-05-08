@@ -15,33 +15,35 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 
-def canonicalize_repo_url(repo: str) -> str:
-    """Normalize a repo URL/slug so case-only differences map to the same key.
+def canonicalize_url(url: str) -> str:
+    """Normalize any URL (or slug) so case-only differences collapse.
 
-    GitHub/GitLab routes are case-insensitive for owner+repo
-    (`Nileneb/X` and `nileneb/X` resolve to the same project), but the URL
-    string preserves whatever casing the user typed. That alone caused two
-    parallel source_ids and a Chroma-vs-SQLite split where vector search
-    returned 0.0 even though the chunks existed.
+    A URL is a URL — GitHub, GitLab, an arxiv abstract, a wiki page, an
+    SSH-form git remote, or a plain `owner/name` slug. They all share one
+    rule: the host and path are case-insensitive at routing time, but the
+    string the user typed preserves whatever casing happened. Without
+    normalisation that yields parallel source_ids and a Chroma-vs-SQLite
+    split where vector search returns 0.0 even though the chunks exist.
 
-    Lowercases the host and path; preserves scheme. Non-URL strings (e.g.
-    workspace slugs, plain "owner/name") are simply lowercased.
+    Lowercases host and path; preserves scheme. SSH form `git@host:owner/repo`
+    is handled because Git remotes are URLs in spirit. Bare slugs and
+    workspace IDs fall through to a plain lowercase.
     """
-    if not repo:
-        return repo
-    if "://" in repo:
-        parsed = urlparse(repo)
+    if not url:
+        return url
+    if "://" in url:
+        parsed = urlparse(url)
         host = (parsed.hostname or "").lower()
         path = parsed.path.lower().rstrip("/")
         scheme = parsed.scheme.lower() or "https"
         return f"{scheme}://{host}{path}"
-    if repo.startswith("git@"):
+    if url.startswith("git@"):
         # git@github.com:Owner/Repo.git  → git@github.com:owner/repo
-        host_path = repo[4:]
+        host_path = url[4:]
         if ":" in host_path:
             host, path = host_path.split(":", 1)
             return f"git@{host.lower()}:{path.lower().removesuffix('.git')}"
-    return repo.lower()
+    return url.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +78,7 @@ class Source:
         source_id (and one Chroma entry). Without this, ``Nileneb/X`` and
         ``nileneb/X`` ingest twice and vector retrieval misses half the corpus.
         """
-        return f"repo:{canonicalize_repo_url(repo)}:{path}"
+        return f"repo:{canonicalize_url(repo)}:{path}"
 
     def to_dict(self) -> dict:
         return {
