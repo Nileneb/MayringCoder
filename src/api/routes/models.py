@@ -69,6 +69,11 @@ class MemorySearchRequest(BaseModel):
     # budget on populated workspaces. Default None lets the existing
     # auto-trigger logic decide.
     llm_prefilter: bool | None = None
+    # Memory-Injection v2.0 — pin a specific ranker for this request.
+    # 'v1' / 'v2' / 'auto' (50/50 by query-hash). When unset, the env
+    # variable RERANKER_VERSION decides; default is v1 so behaviour
+    # never changes silently.
+    reranker_version: str | None = None
 
 
 class MemoryPutRequest(BaseModel):

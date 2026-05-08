@@ -90,6 +90,10 @@ async def memory_search(
             opts["task_context"] = request.task_context
         if request.llm_prefilter is not None:
             opts["llm_prefilter"] = request.llm_prefilter
+        if request.reranker_version:
+            # Forward per-request override to _rerank() — used by /stats/
+            # retrieval-ab to compare v1/v2 head-to-head on the same query.
+            opts["reranker_version"] = request.reranker_version
         result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
                              opts, request.char_budget)
         return {"workspace_id": workspace_id, **result}

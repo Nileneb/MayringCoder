@@ -146,6 +146,87 @@ async def retrieval_metrics(
     }
 
 
+@router.get("/stats/retrieval-ab")
+async def retrieval_ab(
+    info: TokenInfo = Depends(get_token_info),
+    days: int = 7,
+    k: int = 5,
+) -> dict:
+    """A/B compare reranker versions on the same metrics.
+
+    Splits ``context_feedback_log`` rows by ``reranker_version`` and runs
+    the same precision@K + NDCG@K logic per group. Lets us tell whether
+    v2 actually beats v1 on real traffic, not just on hold-out test
+    AUC. Numbers are workspace-scoped unless caller has admin scope.
+    """
+    if k < 1 or k > 20:
+        k = 5
+    if days < 1 or days > 90:
+        days = 7
+    conn = _conn()
+    is_admin = _is_admin(info)
+    where_ws = "" if is_admin else " AND (workspace_id = ? OR workspace_id = '')"
+    params: list[Any] = [f"-{days} days"]
+    if not is_admin:
+        params.append(info.workspace_id)
+    rows = conn.execute(
+        f"SELECT trigger_ids, reranker_version "
+        f"FROM context_feedback_log "
+        f"WHERE captured_at > datetime('now', ?){where_ws} "
+        f"AND query != '' "
+        f"ORDER BY captured_at DESC LIMIT 4000",
+        params,
+    ).fetchall()
+    fb_rows = conn.execute(
+        "SELECT chunk_id, signal FROM chunk_feedback "
+        "WHERE created_at > datetime('now', ?)",
+        (f"-{days} days",),
+    ).fetchall()
+    labels = _label_map(fb_rows)
+
+    buckets: dict[str, dict[str, float]] = {}
+    for row in rows:
+        version = (row["reranker_version"] or "v1") or "v1"
+        try:
+            chunk_ids = json.loads(row["trigger_ids"])
+        except (TypeError, ValueError):
+            continue
+        topk = chunk_ids[:k]
+        if not any(labels.get(cid, 0) for cid in chunk_ids):
+            continue
+        bucket = buckets.setdefault(version, {
+            "queries": 0, "p_sum": 0.0, "ndcg_sum": 0.0,
+        })
+        bucket["queries"] += 1
+        topk_labels = [labels.get(cid, 0) for cid in topk]
+        bucket["p_sum"] += sum(topk_labels) / max(len(topk), 1)
+        bucket["ndcg_sum"] += _ndcg(topk_labels, k)
+
+    summary: dict[str, dict[str, float]] = {}
+    for v, b in buckets.items():
+        n = max(b["queries"], 1)
+        summary[v] = {
+            "queries": int(b["queries"]),
+            "precision_at_k": round(b["p_sum"] / n, 4),
+            "ndcg_at_k": round(b["ndcg_sum"] / n, 4),
+        }
+    p_v1 = (summary.get("v1") or {}).get("precision_at_k", 0.0)
+    p_v2 = (summary.get("v2") or {}).get("precision_at_k", 0.0)
+    n_v1 = (summary.get("v1") or {}).get("ndcg_at_k", 0.0)
+    n_v2 = (summary.get("v2") or {}).get("ndcg_at_k", 0.0)
+    return {
+        "scope": "all" if is_admin else "workspace",
+        "workspace_id": info.workspace_id,
+        "window_days": days,
+        "k": k,
+        "by_version": summary,
+        "uplift": {
+            "precision_at_k": round(p_v2 - p_v1, 4),
+            "ndcg_at_k":      round(n_v2 - n_v1, 4),
+        },
+    }
+
+
 @router.get("/stats/retrieval-stage-attribution")
 async def retrieval_stage_attribution(
     info: TokenInfo = Depends(get_token_info),

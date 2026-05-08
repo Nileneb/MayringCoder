@@ -140,6 +140,8 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("query", "TEXT NOT NULL DEFAULT ''"),
             ("stage_scores", "TEXT NOT NULL DEFAULT '{}'"),
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+            # v2.0 reranker A/B logging — which formula scored this row.
+            ("reranker_version", "TEXT NOT NULL DEFAULT 'v1'"),
         ],
     }
     for table, columns in migrations.items():

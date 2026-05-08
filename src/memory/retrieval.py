@@ -257,15 +257,32 @@ def _rerank(
     source_type_map: dict[str, str] | None = None,
     session_compacted: bool = False,
     llm_scores: dict[str, float] | None = None,
+    reranker_query_hint: str | None = None,
+    reranker_override: str | None = None,
 ) -> list[RetrievalRecord]:
     """Combine scores and return top_k RetrievalRecords sorted by score_final DESC.
 
     llm_scores: optional PI-advisor relevance ratings (chunk_id → [0,1]). Missing
     chunks default to 0.5 (neutral) so the LLM weight contributes equally and
     doesn't bias the ranking when scores are unavailable.
+
+    reranker_query_hint / reranker_override: control which weighting
+    formula is used per call.
+      * v1 (default): the hand-tuned ``_WEIGHTS`` dict + asymmetric
+        feedback penalty + compaction boost.
+      * v2: learned weights from ``cache/rerank_v2.json``. Computes the
+        v1 score first (so v2 can use ``f=score_v1`` as a feature), then
+        replaces the final score with the sigmoid output of the linear
+        model. Falls back silently to v1 if no model file exists.
+
+    See src/memory/reranker_v2.py for selection precedence.
     """
+    from src.memory.reranker_v2 import get_active_reranker, score_v2
     records: list[RetrievalRecord] = []
     llm_scores = llm_scores or {}
+    rr_version, rr_model = get_active_reranker(
+        query_hint=reranker_query_hint, explicit_override=reranker_override,
+    )
 
     # Stretch vector scores so the best Chroma hit in *this* query gets the
     # full vector weight. Cosine distances from nomic-embed-text typically
@@ -294,7 +311,7 @@ def _rerank(
         sf = get_feedback_score(conn, chunk.chunk_id)
         sl = llm_scores.get(chunk.chunk_id, 0.5)  # neutral default
 
-        score_final = (
+        score_v1 = (
             _WEIGHTS["vector"] * sv_eff
             + _WEIGHTS["symbolic"] * ss
             + _WEIGHTS["recency"] * sr
@@ -307,13 +324,24 @@ def _rerank(
         # irrelevant must drop out of top_k entirely, not just rank lower.
         # Triggers when ≥70% of feedback is negative.
         if sf < 0.3:
-            score_final -= 0.10
+            score_v1 -= 0.10
 
         # Compaction boost: prefer conversation_summary section chunks
         if session_compacted and source_type_map:
             chunk_source_type = source_type_map.get(chunk.source_id, "")
             if chunk_source_type == "conversation_summary" and chunk.chunk_level == "section":
-                score_final = min(1.0, score_final + 0.10)
+                score_v1 = min(1.0, score_v1 + 0.10)
+
+        if rr_version == "v2" and rr_model is not None:
+            # The 5-feature linear model is trained on per-stage signals
+            # plus the v1 score itself (so v2 is a calibrator on top of
+            # the existing pipeline, not a from-scratch replacement).
+            score_final = score_v2(
+                {"v": sv_eff, "s": ss, "r": sr, "a": sa, "f": score_v1},
+                rr_model,
+            )
+        else:
+            score_final = score_v1
 
         reasons: list[str] = []
         # Reasons fire on the *normalised* vector score so a query with weak
@@ -576,13 +604,21 @@ def search(
         ).fetchall()
         source_type_map = {r[0]: r[1] for r in rows}
 
-    # Stage 4: re-rank
+    # Stage 4: re-rank — v1 (hand-tuned _WEIGHTS) by default; v2 (learned)
+    # when RERANKER_VERSION=v2 (or =auto and the hash splits this way) AND
+    # cache/rerank_v2.json exists. See src/memory/reranker_v2.py.
+    from src.memory.reranker_v2 import get_active_reranker as _get_active
+    rr_version, _ = _get_active(query_hint=query,
+                                explicit_override=opts.get("reranker_version"))
+    opts["_reranker_used"] = rr_version  # bubbled into diagnostics
     ranked = _rerank(
         candidates, vector_scores, symbolic_scores, top_k, conn,
         affinity_source_id,
         source_type_map=source_type_map,
         session_compacted=session_compacted,
         llm_scores=llm_scores,
+        reranker_query_hint=query,
+        reranker_override=opts.get("reranker_version"),
     )
 
     # Enrich with cross-source refs (same text found in other sources)
