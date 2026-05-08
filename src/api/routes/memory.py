@@ -322,9 +322,33 @@ async def memory_feedback(
             status_code=400,
             detail="signal must be 'positive' or 'negative' — neutral is no longer accepted"
         )
-    from src.memory.store import add_feedback
-    add_feedback(_get_conn(), request.chunk_id, request.signal, request.metadata or {})
-    return {"workspace_id": workspace_id, "chunk_id": request.chunk_id, "recorded": True}
+    from src.memory.store import add_feedback, get_chunks_by_source
+
+    # Slug-tolerance (Issue #138 — solution B): the SessionStart inject
+    # surfaces source_id strings like "github-issue:mayringcoder:jwt-..." but
+    # used to demand the opaque chunk_id for /feedback. Now we accept either:
+    # if `chunk_id` looks like a source_id (no chk_ prefix, contains ':'),
+    # we fan the signal out to every active chunk of that source.
+    cid = request.chunk_id
+    looks_like_source = ":" in cid and not cid.startswith("chk_")
+    if looks_like_source:
+        chunks = get_chunks_by_source(_get_conn(), cid, active_only=True)
+        if not chunks:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no active chunks found for source_id={cid!r}",
+            )
+        for ch in chunks:
+            add_feedback(_get_conn(), ch.chunk_id, request.signal, request.metadata or {})
+        return {
+            "workspace_id": workspace_id,
+            "source_id": cid,
+            "chunk_ids": [ch.chunk_id for ch in chunks],
+            "applied_to": len(chunks),
+            "recorded": True,
+        }
+    add_feedback(_get_conn(), cid, request.signal, request.metadata or {})
+    return {"workspace_id": workspace_id, "chunk_id": cid, "recorded": True}
 
 
 @router.post("/search")

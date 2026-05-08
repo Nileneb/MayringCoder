@@ -21,6 +21,8 @@ import urllib.error
 PLANS_DIR = os.path.expanduser("~/.claude/plans")
 TASK_CONTEXT_BUDGET = 800
 JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
+FEEDBACK_QUEUE = os.path.expanduser("~/.config/mayring/feedback_queue.jsonl")
+MAYRING_API = os.environ.get("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 
 
 def _plugin_root() -> str:
@@ -276,10 +278,95 @@ def _sync_plugin_files_from_repo(plugin_root: str, repo_root: str) -> None:
         print(f"MayringCoder plugin hooks synced from repo: {', '.join(synced)}", file=sys.stderr)
 
 
+def _drain_feedback_queue() -> None:
+    """Replay queued feedback events against REST /memory/feedback.
+
+    Solves the second half of Issue #138: when the MCP session was dead,
+    `mcp__claude_ai_Memory__feedback` calls failed silently and the
+    intended signal was lost. The CLI fallback (`mayring-feedback`)
+    appends to ~/.config/mayring/feedback_queue.jsonl; this drain runs
+    on every SessionStart and ships the entries via REST (which is
+    session-immune — it just reads the JWT from disk).
+
+    Successful POSTs are removed from the queue. Failed POSTs stay so
+    the next session can retry. Never blocks SessionStart on errors.
+    """
+    if not os.path.isfile(FEEDBACK_QUEUE):
+        return
+    try:
+        with open(FEEDBACK_QUEUE, encoding="utf-8") as f:
+            lines = [ln for ln in (l.strip() for l in f) if ln]
+    except OSError:
+        return
+    if not lines:
+        try:
+            os.remove(FEEDBACK_QUEUE)
+        except OSError:
+            pass
+        return
+    try:
+        with open(JWT_FILE, encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError:
+        return
+    if not token:
+        return
+
+    remaining: list[str] = []
+    posted = 0
+    for raw in lines:
+        try:
+            entry = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue  # corrupted line, drop it
+        body = json.dumps({
+            "chunk_id": entry.get("chunk_id"),
+            "signal": entry.get("signal"),
+            "metadata": entry.get("metadata") or {},
+        }).encode()
+        req = urllib.request.Request(
+            f"{MAYRING_API}/memory/feedback",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as _:
+                posted += 1
+        except urllib.error.HTTPError as e:
+            # 4xx → client error (chunk gone, invalid signal): drop the
+            # entry, no retry will fix it. 5xx → keep for next session.
+            if 400 <= e.code < 500:
+                continue
+            remaining.append(raw)
+        except Exception:
+            remaining.append(raw)
+
+    try:
+        if remaining:
+            with open(FEEDBACK_QUEUE, "w", encoding="utf-8") as f:
+                f.write("\n".join(remaining) + "\n")
+        else:
+            os.remove(FEEDBACK_QUEUE)
+    except OSError:
+        pass
+
+    if posted:
+        print(
+            f"MayringCoder feedback queue: replayed {posted} entries "
+            f"({len(remaining)} pending)",
+            file=sys.stderr,
+        )
+
+
 if __name__ == "__main__":
     plugin_root = _plugin_root()
     repo_root = _repo_root(plugin_root)
     _sync_plugin_files_from_repo(plugin_root, repo_root)
     _bootstrap_if_needed()
+    _drain_feedback_queue()
     payload = json.loads(sys.stdin.read() or "{}")
     _inject_memory(payload)
