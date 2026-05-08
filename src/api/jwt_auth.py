@@ -91,12 +91,17 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     except jwt.InvalidTokenError:
         return None
 
-    workspace_id = payload.get("workspace_id")
-    if workspace_id is None:
+    # workspace_id is ALWAYS derived from the JWT's `sub` claim
+    # (= app.linn.games User.id, integer-as-string). This is the only way
+    # to stop the same human ending up with three different workspaces just
+    # because claude.ai web, claude-cli, and the dashboard happen to mint
+    # tokens with different workspace_id claims. app.linn.games owns user
+    # identity → app.linn.games owns workspace identity, full stop.
+    sub_raw = payload.get("sub")
+    if sub_raw is None or not str(sub_raw).strip():
         return None
-    workspace_id = str(workspace_id).strip()
-    if not workspace_id:
-        return None
+    sub_str = str(sub_raw).strip()
+    workspace_id = f"user-{sub_str}"
 
     raw_scopes = payload.get("scope", [])
     if isinstance(raw_scopes, str):
@@ -115,7 +120,6 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     llm_model = payload.get("llm_model")
     llm_endpoint = payload.get("llm_endpoint")
     raw_requires_key = payload.get("llm_requires_key", False)
-    sub_raw = payload.get("sub")
     iat_raw = payload.get("iat")
     org_id_raw = payload.get("org_id")
 
@@ -126,7 +130,7 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
         llm_model=str(llm_model) if isinstance(llm_model, str) and llm_model else None,
         llm_endpoint=str(llm_endpoint) if isinstance(llm_endpoint, str) and llm_endpoint else None,
         llm_requires_key=bool(raw_requires_key),
-        sub=str(sub_raw) if sub_raw is not None else None,
+        sub=sub_str,
         iat=int(iat_raw) if isinstance(iat_raw, (int, float)) else None,
         org_id=str(org_id_raw) if org_id_raw else None,
     )

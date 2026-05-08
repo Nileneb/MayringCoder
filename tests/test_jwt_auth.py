@@ -47,6 +47,13 @@ _MCP_SCOPE = ["mcp:memory"]
 
 def _sign(private_pem: str, **claims) -> str:
     claims.setdefault("scope", _MCP_SCOPE)
+    # workspace_id is now derived from sub server-side; tests that previously
+    # passed workspace_id="bene-workspace" need a sub instead. We default sub
+    # so callers that only care about other claims don't need to set it.
+    claims.setdefault("sub", "2")
+    # Strip workspace_id from claims — it's ignored by the validator now and
+    # would only confuse readers comparing test fixture vs. result.
+    claims.pop("workspace_id", None)
     return pyjwt.encode(claims, private_pem, algorithm="RS256")
 
 
@@ -60,12 +67,34 @@ def test_valid_tenant_token(configured_env):
         iss="https://app.linn.games",
         aud="mayringcoder",
         exp=int(time.time()) + 300,
-        workspace_id="bene-workspace",
+        sub="2",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    assert info.workspace_id == "bene-workspace"
+    # workspace_id is deterministically derived from sub — no per-token
+    # variation, no drift across claude.ai web vs. CLI for the same user.
+    assert info.workspace_id == "user-2"
+    assert info.sub == "2"
     assert info.is_admin is False
+
+
+def test_workspace_id_claim_is_ignored(configured_env):
+    """A `workspace_id` claim in the JWT is no longer authoritative — sub wins."""
+    token = pyjwt.encode(
+        {
+            "iss": "https://app.linn.games",
+            "aud": "mayringcoder",
+            "exp": int(time.time()) + 300,
+            "sub": "7",
+            "workspace_id": "totally-different-workspace",  # ignored
+            "scope": ["mcp:memory"],
+        },
+        configured_env,
+        algorithm="RS256",
+    )
+    info = jwt_auth.validate_jwt_token(token)
+    assert info is not None
+    assert info.workspace_id == "user-7"
 
 
 def test_admin_scope_list(configured_env):
@@ -120,23 +149,32 @@ def test_expired_token(configured_env):
     assert jwt_auth.validate_jwt_token(token) is None
 
 
-def test_missing_workspace_id(configured_env):
-    token = _sign(
+def test_missing_sub_is_rejected(configured_env):
+    """Tokens without sub can't yield a stable workspace_id → rejected."""
+    token = pyjwt.encode(
+        {
+            "iss": "https://app.linn.games",
+            "aud": "mayringcoder",
+            "exp": int(time.time()) + 300,
+            "scope": ["mcp:memory"],
+        },
         configured_env,
-        iss="https://app.linn.games",
-        aud="mayringcoder",
-        exp=int(time.time()) + 300,
+        algorithm="RS256",
     )
     assert jwt_auth.validate_jwt_token(token) is None
 
 
-def test_empty_workspace_id(configured_env):
-    token = _sign(
+def test_blank_sub_is_rejected(configured_env):
+    token = pyjwt.encode(
+        {
+            "iss": "https://app.linn.games",
+            "aud": "mayringcoder",
+            "exp": int(time.time()) + 300,
+            "sub": "   ",
+            "scope": ["mcp:memory"],
+        },
         configured_env,
-        iss="https://app.linn.games",
-        aud="mayringcoder",
-        exp=int(time.time()) + 300,
-        workspace_id="   ",
+        algorithm="RS256",
     )
     assert jwt_auth.validate_jwt_token(token) is None
 
@@ -198,17 +236,19 @@ def test_empty_token_rejected(configured_env):
     assert jwt_auth.validate_jwt_token("") is None
 
 
-def test_workspace_id_trimmed(configured_env):
+def test_sub_trimmed(configured_env):
+    """Whitespace around sub is stripped before workspace_id derivation."""
     token = _sign(
         configured_env,
         iss="https://app.linn.games",
         aud="mayringcoder",
         exp=int(time.time()) + 300,
-        workspace_id="  bene-workspace  ",
+        sub="  42  ",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    assert info.workspace_id == "bene-workspace"
+    assert info.workspace_id == "user-42"
+    assert info.sub == "42"
 
 
 # ---------------------------------------------------------------------------
@@ -251,14 +291,14 @@ class TestMiddlewareEnabled:
             iss="https://app.linn.games",
             aud="mayringcoder",
             exp=int(time.time()) + 300,
-            workspace_id="ws_abc",
+            sub="11",
         )
 
         async def _run():
             sent, downstream, scope = await _drive(mw, token=token)
             assert sent == []
             downstream.assert_awaited_once()
-            assert scope["workspace_id"] == "ws_abc"
+            assert scope["workspace_id"] == "user-11"
 
         anyio.run(_run)
 
@@ -269,13 +309,13 @@ class TestMiddlewareEnabled:
             iss="https://app.linn.games",
             aud="mayringcoder",
             exp=int(time.time()) + 300,
-            workspace_id="ws_bearer",
+            sub="22",
         )
 
         async def _run():
             sent, downstream, scope = await _drive(mw, token=token, bearer=True)
             assert sent == []
-            assert scope["workspace_id"] == "ws_bearer"
+            assert scope["workspace_id"] == "user-22"
 
         anyio.run(_run)
 
