@@ -974,6 +974,55 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_retrieval_metrics_endpoint(api: str, token: str) -> CheckResult:
+    """Memory-Injection v2.0 foundation: /stats/retrieval-metrics returns
+    precision@K + NDCG@K + recall@K joined from context_feedback_log and
+    chunk_feedback. Pass: route 200 + the four numeric fields are present
+    (values may legitimately be 0 before the new logging accumulates data,
+    that's not a fail; the SHAPE is what we're proving here)."""
+    code, body, _ = _http(
+        "GET", f"{api}/stats/retrieval-metrics?days=7&k=5", token,
+    )
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult(
+            "retrieval_metrics_endpoint", False,
+            f"http={code} body={body}",
+        )
+    needed = {"precision_at_k", "ndcg_at_k", "recall_at_k", "queries_logged"}
+    missing = needed - set(body.keys())
+    return CheckResult(
+        "retrieval_metrics_endpoint", not missing,
+        f"http=200 keys_ok={not missing} missing={missing}  "
+        f"sample={ {k: body.get(k) for k in needed if k in body} }",
+    )
+
+
+def check_retrieval_stage_attribution(api: str, token: str) -> CheckResult:
+    """Companion check: /stats/retrieval-stage-attribution surfaces which
+    ranking stage (vector/symbolic/recency/source_affinity) actually
+    drives positive chunks. Pass: route 200 + the four stages appear in
+    both `stage_wins` and `stage_share` sub-dicts."""
+    code, body, _ = _http(
+        "GET", f"{api}/stats/retrieval-stage-attribution?days=7", token,
+    )
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult(
+            "retrieval_stage_attribution", False,
+            f"http={code} body={body}",
+        )
+    wins = body.get("stage_wins") or {}
+    share = body.get("stage_share") or {}
+    expected_stages = {"vector", "symbolic", "recency", "source_affinity"}
+    ok = (expected_stages <= set(wins.keys())
+          and expected_stages <= set(share.keys()))
+    return CheckResult(
+        "retrieval_stage_attribution", ok,
+        f"http=200 stages_in_wins={set(wins.keys())} "
+        f"stages_in_share={set(share.keys())} attributed="
+        f"{body.get('positive_chunks_attributed')}",
+    )
+
+
 def check_pi_second_opinion_endpoint(api: str, token: str) -> CheckResult:
     """Issue #139 acceptance: ``pi_second_opinion`` is reachable from the
     Pi-Agent via tool-use. We can't drive the MCP tool over HTTP, but the
@@ -1092,6 +1141,8 @@ ALL_CHECKS = [
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
     ("pi_second_opinion_endpoint",    check_pi_second_opinion_endpoint),
+    ("retrieval_metrics_endpoint",    check_retrieval_metrics_endpoint),
+    ("retrieval_stage_attribution",   check_retrieval_stage_attribution),
 ]
 
 

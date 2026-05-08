@@ -131,6 +131,16 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("claimed_by", "TEXT NOT NULL DEFAULT ''"),
             ("claimed_at", "TEXT NOT NULL DEFAULT ''"),
         ],
+        # Memory-Injection v2.0 — retrieval metrics + reranker training data.
+        # The hook-injection path already wrote (trigger_ids, context_text,
+        # captured_at) here. Adding query + stage_scores + workspace_id makes
+        # the row a complete join key for chunk_feedback so we can compute
+        # precision@K / NDCG@K and export training triples.
+        "context_feedback_log": [
+            ("query", "TEXT NOT NULL DEFAULT ''"),
+            ("stage_scores", "TEXT NOT NULL DEFAULT '{}'"),
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
     }
     for table, columns in migrations.items():
         existing = conn.get_columns(table)

@@ -57,12 +57,28 @@ def run_search(
             import json as _json
             from datetime import datetime, timezone
             _ids = _json.dumps([r.chunk_id for r in results])
+            # Per-stage scores keyed by chunk_id — the dataset that lets us
+            # train a learned reranker (Issue #87 Pipeline 2). Logged for
+            # every search; missing fields default to 0 so old rows still
+            # work in metric queries.
+            _stage = _json.dumps({
+                r.chunk_id: {
+                    "v": round(getattr(r, "score_vector", 0.0) or 0.0, 4),
+                    "s": round(getattr(r, "score_symbolic", 0.0) or 0.0, 4),
+                    "r": round(getattr(r, "score_recency", 0.0) or 0.0, 4),
+                    "a": round(getattr(r, "score_source_affinity", 0.0) or 0.0, 4),
+                    "f": round(getattr(r, "score_final", 0.0) or 0.0, 4),
+                }
+                for r in results
+            })
             conn.execute(
                 "INSERT INTO context_feedback_log"
-                " (trigger_ids,context_text,was_referenced,led_to_retrieval,relevance_score,captured_at)"
-                " VALUES (?,?,0,0,0.0,?)",
+                " (trigger_ids,context_text,was_referenced,led_to_retrieval,"
+                "  relevance_score,captured_at,query,stage_scores,workspace_id)"
+                " VALUES (?,?,0,0,0.0,?,?,?,?)",
                 (_ids, response["prompt_context"][:2000],
-                 datetime.now(timezone.utc).isoformat()),
+                 datetime.now(timezone.utc).isoformat(),
+                 query[:1000], _stage, workspace_id),
             )
             conn.commit()
         except Exception:
