@@ -113,6 +113,68 @@ def test_10_node_louvain_produces_2_clusters(ten_node_graph):
     assert len(all_members) == 10
 
 
+def test_orphan_nodes_absorbed_into_path_sibling(tmp_path):
+    """Orphan nodes (no edges) must NOT become singleton clusters when a
+    path-sibling big cluster exists. They get folded into it."""
+    g = WikiGraph("ws-orph", "repo", db_path=tmp_path / "wiki_orph.db")
+    # api family: 5 nodes wired as a star → forms one cluster
+    api = [f"src/api/f{i}.py" for i in range(5)]
+    for f in api:
+        g.upsert_node(WikiNode(f, "repo", "ws-orph"))
+    for i in range(1, 5):
+        g.add_edge(WikiEdge(api[0], api[i], "repo", "ws-orph", "import", 1.0))
+
+    # 3 orphans under src/api with no incoming/outgoing edges — would be
+    # singletons before, must absorb into the api cluster now.
+    orphans = ["src/api/config.py", "src/api/README.md", "src/api/types.py"]
+    for f in orphans:
+        g.upsert_node(WikiNode(f, "repo", "ws-orph"))
+
+    engine = ClusterEngine()
+    clusters = engine.cluster(g, strategy="louvain")
+    sizes = sorted(len(c.members) for c in clusters)
+    # No 1-member or 2-member singleton clusters survive
+    assert all(s >= 3 for s in sizes), f"singletons not absorbed: sizes={sizes}"
+    all_members = {m for c in clusters for m in c.members}
+    assert all_members == set(api) | set(orphans)
+    g.close()
+
+
+def test_sparse_graph_falls_back_to_path_prefix(tmp_path):
+    """When edges are too sparse for meaningful Louvain, fall back to
+    path-prefix grouping rather than producing N singletons."""
+    g = WikiGraph("ws-sparse", "repo", db_path=tmp_path / "wiki_sparse.db")
+    files = [
+        "src/api/a.py", "src/api/b.py", "src/api/c.py",
+        "src/memory/x.py", "src/memory/y.py", "src/memory/z.py",
+        "tests/t1.py", "tests/t2.py",
+    ]
+    for f in files:
+        g.upsert_node(WikiNode(f, "repo", "ws-sparse"))
+    # A single edge — way under the sparsity floor for 8 nodes.
+    g.add_edge(WikiEdge("src/api/a.py", "src/api/b.py", "repo", "ws-sparse", "import", 1.0))
+
+    engine = ClusterEngine()
+    clusters = engine.cluster(g, strategy="louvain")
+    # Must be ≤ 3 (one per top path-prefix), not 8 singletons
+    assert len(clusters) <= 3, f"expected ≤3 prefix-buckets, got {len(clusters)}"
+    sizes = sorted(len(c.members) for c in clusters)
+    assert sizes[-1] >= 2, "no real grouping happened"
+    g.close()
+
+
+def test_cluster_quality_metrics_extended(populated_graph):
+    """quality dict carries the new percentile + small-cluster fields."""
+    engine = ClusterEngine()
+    clusters = engine.cluster(populated_graph, strategy="louvain")
+    from src.wiki_v2.clustering import cluster_quality
+    q = cluster_quality(clusters, populated_graph)
+    for key in ("median_cluster_size", "p10_cluster_size",
+                "p90_cluster_size", "small_clusters", "internal_ratio"):
+        assert key in q, f"missing {key} in {q}"
+    assert 0.0 <= q["internal_ratio"] <= 1.0
+
+
 def test_clusters_json_written(ten_node_graph, tmp_path, monkeypatch):
     """cluster() schreibt clusters.json pro Workspace."""
     import src.wiki_v2.clustering as cm
