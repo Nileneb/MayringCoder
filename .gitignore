@@ -23,3 +23,10 @@ Todo-research.md
 benchmarks/swebench_results/
 benchmarks/version_upgrade_results/
 benchmarks/training_data/
+
+# Test artifacts
+wiki/ws-test*/
+wiki/ws-orph/
+wiki/ws-sparse/
+wiki/ws-empty/
+wiki/ws-single/
