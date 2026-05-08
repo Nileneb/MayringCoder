@@ -73,13 +73,24 @@ class RouteUpdateRequest(BaseModel):
 async def get_model_routes(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
-    """Return the active ModelRouter configuration."""
+    """Return the active ModelRouter configuration.
+
+    ``resolved_models`` reports the actual string each call site would
+    receive from ``ModelRouter.resolve(task)`` right now. This is the
+    canonical proof that admin overrides took effect — it is what
+    smoke check ``model_identity_check`` (Issue #106) probes.
+    """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    router_view = ModelRouter(ollama_url=ollama_url).to_dict()
+    router = ModelRouter(ollama_url=ollama_url)
     return {
-        "routes": router_view,
+        "routes": router.to_dict(),
+        "resolved_models": {
+            "text":      router.resolve("text"),
+            "vision":    router.resolve("vision"),
+            "embedding": router.resolve("embedding"),
+        },
         "config_path": str(_CONFIG_PATH.relative_to(_ROOT)),
         "config_exists": _CONFIG_PATH.exists(),
     }

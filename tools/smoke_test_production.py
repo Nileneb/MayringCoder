@@ -974,6 +974,69 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_model_identity(api: str, token: str) -> CheckResult:
+    """Issue #106 acceptance: the MODEL THAT ACTUALLY GETS USED is the
+    one configured via /stats/admin/model-routes.
+
+    The previous smoke `memory_search_vector` only proved the vector
+    stage runs — it stayed green even when an outdated default model
+    was loaded. Audit subagent flagged this as a GAP: a model upgrade
+    cannot be verified by ``diag=ok(...)``.
+
+    Probe: read ``resolved_models.text`` from GET, set a sentinel via
+    POST, re-GET and assert ``resolved_models.text`` reflects the
+    sentinel — proves ModelRouter.resolve() picks up the change AND
+    that callers using ``ModelRouter.resolve("text")`` (per #88 fix)
+    will see the new model on the very next call.
+    """
+    code, body, _ = _http("GET", f"{api}/stats/admin/model-routes", token)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("model_identity", False,
+                           f"GET http={code} body={body}")
+    routes = (body or {}).get("routes", {})
+    resolved = (body or {}).get("resolved_models", {})
+    if "text" not in resolved:
+        return CheckResult(
+            "model_identity", False,
+            "GET /stats/admin/model-routes missing 'resolved_models.text' "
+            "— Issue #106 smoke can't run",
+        )
+    text_route = routes.get("text") or {}
+    orig_model = text_route.get("model") or "mistral:7b-instruct"
+    sentinel_name = "smoke-identity-sentinel:13"
+    if orig_model == sentinel_name:
+        sentinel_name = "smoke-identity-sentinel:14"
+    payload = {
+        "task": "text",
+        "model": sentinel_name,
+        "fallback": text_route.get("fallback") or "",
+        "timeout": int(text_route.get("timeout") or 240),
+    }
+    code2, body2, _ = _http(
+        "POST", f"{api}/stats/admin/model-routes", token, body=payload,
+    )
+    if code2 != 200:
+        return CheckResult(
+            "model_identity", False,
+            f"POST http={code2} body={body2}",
+        )
+    code3, body3, _ = _http("GET", f"{api}/stats/admin/model-routes", token)
+    new_resolved = (body3 or {}).get("resolved_models", {}).get("text", "")
+    revert = {
+        "task": "text",
+        "model": orig_model,
+        "fallback": text_route.get("fallback") or "",
+        "timeout": int(text_route.get("timeout") or 240),
+    }
+    _http("POST", f"{api}/stats/admin/model-routes", token, body=revert)
+    return CheckResult(
+        "model_identity",
+        new_resolved == sentinel_name,
+        f"orig={orig_model!r}  set={sentinel_name!r}  resolved={new_resolved!r} "
+        f"(matches sentinel ⇒ ModelRouter is the canonical resolution path)",
+    )
+
+
 def check_retrieval_metrics_endpoint(api: str, token: str) -> CheckResult:
     """Memory-Injection v2.0 foundation: /stats/retrieval-metrics returns
     precision@K + NDCG@K + recall@K joined from context_feedback_log and
@@ -1140,6 +1203,7 @@ ALL_CHECKS = [
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
+    ("model_identity",                check_model_identity),
     ("pi_second_opinion_endpoint",    check_pi_second_opinion_endpoint),
     ("retrieval_metrics_endpoint",    check_retrieval_metrics_endpoint),
     ("retrieval_stage_attribution",   check_retrieval_stage_attribution),
