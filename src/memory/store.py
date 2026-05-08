@@ -108,6 +108,11 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
             ("visibility", "TEXT NOT NULL DEFAULT 'private'"),
             ("org_id", "TEXT DEFAULT NULL"),
+            # user_id: User-scoped sharing across workspaces. Same user, multiple
+            # workspace_ids (claude.ai web vs claude-cli) → set visibility='user'
+            # so all sessions of the same user can see each other's memory
+            # without falling back to 'public'.
+            ("user_id", "TEXT DEFAULT NULL"),
         ],
         "chunks": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
@@ -116,6 +121,7 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("igio_axis", "TEXT NOT NULL DEFAULT ''"),
             ("igio_confidence", "REAL NOT NULL DEFAULT 0.0"),
             ("igio_classified_at", "TEXT NOT NULL DEFAULT ''"),
+            ("user_id", "TEXT DEFAULT NULL"),
         ],
         # pi_jobs Phase 2: cloud-routable jobs need a worker_id, capability,
         # and a scope marker so local-only and cloud-routable rows can coexist.
@@ -132,6 +138,66 @@ def _migrate_schema(conn: DBAdapter) -> None:
             if col_name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
 
+    _migrate_visibility_check(conn)
+
+
+def _migrate_visibility_check(conn: DBAdapter) -> None:
+    """Extend sources.visibility CHECK constraint to allow 'user'.
+
+    SQLite can't ALTER a CHECK constraint in place — the only way is to rebuild
+    the table. Idempotent: detects via PRAGMA whether the new constraint is
+    already in effect and no-ops when it is.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sources'"
+        ).fetchall()
+    except Exception:
+        return
+    if not rows:
+        return
+    sql = rows[0][0] or ""
+    if "'user'" in sql:
+        return  # already extended
+    if "CHECK(visibility IN" not in sql and "CHECK (visibility IN" not in sql:
+        return  # no CHECK at all (very old DB) — leave alone
+    try:
+        conn.execute("ALTER TABLE sources RENAME TO sources_legacy_visibility")
+        conn.executescript("""
+            CREATE TABLE sources (
+                source_id       TEXT PRIMARY KEY,
+                source_type     TEXT NOT NULL DEFAULT 'repo_file',
+                repo            TEXT NOT NULL DEFAULT '',
+                path            TEXT NOT NULL DEFAULT '',
+                branch          TEXT NOT NULL DEFAULT 'main',
+                "commit"        TEXT NOT NULL DEFAULT '',
+                content_hash    TEXT NOT NULL DEFAULT '',
+                captured_at     TEXT NOT NULL,
+                workspace_id    TEXT NOT NULL DEFAULT 'default',
+                visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public', 'user')),
+                org_id          TEXT DEFAULT NULL,
+                user_id         TEXT DEFAULT NULL
+            );
+        """)
+        legacy_cols = conn.get_columns("sources_legacy_visibility")
+        select_cols = ", ".join(
+            f'"{c}"' if c == "commit" else c
+            for c in legacy_cols
+        )
+        # Insert preserving every column the legacy table had — new columns
+        # (user_id) get DEFAULT NULL automatically.
+        conn.execute(
+            f"INSERT INTO sources ({select_cols}) "
+            f"SELECT {select_cols} FROM sources_legacy_visibility"
+        )
+        conn.execute("DROP TABLE sources_legacy_visibility")
+        _maybe_commit(conn)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "visibility-check migration failed: %s — DB still on old constraint", exc
+        )
+
 
 def _init_schema(conn: DBAdapter) -> None:
     conn.executescript("""
@@ -144,8 +210,9 @@ def _init_schema(conn: DBAdapter) -> None:
             "commit"        TEXT NOT NULL DEFAULT '',
             content_hash    TEXT NOT NULL DEFAULT '',
             captured_at     TEXT NOT NULL,
-            visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public')),
-            org_id          TEXT DEFAULT NULL
+            visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public', 'user')),
+            org_id          TEXT DEFAULT NULL,
+            user_id         TEXT DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -309,14 +376,24 @@ def _init_schema(conn: DBAdapter) -> None:
 
 def upsert_source(
     conn: DBAdapter, source: Source, workspace_id: str = "default",
-    visibility: str = "private", org_id: str | None = None,
+    visibility: str | None = None, org_id: str | None = None,
+    user_id: str | None = None,
 ) -> None:
+    """Insert/update a source row.
+
+    visibility/org_id/user_id default to the values on the Source dataclass
+    when not explicitly passed; this lets callers attach them at Source
+    construction time and have them flow all the way to the DB.
+    """
+    eff_visibility = visibility if visibility is not None else source.visibility
+    eff_org_id = org_id if org_id is not None else source.org_id
+    eff_user_id = user_id if user_id is not None else source.user_id
     conn.execute(
         """
         INSERT INTO sources
             (source_id, source_type, repo, path, branch, "commit", content_hash,
-             captured_at, workspace_id, visibility, org_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             captured_at, workspace_id, visibility, org_id, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET
             source_type  = excluded.source_type,
             repo         = excluded.repo,
@@ -327,12 +404,13 @@ def upsert_source(
             captured_at  = excluded.captured_at,
             workspace_id = excluded.workspace_id,
             visibility   = excluded.visibility,
-            org_id       = excluded.org_id
+            org_id       = excluded.org_id,
+            user_id      = excluded.user_id
         """,
         (
             source.source_id, source.source_type, source.repo, source.path,
             source.branch, source.commit, source.content_hash, source.captured_at,
-            workspace_id, visibility, org_id,
+            workspace_id, eff_visibility, eff_org_id, eff_user_id,
         ),
     )
     _maybe_commit(conn)
@@ -354,6 +432,9 @@ def get_source(conn: DBAdapter, source_id: str) -> Source | None:
         commit=d["commit"],
         content_hash=d["content_hash"],
         captured_at=d["captured_at"],
+        visibility=d.get("visibility") or "private",
+        org_id=d.get("org_id"),
+        user_id=d.get("user_id"),
     )
 
 

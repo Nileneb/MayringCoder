@@ -70,8 +70,18 @@ def _scope_filter(
     source_type: str | None = None,
     workspace_id: str | None = None,
     org_id: str | None = None,
+    user_id: str | None = None,
 ) -> list[str]:
-    """Return chunk_ids of active chunks matching hard scope filters."""
+    """Return chunk_ids of active chunks matching hard scope filters.
+
+    Visibility model — a chunk is visible to the caller when ANY of:
+      - visibility='public'                              (everyone)
+      - visibility='org'     AND s.org_id   = caller_org   (same organization)
+      - visibility='user'    AND s.user_id  = caller_sub   (same human user,
+                                                            any workspace —
+                                                            claude.ai vs CLI)
+      - visibility='private' AND c.workspace_id = caller_ws (legacy default)
+    """
     query = """
         SELECT c.chunk_id, c.category_labels
         FROM chunks c
@@ -84,9 +94,11 @@ def _scope_filter(
         query += (
             " AND (s.visibility = 'public'"
             " OR (s.visibility = 'org' AND s.org_id = ?)"
+            " OR (s.visibility = 'user' AND s.user_id = ?)"
             " OR (s.visibility = 'private' AND c.workspace_id = ?))"
         )
         params.append(org_id)
+        params.append(user_id)
         params.append(workspace_id)
     if repo:
         query += " AND s.repo = ?"
@@ -347,6 +359,7 @@ def search(
     include_text: bool = bool(opts.get("include_text", True))
     workspace_id: str | None = opts.get("workspace_id")
     org_id: str | None = opts.get("org_id")
+    user_id: str | None = opts.get("user_id")
 
     # Query-Cache check — hit: re-hydrate from SQLite and return early
     _ck = _cache_key(query, opts, session_compacted)
@@ -368,7 +381,7 @@ def search(
     # Stage 1: scope filter
     candidate_ids = _scope_filter(
         conn, repo=repo, categories=categories, source_type=source_type,
-        workspace_id=workspace_id, org_id=org_id,
+        workspace_id=workspace_id, org_id=org_id, user_id=user_id,
     )
     if not candidate_ids:
         return []

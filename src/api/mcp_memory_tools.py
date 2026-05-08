@@ -7,7 +7,13 @@ from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
-from src.api.mcp_auth import _enforce_tenant, _effective_workspace_id, _current_raw_jwt
+from src.api.mcp_auth import (
+    _enforce_tenant,
+    _effective_workspace_id,
+    _effective_user_id,
+    _effective_org_id,
+    _current_raw_jwt,
+)
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.memory_service import run_search as _run_search, run_ingest as _run_ingest
 from src.memory.retrieval import invalidate_query_cache
@@ -56,15 +62,20 @@ def register_memory_tools(mcp: FastMCP) -> None:
             {results: list[RetrievalRecord], prompt_context: str}
         """
         try:
+            from src.memory.schema import canonicalize_repo_url
             ws = _enforce_tenant(workspace_id)
             opts = {
-                "repo": repo,
+                "repo": canonicalize_repo_url(repo) if repo else repo,
                 "categories": categories,
                 "source_type": source_type,
                 "top_k": top_k,
                 "include_text": include_text,
                 "source_affinity": source_affinity,
                 "workspace_id": ws,
+                # user_id + org_id let visibility='user' / 'org' chunks
+                # surface across workspaces of the same human user / org.
+                "user_id": _effective_user_id(),
+                "org_id": _effective_org_id(),
                 "task_context": task_context,
             }
             result = _run_search(query, _get_conn(), _get_chroma(),
@@ -226,6 +237,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         """
         import hashlib
         import httpx
+        from src.memory.schema import canonicalize_repo_url
 
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
@@ -248,7 +260,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
             try:
                 resp = httpx.post(
                     f"{_api}/populate",
-                    json={"repo": source},
+                    json={"repo": canonicalize_repo_url(source)},
                     headers=headers,
                     timeout=30.0,
                 )
@@ -262,12 +274,20 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 model = os.getenv("MAYRING_MODEL", "qwen2.5-coder:7b")
                 sid = source_id or f"text:{ws}:{hashlib.sha256(source[:64].encode()).hexdigest()[:12]}"
                 _stype = source_type if source_type not in ("auto", "text") else "knowledge"
+                # Default text/note ingest from MCP is per-user content (session
+                # summaries, insights, etc.). Stamp it with visibility="user"
+                # + user_id so the same human sees it across workspaces
+                # (claude.ai web vs claude-cli) without falling back to "public".
+                _uid = _effective_user_id()
                 source_dict = {
                     "source_id": sid,
                     "source_type": _stype,
                     "repo": ws,
                     "path": sid,
                     "content_hash": "sha256:" + hashlib.sha256(source.encode()).hexdigest()[:16],
+                    "visibility": "user" if _uid else "private",
+                    "user_id": _uid,
+                    "org_id": _effective_org_id(),
                 }
                 result = _run_ingest(
                     source_dict, source, _get_conn(), _get_chroma(),

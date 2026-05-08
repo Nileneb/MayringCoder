@@ -43,8 +43,12 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
 
     from src.gpu_metrics import format_summary, parse_metrics, start_monitoring, stop_monitoring
     from src.memory.ingest import get_or_create_chroma_collection, ingest
-    from src.memory.schema import Source
+    from src.memory.schema import Source, canonicalize_repo_url
     from src.memory.store import init_memory_db
+
+    # Collapse case-only typo variants (Nileneb/X vs nileneb/X) into one
+    # source_id namespace so vector + symbolic stages see the same chunks.
+    repo_url = canonicalize_repo_url(repo_url)
 
     token = os.getenv("GITHUB_TOKEN") or None
     codebook_path = Path(args.codebook) if getattr(args, "codebook", None) else CODEBOOK_PATH

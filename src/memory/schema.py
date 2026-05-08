@@ -12,6 +12,36 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from urllib.parse import urlparse
+
+
+def canonicalize_repo_url(repo: str) -> str:
+    """Normalize a repo URL/slug so case-only differences map to the same key.
+
+    GitHub/GitLab routes are case-insensitive for owner+repo
+    (`Nileneb/X` and `nileneb/X` resolve to the same project), but the URL
+    string preserves whatever casing the user typed. That alone caused two
+    parallel source_ids and a Chroma-vs-SQLite split where vector search
+    returned 0.0 even though the chunks existed.
+
+    Lowercases the host and path; preserves scheme. Non-URL strings (e.g.
+    workspace slugs, plain "owner/name") are simply lowercased.
+    """
+    if not repo:
+        return repo
+    if "://" in repo:
+        parsed = urlparse(repo)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower().rstrip("/")
+        scheme = parsed.scheme.lower() or "https"
+        return f"{scheme}://{host}{path}"
+    if repo.startswith("git@"):
+        # git@github.com:Owner/Repo.git  → git@github.com:owner/repo
+        host_path = repo[4:]
+        if ":" in host_path:
+            host, path = host_path.split(":", 1)
+            return f"git@{host.lower()}:{path.lower().removesuffix('.git')}"
+    return repo.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -30,13 +60,21 @@ class Source:
     commit: str = ""
     content_hash: str = ""  # sha256 of raw source content
     captured_at: str = field(default_factory=lambda: _now_iso())
-    visibility: str = "private"   # "private" | "org" | "public"
+    visibility: str = "private"   # "private" | "org" | "user" | "public"
     org_id: str | None = None
+    user_id: str | None = None    # JWT.sub — same value across all workspaces
+                                  # of the same human user; required when
+                                  # visibility="user"
 
     @staticmethod
     def make_id(repo: str, path: str) -> str:
-        """Build a canonical source_id from repo and path."""
-        return f"repo:{repo}:{path}"
+        """Build a canonical source_id from repo and path.
+
+        repo is canonicalized so case-only typo variants collapse into one
+        source_id (and one Chroma entry). Without this, ``Nileneb/X`` and
+        ``nileneb/X`` ingest twice and vector retrieval misses half the corpus.
+        """
+        return f"repo:{canonicalize_repo_url(repo)}:{path}"
 
     def to_dict(self) -> dict:
         return {
@@ -50,12 +88,14 @@ class Source:
             "captured_at": self.captured_at,
             "visibility": self.visibility,
             "org_id": self.org_id,
+            "user_id": self.user_id,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Source":
         data = {k: d.get(k, "") for k in cls.__dataclass_fields__}
         data["org_id"] = d.get("org_id")  # None when absent or NULL
+        data["user_id"] = d.get("user_id")
         return cls(**data)
 
 

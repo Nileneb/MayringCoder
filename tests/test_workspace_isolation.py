@@ -60,6 +60,54 @@ def test_tenant_b_sees_only_own_chunks(memory_db):
     assert ids == ["chk_tenant-b_1"]
 
 
+def test_visibility_user_crosses_workspaces_for_same_user(tmp_path):
+    """Issue: claude.ai (workspace-A) and claude-cli (workspace-B) belong to the
+    same human user (JWT.sub='42'). A source ingested in workspace-A with
+    visibility='user' must surface in a search from workspace-B with the same
+    user_id — without falling back to 'public'."""
+    conn = init_memory_db(tmp_path / "user_share.db")
+
+    src = Source(
+        source_id="text:user-shared-note",
+        source_type="note",
+        repo="user-42",
+        path="note",
+        content_hash="sha256:abc",
+        captured_at=datetime.now(timezone.utc).isoformat(),
+        visibility="user",
+        user_id="42",
+    )
+    upsert_source(conn, src, workspace_id="workspace-A")
+
+    chunk = Chunk(
+        chunk_id="chk_user_share",
+        source_id=src.source_id,
+        chunk_level="file",
+        ordinal=0,
+        start_offset=0,
+        end_offset=10,
+        text="cross-workspace user note",
+        text_hash="sha256:user_share",
+        embedding_model="nomic-embed-text",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        is_active=True,
+    )
+    insert_chunk(conn, chunk, workspace_id="workspace-A")
+    conn.commit()
+
+    # Search from workspace-B with same user_id → must see the chunk
+    same_user_ids = _scope_filter(conn, workspace_id="workspace-B", user_id="42")
+    assert "chk_user_share" in same_user_ids
+
+    # Search from workspace-B with DIFFERENT user_id → must NOT see it
+    other_user_ids = _scope_filter(conn, workspace_id="workspace-B", user_id="99")
+    assert "chk_user_share" not in other_user_ids
+
+    # Search without user_id at all → also must NOT see it (no fallback)
+    no_user_ids = _scope_filter(conn, workspace_id="workspace-B", user_id=None)
+    assert "chk_user_share" not in no_user_ids
+
+
 def test_no_workspace_filter_returns_all(memory_db):
     ids = _scope_filter(memory_db, workspace_id=None)
     assert sorted(ids) == ["chk_tenant-a_1", "chk_tenant-b_1"]

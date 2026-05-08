@@ -36,10 +36,22 @@ def _plugin_root() -> str:
 
 
 def _repo_root(plugin_root: str) -> str:
-    """The repo containing src/api/local_mcp.py — typically plugin_root/.."""
+    """The repo containing src/api/local_mcp.py.
+
+    Searches in order:
+      1. plugin_root/.. (dev clone where claude-plugin/ lives in repo)
+      2. $MAYRING_REPO_ROOT (explicit override)
+
+    No more hardcoded path probing — auto-sync just no-ops on machines without
+    a local clone, which is the right default. Set MAYRING_REPO_ROOT if you
+    want plugin-file auto-sync to work.
+    """
     parent = os.path.abspath(os.path.join(plugin_root, ".."))
     if os.path.isfile(os.path.join(parent, "src", "api", "local_mcp.py")):
         return parent
+    env_root = os.environ.get("MAYRING_REPO_ROOT", "")
+    if env_root and os.path.isfile(os.path.join(env_root, "src", "api", "local_mcp.py")):
+        return os.path.abspath(env_root)
     return plugin_root
 
 
@@ -223,7 +235,51 @@ def _inject_memory(payload: dict) -> None:
         pass
 
 
+def _sync_plugin_files_from_repo(plugin_root: str, repo_root: str) -> None:
+    """Mirror claude-plugin/hooks/*.py and hooks.json from the local repo into
+    the marketplace plugin cache so a fresh `git push` is reflected without
+    requiring the user to run `/plugin update mayring-coder` manually.
+
+    Only runs when:
+      1. plugin_root != repo_root (i.e. we ARE the marketplace cache copy, not
+         the dev copy itself), AND
+      2. The repo has a newer mtime on at least one hook file.
+
+    No-op when the hook is invoked from a dev clone (plugin_root == repo_root)
+    or the repo isn't accessible.
+    """
+    if os.path.abspath(plugin_root) == os.path.abspath(repo_root):
+        return
+    src_dir = os.path.join(repo_root, "claude-plugin", "hooks")
+    dst_dir = os.path.join(plugin_root, "hooks")
+    if not os.path.isdir(src_dir) or not os.path.isdir(dst_dir):
+        return
+    import shutil
+    synced: list[str] = []
+    try:
+        for name in os.listdir(src_dir):
+            if not (name.endswith(".py") or name.endswith(".json")):
+                continue
+            src = os.path.join(src_dir, name)
+            dst = os.path.join(dst_dir, name)
+            try:
+                src_mtime = os.path.getmtime(src)
+                dst_mtime = os.path.getmtime(dst) if os.path.isfile(dst) else 0
+                if src_mtime > dst_mtime + 1.0:  # 1s slack vs filesystem precision
+                    shutil.copy2(src, dst)
+                    synced.append(name)
+            except OSError:
+                continue
+    except OSError:
+        return
+    if synced:
+        print(f"MayringCoder plugin hooks synced from repo: {', '.join(synced)}", file=sys.stderr)
+
+
 if __name__ == "__main__":
+    plugin_root = _plugin_root()
+    repo_root = _repo_root(plugin_root)
+    _sync_plugin_files_from_repo(plugin_root, repo_root)
     _bootstrap_if_needed()
     payload = json.loads(sys.stdin.read() or "{}")
     _inject_memory(payload)

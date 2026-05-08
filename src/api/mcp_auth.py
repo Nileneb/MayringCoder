@@ -36,6 +36,18 @@ def _effective_workspace_id(caller_default: str = "default") -> str:
     return info.workspace_id
 
 
+def _effective_user_id() -> str | None:
+    """Caller's user_id (JWT.sub). Same value across all workspaces of the
+    same human user, so it's the right key for visibility='user' sharing."""
+    info = _TOKEN_CTX.get(None)
+    return info.sub if info is not None else None
+
+
+def _effective_org_id() -> str | None:
+    info = _TOKEN_CTX.get(None)
+    return info.org_id if info is not None else None
+
+
 def _enforce_tenant(requested: str | None) -> str | None:
     info = _TOKEN_CTX.get(None)
     if info is None:

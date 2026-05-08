@@ -84,10 +84,23 @@ def main() -> None:
 
     result = _search(prompt, token)
     if not result:
+        # Don't stay silent — the user (and Claude) need to know the hook ran.
+        # Distinguish between "API down" and "no relevant memory".
+        print(
+            f"## Memory: Suche fehlgeschlagen "
+            f"(API={API}, prompt[:50]={prompt[:50]!r})"
+        )
         return
 
     context = (result.get("prompt_context") or "").strip()
+    diagnostics = result.get("diagnostics") or {}
+    vector_diag = diagnostics.get("vector_stage", "?")
+
     if not context:
+        print(
+            f"## Memory: keine Treffer für diesen Prompt "
+            f"(vector_stage={vector_diag}, candidates={diagnostics.get('candidates', 0)})"
+        )
         return
 
     chunk_ids = [r.get("chunk_id", "") for r in result.get("results", []) if r.get("chunk_id")]
@@ -99,7 +112,8 @@ def main() -> None:
         )
 
     print(
-        f"## Memory-Kontext für diesen Prompt\n\n{context}{chunk_id_hint}\n\n"
+        f"## Memory-Kontext für diesen Prompt\n\n"
+        f"_diag: vector_stage={vector_diag}_\n\n{context}{chunk_id_hint}\n\n"
         "_Pflicht: Nach dem Task `mcp__claude_ai_Memory__feedback` für die genutzten Chunks._"
     )
 

@@ -69,6 +69,9 @@ def run_ingest(
         branch=source_dict.get("branch", "main"),
         commit=source_dict.get("commit", ""),
         content_hash=source_dict.get("content_hash", ""),
+        visibility=source_dict.get("visibility") or "private",
+        org_id=source_dict.get("org_id"),
+        user_id=source_dict.get("user_id"),
     )
     return ingest(
         source=src,
