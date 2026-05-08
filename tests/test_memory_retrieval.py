@@ -366,6 +366,78 @@ class TestQueryCache:
         assert k2 != k3
 
 
+class TestVectorStretch:
+    """Vector scores get stretched per-query so the best Chroma hit wins.
+
+    Scenario without stretching: nomic-embed-text typically returns cosine
+    distances around 0.5..1.0 → raw score in [0, 0.5]. Symbolic scores
+    routinely hit 1.0. Even when vector found a clear winner, sym=1.0 *
+    weight 0.20 = 0.2 still beat vec=0.5 * weight 0.30 = 0.15. Vector
+    stage was effectively decoration.
+    """
+
+    def test_top_vector_score_wins_against_high_symbolic(self, tmp_path: Path) -> None:
+        """A chunk with the highest vector score (after per-query stretch)
+        ranks above one with vec=0 sym=1.0. Pre-stretch: sym chunk would have
+        won 0.20 vs 0.15. With stretch: vec chunk gets full vector weight."""
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:vs.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="alpha")  # vector winner
+        cb = _make_chunk(src.source_id, 1, text="bravo")  # symbolic winner
+        insert_chunk(conn, ca)
+        insert_chunk(conn, cb)
+
+        records = _rerank(
+            [ca, cb],
+            # Realistic vector landscape: best Chroma score is 0.5
+            {ca.chunk_id: 0.5, cb.chunk_id: 0.0},
+            # Symbolic stage perfectly matches the other chunk
+            {ca.chunk_id: 0.0, cb.chunk_id: 1.0},
+            top_k=2,
+            conn=conn,
+        )
+        assert records[0].chunk_id == ca.chunk_id, (
+            f"vector winner did not rank first; finals: "
+            f"{[(r.chunk_id, r.score_final) for r in records]}"
+        )
+
+    def test_score_vector_field_is_raw_not_stretched(self, tmp_path: Path) -> None:
+        """The RetrievalRecord.score_vector reports the raw cosine-derived
+        score, not the per-query stretched value — otherwise calibration and
+        debugging signals lie."""
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:raw.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="x")
+        insert_chunk(conn, ca)
+        records = _rerank(
+            [ca],
+            {ca.chunk_id: 0.42},
+            {ca.chunk_id: 0.0},
+            top_k=1,
+            conn=conn,
+        )
+        assert records[0].score_vector == pytest.approx(0.42)
+
+    def test_empty_vector_scores_does_not_crash(self, tmp_path: Path) -> None:
+        """Vector stage skipped (no Chroma) → stretch is a no-op."""
+        conn = init_memory_db(tmp_path / "m.db")
+        src = _make_source("repo:t/r:novec.py")
+        upsert_source(conn, src)
+        ca = _make_chunk(src.source_id, 0, text="x")
+        insert_chunk(conn, ca)
+        records = _rerank(
+            [ca],
+            {},
+            {ca.chunk_id: 0.5},
+            top_k=1,
+            conn=conn,
+        )
+        assert len(records) == 1
+        assert records[0].score_vector == 0.0
+
+
 class TestFeedbackRanking:
     def test_positive_feedback_ranks_higher(self, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")

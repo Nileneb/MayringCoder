@@ -267,8 +267,27 @@ def _rerank(
     records: list[RetrievalRecord] = []
     llm_scores = llm_scores or {}
 
+    # Stretch vector scores so the best Chroma hit in *this* query gets the
+    # full vector weight. Cosine distances from nomic-embed-text typically
+    # land in [0.5, 1.0] → raw scores in [0, 0.5], i.e. half the weight even
+    # for the best possible match. Without stretching, symbolic (which easily
+    # hits 1.0 on token overlap) wins every ranking decision and the vector
+    # pipeline doesn't actually influence top_k. Per-query stretch is
+    # scale-free across embedding models / domains and doesn't penalise
+    # queries with weak corpus support — it just stops the asymmetry from
+    # silently disabling vector search.
+    if vector_scores:
+        _max_v = max(vector_scores.values())
+        if _max_v > 0:
+            stretched_vec = {cid: v / _max_v for cid, v in vector_scores.items()}
+        else:
+            stretched_vec = vector_scores
+    else:
+        stretched_vec = {}
+
     for chunk in candidates:
-        sv = vector_scores.get(chunk.chunk_id, 0.0)
+        sv_raw = vector_scores.get(chunk.chunk_id, 0.0)         # for the record
+        sv_eff = stretched_vec.get(chunk.chunk_id, 0.0)         # for ranking
         ss = symbolic_scores.get(chunk.chunk_id, 0.0)
         sr = _recency_score(chunk)
         sa = _source_affinity_score(chunk, affinity_source_id)
@@ -276,7 +295,7 @@ def _rerank(
         sl = llm_scores.get(chunk.chunk_id, 0.5)  # neutral default
 
         score_final = (
-            _WEIGHTS["vector"] * sv
+            _WEIGHTS["vector"] * sv_eff
             + _WEIGHTS["symbolic"] * ss
             + _WEIGHTS["recency"] * sr
             + _WEIGHTS["source_affinity"] * sa
@@ -297,7 +316,11 @@ def _rerank(
                 score_final = min(1.0, score_final + 0.10)
 
         reasons: list[str] = []
-        if sv > 0.5:
+        # Reasons fire on the *normalised* vector score so a query with weak
+        # global similarity but a clear in-query winner still surfaces
+        # "embedding_similarity" — otherwise this label was effectively dead
+        # for nomic-embed-text where raw scores rarely cross 0.5.
+        if sv_eff > 0.5:
             reasons.append("embedding_similarity")
         if ss > 0.3:
             reasons.append("token_overlap")
@@ -311,7 +334,7 @@ def _rerank(
         records.append(
             RetrievalRecord(
                 chunk_id=chunk.chunk_id,
-                score_vector=sv,
+                score_vector=sv_raw,
                 score_symbolic=ss,
                 score_recency=sr,
                 score_source_affinity=sa,
