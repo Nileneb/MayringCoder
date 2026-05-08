@@ -82,6 +82,19 @@ def run_ingest(
     workspace_id: str = "default",
 ) -> dict[str, Any]:
     """Create Source from dict and ingest into memory. Returns ingest result dict."""
+    # Compute content_hash from the actual content when the caller didn't
+    # set one. /memory/put doesn't pass content_hash in the request, and
+    # the state-detection logic (core.py: NEW/CHANGED/UNCHANGED) needs it
+    # to know whether anything changed. Without this fix every PUT returns
+    # state="new" even when re-ingesting identical content — the exact
+    # acceptance-criterion failure for closed Issue #137.
+    import hashlib as _hashlib
+    given_hash = source_dict.get("content_hash", "")
+    if not given_hash and content is not None:
+        given_hash = "sha256:" + _hashlib.sha256(
+            (content or "").encode("utf-8")
+        ).hexdigest()
+
     src = Source(
         source_id=source_dict.get("source_id") or Source.make_id(
             source_dict.get("repo", ""), source_dict.get("path", "")
@@ -91,7 +104,7 @@ def run_ingest(
         path=source_dict.get("path", ""),
         branch=source_dict.get("branch", "main"),
         commit=source_dict.get("commit", ""),
-        content_hash=source_dict.get("content_hash", ""),
+        content_hash=given_hash,
         visibility=source_dict.get("visibility") or "private",
         org_id=source_dict.get("org_id"),
         user_id=source_dict.get("user_id"),

@@ -371,6 +371,41 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_ingest_state_field(api: str, token: str) -> CheckResult:
+    """Issue #137 acceptance: /memory/put response.state must distinguish
+    NEW (first ingest), UNCHANGED (same content_hash), CHANGED (different
+    content). The original close was without this verification — the field
+    silently always returned 'new' for the REST path because content_hash
+    was never set on the request side.
+    """
+    sid = f"smoke:state:{int(time.time())}:{os.urandom(2).hex()}"
+
+    def _put(content: str) -> str:
+        code, body, _ = _http(
+            "POST", f"{api}/memory/put", token,
+            body={
+                "source_id": sid, "source_type": "note",
+                "repo": "smoke", "path": "state-test",
+                "content": content, "categorize": False,
+            },
+            timeout=20.0,
+        )
+        if code != 200:
+            return f"http={code}"
+        return (body or {}).get("state", "?")
+
+    s1 = _put("content-version-1")
+    s2 = _put("content-version-1")  # identical → unchanged
+    s3 = _put("content-version-2")  # different → changed
+
+    ok = s1 == "new" and s2 == "unchanged" and s3 == "changed"
+    return CheckResult(
+        "ingest_state_field",
+        ok,
+        f"first(new)={s1!r}  same(unchanged)={s2!r}  different(changed)={s3!r}",
+    )
+
+
 def check_visibility_isolation(api: str, token: str) -> CheckResult:
     """Ingest a private + a public source, search, verify visibility flags.
 
@@ -561,6 +596,7 @@ ALL_CHECKS = [
     ("feedback_slug_resolution",      check_feedback_slug_resolution),
     ("feedback_count_delta",          check_feedback_count_moves),
     ("micro_batch_indexes",           check_micro_batch_indexes),
+    ("ingest_state_field",            check_ingest_state_field),
     ("visibility_isolation",          check_visibility_isolation),
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("dashboard_endpoints",           check_dashboard_endpoints),
