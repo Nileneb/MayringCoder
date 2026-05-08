@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -95,7 +97,11 @@ class MemoryReindexRequest(BaseModel):
 
 class MemoryFeedbackRequest(BaseModel):
     chunk_id: str
-    signal: str
+    # Binary by design — see /memory/feedback route for rationale. The
+    # validator here makes the OpenAPI schema and any pydantic-aware
+    # client (Laravel etc.) reject neutral before the request even hits
+    # the network.
+    signal: Literal["positive", "negative"]
     metadata: dict | None = None
 
 

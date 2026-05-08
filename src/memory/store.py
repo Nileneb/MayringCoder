@@ -544,6 +544,17 @@ def add_feedback(
     signal: str,
     metadata: dict | None = None,
 ) -> None:
+    """Insert a feedback row. Binary-only — `neutral` is rejected.
+
+    Raises ``ValueError`` if anything other than positive/negative is
+    passed; the API route also validates this, but defending the data
+    layer here means a future mis-call from another caller fails loud
+    instead of silently writing a row that distorts scoring.
+    """
+    if signal not in ("positive", "negative"):
+        raise ValueError(
+            f"add_feedback: signal must be 'positive' or 'negative', got {signal!r}"
+        )
     conn.execute(
         """
         INSERT INTO chunk_feedback (chunk_id, signal, metadata, created_at)
@@ -555,7 +566,14 @@ def add_feedback(
 
 
 def get_feedback_score(conn: DBAdapter, chunk_id: str) -> float:
-    """Net feedback: 0.5=neutral, 1.0=nur positiv, 0.0=nur negativ."""
+    """Net feedback: 1.0 = all positive, 0.0 = all negative.
+
+    With binary-only signals (no neutral writes), the formula reduces to
+    pos / (pos+neg) → directly the positive ratio. Chunks without any
+    feedback return 0.5: that's a *scoring default* for "no information",
+    not a third semantic class. The DB never holds a literal 'neutral'
+    row.
+    """
     rows = conn.execute(
         "SELECT signal FROM chunk_feedback WHERE chunk_id = ?",
         (chunk_id,),

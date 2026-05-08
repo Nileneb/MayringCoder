@@ -312,8 +312,16 @@ async def memory_feedback(
     request: MemoryFeedbackRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    if request.signal not in ("positive", "negative", "neutral"):
-        raise HTTPException(status_code=400, detail="signal must be positive|negative|neutral")
+    # Binary-only by design. The earlier "neutral" signal was both useless
+    # in scoring (identical to no-feedback default 0.5) and actively
+    # harmful when emitted in bulk by the old auto-rater (diluted real
+    # signals). Reject it loud rather than silently accept and write a
+    # row that contributes nothing.
+    if request.signal not in ("positive", "negative"):
+        raise HTTPException(
+            status_code=400,
+            detail="signal must be 'positive' or 'negative' — neutral is no longer accepted"
+        )
     from src.memory.store import add_feedback
     add_feedback(_get_conn(), request.chunk_id, request.signal, request.metadata or {})
     return {"workspace_id": workspace_id, "chunk_id": request.chunk_id, "recorded": True}

@@ -151,8 +151,12 @@ def test_memory_feedback_records(client, seeded_chunk):
 
 
 def test_memory_feedback_rejects_invalid_signal(client):
-    r = client.post("/memory/feedback", json={"chunk_id": "x", "signal": "bogus"})
-    assert r.status_code == 400
+    """Bogus + 'neutral' both rejected — 422 from pydantic Literal validator
+    (preferred) or 400 from the in-route check, depending on which fires
+    first. Both are 'rejected', the contract is binary-only."""
+    for bad in ("bogus", "neutral"):
+        r = client.post("/memory/feedback", json={"chunk_id": "x", "signal": bad})
+        assert r.status_code in (400, 422), f"signal={bad!r} accepted (got {r.status_code})"
 
 
 # ---------------------------------------------------------------------------

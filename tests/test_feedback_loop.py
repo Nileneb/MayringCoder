@@ -116,23 +116,14 @@ def test_negative_feedback_lowers_ranking():
     assert ranked[0].score_final > ranked[1].score_final
 
 
-def test_neutral_feedback_has_no_effect():
-    """Neutral-marked chunk ranks the same as chunk with no feedback."""
-    from src.memory.retrieval import _rerank
+def test_neutral_feedback_is_rejected():
+    """Binary-only contract: add_feedback raises on 'neutral'.
 
+    Was previously a soft no-op (neutral row persisted but didn't shift
+    score). The auto-rater used to spam 3243 such rows — they were both
+    pointless and actively diluted real signals (1 pos + 10 neutral
+    yielded 0.545 instead of 1.0). Now the data layer rejects it loud."""
+    import pytest as _pt
     db = _db()
-    chunk_neutral = _make_chunk("chk-neutral", "src-neutral", "text", db)
-    chunk_none = _make_chunk("chk-none", "src-none", "text", db)
-
-    add_feedback(db, "chk-neutral", "neutral")
-
-    vector_scores = {"chk-neutral": 0.5, "chk-none": 0.5}
-    symbolic_scores = {"chk-neutral": 0.3, "chk-none": 0.3}
-
-    ranked = _rerank(
-        [chunk_neutral, chunk_none],
-        vector_scores, symbolic_scores,
-        top_k=2, conn=db,
-    )
-
-    assert abs(ranked[0].score_final - ranked[1].score_final) < 0.01
+    with _pt.raises(ValueError, match="positive.*negative"):
+        add_feedback(db, "chk-anything", "neutral")
