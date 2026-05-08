@@ -473,14 +473,20 @@ def check_retrieval_reasons_field(api: str, token: str) -> CheckResult:
 
 
 def check_igio_axis_on_chunks(api: str, token: str) -> CheckResult:
-    """Closed Issue #90/Wiki-v2 acceptance: IGIO classifier writes
-    `igio_axis` (issue/goal/intervention/outcome) onto chunks. Existing
-    chunks must include this field in /memory/chunk/{id} response.
+    """Issue #141 acceptance: ≥50% of active chunks have a non-empty
+    ``igio_axis``. The IGIO classifier was added late; older chunks were
+    never reclassified, so the column was filled <5% across the dataset.
 
-    User-Punkt: 'Reason' als Subfeld bei 'Intervention' ist genau wofür
-    igio_axis da ist — Intervention-typed chunks sollten existieren.
+    Two parts to this check:
+      1) shape — /memory/chunk/{id} response includes ``igio_axis`` and
+         ``igio_confidence`` fields (regression guard for the column itself).
+      2) coverage — /stats/igio-coverage reports ratio ≥ 0.5 (the
+         backfill loop has run enough times to fill the historical gap).
+
+    Coverage drives an admin-side backfill loop (cron'd workflow). Until
+    coverage clears 50%, this check stays red — that's the whole point:
+    the failing smoke is the trigger that keeps the loop running.
     """
-    # Find a chunk via search, then fetch its full record
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "fix bug", "top_k": 1, "include_text": False,
@@ -496,11 +502,27 @@ def check_igio_axis_on_chunks(api: str, token: str) -> CheckResult:
                            f"GET /memory/chunk http={code2}")
     chunk = (body2 or {}).get("chunk", {})
     has_igio = "igio_axis" in chunk and "igio_confidence" in chunk
+    if not has_igio:
+        return CheckResult(
+            "igio_axis_on_chunks", False,
+            f"shape regression: chunk_id={cid[:18]} missing igio fields",
+        )
+    code3, body3, _ = _http("GET", f"{api}/stats/igio-coverage", token)
+    if code3 != 200 or not isinstance(body3, dict):
+        return CheckResult(
+            "igio_axis_on_chunks", False,
+            f"GET /stats/igio-coverage http={code3}",
+        )
+    ratio = float(body3.get("ratio") or 0.0)
+    total = int(body3.get("total_active") or 0)
+    with_axis = int(body3.get("with_axis") or 0)
+    scope = body3.get("scope")
+    threshold = 0.5
+    ok = ratio >= threshold or total < 50
     return CheckResult(
-        "igio_axis_on_chunks",
-        has_igio,
-        f"chunk_id={cid[:18]} has_igio_fields={has_igio} "
-        f"axis={chunk.get('igio_axis')!r}",
+        "igio_axis_on_chunks", ok,
+        f"shape=OK  scope={scope}  total={total}  with_axis={with_axis}  "
+        f"ratio={ratio:.3f}  (target ≥ {threshold})",
     )
 
 
