@@ -148,7 +148,13 @@ def main() -> None:
     args = p.parse_args()
 
     conn = sqlite3.connect(args.db)
-    conn.execute("PRAGMA foreign_keys = ON")
+    # Migration deliberately disables FK enforcement: the promote step renames
+    # a source_id that chunks/refs still point at, which would otherwise trip
+    # the chunks→sources FK (parent UPDATE without ON UPDATE CASCADE). The
+    # script itself rewrites every dependent row in the same transaction;
+    # FK is re-armed before commit so any leftover dangling reference still
+    # surfaces.
+    conn.execute("PRAGMA foreign_keys = OFF")
 
     groups = find_duplicate_groups(conn)
     if not groups:
@@ -168,6 +174,9 @@ def main() -> None:
         print(f"    {stats}")
 
     if args.apply:
+        # Re-arm FKs and commit. If anything is still dangling, commit fails
+        # loudly here rather than silently corrupting the DB.
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.commit()
         print(f"\nApplied. Totals: {total}")
     else:
