@@ -56,6 +56,8 @@ app.include_router(jobs.router)
 app.include_router(duel.router)
 app.include_router(reports.router)
 app.include_router(_sync_router)
+from src.api.routes import dashboard as _dashboard
+app.include_router(_dashboard.router)
 
 
 @app.on_event("startup")

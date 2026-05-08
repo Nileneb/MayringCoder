@@ -9,14 +9,50 @@ Client pollt via GET /jobs/{id} und sieht Fortschritt statt stoischer
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).parent.parent.parent
-_JOBS: dict[str, dict] = {}
+
+# Persistent shadow of _JOBS so the dashboard's job history doesn't reset
+# every time the API container restarts. Atomic write (temp + rename) on
+# every status change; load at module import.
+_JOBS_STATE_FILE = Path(
+    os.environ.get("MAYRING_JOBS_STATE", str(_ROOT / "cache" / "jobs_state.json"))
+)
+_JOBS_LOCK = threading.Lock()
+
+
+def _load_jobs() -> dict[str, dict]:
+    try:
+        if _JOBS_STATE_FILE.exists():
+            return json.loads(_JOBS_STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        # Corrupted state shouldn't take the API down — start fresh, the
+        # broken file gets overwritten on the next save.
+        pass
+    return {}
+
+
+def _save_jobs() -> None:
+    """Atomic write of _JOBS to disk. Best-effort; never raises into callers."""
+    try:
+        _JOBS_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _JOBS_STATE_FILE.with_suffix(_JOBS_STATE_FILE.suffix + ".tmp")
+        with _JOBS_LOCK:
+            tmp.write_text(json.dumps(_JOBS, default=str), encoding="utf-8")
+            tmp.replace(_JOBS_STATE_FILE)
+    except OSError:
+        pass
+
+
+_JOBS: dict[str, dict] = _load_jobs()
 
 
 # tqdm default format example:
@@ -46,6 +82,7 @@ def make_job(workspace_id: str) -> str:
         "workspace_id": workspace_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
+    _save_jobs()
     return job_id
 
 
@@ -129,6 +166,10 @@ async def run_checker_job(job_id: str, checker_args: list[str], workspace_id: st
                 "current": _JOBS[job_id]["progress"].get("total", 0),
                 "eta": "done",
             }
+        _JOBS[job_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _save_jobs()
     except Exception as exc:
         _JOBS[job_id]["status"] = "error"
         _JOBS[job_id]["output"] = str(exc)
+        _JOBS[job_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _save_jobs()

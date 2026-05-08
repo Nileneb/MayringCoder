@@ -1,0 +1,357 @@
+"""Dashboard endpoints — read-only aggregations over existing tables.
+
+Each test exercises one endpoint with a tiny in-memory DB seeded with the
+exact rows needed to hit every code path. No HTTP layer involved; the
+endpoints are async functions called directly with a stub workspace_id.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from src.api.routes import dashboard
+from src.memory.store import init_memory_db
+
+
+@pytest.fixture
+def seeded_db(tmp_path, monkeypatch) -> sqlite3.Connection:
+    """Memory DB pre-loaded with one row per dashboard-relevant table."""
+    monkeypatch.setattr(dashboard, "_conn", lambda: conn)
+    db_path = tmp_path / "memory.db"
+    conn = init_memory_db(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn.execute(
+        "INSERT INTO ingestion_log (source_id, event_type, payload, created_at) "
+        "VALUES (?,?,?,?)",
+        ("repo:x:foo.py", "ingest_done", '{"chunks":3}', now),
+    )
+    conn.execute(
+        "INSERT INTO sources (source_id, source_type, repo, path, captured_at, "
+        "                     workspace_id, visibility) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("repo:x:foo.py", "repo_file", "x", "foo.py", now, "user-2", "user"),
+    )
+    conn.execute(
+        "INSERT INTO chunks (chunk_id, source_id, text, text_hash, created_at, "
+        "                    workspace_id) "
+        "VALUES (?,?,?,?,?,?)",
+        ("chk_a", "repo:x:foo.py", "hello", "sha256:abc", now, "user-2"),
+    )
+    conn.execute(
+        "INSERT INTO chunk_feedback (chunk_id, signal, created_at) "
+        "VALUES (?,?,?)",
+        ("chk_a", "positive", now),
+    )
+    conn.execute(
+        "INSERT INTO chunk_source_refs (canonical_chunk_id, source_id, "
+        "                                workspace_id, created_at) "
+        "VALUES (?,?,?,?)",
+        ("chk_a", "repo:x:foo.py", "user-2", now),
+    )
+    conn.execute(
+        "INSERT INTO chunk_source_refs (canonical_chunk_id, source_id, "
+        "                                workspace_id, created_at) "
+        "VALUES (?,?,?,?)",
+        ("chk_a", "repo:x:bar.py", "user-2", now),
+    )
+    conn.execute(
+        "INSERT INTO context_feedback_log (trigger_ids, context_text, "
+        "                                   was_referenced, led_to_retrieval, "
+        "                                   relevance_score, captured_at) "
+        "VALUES (?,?,?,?,?,?)",
+        ('["t1"]', "ctx", 1, 1, 0.8, now),
+    )
+    conn.execute(
+        "INSERT INTO trigger_stats (trigger_id, fire_count, ref_count, "
+        "                            is_active, last_fired) "
+        "VALUES (?,?,?,?,?)",
+        ("t1", 10, 7, 1, now),
+    )
+    conn.execute(
+        "INSERT INTO topic_transitions (from_topic, to_topic, count, last_seen) "
+        "VALUES (?,?,?,?)",
+        ("auth", "session", 5, now),
+    )
+    conn.execute(
+        "INSERT INTO llm_calls_log (call_type, model, prompt, response, "
+        "                            tool_calls, duration_ms, workspace_id, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ("vector_search", "nomic-embed-text", "stop hook",
+         '{"vector_stage":"ok(max_score=0.5,matches=3,mean_dist=0.6)"}',
+         0, 12, "user-2", now),
+    )
+    conn.commit()
+    yield conn
+    conn.close()
+
+
+def _run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+# ---------------------------------------------------------------------------
+# 1 recent_ops
+# ---------------------------------------------------------------------------
+
+def test_recent_ops_returns_ingestion_events(seeded_db):
+    res = _run(dashboard.recent_ops(workspace_id="user-2"))
+    assert res["workspace_id"] == "user-2"
+    assert len(res["ops"]) == 1
+    assert res["ops"][0]["event_type"] == "ingest_done"
+    assert res["ops"][0]["payload"] == {"chunks": 3}
+
+
+def test_recent_ops_filters_by_source_id(seeded_db):
+    res = _run(dashboard.recent_ops(source_id="nope", workspace_id="user-2"))
+    assert res["ops"] == []
+
+
+# ---------------------------------------------------------------------------
+# 3 feedback_log
+# ---------------------------------------------------------------------------
+
+def test_feedback_log_computes_referenced_rate(seeded_db):
+    res = _run(dashboard.feedback_log(workspace_id="user-2"))
+    assert res["injections_24h"] == 1
+    assert res["referenced_24h"] == 1
+    assert res["referenced_rate"] == 1.0
+    assert res["recent"][0]["was_referenced"] is True
+
+
+# ---------------------------------------------------------------------------
+# 4 source_refs
+# ---------------------------------------------------------------------------
+
+def test_source_refs_groups_by_chunk(seeded_db):
+    res = _run(dashboard.source_refs(min_sources=2, workspace_id="user-2"))
+    assert len(res["refs"]) == 1
+    assert res["refs"][0]["canonical_chunk_id"] == "chk_a"
+    assert res["refs"][0]["source_count"] == 2
+
+
+def test_source_refs_min_sources_filters_singletons(seeded_db):
+    res = _run(dashboard.source_refs(min_sources=99, workspace_id="user-2"))
+    assert res["refs"] == []
+
+
+# ---------------------------------------------------------------------------
+# 5 triggers
+# ---------------------------------------------------------------------------
+
+def test_triggers_computes_ratio(seeded_db):
+    res = _run(dashboard.triggers(workspace_id="user-2"))
+    assert len(res["triggers"]) == 1
+    assert res["triggers"][0]["fire_count"] == 10
+    assert res["triggers"][0]["ratio"] == 0.7
+
+
+# ---------------------------------------------------------------------------
+# 6 topic_flow
+# ---------------------------------------------------------------------------
+
+def test_topic_flow_returns_transitions(seeded_db):
+    res = _run(dashboard.topic_flow(workspace_id="user-2"))
+    assert len(res["flows"]) == 1
+    assert res["flows"][0]["from_topic"] == "auth"
+    assert res["flows"][0]["to_topic"] == "session"
+
+
+def test_topic_flow_filter_from(seeded_db):
+    res = _run(dashboard.topic_flow(from_topic="nope", workspace_id="user-2"))
+    assert res["flows"] == []
+
+
+# ---------------------------------------------------------------------------
+# 7 pi_tasks (returns empty without pi_jobs schema, must not crash)
+# ---------------------------------------------------------------------------
+
+def test_pi_tasks_no_pi_jobs_table_returns_empty(seeded_db):
+    """Older DBs lack pi_jobs; endpoint must fail soft."""
+    seeded_db.execute("DROP TABLE IF EXISTS pi_jobs")
+    seeded_db.commit()
+    res = _run(dashboard.pi_tasks(workspace_id="user-2"))
+    assert res["tasks"] == []
+
+
+# ---------------------------------------------------------------------------
+# 9 workspaces
+# ---------------------------------------------------------------------------
+
+def test_workspaces_tenant_sees_only_own(seeded_db, monkeypatch):
+    """Non-admin token: scoped to own workspace_id."""
+    from src.api.jwt_auth import TokenInfo
+    from src.api import mcp_auth as mcp_mod
+    mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=()))
+    try:
+        res = _run(dashboard.workspaces(workspace_id="user-2"))
+        assert len(res["workspaces"]) == 1
+        assert res["workspaces"][0]["workspace_id"] == "user-2"
+        assert res["workspaces"][0]["chunks"] == 1
+    finally:
+        mcp_mod._TOKEN_CTX.set(None)
+
+
+# ---------------------------------------------------------------------------
+# 10 vector_trend
+# ---------------------------------------------------------------------------
+
+def test_vector_trend_parses_ok_diag(seeded_db):
+    res = _run(dashboard.vector_trend(workspace_id="user-2"))
+    assert res["logged_24h"] == 1
+    assert res["success_rate"] == 1.0
+    assert res["mean_max_score"] == pytest.approx(0.5, abs=0.01)
+
+
+def test_vector_trend_no_logs_returns_zeroes(tmp_path, monkeypatch):
+    """Empty llm_calls_log → all zeros, no division-by-zero."""
+    db = init_memory_db(tmp_path / "empty.db")
+    monkeypatch.setattr(dashboard, "_conn", lambda: db)
+    res = _run(dashboard.vector_trend(workspace_id="user-2"))
+    assert res["logged_24h"] == 0
+    assert res["success_rate"] == 0.0
+    assert res["mean_max_score"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 8 activations + 2 jobs_history rely on in-process state — quick smoke tests
+# ---------------------------------------------------------------------------
+
+def test_activations_returns_recent_searches(monkeypatch):
+    """RECENT_ACTIVATIONS deque populated by run_search; admin sees all."""
+    from src.api import memory_service
+    from src.api import mcp_auth as mcp_mod
+    from src.api.jwt_auth import TokenInfo
+    memory_service._RECENT_ACTIVATIONS.clear()
+    memory_service._RECENT_ACTIVATIONS.append(
+        {"workspace_id": "user-2", "query": "q1", "source_ids": ["s1"], "ts": 1}
+    )
+    memory_service._RECENT_ACTIVATIONS.append(
+        {"workspace_id": "user-99", "query": "q2", "source_ids": ["s2"], "ts": 2}
+    )
+    mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=("admin",)))
+    try:
+        res = asyncio.get_event_loop().run_until_complete(
+            dashboard.activations(workspace_id="user-2")
+        )
+        assert len(res["activations"]) == 2
+    finally:
+        mcp_mod._TOKEN_CTX.set(None)
+
+
+def test_activations_tenant_filters_to_own_workspace(monkeypatch):
+    from src.api import memory_service
+    from src.api import mcp_auth as mcp_mod
+    from src.api.jwt_auth import TokenInfo
+    memory_service._RECENT_ACTIVATIONS.clear()
+    memory_service._RECENT_ACTIVATIONS.append(
+        {"workspace_id": "user-2", "query": "q1", "source_ids": [], "ts": 1}
+    )
+    memory_service._RECENT_ACTIVATIONS.append(
+        {"workspace_id": "user-99", "query": "q2", "source_ids": [], "ts": 2}
+    )
+    mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=()))
+    try:
+        res = asyncio.get_event_loop().run_until_complete(
+            dashboard.activations(workspace_id="user-2")
+        )
+        assert len(res["activations"]) == 1
+        assert res["activations"][0]["query"] == "q1"
+    finally:
+        mcp_mod._TOKEN_CTX.set(None)
+
+
+def test_jobs_history_reads_in_memory_dict():
+    from src.api import job_queue
+    job_queue._JOBS["jobX"] = {
+        "job_id": "jobX",
+        "status": "done",
+        "started_at": "2026-05-08T00:00:00Z",
+        "workspace_id": "user-2",
+    }
+    try:
+        res = _run(dashboard.jobs_history(workspace_id="user-2"))
+        assert any(j["job_id"] == "jobX" for j in res["jobs"])
+    finally:
+        del job_queue._JOBS["jobX"]
+
+
+def test_jobs_history_status_filter():
+    from src.api import job_queue
+    job_queue._JOBS.update({
+        "j1": {"job_id": "j1", "status": "done", "started_at": "2026-05-08", "workspace_id": "user-2"},
+        "j2": {"job_id": "j2", "status": "error", "started_at": "2026-05-08", "workspace_id": "user-2"},
+    })
+    try:
+        res = _run(dashboard.jobs_history(status="error", workspace_id="user-2"))
+        statuses = {j["status"] for j in res["jobs"]}
+        assert statuses == {"error"}
+    finally:
+        del job_queue._JOBS["j1"]
+        del job_queue._JOBS["j2"]
+
+
+# ---------------------------------------------------------------------------
+# job_queue persistence: round-trip via JSON file
+# ---------------------------------------------------------------------------
+
+def test_save_and_load_jobs_round_trip(tmp_path, monkeypatch):
+    """_save_jobs writes the dict, _load_jobs reads it back identically.
+
+    Avoids `importlib.reload` because other tests in the suite hold imported
+    references to ``_JOBS`` and would see a stale dict after the reload.
+    """
+    from src.api import job_queue
+
+    state = tmp_path / "jobs.json"
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", state)
+
+    job_queue._JOBS["jPersist"] = {
+        "job_id": "jPersist",
+        "status": "done",
+        "started_at": "2026-05-08T00:00:00Z",
+        "workspace_id": "user-2",
+    }
+    try:
+        job_queue._save_jobs()
+        assert state.exists()
+        loaded = job_queue._load_jobs()
+        assert "jPersist" in loaded
+        assert loaded["jPersist"]["status"] == "done"
+    finally:
+        del job_queue._JOBS["jPersist"]
+
+
+def test_load_jobs_handles_missing_file(tmp_path, monkeypatch):
+    from src.api import job_queue
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", tmp_path / "nope.json")
+    assert job_queue._load_jobs() == {}
+
+
+def test_load_jobs_handles_corrupt_file(tmp_path, monkeypatch):
+    """A truncated/garbage state file must not take the API down."""
+    from src.api import job_queue
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", bad)
+    assert job_queue._load_jobs() == {}
+
+
+def test_make_job_writes_state_file(tmp_path, monkeypatch):
+    """make_job() triggers a save so the dashboard sees the row immediately."""
+    from src.api import job_queue
+    state = tmp_path / "jobs.json"
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", state)
+    jid = job_queue.make_job("user-2")
+    try:
+        assert state.exists()
+        payload = json.loads(state.read_text())
+        assert jid in payload
+        assert payload[jid]["workspace_id"] == "user-2"
+    finally:
+        del job_queue._JOBS[jid]

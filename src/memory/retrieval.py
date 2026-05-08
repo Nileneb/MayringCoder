@@ -519,6 +519,27 @@ def search(
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
     opts["_vector_diag"] = vector_diag
 
+    # Optional telemetry: persist vector-stage outcome to llm_calls_log so
+    # the dashboard can plot success-rate over time. Reuses the existing
+    # table (call_type='vector_search') instead of introducing a new one.
+    # Off by default to avoid write amplification on read-heavy paths.
+    import os as _os
+    if _os.environ.get("MAYRING_LOG_VECTOR_TREND") == "1":
+        try:
+            from src.memory.store import log_llm_call
+            log_llm_call(
+                conn,
+                call_type="vector_search",
+                model=_os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
+                prompt=query[:200],
+                response=_json.dumps({"vector_stage": vector_diag}),
+                tool_calls=0,
+                duration_ms=0,
+                workspace_id=workspace_id or "default",
+            )
+        except Exception:
+            pass  # logging must never block retrieval
+
     # Stage 3b: PI-advisor LLM relevance scores — feeds both the candidate
     # filter (if oversized) AND the final _rerank() weighted formula (0.25
     # weight on llm_advisor). Auto-activates when candidates > 10 OR
