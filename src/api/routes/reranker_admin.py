@@ -59,7 +59,14 @@ async def training_data_counts(
     info: TokenInfo = Depends(get_token_info),
     days: int = 30,
 ) -> dict:
-    """Row-count snapshot to decide whether a training run makes sense."""
+    """Row-count snapshot to decide whether a training run makes sense.
+
+    Includes ``since_last_training`` deltas read from the model JSON
+    (cache/rerank_v2.json: trained_at, n_train). The auto-retrain logic
+    in .github/workflows/train-reranker.yml reads ``ready_to_train``
+    plus a ``ready_to_retrain`` (delta-based) gate so we don't burn
+    cycles on repeats with no new data.
+    """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
     conn = _conn()
@@ -85,14 +92,43 @@ async def training_data_counts(
         "WHERE created_at > datetime('now', ?) AND signal = 'negative'",
         (f"-{days} days",),
     ).fetchone()[0]
+
+    last_trained_at: str | None = None
+    n_rows_last_train: int = 0
+    last_metrics: dict | None = None
+    try:
+        from src.memory.reranker_v2 import _load_model
+        m = _load_model()
+        if isinstance(m, dict):
+            last_trained_at = m.get("trained_at")
+            n_rows_last_train = int(m.get("n_train", 0)) + int(m.get("n_test", 0))
+            last_metrics = m.get("metrics")
+    except Exception:
+        pass
+
+    new_rows_since_train = max(0, log_count - n_rows_last_train) if last_trained_at else log_count
+    cold_start_ready = log_count >= 50 and fb_pos >= 10
+    retrain_ready = (
+        last_trained_at is not None
+        and new_rows_since_train >= 50
+        and fb_pos >= 10
+    )
     return {
         "window_days": days,
         "retrieval_log_with_features": log_count,
         "feedback_total": fb_total,
         "feedback_positive": fb_pos,
         "feedback_negative": fb_neg,
-        "ready_to_train": log_count >= 50 and fb_pos >= 10,
-        "min_required": {"retrieval_log_rows": 50, "positives": 10},
+        "last_trained_at": last_trained_at,
+        "n_rows_at_last_train": n_rows_last_train,
+        "new_rows_since_train": new_rows_since_train,
+        "last_metrics": last_metrics,
+        "ready_to_train": cold_start_ready,
+        "ready_to_retrain": retrain_ready,
+        "min_required": {
+            "cold_start": {"retrieval_log_rows": 50, "positives": 10},
+            "retrain":    {"new_rows_since_train": 50, "positives": 10},
+        },
     }
 
 
