@@ -41,12 +41,33 @@ def ingest_image(
     multimodal model (vision_model) and stored as text chunks with embeddings.
 
     Returns:
-        {source_id, chunk_ids, indexed, deduped, superseded}
+        {source_id, state, chunk_ids, indexed, deduped, superseded}
+
+        state ∈ {"new", "changed", "unchanged"} — same contract as core.ingest().
     """
     from src.agents.vision import caption_image, get_image_metadata
     from src.analysis.context import _embed_texts
     # Late import avoids circular dep core -> image -> core
     from src.memory.ingestion.core import resolve_dedup
+    from src.memory.store import deactivate_chunks_by_source, get_source
+
+    existing_src = get_source(conn, source.source_id) if source.content_hash else None
+
+    if (
+        existing_src
+        and source.content_hash
+        and existing_src.content_hash == source.content_hash
+    ):
+        return {
+            "source_id": source.source_id,
+            "state": "unchanged",
+            "chunk_ids": [], "indexed": False,
+            "deduped": 0, "superseded": 0,
+        }
+
+    state = "changed" if existing_src else "new"
+    if state == "changed":
+        deactivate_chunks_by_source(conn, source.source_id)
 
     upsert_source(conn, source, workspace_id=workspace_id)
     log_ingestion_event(conn, source.source_id, "ingest_start", {"path": source.path})
@@ -133,6 +154,7 @@ def ingest_image(
 
     return {
         "source_id": source.source_id,
+        "state": state,
         "chunk_ids": new_chunk_ids,
         "indexed": indexed,
         "deduped": deduped_count,

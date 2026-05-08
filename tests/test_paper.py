@@ -76,7 +76,7 @@ def test_run_ingest_paper_scans_directory():
         with (
             patch("src.memory.store.init_memory_db", return_value=mock_conn),
             patch("src.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
-            patch("src.memory.ingest.ingest", return_value={"chunks": 2, "skipped": False}) as mock_ingest,
+            patch("src.memory.ingest.ingest", return_value={"chunks": 2, "state": "new"}) as mock_ingest,
         ):
             result = run_ingest_paper(
                 papers_dir=tmpdir,
@@ -100,7 +100,7 @@ def test_run_ingest_paper_missing_dir():
 
 
 def test_run_ingest_paper_skips_unchanged(tmp_path):
-    """ingest() returning skipped=True increments skipped counter."""
+    """ingest() returning state="unchanged" increments skipped counter."""
     from src.pipeline import run_ingest_paper
 
     (tmp_path / "paper.txt").write_text("Introduction\nContent.", encoding="utf-8")
@@ -111,7 +111,7 @@ def test_run_ingest_paper_skips_unchanged(tmp_path):
     with (
         patch("src.memory.store.init_memory_db", return_value=mock_conn),
         patch("src.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
-        patch("src.memory.ingest.ingest", return_value={"chunks": 0, "skipped": True}),
+        patch("src.memory.ingest.ingest", return_value={"chunks": 0, "state": "unchanged"}),
     ):
         result = run_ingest_paper(papers_dir=str(tmp_path), ollama_url="", model="")
 

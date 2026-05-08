@@ -67,7 +67,7 @@ def run_ingest_paper(
             opts={"categorize": True, "chunk_level": "paper"},
             workspace_id=workspace_id,
         )
-        if result.get("skipped"):
+        if result.get("state") == "unchanged":
             skipped += 1
         else:
             print(f"  [paper] Ingested: {paper_id} ({result.get('chunks', 0)} chunks)")

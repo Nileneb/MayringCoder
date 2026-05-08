@@ -355,7 +355,7 @@ def _scan_compact_files(model: str, ollama_available: bool) -> str:
                 ollama_url=_ollama_url,
                 model=model if ollama_available else "",
             )
-            if result.get("skipped"):
+            if result.get("state") == "unchanged":
                 skipped += 1
             else:
                 ingested += 1

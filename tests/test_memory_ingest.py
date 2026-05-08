@@ -169,8 +169,48 @@ class TestIngest:
         )
 
         assert result["source_id"] == source.source_id
+        assert result.get("state") == "new"
         assert len(result["chunk_ids"]) >= 1
         assert result["deduped"] == 0
+
+    @patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4])
+    def test_changed_content_deactivates_removed_chunks(self, mock_embed, tmp_path: Path) -> None:
+        """Issue #137: second ingest with different content_hash → state="changed".
+        Chunks that no longer exist in V2 (because V2 has fewer functions than V1)
+        must be deactivated; chunks that still exist at the same ordinal get
+        rewritten via ON CONFLICT and stay active with new content."""
+        from dataclasses import replace as _dc_replace
+        from src.memory.store import get_chunks_by_source
+
+        conn = init_memory_db(tmp_path / "m.db")
+        source_v1 = _make_source()
+        chroma = self._make_mock_chroma()
+
+        # V1: 3 functions → 3 chunks at ordinal 0,1,2
+        result1 = ingest(
+            source_v1,
+            "def foo(): pass\ndef bar(): pass\ndef baz(): pass\n",
+            conn, chroma, "http://localhost:11434", "", {},
+        )
+        assert result1.get("state") == "new"
+        v1_ids = set(result1["chunk_ids"])
+        assert len(v1_ids) == 3
+
+        # V2: 1 function → only ordinal 0 → ordinal 1+2 must be deactivated
+        source_v2 = _dc_replace(source_v1, content_hash="sha256:changed")
+        result2 = ingest(
+            source_v2, "def only(): return 42\n",
+            conn, chroma, "http://localhost:11434", "", {},
+        )
+        assert result2.get("state") == "changed"
+        v2_ids = set(result2["chunk_ids"])
+        assert len(v2_ids) == 1
+
+        # Removed chunks (in V1 but not V2) must be inactive
+        removed = v1_ids - v2_ids
+        active = {c.chunk_id for c in get_chunks_by_source(conn, source_v1.source_id, active_only=True)}
+        assert removed.isdisjoint(active), \
+            f"removed chunks {removed & active} still active after CHANGED"
 
     @patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4])
     def test_second_ingest_same_content_is_deduped(self, mock_embed, tmp_path: Path) -> None:
@@ -179,11 +219,13 @@ class TestIngest:
         chroma = self._make_mock_chroma()
         content = "def foo(): pass\n"
 
-        ingest(source, content, conn, chroma, "http://localhost:11434", "", {})
+        result1 = ingest(source, content, conn, chroma, "http://localhost:11434", "", {})
         result2 = ingest(source, content, conn, chroma, "http://localhost:11434", "", {})
 
-        # Source-level skip: same content_hash → pipeline skipped entirely
-        assert result2.get("skipped") is True
+        # First ingest: state="new"
+        assert result1.get("state") == "new"
+        # Source-level skip: same content_hash → state="unchanged", pipeline skipped
+        assert result2.get("state") == "unchanged"
         assert len(result2["chunk_ids"]) == 0
 
     def test_jsonl_log_written(self, tmp_path: Path) -> None:
@@ -364,7 +406,17 @@ class TestIngestConversationSummary:
         from src.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem3.db")
-        summary = "## Teil 1\n\nErster Abschnitt.\n\n## Teil 2\n\nZweiter Abschnitt."
+
+        # Sections >= 80 chars to pass the conversation_summary "too_short" filter
+        # (src/memory/ingestion/conversation_filter.py).
+        summary = (
+            "## Teil 1\n\n"
+            "Im ersten Abschnitt diskutieren wir die Architektur des Memory-Systems "
+            "und wie die einzelnen Komponenten zusammenarbeiten.\n\n"
+            "## Teil 2\n\n"
+            "Im zweiten Abschnitt geht es um konkrete Implementierungsdetails "
+            "und welche Entscheidungen wir bezüglich des Schemas getroffen haben.\n"
+        )
 
         with _patch("src.analysis.context._embed_texts", return_value=[[0.1]]):
             result = ingest_conversation_summary(

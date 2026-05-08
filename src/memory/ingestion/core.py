@@ -44,6 +44,7 @@ from src.memory.schema import Chunk, Source
 from src.memory.store import (
     add_source_ref,
     batch_context,
+    deactivate_chunks_by_source,
     find_by_text_hash,
     get_source,
     insert_chunk,
@@ -101,7 +102,12 @@ def ingest(
         multiview  (bool): use view-chunking for github_issue
 
     Returns:
-        {source_id, chunk_ids, indexed, deduped, superseded}
+        {source_id, state, chunk_ids, indexed, deduped, superseded}
+
+        state ∈ {"new", "changed", "unchanged"}:
+          - "new":       source_id never seen before
+          - "changed":   source_id known, content_hash differs (old chunks deactivated)
+          - "unchanged": source_id known, content_hash identical (fast-path skip)
     """
     opts = opts or {}
 
@@ -143,17 +149,33 @@ def ingest(
 
     from src.analysis.context import _embed_texts
 
-    # Skip re-ingestion unless caller passes opts={"force": True} — that lifts
-    # the cache completely (used by /populate?force_reingest=true so
-    # re-runs actually re-chunk, re-categorize, re-embed).
-    if source.content_hash and not do_force:
-        existing_src = get_source(conn, source.source_id)
-        if existing_src and existing_src.content_hash == source.content_hash:
-            return {
-                "source_id": source.source_id,
-                "chunk_ids": [], "indexed": False,
-                "deduped": 0, "superseded": 0, "skipped": True,
-            }
+    # State detection: NEW (source unseen) vs CHANGED (hash differs) vs
+    # UNCHANGED (hash identical → fast-path skip). do_force lifts the cache
+    # completely (used by /populate?force_reingest=true) and forces re-ingest
+    # of an existing source as CHANGED.
+    existing_src = get_source(conn, source.source_id) if source.content_hash else None
+
+    if (
+        existing_src
+        and source.content_hash
+        and existing_src.content_hash == source.content_hash
+        and not do_force
+    ):
+        return {
+            "source_id": source.source_id,
+            "state": "unchanged",
+            "chunk_ids": [], "indexed": False,
+            "deduped": 0, "superseded": 0,
+        }
+
+    state = "changed" if existing_src else "new"
+
+    # CHANGED: deactivate old chunks before re-ingest so retrieval no longer
+    # returns stale content. The CHANGED-with-force path is already handled by
+    # workflows/memory_ingest.py before calling ingest(); this covers the
+    # natural CHANGED case (different hash, no --force-reingest).
+    if state == "changed" and not do_force:
+        deactivate_chunks_by_source(conn, source.source_id)
 
     # Ganze Pipeline (upsert_source + alle insert_chunk + log_events) läuft
     # unter einem Commit. Das eliminiert bei einem typischen Populate
@@ -245,6 +267,7 @@ def ingest(
 
     result = {
         "source_id": source.source_id,
+        "state": state,
         "chunk_ids": new_chunk_ids,
         "indexed": indexed,
         "deduped": deduped_count,
