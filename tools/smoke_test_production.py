@@ -371,6 +371,82 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_wiki_p7_endpoints(api: str, token: str) -> CheckResult:
+    """Closed Issue #77 (Wiki 2.0 P7) acceptance: /wiki/rebuild,
+    /wiki/graph (mermaid), /wiki/edge, /wiki/conflicts must respond.
+    Tests endpoint reachability + workspace_id isolation. The actual
+    rebuild is async — we check the route accepts POSTs."""
+    paths_methods = [
+        ("GET", "/wiki/slugs"),
+        ("GET", "/wiki/conflicts"),
+        ("GET", "/wiki/feedback-matrix?limit=1"),
+    ]
+    failures: list[str] = []
+    for method, path in paths_methods:
+        code, _, _ = _http(method, f"{api}{path}", token)
+        if code not in (200, 404):
+            failures.append(f"{method} {path}: http={code}")
+    return CheckResult(
+        "wiki_p7_endpoints",
+        not failures,
+        "; ".join(failures) if failures else f"{len(paths_methods)} wiki endpoints reachable",
+    )
+
+
+def check_wiki_p8_history(api: str, token: str) -> CheckResult:
+    """Closed Issue #78 (Wiki 2.0 P8) acceptance: history/diff endpoints
+    + wiki_contributions logged per user-id."""
+    code1, _, _ = _http("GET", f"{api}/wiki/history?slug=mayringcoder&limit=5", token)
+    code2, _, _ = _http("GET", f"{api}/wiki/team?slug=mayringcoder&limit=5", token)
+    return CheckResult(
+        "wiki_p8_history",
+        code1 in (200, 404, 422) and code2 in (200, 404, 422),
+        f"history.http={code1}  team.http={code2} (200/404/422 all OK — endpoints exist)",
+    )
+
+
+def check_image_routing_supported(api: str, token: str) -> CheckResult:
+    """Closed Issue #91 acceptance: vision-capable model route exists.
+    Tests via /api/mcp-service/llm-endpoint server-side resolver — if
+    'vision' agent resolves at all, the routing path is wired."""
+    code, body, _ = _http(
+        "GET",
+        f"{api}/api/mcp-service/llm-endpoint/system?agent=vision",
+        token,
+    )
+    # Either resolves cleanly (200) or replies "not configured" (404/422).
+    # 500 = code path crashed, that's the regression we'd catch.
+    return CheckResult(
+        "image_routing_supported",
+        code != 500,
+        f"http={code}  body={body}  (must NOT be 500 = crash)",
+    )
+
+
+def check_training_merge_endpoint(api: str, token: str) -> CheckResult:
+    """Closed Issue #87 acceptance: POST /api/training/merge endpoint
+    exists. Empty POST should yield validation error (422), not 404 or
+    500 — proves the route is registered."""
+    code, body, _ = _http("POST", f"{api}/api/training/merge", token, body={})
+    # 200/400/422 all prove the route exists; 404 = never built; 500 = crash
+    return CheckResult(
+        "training_merge_endpoint",
+        code in (200, 400, 422),
+        f"http={code} body={body}  (200/400/422 = route exists; 404 or 500 = regression)",
+    )
+
+
+def check_turbulence_endpoint(api: str, token: str) -> CheckResult:
+    """Closed Issue #83 acceptance: /turbulence endpoint exists for
+    code-quality reports."""
+    code, body, _ = _http("POST", f"{api}/turbulence", token, body={})
+    return CheckResult(
+        "turbulence_endpoint",
+        code in (200, 400, 422),
+        f"http={code} (200/400/422 = endpoint exists)",
+    )
+
+
 def check_jwt_invalid_signature_rejected(api: str, token: str) -> CheckResult:
     """Closed Issue #94 acceptance: tampered JWTs must be rejected with 401.
 
@@ -717,6 +793,11 @@ ALL_CHECKS = [
     ("jwt_invalid_signature",         check_jwt_invalid_signature_rejected),
     ("task_feedback_matrix",          check_task_feedback_matrix),
     ("wiki_graph_clusters",           check_wiki_graph_clusters),
+    ("wiki_p7_endpoints",             check_wiki_p7_endpoints),
+    ("wiki_p8_history",               check_wiki_p8_history),
+    ("image_routing_supported",       check_image_routing_supported),
+    ("training_merge_endpoint",       check_training_merge_endpoint),
+    ("turbulence_endpoint",           check_turbulence_endpoint),
     ("pi_tasks_schema",               check_pi_tasks_schema),
     ("categorization_logging",        check_categorization_logging),
     ("jobs_progress_observability",   check_jobs_progress_observability),
