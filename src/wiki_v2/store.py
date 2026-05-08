@@ -98,12 +98,30 @@ def log_contribution(
 
 
 def upsert_node(conn: DBAdapter, node: WikiNode, user_id: str = "system") -> None:
+    """Insert-or-update a wiki_nodes row.
+
+    BUG-FIX (#162): the ON CONFLICT clause used to overwrite ``cluster_id``
+    with ``excluded.cluster_id``. New WikiNode objects from the ingest
+    pipeline have ``cluster_id=""`` because clustering hasn't run yet —
+    so every re-ingest wiped the cluster_id that ``upsert_cluster`` had
+    just written, leaving production with cluster shells whose
+    ``wiki_nodes.cluster_id`` JOIN returned no members.
+
+    The fix: keep the existing cluster_id when the incoming value is
+    empty (default for fresh-from-ingest nodes). When the caller passes
+    a non-empty cluster_id explicitly (e.g. a future migration), it
+    still wins. ``upsert_cluster`` continues to be the canonical writer
+    of cluster_id via its dedicated ``UPDATE wiki_nodes SET cluster_id``.
+    """
     conn.execute(
         """INSERT INTO wiki_nodes (id, repo_slug, workspace_id, type, cluster_id,
            labels_json, summary, turbulence_tier, loc, updated_at)
            VALUES (?,?,?,?,?,?,?,?,?, datetime('now'))
            ON CONFLICT(id, workspace_id) DO UPDATE SET
-           cluster_id=excluded.cluster_id, labels_json=excluded.labels_json,
+           cluster_id=CASE WHEN excluded.cluster_id != ''
+                           THEN excluded.cluster_id
+                           ELSE wiki_nodes.cluster_id END,
+           labels_json=excluded.labels_json,
            summary=excluded.summary, turbulence_tier=excluded.turbulence_tier,
            loc=excluded.loc, updated_at=excluded.updated_at""",
         (node.id, node.repo_slug, node.workspace_id, node.type, node.cluster_id,

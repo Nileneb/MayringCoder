@@ -118,3 +118,59 @@ def test_upsert_cluster_logs_contribution(tmp_path):
     assert len(rows) == 1
     assert rows[0]["action"] == "upsert_cluster"
     conn.close()
+
+
+def test_upsert_node_preserves_cluster_id_on_re_ingest(tmp_path):
+    """Issue #162 regression guard.
+
+    Before the fix, upsert_node's ON CONFLICT clause overwrote
+    ``cluster_id`` with ``excluded.cluster_id``. New WikiNode objects
+    from the ingest pipeline default to ``cluster_id=""``, so every
+    re-ingest after clustering wiped the cluster_id that
+    upsert_cluster had just set — clusters ended up as shells in
+    wiki_clusters with no nodes pointing back, JOIN returned
+    members=[], API showed clusters_count=N but max_members=0.
+
+    Repro:
+      1. Insert a node (cluster_id="").
+      2. Run upsert_cluster — sets node.cluster_id = "cl_42".
+      3. Re-insert the SAME node (cluster_id="" again — pipeline-default).
+         Before fix: cluster_id reset to "".
+         After fix: cluster_id stays "cl_42".
+    """
+    from src.wiki_v2 import store as s
+    db = tmp_path / "wiki_regression.db"
+    conn = s.init_wiki_db(db)
+
+    n = WikiNode(id="src/foo.py", repo_slug="r", workspace_id="ws")
+    s.upsert_node(conn, n)
+
+    cluster = Cluster(cluster_id="cl_42", repo_slug="r", workspace_id="ws",
+                      name="Foo group", members=["src/foo.py"])
+    s.upsert_cluster(conn, cluster)
+
+    # Verify the cluster_id was set
+    row = conn.execute(
+        "SELECT cluster_id FROM wiki_nodes WHERE id='src/foo.py' AND workspace_id='ws'"
+    ).fetchone()
+    assert row["cluster_id"] == "cl_42", "upsert_cluster should set cluster_id"
+
+    # Now re-ingest the SAME node (this is what pipeline does after every
+    # ingest event — fresh WikiNode object with cluster_id="")
+    n_re = WikiNode(id="src/foo.py", repo_slug="r", workspace_id="ws")
+    assert n_re.cluster_id == "", "default cluster_id is empty"
+    s.upsert_node(conn, n_re)
+
+    row = conn.execute(
+        "SELECT cluster_id FROM wiki_nodes WHERE id='src/foo.py' AND workspace_id='ws'"
+    ).fetchone()
+    assert row["cluster_id"] == "cl_42", (
+        "re-ingest with empty cluster_id MUST preserve the existing one — "
+        "without this, every re-ingest wipes clustering"
+    )
+
+    # Sanity: get_clusters now reflects the preserved cluster_id
+    clusters = s.get_clusters(conn, "ws")
+    assert len(clusters) == 1
+    assert clusters[0].members == ["src/foo.py"]
+    conn.close()
