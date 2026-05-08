@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Stop hook — captures the last user/assistant turn into Memory and rates injected chunks.
+"""Stop hook — captures the last user/assistant turn into Memory.
 
-Two responsibilities, both fire-and-forget (always exit 0):
+Reads `transcript_path` from stdin (Claude Code Stop-hook payload), pulls the
+last user turn + last assistant turn out of the JSONL, and POSTs them to
+`/conversation/micro-batch`. The server-side summariser condenses the pair,
+dedups via deterministic source_id (`conversation:<workspace>:<session>`),
+and ingests as `source_type=conversation_summary`. Closes the gap between
+PostCompact events: Memory sees every completed turn, not just compaction
+boundaries.
 
-1. **Turn capture** — read `transcript_path` from stdin (Claude Code Stop-hook
-   payload), pull the last user turn + last assistant turn out of the JSONL,
-   and POST them to `/memory/conversation/micro-batch`. The server-side
-   summarizer condenses the pair, dedups via deterministic source_id
-   (`conversation:<workspace>:<session>`), and ingests as
-   `source_type=conversation_summary`. This closes the gap between PostCompact
-   events: the Memory layer now sees every completed turn, not just compaction
-   boundaries.
+Fire-and-forget (always exits 0). Workspace slug derives from CWD basename.
 
-2. **Neutral feedback** — call `/memory/unrated-chunks` and mark every chunk
-   that was injected this turn but never rated as `signal=neutral`. Keeps the
-   feedback signal clean.
-
-Workspace slug derives from CWD basename (lowercased) — matches the SessionStart
-hook's convention.
+History note: an earlier version of this hook also auto-rated every injected
+chunk as `signal=neutral`. That was strictly harmful — neutral entries are
+indistinguishable from "no feedback" in scoring (both yield 0.5) but actively
+dilute real signals (1 positive + 10 neutral → 0.545 instead of 1.0). Removed.
 """
 from __future__ import annotations
 
@@ -30,7 +27,6 @@ import urllib.request
 _JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 _API_URL = os.environ.get("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 _TIMEOUT = 5
-_LOOKBACK_MINUTES = 60
 
 _MAX_TURN_CHARS = 4000      # truncate per-turn content fed to the server
 _TURN_PAIR_LIMIT = 2        # one user + one assistant turn
@@ -161,38 +157,6 @@ def _capture_turns(payload: dict, token: str) -> None:
     _post_micro_batch(turns, session_id, _workspace_slug(), token)
 
 
-def _get(path: str, token: str) -> dict:
-    req = urllib.request.Request(
-        f"{_API_URL}{path}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    try:
-        resp = urllib.request.urlopen(req, timeout=_TIMEOUT)
-        return json.loads(resp.read())
-    except Exception:
-        return {}
-
-
-def _post_feedback(chunk_id: str, token: str) -> None:
-    payload = json.dumps({"chunk_id": chunk_id, "signal": "neutral"}).encode()
-    req = urllib.request.Request(
-        f"{_API_URL}/memory/feedback",
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-        method="POST",
-    )
-    try:
-        urllib.request.urlopen(req, timeout=_TIMEOUT)
-    except Exception:
-        pass
-
-
-def _rate_unrated(token: str) -> None:
-    data = _get(f"/memory/unrated-chunks?minutes={_LOOKBACK_MINUTES}", token)
-    for chunk_id in data.get("chunk_ids", []) or []:
-        _post_feedback(chunk_id, token)
-
-
 def main() -> None:
     token = _read_token()
     if not token:
@@ -200,10 +164,6 @@ def main() -> None:
     payload = _read_payload()
     try:
         _capture_turns(payload, token)
-    except Exception:
-        pass
-    try:
-        _rate_unrated(token)
     except Exception:
         pass
 
