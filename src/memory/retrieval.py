@@ -52,8 +52,8 @@ _WEIGHTS = {
     "symbolic":        0.20,
     "recency":         0.10,
     "source_affinity": 0.10,
-    "feedback":        0.05,   # additive ±0.05 Bonus
-    "llm_advisor":     0.25,   # PI-advisor semantic relevance (0.5 = neutral when missing)
+    "feedback":        0.15,   # additive ±0.15, plus asymmetric -0.10 penalty when sf<0.3
+    "llm_advisor":     0.15,   # PI-advisor semantic relevance (0.5 = neutral when missing)
 }
 
 _RECENCY_DECAY_DAYS = 30.0
@@ -268,9 +268,15 @@ def _rerank(
             + _WEIGHTS["symbolic"] * ss
             + _WEIGHTS["recency"] * sr
             + _WEIGHTS["source_affinity"] * sa
-            + _WEIGHTS["feedback"] * (sf * 2.0 - 1.0)   # [0,1]→[-1,1] → ±0.05
+            + _WEIGHTS["feedback"] * (sf * 2.0 - 1.0)   # [0,1]→[-1,1] × 0.15 → ±0.15
             + _WEIGHTS["llm_advisor"] * sl
         )
+
+        # Asymmetric negative penalty: a chunk users repeatedly mark as
+        # irrelevant must drop out of top_k entirely, not just rank lower.
+        # Triggers when ≥70% of feedback is negative.
+        if sf < 0.3:
+            score_final -= 0.10
 
         # Compaction boost: prefer conversation_summary section chunks
         if session_compacted and source_type_map:
@@ -398,11 +404,22 @@ def search(
 
     # Stage 3: vector retrieval
     vector_scores: dict[str, float] = {}
-    if chroma_collection is not None and _HAS_EMBED:
+    vector_diag: str = "ok"  # surfaces in opts so callers can see WHY 0.0 happened
+    if chroma_collection is None:
+        vector_diag = "no_chroma_collection"
+        _log.warning("vector stage skipped: chroma_collection is None (query=%r)", query[:60])
+    elif not _HAS_EMBED:
+        vector_diag = "embed_module_missing"
+        _log.warning("vector stage skipped: _embed_texts not importable")
+    else:
         try:
             query_emb = _embed_texts([query], ollama_url)[0]
-            n_results = min(top_k * 2, chroma_collection.count())
-            if n_results > 0:
+            chroma_count = chroma_collection.count()
+            n_results = min(top_k * 2, chroma_count)
+            if n_results == 0:
+                vector_diag = f"chroma_empty(count={chroma_count})"
+                _log.warning("vector stage: chroma collection has 0 entries")
+            else:
                 chroma_where = (
                     {"workspace_id": {"$eq": workspace_id}} if workspace_id else None
                 )
@@ -415,6 +432,7 @@ def search(
                         include=["distances"],
                     )
                 except Exception as _chroma_exc:
+                    vector_diag = f"chroma_query_failed:{type(_chroma_exc).__name__}"
                     _log.warning(
                         "chroma workspace filter failed for workspace=%r (%s) "
                         "— skipping vector stage to prevent cross-workspace data leak",
@@ -427,8 +445,23 @@ def search(
                     dist_list = results.get("distances", [[]])[0]
                 candidate_set = {c.chunk_id for c in candidates}
                 vector_scores = _normalize_vector_scores(ids_list, dist_list, candidate_set)
+                if results is not None and ids_list and not vector_scores:
+                    # Hits returned, but none in our candidate set → SQLite/Chroma drift
+                    vector_diag = (
+                        f"chroma_candidate_mismatch(hits={len(ids_list)}"
+                        f",candidates={len(candidate_set)})"
+                    )
+                    _log.warning(
+                        "vector stage: chroma returned %d hits but 0 in candidate set "
+                        "(SQLite/Chroma drift; query=%r workspace=%r)",
+                        len(ids_list), query[:60], workspace_id,
+                    )
+                elif not ids_list and chroma_count > 0:
+                    vector_diag = "chroma_query_empty"
         except Exception as exc:
+            vector_diag = f"embed_failed:{type(exc).__name__}"
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
+    opts["_vector_diag"] = vector_diag
 
     # Stage 3b: PI-advisor LLM relevance scores — feeds both the candidate
     # filter (if oversized) AND the final _rerank() weighted formula (0.25

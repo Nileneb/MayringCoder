@@ -41,6 +41,10 @@ def run_search(
     return {
         "results": [r.to_dict() for r in results],
         "prompt_context": compress_for_prompt(results, char_budget),
+        "diagnostics": {
+            "vector_stage": opts.get("_vector_diag", "unknown"),
+            "candidates": len(results),
+        },
     }
 
 

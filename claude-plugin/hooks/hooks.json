@@ -18,6 +18,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/memory_inject.py"
+          },
+          {
+            "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/start_watcher.py"
           },
           {

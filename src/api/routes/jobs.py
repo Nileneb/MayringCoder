@@ -229,8 +229,11 @@ async def trigger_populate(
     # komplett überspringt und alle chunks ohne category_labels landen.
     # Das war der Befund aus dem ersten Prod-Smoke (d5023372): 1128 Chunks,
     # 0 mit Labels. Standard-Weg aus dem UI muss Mayring aktiv haben.
+    # --workers 2: server-side parallelization halves wall-clock time on
+    # large repos. Ollama+mistral:7b handles 2 concurrent generations on
+    # the three.linn.games GPU without VRAM pressure.
     args = ["--repo", request.repo, "--populate-memory", "--multiview",
-            "--memory-categorize"]
+            "--memory-categorize", "--workers", "2"]
     if request.force_reingest:
         args.append("--force-reingest")
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
