@@ -62,9 +62,11 @@ class Source:
     captured_at: str = field(default_factory=lambda: _now_iso())
     visibility: str = "private"   # "private" | "org" | "user" | "public"
     org_id: str | None = None
-    user_id: str | None = None    # JWT.sub — same value across all workspaces
-                                  # of the same human user; required when
-                                  # visibility="user"
+    user_id: str | None = None    # JWT.sub from app.linn.games — currently the
+                                  # Laravel User.id as a string ("2"), not a
+                                  # UUID. Same value across all workspaces of
+                                  # the same human user; required when
+                                  # visibility="user".
 
     @staticmethod
     def make_id(repo: str, path: str) -> str:
