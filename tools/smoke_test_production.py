@@ -371,6 +371,82 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_retrieval_reasons_field(api: str, token: str) -> CheckResult:
+    """User question: 'wo wird der Reason gespeichert?' — every result of
+    /memory/search must carry a `reasons` array explaining WHY a chunk
+    surfaced (embedding_similarity, token_overlap, recent_chunk,
+    source_affinity_match, llm_advisor_high). At least one of the top-5
+    results must have a non-empty reasons list."""
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "feedback memory hook", "top_k": 5,
+              "include_text": False, "llm_prefilter": False},
+        timeout=12.0,
+    )
+    if code != 200:
+        return CheckResult("retrieval_reasons_field", False, f"http={code}")
+    results = (body or {}).get("results", [])
+    has_reasons = any(r.get("reasons") for r in results)
+    return CheckResult(
+        "retrieval_reasons_field",
+        has_reasons,
+        f"top_k={len(results)} chunks_with_reasons="
+        f"{sum(1 for r in results if r.get('reasons'))}",
+    )
+
+
+def check_igio_axis_on_chunks(api: str, token: str) -> CheckResult:
+    """Closed Issue #90/Wiki-v2 acceptance: IGIO classifier writes
+    `igio_axis` (issue/goal/intervention/outcome) onto chunks. Existing
+    chunks must include this field in /memory/chunk/{id} response.
+
+    User-Punkt: 'Reason' als Subfeld bei 'Intervention' ist genau wofür
+    igio_axis da ist — Intervention-typed chunks sollten existieren.
+    """
+    # Find a chunk via search, then fetch its full record
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "fix bug", "top_k": 1, "include_text": False,
+              "llm_prefilter": False},
+    )
+    if code != 200 or not (body or {}).get("results"):
+        return CheckResult("igio_axis_on_chunks", False,
+                           "could not get a chunk_id to inspect")
+    cid = body["results"][0]["chunk_id"]
+    code2, body2, _ = _http("GET", f"{api}/memory/chunk/{cid}", token)
+    if code2 != 200:
+        return CheckResult("igio_axis_on_chunks", False,
+                           f"GET /memory/chunk http={code2}")
+    chunk = (body2 or {}).get("chunk", {})
+    has_igio = "igio_axis" in chunk and "igio_confidence" in chunk
+    return CheckResult(
+        "igio_axis_on_chunks",
+        has_igio,
+        f"chunk_id={cid[:18]} has_igio_fields={has_igio} "
+        f"axis={chunk.get('igio_axis')!r}",
+    )
+
+
+def check_wiki_context_injector_used(api: str, token: str) -> CheckResult:
+    """Closed Issue #75 (Wiki-v2 P5) acceptance: WikiContextInjector
+    builds context blocks. The /wiki/graph response includes the
+    `activations` field that lists recent context-injection events —
+    if the injector ran for any source, it surfaces here. Empty
+    activations after a fresh injection = injector silently skipped."""
+    code, body, _ = _http(
+        "GET", f"{api}/wiki/graph?slug=mayringcoder", token,
+    )
+    if code != 200:
+        return CheckResult("wiki_context_injector_used", False, f"http={code}")
+    has_activations_key = isinstance(body, dict) and "activations" in body
+    return CheckResult(
+        "wiki_context_injector_used",
+        has_activations_key,
+        f"http={code}  has_activations_field={has_activations_key} "
+        f"recent_count={len((body or {}).get('activations', []) if isinstance(body, dict) else [])}",
+    )
+
+
 def check_wiki_p7_endpoints(api: str, token: str) -> CheckResult:
     """Closed Issue #77 (Wiki 2.0 P7) acceptance: /wiki/rebuild,
     /wiki/graph (mermaid), /wiki/edge, /wiki/conflicts must respond.
@@ -793,6 +869,9 @@ ALL_CHECKS = [
     ("jwt_invalid_signature",         check_jwt_invalid_signature_rejected),
     ("task_feedback_matrix",          check_task_feedback_matrix),
     ("wiki_graph_clusters",           check_wiki_graph_clusters),
+    ("retrieval_reasons_field",       check_retrieval_reasons_field),
+    ("igio_axis_on_chunks",           check_igio_axis_on_chunks),
+    ("wiki_context_injector_used",    check_wiki_context_injector_used),
     ("wiki_p7_endpoints",             check_wiki_p7_endpoints),
     ("wiki_p8_history",               check_wiki_p8_history),
     ("image_routing_supported",       check_image_routing_supported),
