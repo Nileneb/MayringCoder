@@ -21,11 +21,12 @@ from src.api.mcp_auth import (
 
 
 def _resolve_model(override: str | None) -> str:
+    """Issue #88: never read OLLAMA_MODEL from env. ModelRouter is the only
+    path so admin routes (/stats/admin/model-routes) actually take effect."""
     if override:
         return override
     from src.model_router import ModelRouter
-    routed = ModelRouter(_OLLAMA_URL).resolve("text")
-    return routed or os.getenv("OLLAMA_MODEL") or "qwen2.5-coder:7b"
+    return ModelRouter(_OLLAMA_URL).resolve("text") or "qwen2.5-coder:7b"
 
 
 def register_second_opinion_tools(mcp: FastMCP) -> None:

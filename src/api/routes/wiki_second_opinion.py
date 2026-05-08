@@ -125,9 +125,7 @@ async def wiki_second_opinion(
 
 
 def _resolve_default_model(ollama_url: str) -> str:
+    """Issue #88: ModelRouter is the only allowed path. Never read
+    OLLAMA_MODEL from env or admin overrides won't take effect."""
     from src.model_router import ModelRouter
-    return (
-        ModelRouter(ollama_url=ollama_url).resolve("text")
-        or os.getenv("OLLAMA_MODEL")
-        or "qwen2.5-coder:7b"
-    )
+    return ModelRouter(ollama_url=ollama_url).resolve("text") or "qwen2.5-coder:7b"
