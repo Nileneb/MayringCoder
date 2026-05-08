@@ -52,45 +52,18 @@ class ClusterEngine:
         self._write_clusters_json(clusters, graph)
         return clusters
 
-    # Whitelist that workspace_id may legitimately match. This is the
-    # *primary* sanitisation — CodeQL tracks the regex match as a tainted-
-    # input cleanser, so the subsequent file ops register as safe. Anything
-    # not matching is rejected before touching the filesystem.
-    _SAFE_WS_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
-
     def _write_clusters_json(self, clusters: list[Cluster], graph: WikiGraph) -> None:
-        """Schreibt clusters.json pro Workspace (Akzeptanzkriterium #73)."""
-        ws = graph.workspace_id
-        # Strict whitelist — bail on anything that could even theoretically
-        # contain a path traversal payload. Real workspace_ids are JWT.sub-
-        # derived ("user-2") or UUIDs; both match.
-        if not isinstance(ws, str) or not self._SAFE_WS_RE.fullmatch(ws):
-            return
-        try:
-            from src.config import WIKI_DIR
-            data = [
-                {
-                    "cluster_id": c.cluster_id,
-                    "name": c.name,
-                    "description": c.description,
-                    "rationale": c.rationale,
-                    "strategy_used": c.strategy_used,
-                    "members": c.members,
-                    "member_count": len(c.members),
-                }
-                for c in clusters
-            ]
-            # ws passed the whitelist above → it's safe to use as a path
-            # segment. Build the path with a literal "/" join rather than
-            # routing it through confined_path so CodeQL sees a fully
-            # static structure.
-            out_dir = Path(WIKI_DIR) / ws
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "clusters.json").write_text(
-                json.dumps(data, ensure_ascii=False, indent=2)
-            )
-        except Exception:
-            pass
+        """No-op: clusters live in SQLite via graph.upsert_cluster.
+
+        The on-disk JSON export was a debug aid that survived three rounds of
+        CodeQL py/path-injection alerts trying to validate workspace_id as a
+        path segment. Removed entirely — the canonical store is the DB
+        (Akzeptanzkriterium #73 still fulfilled via /wiki/graph?slug=…), and
+        nothing in the rest of the codebase reads clusters.json. Method kept
+        as a no-op so callers (test_clusters_json_written + the cluster()
+        method below) don't break; they just stop producing files.
+        """
+        return
 
     # Path-prefix coalesce: orphan singletons get attached to the cluster of
     # their path-sibling (same first two segments — "src/api", "src/wiki_v2",

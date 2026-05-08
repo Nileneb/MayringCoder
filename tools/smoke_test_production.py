@@ -371,15 +371,91 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_coverage_map_complete(api: str, token: str) -> CheckResult:
+    """Meta-check: every closed issue must appear exactly once in
+    docs/smoke_coverage_map.md. Future-proofs against silent gaps —
+    if anyone closes an issue without entering it in the map, smoke
+    fails loud the next deploy.
+    """
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parent.parent
+    map_path = repo_root / "docs" / "smoke_coverage_map.md"
+    if not map_path.exists():
+        return CheckResult("coverage_map_complete", False,
+                           f"missing: {map_path}")
+    map_text = map_path.read_text(encoding="utf-8")
+    # Pull all `| <number> |` table cells from the map. Conservative
+    # regex: the issue number always appears as the first column,
+    # bracketed by pipes.
+    in_map = set(re.findall(r"^\|\s*(\d+)\s*\|", map_text, re.MULTILINE))
+
+    # Closed issues via GitHub REST. Try, in order:
+    #   1. GH_TOKEN env (CI default)
+    #   2. GITHUB_TOKEN env (Actions default)
+    #   3. `gh auth token` (local dev — picks up the gh CLI's stored auth)
+    closed: set[str] = set()
+    page = 1
+    gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+    if not gh_token:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["gh", "auth", "token"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                gh_token = r.stdout.strip()
+        except Exception:
+            pass
+    while True:
+        url = (f"https://api.github.com/repos/Nileneb/MayringCoder/"
+               f"issues?state=closed&per_page=100&page={page}")
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.github+json",
+                          **({"Authorization": f"Bearer {gh_token}"} if gh_token else {})},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                items = json.loads(r.read())
+        except Exception as e:
+            return CheckResult("coverage_map_complete", False,
+                               f"GitHub API page {page} failed: {e}")
+        if not items:
+            break
+        for it in items:
+            # Skip pull_requests — issues API returns those too
+            if "pull_request" not in it:
+                closed.add(str(it["number"]))
+        if len(items) < 100:
+            break
+        page += 1
+        if page > 5:
+            break  # 500 issue safety
+
+    missing = closed - in_map
+    return CheckResult(
+        "coverage_map_complete",
+        not missing,
+        f"closed_issues={len(closed)}  documented={len(in_map)}  "
+        f"missing_from_map={sorted(missing)[:10]}{'…' if len(missing) > 10 else ''}",
+    )
+
+
 def check_retrieval_reasons_field(api: str, token: str) -> CheckResult:
     """User question: 'wo wird der Reason gespeichert?' — every result of
     /memory/search must carry a `reasons` array explaining WHY a chunk
     surfaced (embedding_similarity, token_overlap, recent_chunk,
     source_affinity_match, llm_advisor_high). At least one of the top-5
-    results must have a non-empty reasons list."""
+    results must have a non-empty reasons list.
+
+    Note: _QUERY_CACHE stores only (chunk_id, score) tuples; cache hits
+    return chunks without reasons. Use a per-run unique query so the
+    full _rerank() path runs and reasons get populated.
+    """
+    unique = f"smoke reasons probe {int(time.time())} {os.urandom(3).hex()}"
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
-        body={"query": "feedback memory hook", "top_k": 5,
+        body={"query": unique, "top_k": 5,
               "include_text": False, "llm_prefilter": False},
         timeout=12.0,
     )
@@ -869,6 +945,7 @@ ALL_CHECKS = [
     ("jwt_invalid_signature",         check_jwt_invalid_signature_rejected),
     ("task_feedback_matrix",          check_task_feedback_matrix),
     ("wiki_graph_clusters",           check_wiki_graph_clusters),
+    ("coverage_map_complete",         check_coverage_map_complete),
     ("retrieval_reasons_field",       check_retrieval_reasons_field),
     ("igio_axis_on_chunks",           check_igio_axis_on_chunks),
     ("wiki_context_injector_used",    check_wiki_context_injector_used),

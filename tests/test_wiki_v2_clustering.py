@@ -179,27 +179,23 @@ def test_cluster_quality_metrics_extended(populated_graph):
     assert 0.0 <= q["internal_ratio"] <= 1.0
 
 
-def test_clusters_json_written(ten_node_graph, tmp_path, monkeypatch):
-    """cluster() schreibt clusters.json pro Workspace."""
-    import src.wiki_v2.clustering as cm
-    wiki_dir = tmp_path / "wiki"
-    monkeypatch.setattr(cm, "WIKI_DIR", wiki_dir, raising=False)
+def test_clusters_persisted_to_db_not_disk(ten_node_graph, tmp_path, monkeypatch):
+    """clusters live in the SQLite wiki_clusters table, not on disk.
 
-    # Patch WIKI_DIR im clustering Modul
-    import importlib, src.config as conf
-    real_wiki_dir = conf.WIKI_DIR
-    conf.WIKI_DIR = wiki_dir
-    try:
-        engine = ClusterEngine()
-        engine.cluster(ten_node_graph, strategy="louvain")
-        out = wiki_dir / "ws-test" / "clusters.json"
-        assert out.exists(), f"clusters.json not found at {out}"
-        data = json.loads(out.read_text())
-        assert len(data) >= 2
-        assert "cluster_id" in data[0]
-        assert "members" in data[0]
-    finally:
-        conf.WIKI_DIR = real_wiki_dir
+    Earlier versions wrote a clusters.json file per workspace; that path
+    triggered three rounds of CodeQL py/path-injection alerts because
+    workspace_id was used as a path segment. The disk export was redundant
+    (the same data is already in graph.upsert_cluster), so it's gone.
+    The DB persistence remains the canonical store and is what
+    /wiki/graph?slug=… exposes.
+    """
+    engine = ClusterEngine()
+    clusters = engine.cluster(ten_node_graph, strategy="louvain")
+    assert len(clusters) >= 2
+    # DB round-trip — the cluster() method calls graph.upsert_cluster
+    persisted = ten_node_graph.get_clusters()
+    assert len(persisted) >= 2
+    assert all(hasattr(c, "cluster_id") for c in persisted)
 
 
 def test_embedding_layer_merges_similar_nodes(tmp_path):
