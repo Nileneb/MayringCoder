@@ -1,20 +1,23 @@
 name: Post-deploy smoke (production)
 
 # When this fires:
-#   - 90 seconds after every push to master (gives auto-deploy time to land)
-#   - manual `Run workflow` button on the Actions tab
-#   - daily cron sweep at 06:00 UTC so we catch silent regressions overnight
+#   - AFTER "Build & Push" completes successfully — that's when new
+#     code is actually live in production. Triggering on `push` was
+#     wrong: image build + registry push + remote auto-deploy take
+#     5-10 min, the previous 90s sleep ran smoke against the OLD
+#     container every single push.
+#   - daily cron at 06:00 UTC catches silent overnight regressions
+#   - manual `Run workflow` button (Actions tab)
 #
 # What it does:
 #   - Runs tools/smoke_test_production.py against https://mcp.linn.games
-#   - On failure: opens a labelled "smoke-failure" issue in this repo
-#     → GitHub auto-emails repo subscribers, that IS the alert channel
-#
-# Why no Telegram/PagerDuty/Uptime-Kuma: GitHub Issues already have all
-# three (notification, deduplication via title, history). Use what's there.
+#   - On failure: opens a labelled "smoke-failure" issue → GitHub
+#     auto-emails repo subscribers (that IS the alert channel)
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build & Push"]
+    types: [completed]
     branches: [master]
   schedule:
     - cron: "0 6 * * *"
@@ -23,19 +26,31 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    # Skip when the upstream Build & Push didn't actually land — no
+    # point running smoke against a failed build.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       issues: write   # for `gh issue create` on failure
       contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Wait for auto-deploy to complete
-        if: github.event_name == 'push'
+      - name: Wait for the new image to actually land in production
+        if: github.event_name == 'workflow_run'
         run: |
-          # Auto-deploy needs ~90s after push to land in production. We
-          # poll the new commit hash via /health response or just sleep.
-          # Sleep is the lazy-but-reliable choice.
-          sleep 90
+          # Build & Push complete = image in registry. Remote server
+          # still needs to docker-compose pull + restart (~30-60s).
+          # Poll /health instead of guessing a sleep length.
+          for i in $(seq 1 60); do
+            if curl -sf -m 4 -o /dev/null https://mcp.linn.games/health; then
+              echo "API healthy after ${i} attempts"
+              break
+            fi
+            sleep 5
+          done
+          # Safety margin so container finishes startup tasks
+          # (DB migrations, hook registration) before smoke fires.
+          sleep 10
 
       - name: Set up Python
         uses: actions/setup-python@v5
