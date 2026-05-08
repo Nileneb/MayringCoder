@@ -1,0 +1,70 @@
+name: Reranker compare (v1 vs v2)
+
+# Ad-hoc workflow to inspect what the trained v2 model actually does.
+# Triggered manually; runs three queries through both rankers and
+# reports side-by-side ordering + score_final differences.
+
+on:
+  workflow_dispatch:
+    inputs:
+      queries:
+        description: "Comma-separated list of queries to compare"
+        required: false
+        default: "memory feedback hook,vector search reranker,jwt auth workspace"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: [self-hosted, u-server]
+    timeout-minutes: 5
+    steps:
+      - name: Run side-by-side ranking comparison
+        env:
+          QUERIES: ${{ github.event.inputs.queries || 'memory feedback hook,vector search reranker,jwt auth workspace' }}
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
+            exit 1
+          fi
+
+          echo "===== model state ====="
+          curl -sS -m 15 -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
+            "https://mcp.linn.games/stats/admin/training-data-counts?days=7" \
+            | python3 -m json.tool
+
+          IFS=',' read -ra QARRAY <<< "$QUERIES"
+          for query in "${QARRAY[@]}"; do
+            query=$(echo "$query" | xargs)  # trim whitespace
+            echo ""
+            echo "===== query: '$query' ====="
+            for version in v1 v2; do
+              echo ""
+              echo "--- $version ---"
+              curl -sS -m 30 -X POST https://mcp.linn.games/memory/search \
+                -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
+                -H "Content-Type: application/json" \
+                --data "{\"query\":\"${query}\",\"top_k\":5,\"include_text\":false,\"llm_prefilter\":false,\"reranker_version\":\"${version}\"}" \
+                | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+diag = d.get("diagnostics", {})
+print(f"  diag.reranker_version: {diag.get(\"reranker_version\")}")
+print(f"  diag.vector_stage: {diag.get(\"vector_stage\")}")
+results = d.get("results", [])
+print(f"  top {len(results)} chunks:")
+for i, r in enumerate(results, 1):
+    cid = r.get("chunk_id", "?")[:18]
+    sf = r.get("score_final", 0)
+    sv = r.get("score_vector", 0)
+    ss = r.get("score_symbolic", 0)
+    sr = r.get("score_recency", 0)
+    src = (r.get("source_id", "") or "")[:48]
+    print(f"    {i}. {cid}  final={sf:.3f}  v={sv:.2f} s={ss:.2f} r={sr:.2f}  src={src}")
+'
+            done
+          done
