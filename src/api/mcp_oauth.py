@@ -163,6 +163,18 @@ class PathNormMiddleware:
         await self._app(scope, receive, send)
 
 
+async def _health(_request):
+    """Cheap liveness endpoint for the docker healthcheck.
+
+    The MCP container's docker-compose healthcheck calls `curl /health`.
+    Without this route the FastMCP app responds 404, curl exits 22, the
+    container is flagged unhealthy — silently, since nothing alerts on
+    the flag. Public by design (mcp_auth._PUBLIC_PATHS bypasses /health).
+    """
+    from starlette.responses import JSONResponse
+    return JSONResponse({"ok": True, "service": "mcp"})
+
+
 def build_starlette_routes() -> list:
     from starlette.routing import Route
     return [
@@ -173,5 +185,6 @@ def build_starlette_routes() -> list:
         Route("/authorize", _oauth_authorize, methods=["GET"]),
         Route("/authorize/register-code", _oauth_register_code, methods=["POST"]),
         Route("/token", _oauth_token, methods=["POST"]),
+        Route("/health", _health, methods=["GET"]),
         Route("/", _landing_page, methods=["GET"]),
     ]
