@@ -38,7 +38,7 @@ def run_search(
         "source_ids": [r.source_id for r in results],
         "ts": _time.time(),
     })
-    return {
+    response = {
         "results": [r.to_dict() for r in results],
         "prompt_context": compress_for_prompt(results, char_budget),
         "diagnostics": {
@@ -46,6 +46,29 @@ def run_search(
             "candidates": len(results),
         },
     }
+
+    # Inject-effizienz tracking: every search that produces hits also
+    # produces a row in context_feedback_log so the "Memory-Effizienz (24h)"
+    # card on the dashboard counts hook-injections too. Without this only
+    # the legacy MCP-tool path (mcp_memory_tools.py) wrote rows here, so
+    # the counter froze the moment everything moved to the hook-path.
+    if results:
+        try:
+            import json as _json
+            from datetime import datetime, timezone
+            _ids = _json.dumps([r.chunk_id for r in results])
+            conn.execute(
+                "INSERT INTO context_feedback_log"
+                " (trigger_ids,context_text,was_referenced,led_to_retrieval,relevance_score,captured_at)"
+                " VALUES (?,?,0,0,0.0,?)",
+                (_ids, response["prompt_context"][:2000],
+                 datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        except Exception:
+            pass  # non-critical; never block the search result
+
+    return response
 
 
 def run_ingest(
