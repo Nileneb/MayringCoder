@@ -62,6 +62,8 @@ from src.api.routes import dashboard as _dashboard
 app.include_router(_dashboard.router)
 from src.api.routes import igio_admin as _igio_admin
 app.include_router(_igio_admin.router)
+from src.api.routes import model_router_admin as _model_router_admin
+app.include_router(_model_router_admin.router)
 
 
 @app.on_event("startup")

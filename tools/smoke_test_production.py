@@ -161,7 +161,13 @@ def _login_via_sanctum(sanctum_token: str) -> str:
 
 def _http(method: str, url: str, token: str, body: dict | None = None,
           timeout: float = 10.0) -> tuple[int, dict | None, float]:
-    """Returns (status_code, parsed_json_or_None, elapsed_seconds)."""
+    """Returns (status_code, parsed_json_or_None, elapsed_seconds).
+
+    Retries on 502/503/504 and connection errors up to 4 times with a
+    short backoff. Container restarts during deploy commonly produce a
+    short window of 502s — we don't want every post-deploy smoke to
+    spuriously red-flag during that window.
+    """
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -169,21 +175,36 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode()
-            try:
-                return resp.status, json.loads(raw), time.time() - t0
-            except (ValueError, TypeError):
-                return resp.status, None, time.time() - t0
-    except urllib.error.HTTPError as e:
+    backoff = 1.5
+    last_code = 0
+    last_body: dict | None = None
+    for attempt in range(4):
         try:
-            err_json = json.loads(e.read().decode())
-        except Exception:
-            err_json = None
-        return e.code, err_json, time.time() - t0
-    except Exception as e:
-        return 0, {"_error": f"{type(e).__name__}: {e}"}, time.time() - t0
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode()
+                try:
+                    return resp.status, json.loads(raw), time.time() - t0
+                except (ValueError, TypeError):
+                    return resp.status, None, time.time() - t0
+        except urllib.error.HTTPError as e:
+            try:
+                err_json = json.loads(e.read().decode())
+            except Exception:
+                err_json = None
+            last_code, last_body = e.code, err_json
+            if e.code in (502, 503, 504) and attempt < 3:
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            return e.code, err_json, time.time() - t0
+        except Exception as e:
+            last_body = {"_error": f"{type(e).__name__}: {e}"}
+            if attempt < 3:
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            return 0, last_body, time.time() - t0
+    return last_code, last_body, time.time() - t0
 
 
 # ---------------------------------------------------------------------------
@@ -953,6 +974,56 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_model_router_runtime(api: str, token: str) -> CheckResult:
+    """Issue #140 acceptance: ModelRouter routes are mutable at runtime
+    via /stats/admin/model-routes. Service token gets admin scope.
+
+    Probe: GET routes → flip text.timeout to a sentinel value → re-GET →
+    sentinel must round-trip. Then revert to the original value to keep
+    production state untouched.
+    """
+    code, body, _ = _http("GET", f"{api}/stats/admin/model-routes", token)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("model_router_runtime", False,
+                           f"GET http={code} body={body}")
+    routes = (body or {}).get("routes", {})
+    text = routes.get("text") or {}
+    if not text:
+        return CheckResult("model_router_runtime", False,
+                           "GET ok but no 'text' route present")
+    orig_timeout = int(text.get("timeout") or 240)
+    sentinel = 313
+    if orig_timeout == sentinel:
+        sentinel = 314  # avoid no-op write
+    payload = {
+        "task": "text",
+        "model": text.get("model") or "mistral:7b-instruct",
+        "fallback": text.get("fallback") or "",
+        "timeout": sentinel,
+    }
+    code2, body2, _ = _http(
+        "POST", f"{api}/stats/admin/model-routes", token, body=payload,
+    )
+    if code2 != 200:
+        return CheckResult("model_router_runtime", False,
+                           f"POST http={code2} body={body2}")
+    code3, body3, _ = _http("GET", f"{api}/stats/admin/model-routes", token)
+    new_timeout = int(((body3 or {}).get("routes", {}).get("text") or {}).get("timeout") or 0)
+    # Revert regardless of outcome — leave prod untouched
+    revert = {
+        "task": "text",
+        "model": text.get("model") or "mistral:7b-instruct",
+        "fallback": text.get("fallback") or "",
+        "timeout": orig_timeout,
+    }
+    _http("POST", f"{api}/stats/admin/model-routes", token, body=revert)
+    return CheckResult(
+        "model_router_runtime",
+        new_timeout == sentinel,
+        f"orig={orig_timeout} sent={sentinel} got={new_timeout} (round-trip ok if sent==got)",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -985,6 +1056,7 @@ ALL_CHECKS = [
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
+    ("model_router_runtime",          check_model_router_runtime),
 ]
 
 
