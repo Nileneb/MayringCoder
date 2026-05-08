@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.api.auth import get_workspace
-from src.memory.store import init_memory_db
 
 router = APIRouter()
 
@@ -42,13 +41,12 @@ async def wiki_second_opinion(
     from src.wiki_v2.graph import WikiGraph
     from src.wiki_v2.second_opinion import WikiSecondOpinion
 
-    conn = init_memory_db(CACHE_DIR / "memory.db")
+    graph = WikiGraph(
+        workspace_id=workspace_id,
+        repo_slug=request.repo_slug,
+        db_path=CACHE_DIR / "wiki_v2.db",
+    )
     try:
-        graph = WikiGraph(
-            workspace_id=workspace_id,
-            repo_slug=request.repo_slug,
-            conn=conn,
-        )
         if request.scope == "cluster":
             clusters = graph.get_clusters()
             target = next(
@@ -121,7 +119,7 @@ async def wiki_second_opinion(
         }
     finally:
         try:
-            conn.close()
+            graph.close()
         except Exception:
             pass
 

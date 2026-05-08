@@ -55,7 +55,6 @@ def register_second_opinion_tools(mcp: FastMCP) -> None:
             on error:      {error, hint, target_id}
         """
         from src.config import CACHE_DIR
-        from src.memory.store import init_memory_db
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.second_opinion import WikiSecondOpinion
 
@@ -65,8 +64,10 @@ def register_second_opinion_tools(mcp: FastMCP) -> None:
                     "hint": "use 'cluster' or 'edge'", "target_id": target_id}
         chosen_model = _resolve_model(model)
 
-        conn = init_memory_db(CACHE_DIR / "memory.db")
-        graph = WikiGraph(workspace_id=ws, repo_slug=repo_slug, conn=conn)
+        graph = WikiGraph(
+            workspace_id=ws, repo_slug=repo_slug,
+            db_path=CACHE_DIR / "wiki_v2.db",
+        )
         validator = WikiSecondOpinion()
 
         try:
@@ -128,7 +129,7 @@ def register_second_opinion_tools(mcp: FastMCP) -> None:
             }
         finally:
             try:
-                conn.close()
+                graph.close()
             except Exception:
                 pass
 
