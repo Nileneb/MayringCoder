@@ -46,7 +46,8 @@ jobs:
           fi
           # Retry up to 3 times — the container can return nginx HTML
           # (502) during the first few seconds while Uvicorn finishes
-          # startup. Only the JSON response counts.
+          # startup. Only the JSON response counts. Single-line python
+          # to keep YAML scanner happy.
           job_id=""
           for attempt in 1 2 3; do
             response=$(curl -sS -m 30 -X POST https://mcp.linn.games/populate \
@@ -54,15 +55,9 @@ jobs:
               -H "Content-Type: application/json" \
               --data '{"repo":"https://github.com/Nileneb/MayringCoder"}')
             echo "[attempt $attempt] Response: $response"
-            # Parse only if response begins with '{' — bail to retry on HTML.
             case "$response" in
               \{*)
-                job_id=$(echo "$response" | python3 -c \
-                  'import json,sys
-try:
-    print(json.load(sys.stdin).get("job_id",""))
-except Exception:
-    print("")') || true
+                job_id=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id","") if sys.stdin else "")' 2>/dev/null || echo "")
                 if [ -n "$job_id" ]; then break; fi
                 ;;
             esac
