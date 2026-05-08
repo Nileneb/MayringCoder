@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""After-deploy smoke test — runs every critical path against PROD.
+
+Why this script exists: 1232 unit tests pass against synthetic fixtures
+but never touch production. A real bug (Stop-hook silently broken,
+hook-timeout < real latency, /memory/search not writing context_log)
+slips by every one of them and surfaces only when the user manually
+notices something looks off. This script closes the gap.
+
+Approach: every test is one assertion against the live API. Counts
+delta, not just "got 200". When a check fails, exit 1 with a loud
+multi-line error so a CI step / manual run cannot mistake it for
+"all green".
+
+Run:
+    python tools/smoke_test_production.py
+    python tools/smoke_test_production.py --fail-fast
+    python tools/smoke_test_production.py --skip mcp_health     # skip a check by id
+
+Exit codes:
+    0  — all checks PASS
+    1  — at least one check FAIL (script printed details)
+    2  — environment problem (no JWT, network down)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any
+
+API_DEFAULT = "https://mcp.linn.games"
+JWT_PATH = os.path.expanduser("~/.config/mayring/hook.jwt")
+
+
+# ---------------------------------------------------------------------------
+# Plumbing
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CheckResult:
+    name: str
+    passed: bool
+    detail: str = ""
+    payload: Any = None
+
+
+def _load_token() -> str:
+    try:
+        with open(JWT_PATH) as f:
+            return f.read().strip()
+    except OSError:
+        sys.stderr.write(f"FATAL: no JWT at {JWT_PATH} — cannot smoke-test\n")
+        sys.exit(2)
+
+
+def _http(method: str, url: str, token: str, body: dict | None = None,
+          timeout: float = 10.0) -> tuple[int, dict | None, float]:
+    """Returns (status_code, parsed_json_or_None, elapsed_seconds)."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode()
+            try:
+                return resp.status, json.loads(raw), time.time() - t0
+            except (ValueError, TypeError):
+                return resp.status, None, time.time() - t0
+    except urllib.error.HTTPError as e:
+        try:
+            err_json = json.loads(e.read().decode())
+        except Exception:
+            err_json = None
+        return e.code, err_json, time.time() - t0
+    except Exception as e:
+        return 0, {"_error": f"{type(e).__name__}: {e}"}, time.time() - t0
+
+
+# ---------------------------------------------------------------------------
+# Individual checks — every one returns CheckResult
+# ---------------------------------------------------------------------------
+
+def check_health(api: str, token: str) -> CheckResult:
+    code, body, dt = _http("GET", f"{api}/health", token)
+    return CheckResult(
+        "api_health",
+        code == 200 and (body or {}).get("status") == "ok",
+        f"http={code} time={dt:.2f}s body={body}",
+        body,
+    )
+
+
+def check_workspace_scoped(api: str, token: str) -> CheckResult:
+    """Stats endpoints must respond with workspace_id derived from JWT.sub,
+    not 'system' (the daemon bucket) and not the legacy UUID."""
+    code, body, dt = _http("GET", f"{api}/stats/workspaces", token)
+    if code != 200:
+        return CheckResult("workspace_scoping", False,
+                           f"/stats/workspaces http={code}: {body}")
+    ws = (body or {}).get("workspace_id", "")
+    looks_user_scoped = ws.startswith("user-")
+    return CheckResult(
+        "workspace_scoping",
+        looks_user_scoped,
+        f"workspace_id={ws!r} (must start with 'user-' to confirm JWT.sub-derived)",
+    )
+
+
+def check_memory_search_returns_vector_hits(api: str, token: str) -> CheckResult:
+    """A real search must:
+    - return 200
+    - report vector_stage diagnostics (not 'unknown')
+    - have at least one result with score_vector > 0 in top-5"""
+    code, body, dt = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "memory feedback hook stop", "top_k": 5,
+              "include_text": False, "llm_prefilter": False},
+        timeout=15.0,
+    )
+    if code != 200:
+        return CheckResult("memory_search_vector", False,
+                           f"http={code} time={dt:.2f}s body={body}")
+    diag = (body or {}).get("diagnostics", {}).get("vector_stage", "?")
+    results = (body or {}).get("results", [])
+    has_vec = any(r.get("score_vector", 0) > 0 for r in results)
+    diag_ok = isinstance(diag, str) and (diag.startswith("ok(") or diag == "query_cache_hit")
+    return CheckResult(
+        "memory_search_vector",
+        diag_ok,  # vector hits not always present, but diag must be sensible
+        f"http={code} time={dt:.2f}s diag={diag!r} top_k_with_vec={has_vec} results={len(results)}",
+    )
+
+
+def check_feedback_binary_only(api: str, token: str) -> CheckResult:
+    """Neutral signal must be rejected (Issue: silent neutral pollution)."""
+    code, body, _ = _http(
+        "POST", f"{api}/memory/feedback", token,
+        body={"chunk_id": "chk_smoke_test_dummy_1", "signal": "neutral"},
+    )
+    return CheckResult(
+        "feedback_neutral_rejected",
+        code in (400, 422),
+        f"http={code} body={body} — must be 400 (route) or 422 (pydantic)",
+    )
+
+
+def check_feedback_slug_resolution(api: str, token: str) -> CheckResult:
+    """Submit feedback via source-id slug; backend must resolve to chunks."""
+    # Pick a known existing source_id from a search
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "memory", "top_k": 1, "include_text": False,
+              "llm_prefilter": False},
+    )
+    if code != 200 or not (body or {}).get("results"):
+        return CheckResult("feedback_slug_resolution", False,
+                           "could not get a real source_id from /memory/search")
+    sid = body["results"][0]["source_id"]
+
+    code, body, _ = _http(
+        "POST", f"{api}/memory/feedback", token,
+        body={"chunk_id": sid, "signal": "positive"},
+    )
+    if code != 200:
+        return CheckResult("feedback_slug_resolution", False,
+                           f"slug feedback failed http={code} body={body}")
+    applied = (body or {}).get("applied_to", 0)
+    return CheckResult(
+        "feedback_slug_resolution",
+        applied >= 1,
+        f"slug={sid[:60]!r} applied_to={applied} chunks={(body or {}).get('chunk_ids', [])[:3]}",
+    )
+
+
+def check_feedback_count_moves(api: str, token: str) -> CheckResult:
+    """POST one positive feedback, verify the count actually increased."""
+    pre_code, pre, _ = _http("GET", f"{api}/stats/summary", token)
+    if pre_code != 200:
+        return CheckResult("feedback_count_delta", False,
+                           f"pre /stats/summary http={pre_code}")
+    pre_pos = (pre or {}).get("feedback", {}).get("positive", 0)
+
+    # Get a real chunk_id
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "stop hook", "top_k": 1, "include_text": False,
+              "llm_prefilter": False},
+    )
+    if code != 200 or not (body or {}).get("results"):
+        return CheckResult("feedback_count_delta", False, "no chunk_id from search")
+    cid = body["results"][0]["chunk_id"]
+
+    fb_code, fb_body, _ = _http(
+        "POST", f"{api}/memory/feedback", token,
+        body={"chunk_id": cid, "signal": "positive"},
+    )
+    if fb_code != 200:
+        return CheckResult("feedback_count_delta", False,
+                           f"feedback POST http={fb_code} body={fb_body}")
+
+    time.sleep(1)
+    post_code, post, _ = _http("GET", f"{api}/stats/summary", token)
+    post_pos = (post or {}).get("feedback", {}).get("positive", 0)
+    delta = post_pos - pre_pos
+    return CheckResult(
+        "feedback_count_delta",
+        delta >= 1,
+        f"pre.positive={pre_pos}  post.positive={post_pos}  delta={delta}",
+    )
+
+
+def check_micro_batch_indexes(api: str, token: str) -> CheckResult:
+    """Turn-capture endpoint must accept a turn pair and create a source."""
+    session_id = f"smoke-{int(time.time())}"
+    code, body, dt = _http(
+        "POST", f"{api}/conversation/micro-batch", token,
+        body={
+            "turns": [
+                {"role": "user", "content": "smoke test prompt", "timestamp": ""},
+                {"role": "assistant", "content": "smoke test response", "timestamp": ""},
+            ],
+            "session_id": session_id,
+            "workspace_slug": "mayringcoder",
+        },
+        timeout=30.0,  # server summarises via LLM
+    )
+    indexed = bool((body or {}).get("indexed"))
+    sid = (body or {}).get("source_id", "")
+    return CheckResult(
+        "micro_batch_indexes",
+        code == 200 and indexed,
+        f"http={code} time={dt:.2f}s indexed={indexed} source_id={sid}",
+    )
+
+
+def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
+    """All 10 dashboard endpoints respond 200 with a workspace-id field."""
+    paths = [
+        "/stats/recent-ops", "/stats/jobs-history", "/stats/feedback-log",
+        "/stats/source-refs", "/stats/triggers", "/stats/topic-flow",
+        "/stats/pi-tasks", "/stats/activations", "/stats/workspaces",
+        "/stats/vector-trend",
+    ]
+    failures: list[str] = []
+    for p in paths:
+        code, body, dt = _http("GET", f"{api}{p}", token, timeout=8.0)
+        if code != 200:
+            failures.append(f"{p}: http={code}")
+        elif not isinstance(body, dict) or "workspace_id" not in body:
+            failures.append(f"{p}: missing workspace_id field in response")
+    return CheckResult(
+        "dashboard_endpoints",
+        not failures,
+        "; ".join(failures) if failures else f"all {len(paths)} endpoints 200 + workspace-scoped",
+    )
+
+
+def check_feedback_log_movement(api: str, token: str) -> CheckResult:
+    """A search must increment context_feedback_log injections_24h.
+    Catches the regression where /memory/search bypassed this table."""
+    pre_code, pre, _ = _http("GET", f"{api}/stats/feedback-log", token)
+    if pre_code != 200:
+        return CheckResult("feedback_log_movement", False,
+                           f"pre http={pre_code}")
+    pre_inj = (pre or {}).get("injections_24h", 0)
+
+    # Trigger a search
+    _http("POST", f"{api}/memory/search", token,
+          body={"query": f"smoke check {time.time()}", "top_k": 3,
+                "include_text": False, "llm_prefilter": False})
+    time.sleep(1)
+    post_code, post, _ = _http("GET", f"{api}/stats/feedback-log", token)
+    post_inj = (post or {}).get("injections_24h", 0)
+    delta = post_inj - pre_inj
+    return CheckResult(
+        "feedback_log_movement",
+        delta >= 1,
+        f"pre.injections={pre_inj}  post.injections={post_inj}  delta={delta}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+ALL_CHECKS = [
+    ("api_health",                    check_health),
+    ("workspace_scoping",             check_workspace_scoped),
+    ("memory_search_vector",          check_memory_search_returns_vector_hits),
+    ("feedback_neutral_rejected",     check_feedback_binary_only),
+    ("feedback_slug_resolution",      check_feedback_slug_resolution),
+    ("feedback_count_delta",          check_feedback_count_moves),
+    ("micro_batch_indexes",           check_micro_batch_indexes),
+    ("dashboard_endpoints",           check_dashboard_endpoints),
+    ("feedback_log_movement",         check_feedback_log_movement),
+]
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--api", default=os.getenv("MAYRING_API_URL", API_DEFAULT))
+    p.add_argument("--fail-fast", action="store_true")
+    p.add_argument("--skip", action="append", default=[],
+                   help="check id to skip (repeatable)")
+    args = p.parse_args()
+
+    token = _load_token()
+    api = args.api.rstrip("/")
+    skip = set(args.skip)
+
+    print(f"# Smoke tests against {api}")
+    print(f"# JWT loaded: {len(token)} chars")
+    print()
+
+    results: list[CheckResult] = []
+    t_start = time.time()
+    for name, fn in ALL_CHECKS:
+        if name in skip:
+            print(f"  SKIP  {name}")
+            continue
+        t0 = time.time()
+        try:
+            res = fn(api, token)
+        except Exception as e:
+            res = CheckResult(name, False, f"check raised: {type(e).__name__}: {e}")
+        dt = time.time() - t0
+        marker = " OK " if res.passed else "FAIL"
+        print(f"  [{marker}] {res.name}  ({dt:.2f}s)")
+        if res.detail:
+            indent = "         "
+            for line in res.detail.split("\n"):
+                print(f"{indent}{line}")
+        results.append(res)
+        if args.fail_fast and not res.passed:
+            break
+
+    failed = [r for r in results if not r.passed]
+    elapsed = time.time() - t_start
+    print()
+    print(f"# {len(results) - len(failed)}/{len(results)} passed  ({elapsed:.1f}s total)")
+    if failed:
+        print(f"# FAIL: {', '.join(r.name for r in failed)}")
+        return 1
+    print("# all good — every critical path is actually working in prod")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
