@@ -17,6 +17,9 @@ plotly>=5.0
 networkx>=3.0
 pymysql
 datasets>=2.0
+# Memory-Injection v2.0 reranker training (tools/train_reranker.py).
+# Linear estimator on the 5 stage-score features — small footprint.
+scikit-learn>=1.3
 
 # Dev
 pytest
