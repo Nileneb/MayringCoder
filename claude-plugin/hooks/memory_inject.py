@@ -67,7 +67,7 @@ def _search(
         body_dict["source_type"] = source_type
     body = json.dumps(body_dict).encode()
     req = urllib.request.Request(
-        f"{API}/search",
+        f"{API}/memory/search",
         data=body,
         headers={
             "Authorization": f"Bearer {token}",

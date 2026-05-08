@@ -364,6 +364,7 @@ def search(
     # Query-Cache check — hit: re-hydrate from SQLite and return early
     _ck = _cache_key(query, opts, session_compacted)
     if _ck in _QUERY_CACHE:
+        opts["_vector_diag"] = "query_cache_hit"
         hydrated: list[RetrievalRecord] = []
         for cid, score_final in _QUERY_CACHE[_ck]:
             chunk = get_chunk(conn, cid)
@@ -384,6 +385,9 @@ def search(
         workspace_id=workspace_id, org_id=org_id, user_id=user_id,
     )
     if not candidate_ids:
+        # Tell callers WHY the result is empty: scope filter excluded
+        # everything (workspace mismatch, no public/org/user share, etc.)
+        opts["_vector_diag"] = "empty_after_scope_filter"
         return []
 
     # Load candidate chunks (KV cache first, then SQLite)
