@@ -236,8 +236,15 @@ async def trigger_populate(
             "--memory-categorize", "--workers", "2"]
     if request.force_reingest:
         args.append("--force-reingest")
+    if request.batch_delay is not None:
+        # Issue #85: forward the throttle to the populate-memory loop.
+        # CLI flag is --batch-delay (src/cli_args.py); 0 means no pause.
+        args += ["--batch-delay", str(max(0.0, float(request.batch_delay)))]
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
-    return {"job_id": job_id, "status": "started", "repo": request.repo}
+    return {
+        "job_id": job_id, "status": "started", "repo": request.repo,
+        "batch_delay": request.batch_delay,
+    }
 
 
 @router.post("/wiki/generate")

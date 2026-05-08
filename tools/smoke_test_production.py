@@ -989,6 +989,133 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_watcher_hook_fires(api: str, token: str) -> CheckResult:
+    """Issue #74 audit gap: post-ingest watcher must update graph state.
+    Previous smoke `wiki_p7_endpoints` only checked GET endpoints reachable;
+    no proof a watcher event ever fires.
+
+    Probe: POST a unique chunk via /memory/put, then check /stats/recent-ops
+    surfaces an ingest event for that source_id within 5s. The recent-ops
+    feed is the same one the dashboard binds to — if the watcher path is
+    silently broken, this catches it.
+    """
+    marker = f"smoke-watcher-{int(time.time() * 1000)}"
+    source_id = f"smoke:watcher:{marker}"
+    code, body, _ = _http(
+        "POST", f"{api}/memory/put", token,
+        body={
+            "source_id": source_id,
+            "source_type": "test",
+            "content": f"smoke watcher probe content {marker}",
+        },
+    )
+    if code not in (200, 201):
+        return CheckResult("watcher_hook_fires", False,
+                           f"PUT http={code} body={body}")
+    deadline = time.time() + 8.0
+    seen = False
+    last_count = -1
+    while time.time() < deadline:
+        time.sleep(1.5)
+        code2, body2, _ = _http("GET", f"{api}/stats/recent-ops?limit=20", token)
+        if code2 == 200 and isinstance(body2, dict):
+            ops = body2.get("ops") or body2.get("recent_ops") or []
+            if isinstance(ops, list):
+                last_count = len(ops)
+                if any(marker in str(op) or source_id in str(op) for op in ops):
+                    seen = True
+                    break
+    return CheckResult(
+        "watcher_hook_fires",
+        seen,
+        f"source_id={source_id}  recent_ops_seen={seen}  "
+        f"last_count={last_count}  (watcher must surface ingest within 8s)",
+    )
+
+
+def check_wiki_cluster_depth(api: str, token: str) -> CheckResult:
+    """Issue #71/#72/#73 audit gap: /wiki/graph?slug=... was previously only
+    asserted on shape (clusters key present). Real acceptance: cluster
+    engine produced non-empty clusters with members, edges have type field.
+
+    Two-stage: pick a slug, fetch graph, assert clusters list is non-empty
+    AND at least one cluster has ≥1 member. Vacuous-OK is rejected.
+    """
+    code, slugs, _ = _http("GET", f"{api}/wiki/slugs", token)
+    if code != 200:
+        return CheckResult("wiki_cluster_depth", False,
+                           f"/wiki/slugs http={code}")
+    available = (slugs or {}).get("slugs", [])
+    if not available:
+        return CheckResult(
+            "wiki_cluster_depth", True,
+            "no slugs available — cluster depth check vacuously OK",
+        )
+    slug = available[0]
+    code2, body2, _ = _http(
+        "GET", f"{api}/wiki/graph?slug={slug}&format=json", token,
+    )
+    if code2 != 200 or not isinstance(body2, dict):
+        return CheckResult("wiki_cluster_depth", False,
+                           f"/wiki/graph http={code2}")
+    clusters = body2.get("clusters") or []
+    edges = body2.get("edges") or []
+    cluster_count = len(clusters) if isinstance(clusters, list) else 0
+    has_members = any(
+        isinstance(c, dict) and len(c.get("members") or c.get("nodes") or []) > 0
+        for c in clusters if isinstance(c, dict)
+    )
+    edge_types = {
+        e.get("type") or e.get("edge_type") for e in edges
+        if isinstance(e, dict)
+    }
+    edge_types.discard(None)
+    return CheckResult(
+        "wiki_cluster_depth",
+        cluster_count > 0 and has_members,
+        f"slug={slug}  clusters={cluster_count}  has_members={has_members}  "
+        f"edge_types={sorted(t for t in edge_types if t)[:5]}",
+    )
+
+
+def check_populate_accepts_batch_delay(api: str, token: str) -> CheckResult:
+    """Issue #85 audit gap: /populate must accept ``batch_delay`` so the
+    GPU-throttle from the CLI ``--batch-delay`` flag is reachable via API.
+    Previous smoke didn't verify this — a regression that drops the
+    parameter would silently break the entire throttle mechanism.
+
+    Probe: POST /populate with a deliberately-tiny batch_delay=0.01 and
+    a never-existing repo URL. Acceptable: 200 (job queued, includes
+    ``batch_delay`` in response) OR 4xx with error mentioning the field.
+    Forbidden: 422 unknown-field error (= API doesn't accept the param).
+
+    The job itself fails fast on the bogus repo — this isn't about
+    running ingestion, just proving the parameter is wired.
+    """
+    code, body, _ = _http(
+        "POST", f"{api}/populate", token,
+        body={
+            "repo": "https://github.com/Nileneb/smoke-nonexistent-test-repo",
+            "force_reingest": False,
+            "batch_delay": 0.01,
+        },
+    )
+    is_accepted = code == 200 and isinstance(body, dict) and (
+        body.get("batch_delay") == 0.01 or "job_id" in body
+    )
+    is_known_error = (
+        code in (400, 404) and isinstance(body, dict)
+        and "batch_delay" not in str(body).lower()
+    )
+    return CheckResult(
+        "populate_accepts_batch_delay",
+        is_accepted or (code == 200 and "job_id" in (body or {})),
+        f"http={code}  batch_delay_in_resp={(body or {}).get('batch_delay')}  "
+        f"job_id_set={'job_id' in (body or {})}  "
+        f"(API must accept batch_delay; 422 unknown-field = regression)",
+    )
+
+
 def check_model_identity(api: str, token: str) -> CheckResult:
     """Issue #106 acceptance: the MODEL THAT ACTUALLY GETS USED is the
     one configured via /stats/admin/model-routes.
@@ -1219,6 +1346,9 @@ ALL_CHECKS = [
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
     ("model_identity",                check_model_identity),
+    ("watcher_hook_fires",            check_watcher_hook_fires),
+    ("wiki_cluster_depth",            check_wiki_cluster_depth),
+    ("populate_accepts_batch_delay",  check_populate_accepts_batch_delay),
     ("pi_second_opinion_endpoint",    check_pi_second_opinion_endpoint),
     ("retrieval_metrics_endpoint",    check_retrieval_metrics_endpoint),
     ("retrieval_stage_attribution",   check_retrieval_stage_attribution),

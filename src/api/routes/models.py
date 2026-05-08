@@ -44,6 +44,11 @@ class IssuesIngestRequest(BaseModel):
 class PopulateRequest(BaseModel):
     repo: str
     force_reingest: bool = False
+    # Issue #85: batch_delay throttles the populate-memory loop so the
+    # GPU has breathing room between embedding batches. Default None
+    # means use BATCH_DELAY_SECONDS from src/config.py. 0 disables the
+    # delay entirely.
+    batch_delay: float | None = None
 
 
 class PaperIngestRequest(BaseModel):
