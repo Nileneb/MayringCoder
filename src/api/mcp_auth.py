@@ -8,7 +8,9 @@ from typing import Any
 
 from src.api.jwt_auth import TokenInfo, validate_jwt_token
 
-_AUTH_ENABLED  = os.getenv("MCP_AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+# Default ON. Forgotten env var on a prod deploy must NOT silently expose
+# unauthenticated MCP. Local dev opts out via MCP_AUTH_ENABLED=false.
+_AUTH_ENABLED  = os.getenv("MCP_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
 _OAUTH_BASE_URL = os.getenv("MCP_OAUTH_BASE_URL", "https://mcp.linn.games")
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")

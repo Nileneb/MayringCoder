@@ -389,9 +389,8 @@ async def vector_trend(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Vector-stage success-rate over time. Reuses ``llm_calls_log`` with a
-    dedicated ``call_type='vector_search'`` so we don't introduce yet another
-    write-heavy table; opt-in via ``MAYRING_LOG_VECTOR_TREND=1`` in the API
-    container."""
+    dedicated ``call_type='vector_search'`` so we don't introduce yet
+    another write-heavy table. Logging runs on every search."""
     conn = _conn()
     last_24h = conn.execute(
         "SELECT COUNT(*) FROM llm_calls_log "
