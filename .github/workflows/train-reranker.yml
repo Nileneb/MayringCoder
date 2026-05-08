@@ -1,0 +1,98 @@
+name: Reranker training (memory v2.0)
+
+# Triggers the export+train pipeline on the production memory.db via the
+# admin endpoint (POST /stats/admin/train-reranker, see
+# src/api/routes/reranker_admin.py). Manual + daily cron.
+#
+# Why a dedicated workflow rather than reusing post-deploy-ingest:
+#   - training takes minutes (subprocess), should not block the
+#     deploy fast-path
+#   - cron schedule lets the model refresh once per day without
+#     waiting for the next push
+#   - readiness gate: the workflow only triggers if there are
+#     ≥50 retrieval_log rows and ≥10 positives — otherwise it's
+#     a no-op with a notice (no spurious GitHub failures while
+#     data still accumulates).
+
+on:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Window in days to train on"
+        required: false
+        default: "30"
+      force:
+        description: "Train even if readiness gate says 'not ready'"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    runs-on: [self-hosted, u-server]
+    timeout-minutes: 30
+    steps:
+      - name: Check training-data readiness
+        id: gate
+        env:
+          DAYS: ${{ github.event.inputs.days || '30' }}
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
+            exit 1
+          fi
+          counts=$(curl -sS -m 30 \
+            "https://mcp.linn.games/stats/admin/training-data-counts?days=${DAYS}" \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+          echo "counts: $counts"
+          ready=$(echo "$counts" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("ready_to_train", False))' 2>/dev/null || echo "False")
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if not ready
+        if: steps.gate.outputs.ready != 'True' && github.event.inputs.force != 'true'
+        run: |
+          echo "::notice::not enough data yet — skipping training run"
+          exit 0
+
+      - name: Trigger train-reranker
+        env:
+          DAYS: ${{ github.event.inputs.days || '30' }}
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          response=$(curl -sS -m 60 -X POST \
+            "https://mcp.linn.games/stats/admin/train-reranker?days=${DAYS}" \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+          echo "queued: $response"
+          job_id=$(echo "$response" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("job_id",""))' 2>/dev/null || echo "")
+          if [ -z "$job_id" ]; then
+            echo "::error::no job_id returned"
+            exit 1
+          fi
+          for i in $(seq 1 60); do
+            sleep 15
+            state=$(curl -sS -m 30 \
+              "https://mcp.linn.games/stats/admin/train-reranker/${job_id}" \
+              -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+            status=$(echo "$state" | python3 -c \
+              'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || echo "")
+            case "$status" in
+              done|error)
+                echo "final state:"
+                echo "$state" | python3 -m json.tool || echo "$state"
+                if [ "$status" = "error" ]; then exit 1; fi
+                exit 0
+                ;;
+            esac
+          done
+          echo "::warning::training still running after 15min — left detached"
