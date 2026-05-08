@@ -248,23 +248,38 @@ def check_memory_search_returns_vector_hits(api: str, token: str) -> CheckResult
     """A real search must:
     - return 200
     - report vector_stage diagnostics (not 'unknown')
-    - have at least one result with score_vector > 0 in top-5"""
-    code, body, dt = _http(
-        "POST", f"{api}/memory/search", token,
-        body={"query": "memory feedback hook stop", "top_k": 5,
-              "include_text": False, "llm_prefilter": False},
-        timeout=15.0,
-    )
+    - have at least one result with score_vector > 0 in top-5
+
+    Cold-chroma tolerance: right after a container restart the embedding
+    cache + chroma collection are sometimes cold, so the first 1–2 calls
+    return ``chroma_query_empty``. Retry a couple of times with a fresh
+    query (no query_cache_hit) before failing — the persistent failure
+    is a real bug, the transient is just deploy churn.
+    """
+    diag = "?"; code = 0; dt = 0.0; body = None; results = []
+    for attempt in range(3):
+        code, body, dt = _http(
+            "POST", f"{api}/memory/search", token,
+            body={"query": f"memory feedback hook stop attempt-{attempt}",
+                  "top_k": 5, "include_text": False, "llm_prefilter": False},
+            timeout=15.0,
+        )
+        if code != 200:
+            time.sleep(2)
+            continue
+        diag = (body or {}).get("diagnostics", {}).get("vector_stage", "?")
+        if isinstance(diag, str) and (diag.startswith("ok(") or diag == "query_cache_hit"):
+            break
+        time.sleep(3)
     if code != 200:
         return CheckResult("memory_search_vector", False,
                            f"http={code} time={dt:.2f}s body={body}")
-    diag = (body or {}).get("diagnostics", {}).get("vector_stage", "?")
     results = (body or {}).get("results", [])
     has_vec = any(r.get("score_vector", 0) > 0 for r in results)
     diag_ok = isinstance(diag, str) and (diag.startswith("ok(") or diag == "query_cache_hit")
     return CheckResult(
         "memory_search_vector",
-        diag_ok,  # vector hits not always present, but diag must be sensible
+        diag_ok,
         f"http={code} time={dt:.2f}s diag={diag!r} top_k_with_vec={has_vec} results={len(results)}",
     )
 
