@@ -31,24 +31,45 @@ jobs:
             fi
             sleep 5
           done
-          sleep 10
+          # Uvicorn returns 200 on /health before all routes finish wiring
+          # (startup migrations, includes etc.). Give it room.
+          sleep 30
 
       - name: Trigger /populate for MayringCoder repo
         run: |
+          set -uo pipefail
           ENV_FILE="$HOME/app.linn.games/.env"
           MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
           if [ -z "$MCP_SERVICE_TOKEN" ]; then
             echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
             exit 1
           fi
-          response=$(curl -sS -m 30 -X POST https://mcp.linn.games/populate \
-            -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data '{"repo":"https://github.com/Nileneb/MayringCoder"}')
-          echo "Response: $response"
-          job_id=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
+          # Retry up to 3 times — the container can return nginx HTML
+          # (502) during the first few seconds while Uvicorn finishes
+          # startup. Only the JSON response counts.
+          job_id=""
+          for attempt in 1 2 3; do
+            response=$(curl -sS -m 30 -X POST https://mcp.linn.games/populate \
+              -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data '{"repo":"https://github.com/Nileneb/MayringCoder"}')
+            echo "[attempt $attempt] Response: $response"
+            # Parse only if response begins with '{' — bail to retry on HTML.
+            case "$response" in
+              \{*)
+                job_id=$(echo "$response" | python3 -c \
+                  'import json,sys
+try:
+    print(json.load(sys.stdin).get("job_id",""))
+except Exception:
+    print("")') || true
+                if [ -n "$job_id" ]; then break; fi
+                ;;
+            esac
+            sleep 10
+          done
           if [ -z "$job_id" ]; then
-            echo "::error::no job_id returned — populate did not start"
+            echo "::error::no job_id after 3 attempts — last response: $response"
             exit 1
           fi
           echo "::notice::ingest job_id=$job_id queued; check /jobs/$job_id for progress"
