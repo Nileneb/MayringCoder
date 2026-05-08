@@ -17,6 +17,12 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Least-privilege scope (CodeQL alert #127): the workflow only reads
+# .env from the runner and POSTs to the API. No git writes, no issue
+# creation, no package operations needed.
+permissions:
+  contents: read
+
 jobs:
   ingest:
     runs-on: [self-hosted, u-server]
