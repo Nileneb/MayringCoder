@@ -25,12 +25,13 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
-    # Skip when the upstream Build & Push didn't actually land — no
-    # point running smoke against a failed build.
+    # Self-hosted runner on u-server — same machine as production, so it
+    # reads MCP_SERVICE_TOKEN directly from ~/app.linn.games/.env.
+    # Zero secrets to copy in repo settings.
+    runs-on: [self-hosted, u-server]
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
-      issues: write   # for `gh issue create` on failure
+      issues: write
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -38,60 +39,28 @@ jobs:
       - name: Wait for the new image to actually land in production
         if: github.event_name == 'workflow_run'
         run: |
-          # Build & Push complete = image in registry. Remote server
-          # still needs to docker-compose pull + restart (~30-60s).
-          # Poll /health instead of guessing a sleep length.
           for i in $(seq 1 60); do
             if curl -sf -m 4 -o /dev/null https://mcp.linn.games/health; then
-              echo "API healthy after ${i} attempts"
-              break
+              echo "API healthy after ${i} attempts"; break
             fi
             sleep 5
           done
-          # Safety margin so container finishes startup tasks
-          # (DB migrations, hook registration) before smoke fires.
           sleep 10
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Run smoke test
+      - name: Run smoke test (reads MCP_SERVICE_TOKEN from server's .env)
         id: smoke
         env:
-          # Two ways to authenticate, in priority order — pick one
-          # whichever is more convenient:
-          #
-          # MCP_SERVICE_TOKEN — copy the value of MCP_SERVICE_TOKEN
-          # straight out of ~/app.linn.games/docker-compose.mayring.yml
-          # (it's server-internal, never rotates, no Browser/UI step).
-          # Smoke runs as workspace=system; tests every endpoint, just
-          # not "is this token user-derived" specifically.
-          #
-          # MAYRING_SANCTUM_TOKEN — generated once via
-          # https://app.linn.games/settings/mayring-abo. Long-lived
-          # Sanctum personal-access token; smoke trades it for a JWT
-          # via /api/mayring/refresh-token, exercising the full user-
-          # auth flow (Sanctum → currentWorkspace → hasMayringAccess →
-          # JwtIssuer).
-          #
-          # If neither is set the workflow fails loud with instructions.
-          MCP_SERVICE_TOKEN: ${{ secrets.MCP_SERVICE_TOKEN }}
-          MAYRING_SANCTUM_TOKEN: ${{ secrets.MAYRING_SANCTUM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$MCP_SERVICE_TOKEN" ] && [ -z "$MAYRING_SANCTUM_TOKEN" ]; then
-            cat <<'EOF'
-            ::error::No auth secret configured for smoke tests.
-            ::error::Set ONE of these in repo Settings → Secrets:
-            ::error::  MCP_SERVICE_TOKEN — value already in docker-compose.mayring.yml
-            ::error::  MAYRING_SANCTUM_TOKEN — from app.linn.games/settings/mayring-abo
-          EOF
-            exit 1
+          ENV_FILE="$HOME/app.linn.games/.env"
+          if [ -f "$ENV_FILE" ]; then
+            export MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          fi
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::warning::MCP_SERVICE_TOKEN not in $ENV_FILE — checks will fail loud"
           fi
           set +e
-          python tools/smoke_test_production.py --alert-on-fail
+          python3 tools/smoke_test_production.py --alert-on-fail
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Fail the workflow if smoke failed
