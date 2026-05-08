@@ -110,13 +110,24 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 
 | # | Status | Smoke-Check |
 |---|---|---|
-| 87 | training_merge_endpoint = 404 | API: `training_merge_endpoint` (rot) |
 | 92 | Retraining mayringqwen | offen, kein automatisierter Test (manueller Trainings-Run) |
+
+## Production Bugs (tracker issues)
+
+| # | Description | Coverage |
+|---|---|---|
+| 162 | Wiki cluster engine produces shells without members | API: `wiki_cluster_depth` + RED-GREEN regression test `tests/test_wiki_v2_store.py::test_upsert_node_preserves_cluster_id_on_re_ingest` (commit a6daa78) |
 
 ## Currently Open (parallel work)
 
 | # | Description |
 |---|---|
-| 139 | Second-Opinion als Pi-Agent-Tool (statt CLI-flag) |
-| 140 | ModelRouter zur Runtime konfigurierbar |
-| 141 | IGIO classifier rerun auf bestehende chunks |
+| 141 | IGIO classifier rerun auf bestehende chunks (auto-close via igio-coverage-watch when ratio ≥ 0.5) |
+
+## Recently Closed (today, 2026-05-08)
+
+| # | Description | Coverage |
+|---|---|---|
+| 87 | Training-Data-Generator pipelines | API: `training_merge_endpoint` (200/400/401/422) + Pytest `tests/test_memory_context_generator.py` (8 tests) + workflow `training-data-pipeline.yml` daily 06:30 UTC |
+| 139 | Second-Opinion als Pi-Agent-Tool | API: `pi_second_opinion_endpoint` + MCP-Tool registriert in `local_mcp.py` + `mcp.py` |
+| 140 | ModelRouter zur Runtime konfigurierbar | API: `model_router_runtime` + `model_identity` + reset endpoint |
