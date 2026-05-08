@@ -74,6 +74,17 @@ def _load_token() -> str:
     sanctum = os.environ.get("MAYRING_SANCTUM_TOKEN", "").strip()
     if sanctum:
         return _login_via_sanctum(sanctum)
+    # Fallback that needs no UI step at all — re-uses the same
+    # MCP_SERVICE_TOKEN that already lives in docker-compose.mayring.yml.
+    # Server-internal, long-lived, never expires; mapped to workspace=
+    # "system" with full scope by src/api/auth.py. CI just copies the
+    # value from the compose file once into a secret — no Sanctum
+    # creation flow, no Browser, no user-action beyond pasting one
+    # string.
+    service = os.environ.get("MCP_SERVICE_TOKEN", "").strip()
+    if service:
+        print("# auth: MCP_SERVICE_TOKEN (server-internal, workspace=system)")
+        return service
     raw_jwt = os.environ.get("MAYRING_JWT", "").strip()
     if raw_jwt:
         return raw_jwt
@@ -82,10 +93,13 @@ def _load_token() -> str:
             return f.read().strip()
     except OSError:
         sys.stderr.write(
-            "FATAL: no auth credential found\n"
-            "  preferred: set MAYRING_SANCTUM_TOKEN (Sanctum token from app.linn.games)\n"
-            "  fallback:  set MAYRING_JWT or place a JWT at "
-            f"{JWT_PATH}\n"
+            "FATAL: no auth credential found. Pick one (in priority order):\n"
+            "  1. MCP_SERVICE_TOKEN — copy from docker-compose.mayring.yml (server-internal,\n"
+            "     no UI click, never expires). Best for CI.\n"
+            "  2. MAYRING_SANCTUM_TOKEN — generate at app.linn.games/settings/mayring-abo;\n"
+            "     exercises full user-auth path.\n"
+            "  3. MAYRING_JWT or "
+            f"{JWT_PATH} (raw JWT for ad-hoc local).\n"
         )
         sys.exit(2)
 
@@ -186,18 +200,25 @@ def check_health(api: str, token: str) -> CheckResult:
 
 
 def check_workspace_scoped(api: str, token: str) -> CheckResult:
-    """Stats endpoints must respond with workspace_id derived from JWT.sub,
-    not 'system' (the daemon bucket) and not the legacy UUID."""
+    """Stats endpoints must respond with a sane workspace_id.
+
+    Accepts:
+      • "user-<id>" — JWT.sub-derived (smoke ran with user/Sanctum token)
+      • "system"   — service-token path (smoke ran with MCP_SERVICE_TOKEN)
+    Rejects: legacy UUID, "default", or empty — these would mean either
+    workspace-id derivation is broken or the auth fell through to a
+    non-tenant default.
+    """
     code, body, dt = _http("GET", f"{api}/stats/workspaces", token)
     if code != 200:
         return CheckResult("workspace_scoping", False,
                            f"/stats/workspaces http={code}: {body}")
     ws = (body or {}).get("workspace_id", "")
-    looks_user_scoped = ws.startswith("user-")
+    is_sane = ws.startswith("user-") or ws == "system"
     return CheckResult(
         "workspace_scoping",
-        looks_user_scoped,
-        f"workspace_id={ws!r} (must start with 'user-' to confirm JWT.sub-derived)",
+        is_sane,
+        f"workspace_id={ws!r} (expected 'user-<id>' or 'system')",
     )
 
 

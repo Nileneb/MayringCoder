@@ -42,24 +42,37 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run smoke test (logs in via Sanctum → exercises user-auth)
+      - name: Run smoke test
         id: smoke
         env:
-          # Long-lived Sanctum personal-access token from app.linn.games.
-          # Set once: Settings → Secrets and variables → Actions →
-          # MAYRING_SANCTUM_TOKEN. Smoke script trades it for a fresh JWT
-          # at /api/mayring/refresh-token, so the run also tests:
-          #   • Sanctum auth path
-          #   • currentWorkspace() resolution
-          #   • hasMayringAccess() subscription gate
-          #   • JwtIssuer RS256 signing
+          # Two ways to authenticate, in priority order — pick one
+          # whichever is more convenient:
+          #
+          # MCP_SERVICE_TOKEN — copy the value of MCP_SERVICE_TOKEN
+          # straight out of ~/app.linn.games/docker-compose.mayring.yml
+          # (it's server-internal, never rotates, no Browser/UI step).
+          # Smoke runs as workspace=system; tests every endpoint, just
+          # not "is this token user-derived" specifically.
+          #
+          # MAYRING_SANCTUM_TOKEN — generated once via
+          # https://app.linn.games/settings/mayring-abo. Long-lived
+          # Sanctum personal-access token; smoke trades it for a JWT
+          # via /api/mayring/refresh-token, exercising the full user-
+          # auth flow (Sanctum → currentWorkspace → hasMayringAccess →
+          # JwtIssuer).
+          #
+          # If neither is set the workflow fails loud with instructions.
+          MCP_SERVICE_TOKEN: ${{ secrets.MCP_SERVICE_TOKEN }}
           MAYRING_SANCTUM_TOKEN: ${{ secrets.MAYRING_SANCTUM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$MAYRING_SANCTUM_TOKEN" ]; then
-            echo "::error::MAYRING_SANCTUM_TOKEN secret is not set"
-            echo "Generate one at app.linn.games (Profile → Mayring → 'Watcher Setup')"
-            echo "then add it under repo Settings → Secrets and variables → Actions"
+          if [ -z "$MCP_SERVICE_TOKEN" ] && [ -z "$MAYRING_SANCTUM_TOKEN" ]; then
+            cat <<'EOF'
+            ::error::No auth secret configured for smoke tests.
+            ::error::Set ONE of these in repo Settings → Secrets:
+            ::error::  MCP_SERVICE_TOKEN — value already in docker-compose.mayring.yml
+            ::error::  MAYRING_SANCTUM_TOKEN — from app.linn.games/settings/mayring-abo
+          EOF
             exit 1
           fi
           set +e
