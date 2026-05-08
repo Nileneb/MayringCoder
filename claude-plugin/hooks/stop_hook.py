@@ -135,7 +135,7 @@ def _post_micro_batch(turns: list[dict], session_id: str, workspace_slug: str, t
         "workspace_slug": workspace_slug,
     }).encode()
     req = urllib.request.Request(
-        f"{_API_URL}/memory/conversation/micro-batch",
+        f"{_API_URL}/conversation/micro-batch",
         data=payload,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
