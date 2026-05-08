@@ -44,7 +44,14 @@ _TURN_PAIR_LIMIT = 2        # one user + one assistant turn
 _AUTO_FEEDBACK_LIMIT = 8    # max chunks to rate per turn
 _PATH_KEY_MIN_LEN = 5       # avoid spurious matches on tiny basenames
 
-# Pairs emitted by memory_inject as `- \`chk_xxx\` : \`<source_id>\``
+# memory_inject persists per-session (chunk_id, source_id) pairs in this
+# directory because the inject block isn't part of the user-turn content
+# in the transcript JSONL — without the file, the Stop hook would never
+# see what was injected. See memory_inject._write_inject_state.
+_INJECT_STATE_DIR = os.path.expanduser("~/.config/mayring/inject-state")
+
+# Legacy regex kept for transcripts that DO contain the block inline
+# (e.g. paste-ins, debugging). New canonical source is the state file.
 _CHUNK_LINE_RE = re.compile(r"`(chk_[a-f0-9]{16})`\s*:\s*`([^`]+)`")
 
 
@@ -167,10 +174,14 @@ def _post_micro_batch(turns: list[dict], session_id: str, workspace_slug: str, t
 
 
 def extract_injected_chunks(user_text: str) -> list[tuple[str, str]]:
-    """Pull `(chunk_id, source_id)` pairs out of the memory_inject hint block.
+    """Legacy fallback: parse `(chunk_id, source_id)` pairs from inline block.
 
-    Idempotent on multiple matches — only the first occurrence per chunk_id
-    is kept (later inject blocks within the same prompt would be unusual).
+    The user-turn content in the JSONL transcript does NOT contain the
+    inject block (Claude Code prefixes hook output to the prompt, but
+    only the typed text lands as message.content). The canonical path
+    is now ``read_inject_state(session_id)``; this regex is kept as a
+    fallback for transcripts that *do* embed the block (e.g. for tests
+    or pasted excerpts).
     """
     seen: set[str] = set()
     pairs: list[tuple[str, str]] = []
@@ -180,6 +191,35 @@ def extract_injected_chunks(user_text: str) -> list[tuple[str, str]]:
         seen.add(cid)
         pairs.append((cid, sid))
     return pairs
+
+
+def read_inject_state(session_id: str) -> list[tuple[str, str]]:
+    """Read the (chunk_id, source_id) pairs memory_inject wrote for this session."""
+    if not session_id:
+        return []
+    path = os.path.join(_INJECT_STATE_DIR, f"{session_id}.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    pairs: list[tuple[str, str]] = []
+    for entry in data.get("chunks", []):
+        cid = (entry or {}).get("chunk_id")
+        sid = (entry or {}).get("source_id", "")
+        if cid:
+            pairs.append((cid, sid))
+    return pairs
+
+
+def clear_inject_state(session_id: str) -> None:
+    if not session_id:
+        return
+    path = os.path.join(_INJECT_STATE_DIR, f"{session_id}.json")
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
@@ -242,16 +282,32 @@ def _capture_turns(payload: dict, token: str) -> list[dict]:
     return turns
 
 
-def _auto_feedback(turns: list[dict], token: str) -> None:
-    """Rate every chunk that memory_inject announced for this prompt."""
+def _auto_feedback(turns: list[dict], session_id: str, token: str) -> None:
+    """Rate every chunk that memory_inject announced for this prompt.
+
+    Source of pairs: the per-session state file written by memory_inject
+    (transcript content does NOT contain the inject block). Falls back
+    to inline-block parsing of the user turn for back-compat / tests.
+    Always clears the state file after rating so a missed Stop event
+    doesn't double-rate on the next session.
+    """
     if len(turns) < 2:
         return
-    user_text = turns[0].get("content", "")
+    pairs = read_inject_state(session_id)
+    if not pairs:
+        # Fallback for legacy/test paths that do embed the block inline
+        user_text = turns[0].get("content", "")
+        pairs = extract_injected_chunks(user_text)
+    if not pairs:
+        return
     assistant_text = turns[1].get("content", "")
-    pairs = extract_injected_chunks(user_text)
+    posted = 0
     for chunk_id, source_id in pairs[:_AUTO_FEEDBACK_LIMIT]:
         signal = classify_chunk_relevance(source_id, assistant_text)
         _post_feedback(chunk_id, signal, token)
+        posted += 1
+    sys.stderr.write(f"[stop_hook] auto_feedback: posted {posted} ratings\n")
+    clear_inject_state(session_id)
 
 
 def main() -> None:
@@ -260,13 +316,14 @@ def main() -> None:
         sys.stderr.write(f"[stop_hook] no token at {_JWT_FILE}; skipping\n")
         return
     payload = _read_payload()
+    session_id = payload.get("session_id", "") or "unknown"
     try:
         turns = _capture_turns(payload, token)
     except Exception as exc:
         sys.stderr.write(f"[stop_hook] capture_turns crashed: {type(exc).__name__}: {exc}\n")
         turns = []
     try:
-        _auto_feedback(turns, token)
+        _auto_feedback(turns, session_id, token)
     except Exception as exc:
         sys.stderr.write(f"[stop_hook] auto_feedback crashed: {type(exc).__name__}: {exc}\n")
 

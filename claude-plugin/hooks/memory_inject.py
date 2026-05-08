@@ -21,6 +21,13 @@ import urllib.error
 JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 API = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 
+# Persistent state for the Stop hook. The injected chunk_id list does NOT
+# survive in the user-turn content of the JSONL transcript — Claude Code
+# treats hook output as prompt prefix, not user-typed text. So the Stop
+# hook has no way to read what was injected from the transcript alone;
+# we drop a small state file here that the Stop hook picks up.
+INJECT_STATE_DIR = os.path.expanduser("~/.config/mayring/inject-state")
+
 # Per-request timeout budget. Was 4.0s but the hybrid search auto-activates
 # the PI-advisor LLM stage when the scope-filter returns >10 candidates,
 # which is normal for any populated workspace — that stage adds 2-4s on top
@@ -138,6 +145,26 @@ def _multi_lens_search(query: str, token: str) -> dict[str, dict]:
     return results
 
 
+def _write_inject_state(session_id: str, chunk_pairs: list[tuple[str, str]]) -> None:
+    """Persist (chunk_id, source_id) pairs so the Stop hook can rate them.
+
+    Path: ~/.config/mayring/inject-state/<session_id>.json. Stop hook
+    reads + deletes after rating. Best-effort, never raises.
+    """
+    if not session_id or not chunk_pairs:
+        return
+    try:
+        os.makedirs(INJECT_STATE_DIR, exist_ok=True)
+        path = os.path.join(INJECT_STATE_DIR, f"{session_id}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"chunks": [{"chunk_id": c, "source_id": s} for c, s in chunk_pairs]},
+                f,
+            )
+    except OSError:
+        pass
+
+
 def main() -> None:
     payload = _read_payload()
     prompt = _extract_prompt(payload)
@@ -212,6 +239,9 @@ def main() -> None:
             if cid and cid not in seen_ids:
                 seen_ids.add(cid)
                 chunk_pairs.append((cid, sid))
+
+    # Persist for the Stop hook (transcript doesn't capture this block).
+    _write_inject_state(payload.get("session_id", ""), chunk_pairs[:8])
 
     chunk_id_hint = ""
     if chunk_pairs:
