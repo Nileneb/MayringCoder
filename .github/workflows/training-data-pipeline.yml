@@ -1,0 +1,74 @@
+name: Training-data pipeline (#87 actually-used)
+
+# Issue #87 was built but never automatically called — exactly the
+# pattern the user complained about. This workflow closes the loop:
+#
+#   daily 06:30 UTC
+#     └─▶ POST /api/training/generate?pipeline=memory     (writes memory_context_pairs.jsonl)
+#     └─▶ POST /api/training/generate?pipeline=kategorie  (writes kategorie_coaching_pairs.jsonl)
+#     └─▶ POST /api/training/merge                        (consolidates into train.jsonl)
+#
+# Without this cron, the /api/training/merge endpoint kept finding
+# empty JSONL files because nothing ever generated them.
+
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      pipelines:
+        description: "Which pipelines to run (memory, kategorie, both)"
+        required: false
+        default: "both"
+      workspace_id:
+        description: "Workspace to scope generation to"
+        required: false
+        default: "default"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: [self-hosted, u-server]
+    timeout-minutes: 20
+    steps:
+      - name: Generate training data + merge into train.jsonl
+        env:
+          PIPELINES: ${{ github.event.inputs.pipelines || 'both' }}
+          WS: ${{ github.event.inputs.workspace_id || 'default' }}
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
+            exit 1
+          fi
+          run_pipeline() {
+            local pipeline="$1"
+            echo "===== generate $pipeline ====="
+            response=$(curl -sS -m 600 -X POST \
+              "https://mcp.linn.games/api/training/generate?pipeline=${pipeline}&workspace_id=${WS}&limit=500" \
+              -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+            echo "$response" | python3 -m json.tool || echo "$response"
+            pairs=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pairs_written",0))' 2>/dev/null || echo "0")
+            echo "::notice::pipeline=${pipeline} pairs_written=${pairs}"
+          }
+          case "$PIPELINES" in
+            both)
+              run_pipeline memory
+              run_pipeline kategorie
+              ;;
+            memory|kategorie)
+              run_pipeline "$PIPELINES"
+              ;;
+            *)
+              echo "::error::pipelines must be memory|kategorie|both"
+              exit 1
+              ;;
+          esac
+          echo "===== merge ====="
+          merge_resp=$(curl -sS -m 60 -X POST https://mcp.linn.games/api/training/merge \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+          echo "$merge_resp" | python3 -m json.tool || echo "$merge_resp"
