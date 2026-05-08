@@ -546,8 +546,16 @@ def search(
     # weight on llm_advisor). Auto-activates when candidates > 10 OR
     # task_context was supplied (plan-driven retrieval benefits most from
     # semantic re-ranking since the task description is rich).
+    #
+    # Explicit opt-out: callers that need a fast turnaround (e.g. the
+    # UserPromptSubmit hook with a 9s budget against a workspace of 4k+
+    # chunks) pass `llm_prefilter=False` to skip this stage entirely.
+    # Without the opt-out the auto-trigger >10 candidates would always fire.
     llm_scores: dict[str, float] = {}
-    if (opts.get("llm_prefilter") or task_context or len(candidates) > 10) and ollama_url and candidates:
+    _llm_pref = opts.get("llm_prefilter")
+    if _llm_pref is False:
+        pass  # explicit opt-out — no advisor call
+    elif (_llm_pref or task_context or len(candidates) > 10) and ollama_url and candidates:
         llm_model = opts.get("llm_prefilter_model", "qwen2.5-coder:7b")
         llm_scores = _llm_relevance_scores(
             query, candidates, ollama_url,

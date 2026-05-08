@@ -62,12 +62,23 @@ def _extract_prompt(payload: dict) -> str:
 def _search(
     query: str, token: str, *, top_k: int = TOP_K_PRIMARY,
     source_type: str | None = None, char_budget: int = CHAR_BUDGET,
-) -> dict | None:
+) -> dict:
+    """Run one /memory/search lens.
+
+    Returns either the parsed JSON response, or a synthetic dict with a
+    `_hook_error` key that surfaces the failure mode in the prompt block.
+    Silent ``return None`` on every exception is exactly how this hook
+    masked a 4s timeout for weeks — never again.
+    """
     body_dict: dict = {
         "query": query[:600],
         "top_k": top_k,
         "include_text": True,
         "char_budget": char_budget,
+        # Hook runs in the prompt critical path — skip the LLM advisor
+        # stage that adds 2-4s on a populated workspace. Symbolic + vector
+        # are still ranked; only the post-hoc relevance scoring is off.
+        "llm_prefilter": False,
     }
     if source_type:
         body_dict["source_type"] = source_type
@@ -83,29 +94,47 @@ def _search(
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read())
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError):
-        return None
+    except urllib.error.HTTPError as e:
+        return {"_hook_error": f"HTTP {e.code} from /memory/search"}
+    except TimeoutError:
+        return {"_hook_error": f"TIMEOUT after {TIMEOUT}s — server is slow or down"}
+    except urllib.error.URLError as e:
+        return {"_hook_error": f"URLError: {e.reason}"}
+    except OSError as e:
+        return {"_hook_error": f"OSError {e.errno}: {e.strerror}"}
+    except ValueError as e:
+        return {"_hook_error": f"JSON parse error: {e}"}
 
 
-def _multi_lens_search(query: str, token: str) -> dict[str, dict | None]:
-    """Run three lens-searches concurrently; return {lens_name: result|None}."""
+def _multi_lens_search(query: str, token: str) -> dict[str, dict]:
+    """Run three lens-searches concurrently; one entry per lens.
+
+    Each value is either a real search response or a `{_hook_error: ...}`
+    sentinel. Cancellation/timeout in the futures executor itself also
+    surfaces as `_hook_error` so the user actually sees what's wrong.
+    """
     lenses = {
         "primary":      {},
         "ambient":      {"source_type": "ambient_snapshot", "top_k": TOP_K_LENS, "char_budget": 1000},
         "conversation": {"source_type": "conversation_summary", "top_k": TOP_K_LENS, "char_budget": 1000},
     }
-    results: dict[str, dict | None] = {}
+    results: dict[str, dict] = {n: {"_hook_error": "lens did not complete in time"}
+                                for n in lenses}
     with _cf.ThreadPoolExecutor(max_workers=3) as pool:
         futures = {
             pool.submit(_search, query, token, **kwargs): name
             for name, kwargs in lenses.items()
         }
-        for fut in _cf.as_completed(futures, timeout=GLOBAL_TIMEOUT):
-            name = futures[fut]
-            try:
-                results[name] = fut.result()
-            except Exception:
-                results[name] = None
+        try:
+            for fut in _cf.as_completed(futures, timeout=GLOBAL_TIMEOUT):
+                name = futures[fut]
+                try:
+                    results[name] = fut.result()
+                except Exception as exc:
+                    results[name] = {"_hook_error": f"{type(exc).__name__}: {exc}"}
+        except _cf.TimeoutError:
+            # Leave the pre-seeded "did not complete" sentinels in place.
+            pass
     return results
 
 
@@ -121,8 +150,22 @@ def main() -> None:
 
     results = _multi_lens_search(prompt, token)
     primary = results.get("primary") or {}
-    if not primary:
-        print(f"## Memory: Suche fehlgeschlagen (API={API}, prompt[:50]={prompt[:50]!r})")
+    if "_hook_error" in primary:
+        # Loud error so silent-failure can never come back. Lists ALL three
+        # lens errors at once instead of bailing on the first.
+        errs = [
+            f"  - {lens}: {(r or {}).get('_hook_error', 'no response')}"
+            for lens, r in results.items()
+            if (r or {}).get("_hook_error")
+        ]
+        print(
+            "## Memory: Hook konnte Memory nicht laden\n"
+            f"_API={API}_  _prompt[:50]={prompt[:50]!r}_\n"
+            + "\n".join(errs)
+            + "\n\n_Wenn dieser Block wiederholt erscheint: API-Healthcheck "
+              "(`curl https://mcp.linn.games/health`) prüfen oder Plugin neu "
+              "laden (`/reload-plugins`)._"
+        )
         return
 
     primary_ctx = (primary.get("prompt_context") or "").strip()
@@ -142,16 +185,18 @@ def main() -> None:
     ]
 
     ambient = results.get("ambient") or {}
-    ambient_ctx = (ambient.get("prompt_context") or "").strip() if ambient else ""
-    if ambient_ctx:
-        sections.append("\n### Ambient Snapshot (Projekt-Kontext)")
-        sections.append(ambient_ctx)
+    if ambient and "_hook_error" not in ambient:
+        ambient_ctx = (ambient.get("prompt_context") or "").strip()
+        if ambient_ctx:
+            sections.append("\n### Ambient Snapshot (Projekt-Kontext)")
+            sections.append(ambient_ctx)
 
     conv = results.get("conversation") or {}
-    conv_ctx = (conv.get("prompt_context") or "").strip() if conv else ""
-    if conv_ctx:
-        sections.append("\n### Vorherige Sessions / Decisions")
-        sections.append(conv_ctx)
+    if conv and "_hook_error" not in conv:
+        conv_ctx = (conv.get("prompt_context") or "").strip()
+        if conv_ctx:
+            sections.append("\n### Vorherige Sessions / Decisions")
+            sections.append(conv_ctx)
 
     # Pair each chunk with its source_id so the Stop hook can classify
     # positive/negative automatically (path match against the assistant
@@ -159,6 +204,8 @@ def main() -> None:
     seen_ids: set[str] = set()
     chunk_pairs: list[tuple[str, str]] = []
     for r in (primary, ambient, conv):
+        if not r or "_hook_error" in r:
+            continue
         for chunk in (r.get("results") or []):
             cid = chunk.get("chunk_id", "")
             sid = chunk.get("source_id", "")

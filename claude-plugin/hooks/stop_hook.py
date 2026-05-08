@@ -156,8 +156,13 @@ def _post_micro_batch(turns: list[dict], session_id: str, workspace_slug: str, t
         urllib.request.urlopen(req, timeout=_TIMEOUT)
         return 200
     except urllib.error.HTTPError as e:
+        sys.stderr.write(f"[stop_hook] micro-batch HTTP {e.code}: {e.read().decode()[:200]}\n")
         return e.code
-    except Exception:
+    except TimeoutError:
+        sys.stderr.write(f"[stop_hook] micro-batch TIMEOUT after {_TIMEOUT}s\n")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"[stop_hook] micro-batch {type(exc).__name__}: {exc}\n")
         return 0
 
 
@@ -213,8 +218,11 @@ def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
     )
     try:
         urllib.request.urlopen(req, timeout=_TIMEOUT)
-    except Exception:
-        pass
+    except Exception as exc:
+        sys.stderr.write(
+            f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
 
 
 def _capture_turns(payload: dict, token: str) -> list[dict]:
@@ -249,16 +257,18 @@ def _auto_feedback(turns: list[dict], token: str) -> None:
 def main() -> None:
     token = _read_token()
     if not token:
+        sys.stderr.write(f"[stop_hook] no token at {_JWT_FILE}; skipping\n")
         return
     payload = _read_payload()
     try:
         turns = _capture_turns(payload, token)
-    except Exception:
+    except Exception as exc:
+        sys.stderr.write(f"[stop_hook] capture_turns crashed: {type(exc).__name__}: {exc}\n")
         turns = []
     try:
         _auto_feedback(turns, token)
-    except Exception:
-        pass
+    except Exception as exc:
+        sys.stderr.write(f"[stop_hook] auto_feedback crashed: {type(exc).__name__}: {exc}\n")
 
 
 if __name__ == "__main__":

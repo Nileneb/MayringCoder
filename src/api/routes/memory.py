@@ -88,6 +88,8 @@ async def memory_search(
             opts["source_type"] = request.source_type
         if request.task_context:
             opts["task_context"] = request.task_context
+        if request.llm_prefilter is not None:
+            opts["llm_prefilter"] = request.llm_prefilter
         result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
                              opts, request.char_budget)
         return {"workspace_id": workspace_id, **result}

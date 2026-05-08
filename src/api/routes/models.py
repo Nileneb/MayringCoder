@@ -57,6 +57,11 @@ class MemorySearchRequest(BaseModel):
     top_k: int = 8
     char_budget: int = 6000
     task_context: str | None = None
+    # When False, the retrieval skips the PI-advisor LLM stage entirely —
+    # used by the UserPromptSubmit hook to stay inside its 9s timeout
+    # budget on populated workspaces. Default None lets the existing
+    # auto-trigger logic decide.
+    llm_prefilter: bool | None = None
 
 
 class MemoryPutRequest(BaseModel):
