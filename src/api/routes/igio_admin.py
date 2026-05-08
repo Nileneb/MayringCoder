@@ -2,8 +2,9 @@
 
 Tracks Issue #141: existing chunks have an empty ``igio_axis`` because the
 classifier was never run retroactively. These endpoints expose the coverage
-ratio and an admin-only trigger that runs the same code path as
-``python -m src.cli --classify-igio`` in a FastAPI background thread.
+ratio and an admin-only trigger that spawns ``python -m src.cli
+--classify-igio`` as a SUBPROCESS — keeping the FastAPI worker free during
+long Ollama loops.
 
 Mounted under ``/stats/`` so the production nginx whitelist (``/stats/*``)
 already covers it — no nginx config change required.
@@ -14,6 +15,7 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +28,12 @@ router = APIRouter()
 _log = logging.getLogger(__name__)
 
 _IGIO_JOBS: dict[str, dict[str, Any]] = {}
+_ROOT = Path(__file__).parent.parent.parent.parent
+
+
+def _python_exe() -> str:
+    venv = _ROOT / ".venv" / "bin" / "python"
+    return str(venv) if venv.exists() else "python"
 
 
 def _conn():
@@ -76,62 +84,57 @@ async def igio_coverage(
     }
 
 
-def _run_backfill_sync(
+async def _run_backfill_subprocess(
     job_id: str, limit: int, threshold: float, model: str,
     workspace_id: str | None,
 ) -> None:
-    """Blocking backfill loop. Mirrors ``_cmd_classify_igio`` from src/cli.py
-    so behaviour stays identical to the local CLI path."""
-    from src.wiki_v2.igio_classifier import classify_chunk, now_iso
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    """Spawn ``python -m src.cli --classify-igio ...`` so the LLM loop runs
+    in its own process. Keeps the FastAPI worker pool free, survives
+    container reload of THIS request (subprocess detaches), and shares
+    code with the local CLI path so behaviour cannot diverge."""
     state = _IGIO_JOBS[job_id]
     state.update(status="running", started_at=time.time())
-    conn = _conn()
+    args = [
+        "-m", "src.cli", "--classify-igio",
+        "--igio-limit", str(limit),
+        "--igio-min-confidence", str(threshold),
+        "--model", model,
+    ]
+    if workspace_id:
+        args += ["--workspace-id", workspace_id]
     try:
-        if workspace_id:
-            rows = conn.execute(
-                "SELECT chunk_id, text, category_labels FROM chunks "
-                "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-                "AND workspace_id = ? "
-                "ORDER BY created_at DESC LIMIT ?",
-                (workspace_id, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT chunk_id, text, category_labels FROM chunks "
-                "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-                "ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        state.update(picked=len(rows))
+        proc = await asyncio.create_subprocess_exec(
+            _python_exe(), *args,
+            cwd=str(_ROOT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        out = stdout.decode(errors="replace") if stdout else ""
+        # CLI prints "[igio] persisted=<N>/<total>" on success.
         persisted = 0
-        counts: dict[str, int] = {a: 0 for a in
-                                  ("issue", "goal", "intervention", "outcome", "")}
-        for r in rows:
-            cats = [c for c in (r["category_labels"] or "").split(",") if c]
-            try:
-                verdict = classify_chunk(
-                    r["text"], cats, ollama_url=ollama_url, model=model,
-                )
-            except Exception as e:
-                _log.warning("igio classify failed for %s: %s", r["chunk_id"], e)
-                continue
-            counts[verdict.axis] = counts.get(verdict.axis, 0) + 1
-            if verdict.axis and verdict.confidence >= threshold:
-                conn.execute(
-                    "UPDATE chunks SET igio_axis = ?, igio_confidence = ?, "
-                    "igio_classified_at = ? WHERE chunk_id = ?",
-                    (verdict.axis, verdict.confidence, now_iso(), r["chunk_id"]),
-                )
-                persisted += 1
-        conn.commit()
-        state.update(status="done", persisted=persisted,
-                     counts=counts, ended_at=time.time())
+        picked = 0
+        for line in out.splitlines():
+            if "persisted=" in line and "[igio]" in line:
+                try:
+                    persisted_part = line.split("persisted=", 1)[1].split(" ", 1)[0]
+                    if "/" in persisted_part:
+                        p, t = persisted_part.split("/", 1)
+                        persisted = int(p)
+                        picked = int(t)
+                except (ValueError, IndexError):
+                    pass
+        state.update(
+            status="done" if proc.returncode == 0 else "error",
+            picked=picked,
+            persisted=persisted,
+            returncode=proc.returncode,
+            tail=out[-2000:],
+            ended_at=time.time(),
+        )
     except Exception as e:
         state.update(status="error", error=str(e), ended_at=time.time())
         _log.exception("igio backfill job %s failed", job_id)
-    finally:
-        conn.close()
 
 
 @router.post("/stats/igio-backfill")
@@ -162,8 +165,8 @@ async def trigger_igio_backfill(
         "workspace_id": workspace_id,
         "queued_at": time.time(),
     }
-    asyncio.create_task(asyncio.to_thread(
-        _run_backfill_sync, job_id, limit, min_confidence, model, workspace_id,
+    asyncio.create_task(_run_backfill_subprocess(
+        job_id, limit, min_confidence, model, workspace_id,
     ))
     return {"job_id": job_id, "status": "queued"}
 

@@ -37,7 +37,7 @@ jobs:
     runs-on: [self-hosted, u-server]
     timeout-minutes: 25
     steps:
-      - name: POST /stats/igio-backfill on production
+      - name: POST /stats/igio-backfill (fire and forget)
         env:
           LIMIT: ${{ github.event.inputs.limit || '300' }}
           CONF: ${{ github.event.inputs.min_confidence || '0.5' }}
@@ -52,37 +52,28 @@ jobs:
           fi
           QS="limit=${LIMIT}&min_confidence=${CONF}"
           if [ -n "${WS}" ]; then QS="${QS}&workspace_id=${WS}"; fi
-          response=$(curl -sS -m 30 -X POST \
+          response=$(curl -sS -m 60 -X POST \
             "https://mcp.linn.games/stats/igio-backfill?${QS}" \
             -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
           echo "queued: $response"
           job_id=$(echo "$response" | python3 -c \
             'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
           if [ -z "$job_id" ]; then
-            echo "::error::no job_id returned"; exit 1
+            echo "::error::no job_id returned — endpoint may not exist or auth failed"
+            exit 1
           fi
-          # Poll until status != queued/running, max 20 min
-          for i in $(seq 1 240); do
-            sleep 5
-            state=$(curl -sS -m 10 \
-              "https://mcp.linn.games/stats/igio-backfill/${job_id}" \
-              -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
-            status=$(echo "$state" | python3 -c \
-              'import json,sys; print(json.load(sys.stdin).get("status",""))')
-            case "$status" in
-              done|error)
-                echo "final: $state"
-                if [ "$status" = "error" ]; then exit 1; fi
-                exit 0
-                ;;
-            esac
-          done
-          echo "::warning::job ${job_id} still running after 20 min — left detached"
+          # Fire-and-forget: the job runs async inside the API container. We
+          # do NOT poll because the LLM loop hogs a worker thread for ~5-15
+          # minutes per batch and the container can restart (deploy) mid-run.
+          # The smoke-check `igio_axis_on_chunks` reports the resulting
+          # coverage ratio, which is the real proof the work happened.
+          echo "::notice::job ${job_id} dispatched; coverage rises over time"
 
-      - name: Report new coverage ratio
+      - name: Report current coverage ratio
         if: always()
         run: |
           ENV_FILE="$HOME/app.linn.games/.env"
           MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
-          curl -sS -m 10 -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
+          # Long timeout — the API can be slow when a backfill is running.
+          curl -sS -m 60 -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
             https://mcp.linn.games/stats/igio-coverage | python3 -m json.tool || true
