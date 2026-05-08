@@ -1,0 +1,54 @@
+name: Post-deploy ingest
+
+# After Build & Push completes successfully, fire a /populate against the
+# freshly-deployed API so the new code is ingested into the memory store
+# right away. Without this step, every push silently ages the memory by
+# one commit — fixed code + stale memory = exactly the "fix in one repo
+# masks bug in another" problem the user complained about.
+#
+# Runs on the same self-hosted u-server runner as the smoke suite, so
+# MCP_SERVICE_TOKEN comes from ~/app.linn.games/.env. Zero secrets in
+# repo settings.
+
+on:
+  workflow_run:
+    workflows: ["Build & Push"]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: [self-hosted, u-server]
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Wait for the deploy to land
+        if: github.event_name == 'workflow_run'
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -m 4 -o /dev/null https://mcp.linn.games/health; then
+              echo "API healthy after ${i} attempts"; break
+            fi
+            sleep 5
+          done
+          sleep 10
+
+      - name: Trigger /populate for MayringCoder repo
+        run: |
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
+            exit 1
+          fi
+          response=$(curl -sS -m 30 -X POST https://mcp.linn.games/populate \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"repo":"https://github.com/Nileneb/MayringCoder"}')
+          echo "Response: $response"
+          job_id=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("job_id",""))')
+          if [ -z "$job_id" ]; then
+            echo "::error::no job_id returned — populate did not start"
+            exit 1
+          fi
+          echo "::notice::ingest job_id=$job_id queued; check /jobs/$job_id for progress"
