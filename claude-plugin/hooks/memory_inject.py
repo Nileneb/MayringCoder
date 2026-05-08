@@ -20,8 +20,14 @@ import urllib.error
 
 JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 API = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
-TIMEOUT = 4.0           # per-request
-GLOBAL_TIMEOUT = 6.0    # whole hook
+
+# Per-request timeout budget. Was 4.0s but the hybrid search auto-activates
+# the PI-advisor LLM stage when the scope-filter returns >10 candidates,
+# which is normal for any populated workspace — that stage adds 2-4s on top
+# of vector + symbolic. Sub-4s timeouts caused every prompt to fall through
+# to "Suche fehlgeschlagen" even though the API itself was healthy.
+TIMEOUT = 9.0           # per-request
+GLOBAL_TIMEOUT = 12.0   # whole hook (3 lenses run concurrently)
 TOP_K_PRIMARY = 4
 TOP_K_LENS = 2          # per ambient/conv lens
 CHAR_BUDGET = 1800      # per call → ~5400 total max

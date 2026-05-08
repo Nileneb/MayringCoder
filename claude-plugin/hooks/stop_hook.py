@@ -34,7 +34,9 @@ import urllib.request
 
 _JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 _API_URL = os.environ.get("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
-_TIMEOUT = 5
+_TIMEOUT = 10  # micro-batch summarises a turn pair on the server (LLM call)
+               # — was 5s, frequently hit the deadline mid-summary and silently
+               # dropped the turn. 10s buys headroom without blocking Stop.
 
 _MAX_TURN_CHARS = 4000      # truncate per-turn content fed to the server
 _TURN_PAIR_LIMIT = 2        # one user + one assistant turn
