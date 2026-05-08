@@ -32,6 +32,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,12 +54,94 @@ class CheckResult:
 
 
 def _load_token() -> str:
+    """Resolve the JWT used for every smoke check.
+
+    Order of preference:
+      1. ``MAYRING_SANCTUM_TOKEN`` env var → exchanged at app.linn.games
+         for a fresh JWT (login_path). This is the CI-friendly path:
+         long-lived Sanctum token as the only secret stored in GitHub
+         Actions, the smoke test logs in fresh on every run. Tests the
+         actual user-auth flow as part of the smoke run.
+      2. ``MAYRING_JWT`` env var (raw JWT) — for ad-hoc local runs.
+      3. ``~/.config/mayring/hook.jwt`` file — legacy fallback.
+
+    Mode (1) is the only path that exercises the Laravel login system —
+    user-management, workspace resolution, subscription checks all
+    fire as part of the smoke run. The user's complaint was exactly
+    this: copying a JWT bypasses the user-auth pipeline we wanted
+    tested.
+    """
+    sanctum = os.environ.get("MAYRING_SANCTUM_TOKEN", "").strip()
+    if sanctum:
+        return _login_via_sanctum(sanctum)
+    raw_jwt = os.environ.get("MAYRING_JWT", "").strip()
+    if raw_jwt:
+        return raw_jwt
     try:
         with open(JWT_PATH) as f:
             return f.read().strip()
     except OSError:
-        sys.stderr.write(f"FATAL: no JWT at {JWT_PATH} — cannot smoke-test\n")
+        sys.stderr.write(
+            "FATAL: no auth credential found\n"
+            "  preferred: set MAYRING_SANCTUM_TOKEN (Sanctum token from app.linn.games)\n"
+            "  fallback:  set MAYRING_JWT or place a JWT at "
+            f"{JWT_PATH}\n"
+        )
         sys.exit(2)
+
+
+_LARAVEL_BASE = os.environ.get("LARAVEL_BASE_URL", "https://app.linn.games").rstrip("/")
+
+
+def _login_via_sanctum(sanctum_token: str) -> str:
+    """Trade a Sanctum personal-access token for a fresh RS256 JWT.
+
+    Calls `POST /api/mayring/refresh-token` on app.linn.games — the
+    same endpoint the existing memory_inject hook uses when its JWT
+    expires. Validates the user has a workspace and Mayring access,
+    issues a fresh JWT via JwtIssuer::issueForUser. So this single
+    call exercises:
+
+      • Sanctum auth (user-management is wired)
+      • $user->currentWorkspace() (workspace resolution works)
+      • $workspace->hasMayringAccess() (subscription/billing path)
+      • JwtIssuer (RS256 signing with sub=user.id, workspace_id)
+
+    A 401 here means the Sanctum token is invalid → user-auth broken.
+    A 403 → subscription gate active. Anything else → laravel down.
+    """
+    body = b""  # endpoint takes no body
+    req = urllib.request.Request(
+        f"{_LARAVEL_BASE}/api/mayring/refresh-token",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {sanctum_token}",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(
+            f"FATAL: Sanctum→JWT exchange failed at "
+            f"{_LARAVEL_BASE}/api/mayring/refresh-token: HTTP {e.code}\n"
+            f"  {e.read().decode()[:200]}\n"
+            f"  → check MAYRING_SANCTUM_TOKEN value (rotate if needed)\n"
+        )
+        sys.exit(2)
+    except Exception as e:
+        sys.stderr.write(
+            f"FATAL: could not reach {_LARAVEL_BASE}: {type(e).__name__}: {e}\n"
+        )
+        sys.exit(2)
+    jwt = payload.get("token", "")
+    if not jwt:
+        sys.stderr.write(f"FATAL: refresh-token returned no token: {payload}\n")
+        sys.exit(2)
+    print(f"# logged in via Sanctum → fresh JWT ({len(jwt)} chars)")
+    return jwt
 
 
 def _http(method: str, url: str, token: str, body: dict | None = None,
@@ -267,6 +350,83 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_visibility_isolation(api: str, token: str) -> CheckResult:
+    """Ingest a private + a public source, search, verify visibility flags.
+
+    Catches regressions in the visibility model — private chunks must
+    only surface for the workspace that ingested them, public chunks
+    must be visible to anyone with a valid JWT. The user explicitly
+    asked for this domain to be tested as part of the live login flow.
+    """
+    suffix = int(time.time())
+    workspace_slug = "smoke-vis"
+
+    # 1) Ingest a PRIVATE source (default visibility)
+    priv_id = f"smoke:vis:private:{suffix}"
+    code1, body1, _ = _http(
+        "POST", f"{api}/memory/put", token,
+        body={
+            "source_id": priv_id,
+            "source_type": "note",
+            "repo": workspace_slug,
+            "path": "private-marker",
+            "content": f"PRIVATE marker token {suffix}",
+            "categorize": False,
+        },
+        timeout=15.0,
+    )
+    if code1 != 200:
+        return CheckResult("visibility_isolation", False,
+                           f"private ingest failed http={code1}: {body1}")
+
+    # 2) Ingest a PUBLIC source by patching visibility after ingest
+    pub_id = f"smoke:vis:public:{suffix}"
+    code2, body2, _ = _http(
+        "POST", f"{api}/memory/put", token,
+        body={
+            "source_id": pub_id,
+            "source_type": "note",
+            "repo": workspace_slug,
+            "path": "public-marker",
+            "content": f"PUBLIC marker token {suffix}",
+            "categorize": False,
+        },
+        timeout=15.0,
+    )
+    if code2 != 200:
+        return CheckResult("visibility_isolation", False,
+                           f"public ingest failed http={code2}: {body2}")
+    code3, body3, _ = _http(
+        "PATCH", f"{api}/sources/{urllib.parse.quote(pub_id, safe='')}/visibility",
+        token, body={"visibility": "public"},
+    )
+    if code3 != 200:
+        return CheckResult("visibility_isolation", False,
+                           f"PATCH visibility failed http={code3}: {body3}")
+
+    # 3) Search for the marker token — both should surface for the
+    #    same user/workspace that ingested them.
+    code4, body4, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": f"marker token {suffix}", "top_k": 5,
+              "include_text": True, "llm_prefilter": False},
+        timeout=12.0,
+    )
+    if code4 != 200:
+        return CheckResult("visibility_isolation", False,
+                           f"search failed http={code4}")
+    src_ids_seen = {r["source_id"] for r in (body4 or {}).get("results", [])}
+    private_visible = priv_id in src_ids_seen
+    public_visible = pub_id in src_ids_seen
+
+    return CheckResult(
+        "visibility_isolation",
+        private_visible and public_visible,
+        f"private_in_search={private_visible}  public_in_search={public_visible}  "
+        f"results={len(src_ids_seen)}  marker={suffix}",
+    )
+
+
 def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
     """End-to-end: write a real inject-state file, drive _auto_feedback,
     verify DB-side feedback rows actually got written.
@@ -380,6 +540,7 @@ ALL_CHECKS = [
     ("feedback_slug_resolution",      check_feedback_slug_resolution),
     ("feedback_count_delta",          check_feedback_count_moves),
     ("micro_batch_indexes",           check_micro_batch_indexes),
+    ("visibility_isolation",          check_visibility_isolation),
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),

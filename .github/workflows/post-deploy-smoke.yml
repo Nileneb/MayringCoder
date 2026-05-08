@@ -42,26 +42,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Materialise hook JWT from secret
+      - name: Run smoke test (logs in via Sanctum → exercises user-auth)
+        id: smoke
         env:
-          MAYRING_HOOK_JWT: ${{ secrets.MAYRING_HOOK_JWT }}
+          # Long-lived Sanctum personal-access token from app.linn.games.
+          # Set once: Settings → Secrets and variables → Actions →
+          # MAYRING_SANCTUM_TOKEN. Smoke script trades it for a fresh JWT
+          # at /api/mayring/refresh-token, so the run also tests:
+          #   • Sanctum auth path
+          #   • currentWorkspace() resolution
+          #   • hasMayringAccess() subscription gate
+          #   • JwtIssuer RS256 signing
+          MAYRING_SANCTUM_TOKEN: ${{ secrets.MAYRING_SANCTUM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$MAYRING_HOOK_JWT" ]; then
-            echo "::error::MAYRING_HOOK_JWT secret is not set — add it under repo Settings → Secrets"
+          if [ -z "$MAYRING_SANCTUM_TOKEN" ]; then
+            echo "::error::MAYRING_SANCTUM_TOKEN secret is not set"
+            echo "Generate one at app.linn.games (Profile → Mayring → 'Watcher Setup')"
+            echo "then add it under repo Settings → Secrets and variables → Actions"
             exit 1
           fi
-          mkdir -p ~/.config/mayring
-          printf '%s' "$MAYRING_HOOK_JWT" > ~/.config/mayring/hook.jwt
-          chmod 600 ~/.config/mayring/hook.jwt
-
-      - name: Run smoke test
-        id: smoke
-        run: |
           set +e
           python tools/smoke_test_production.py --alert-on-fail
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fail the workflow if smoke failed
         if: steps.smoke.outputs.exit_code != '0'
