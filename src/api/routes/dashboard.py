@@ -383,6 +383,32 @@ async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
 # 10. vector search trends  →  llm_calls_log with call_type='vector_search'
 # ---------------------------------------------------------------------------
 
+@router.get("/stats/llm-call-types")
+async def llm_call_types(
+    days: int = 1,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Per-call_type aggregate counts from ``llm_calls_log`` over the
+    last `days` days. Smoke probe for #101 (categorization logging)
+    deepens the existing 'logged_24h > 0' check by asserting
+    ``call_type='categorization'`` specifically appears — proves the
+    Mayring categorisation pipeline is logging, not just other LLM
+    paths happening to push the counter."""
+    days = max(1, min(days, 30))
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT call_type, COUNT(*) AS n FROM llm_calls_log "
+        "WHERE created_at > datetime('now', ?) "
+        "GROUP BY call_type ORDER BY n DESC",
+        (f"-{days} days",),
+    ).fetchall()
+    return {
+        "workspace_id": workspace_id,
+        "window_days": days,
+        "counts": {row[0]: int(row[1]) for row in rows},
+    }
+
+
 @router.get("/stats/vector-trend")
 async def vector_trend(
     limit: int = 50,

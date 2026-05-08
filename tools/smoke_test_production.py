@@ -989,6 +989,106 @@ def check_feedback_log_movement(api: str, token: str) -> CheckResult:
     )
 
 
+def check_categorization_call_type_logged(api: str, token: str) -> CheckResult:
+    """Issue #101 deepening: previous categorization_logging only
+    asserted llm_calls_log has activity in 24h — could pass on
+    pi_task or vector_search calls alone. /stats/llm-call-types
+    surfaces per-call_type counts so we can prove specifically that
+    ``call_type='categorization'`` (the Mayring pipeline path,
+    src/memory/ingestion/categorization.py:242) is being logged.
+    """
+    code, body, _ = _http(
+        "GET", f"{api}/stats/llm-call-types?days=7", token,
+    )
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("categorization_call_type_logged", False,
+                           f"http={code} body={body}")
+    counts = body.get("counts") or {}
+    cat_count = int(counts.get("categorization") or 0)
+    return CheckResult(
+        "categorization_call_type_logged",
+        cat_count > 0,
+        f"categorization_calls_7d={cat_count}  "
+        f"all_types={list(counts.keys())[:6]}  "
+        f"(must be > 0 — Mayring pipeline must log on this exact call_type)",
+    )
+
+
+def check_chunk_metadata_complete(api: str, token: str) -> CheckResult:
+    """Issue #30 deepening: every chunk should declare its abstraction
+    level (file/class/function/section/...) so the multi-view ranker
+    + hierarchical context builder can do their job. Pull a sample
+    chunk via search → /memory/chunk/{id} and assert chunk_level is in
+    the expected set, not empty.
+    """
+    valid_levels = {"file", "class", "function", "block", "section",
+                    "view_fact", "view_decision", "view_intent", "view_caveat",
+                    "view_followup"}
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "memory store schema", "top_k": 1,
+              "include_text": False, "llm_prefilter": False},
+    )
+    if code != 200 or not (body or {}).get("results"):
+        return CheckResult("chunk_metadata_complete", False,
+                           "search returned no results")
+    cid = body["results"][0]["chunk_id"]
+    code2, body2, _ = _http("GET", f"{api}/memory/chunk/{cid}", token)
+    if code2 != 200:
+        return CheckResult("chunk_metadata_complete", False,
+                           f"GET /memory/chunk http={code2}")
+    chunk = (body2 or {}).get("chunk", {})
+    level = chunk.get("chunk_level") or ""
+    return CheckResult(
+        "chunk_metadata_complete",
+        level in valid_levels,
+        f"chunk_id={cid[:18]}  chunk_level={level!r}  "
+        f"valid_set={'OK' if level in valid_levels else 'MISSING/UNKNOWN'}",
+    )
+
+
+def check_rag_function_search_finds_source(api: str, token: str) -> CheckResult:
+    """Issue #21 + #18 deepening: previous memory_search_vector only
+    proved the vector stage runs. Real acceptance: a query for a known
+    function name should return chunks from the matching .py source
+    file with score_vector > 0.
+
+    Probe with a function name that's been ingested
+    (`_run_with_v2_postingest` in src/api/routes/jobs.py). Pass: at
+    least one of top-5 has source_id ending in `jobs.py` AND
+    score_vector > 0.05 (loose threshold — vector signal must exist,
+    not be zero).
+    """
+    code, body, _ = _http(
+        "POST", f"{api}/memory/search", token,
+        body={"query": "_run_with_v2_postingest async function "
+                       "populate memory chunk job",
+              "top_k": 5, "include_text": False, "llm_prefilter": False},
+        timeout=15.0,
+    )
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("rag_function_search_finds_source", False,
+                           f"http={code}")
+    results = body.get("results") or []
+    if not results:
+        return CheckResult("rag_function_search_finds_source", False,
+                           "no results returned for function-name query")
+    has_jobs_py = any("jobs.py" in (r.get("source_id") or "") for r in results)
+    has_vector_hit = any(
+        float(r.get("score_vector") or 0) > 0.05 for r in results
+    )
+    matched = [
+        f"{(r.get('source_id') or '')[:50]}/v={r.get('score_vector', 0):.2f}"
+        for r in results[:3]
+    ]
+    return CheckResult(
+        "rag_function_search_finds_source",
+        has_jobs_py and has_vector_hit,
+        f"jobs.py_in_top5={has_jobs_py}  any_vector>0.05={has_vector_hit}  "
+        f"top3={matched}",
+    )
+
+
 def check_watcher_hook_fires(api: str, token: str) -> CheckResult:
     """Issue #74 audit gap: post-ingest watcher must update graph state.
     Previous smoke `wiki_p7_endpoints` only checked GET endpoints reachable;
@@ -1457,6 +1557,9 @@ ALL_CHECKS = [
     ("watcher_hook_fires",            check_watcher_hook_fires),
     ("wiki_cluster_depth",            check_wiki_cluster_depth),
     ("populate_accepts_batch_delay",  check_populate_accepts_batch_delay),
+    ("categorization_call_type_logged", check_categorization_call_type_logged),
+    ("chunk_metadata_complete",       check_chunk_metadata_complete),
+    ("rag_function_search_finds_source", check_rag_function_search_finds_source),
     ("pi_second_opinion_endpoint",    check_pi_second_opinion_endpoint),
     ("retrieval_metrics_endpoint",    check_retrieval_metrics_endpoint),
     ("retrieval_stage_attribution",   check_retrieval_stage_attribution),
