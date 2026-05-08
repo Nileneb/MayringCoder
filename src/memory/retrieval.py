@@ -445,6 +445,8 @@ def search(
                     dist_list = results.get("distances", [[]])[0]
                 candidate_set = {c.chunk_id for c in candidates}
                 vector_scores = _normalize_vector_scores(ids_list, dist_list, candidate_set)
+                max_score = max(vector_scores.values()) if vector_scores else 0.0
+                mean_dist = (sum(dist_list) / len(dist_list)) if dist_list else 0.0
                 if results is not None and ids_list and not vector_scores:
                     # Hits returned, but none in our candidate set → SQLite/Chroma drift
                     vector_diag = (
@@ -458,6 +460,20 @@ def search(
                     )
                 elif not ids_list and chroma_count > 0:
                     vector_diag = "chroma_query_empty"
+                elif vector_scores and max_score < 0.05:
+                    # Hits exist but all distances near/above 1.0 → embeddings
+                    # are not semantically aligned with the query; common when
+                    # query and corpus use different vocab or the corpus is too
+                    # small for vector search to discriminate.
+                    vector_diag = (
+                        f"all_distances_too_far(max_score={max_score:.3f}"
+                        f",mean_dist={mean_dist:.3f})"
+                    )
+                else:
+                    vector_diag = (
+                        f"ok(max_score={max_score:.3f},matches={len(vector_scores)}"
+                        f",mean_dist={mean_dist:.3f})"
+                    )
         except Exception as exc:
             vector_diag = f"embed_failed:{type(exc).__name__}"
             _log.warning("vector retrieval failed (best-effort skip): %s", exc)
