@@ -1,0 +1,27 @@
+name: Set reranker default (memory v2.0)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Default reranker version (v1 / v2 / auto)"
+        required: true
+        default: "v1"
+
+permissions:
+  contents: read
+
+jobs:
+  set-default:
+    runs-on: [self-hosted, u-server]
+    timeout-minutes: 2
+    steps:
+      - name: POST runtime default
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          curl -sS -m 30 -X POST "https://mcp.linn.games/stats/admin/reranker-default?version=${VERSION}" -H "Authorization: Bearer $MCP_SERVICE_TOKEN" | python3 -m json.tool
+          echo "::notice::reranker default set to ${VERSION}"
