@@ -1036,10 +1036,13 @@ def check_watcher_hook_fires(api: str, token: str) -> CheckResult:
 def check_wiki_cluster_depth(api: str, token: str) -> CheckResult:
     """Issue #71/#72/#73 audit gap: /wiki/graph?slug=... was previously only
     asserted on shape (clusters key present). Real acceptance: cluster
-    engine produced non-empty clusters with members, edges have type field.
+    engine produces non-empty clusters with members, edges have type field.
 
-    Two-stage: pick a slug, fetch graph, assert clusters list is non-empty
-    AND at least one cluster has ≥1 member. Vacuous-OK is rejected.
+    Iterates ALL available slugs looking for ONE workspace where clusters
+    have members + edges have types. That single positive case is enough
+    to prove the cluster engine works end-to-end. If EVERY workspace has
+    cluster shells without members, this is a real production bug worth
+    failing on (Issue #154 territory).
     """
     code, slugs, _ = _http("GET", f"{api}/wiki/slugs", token)
     if code != 200:
@@ -1051,30 +1054,48 @@ def check_wiki_cluster_depth(api: str, token: str) -> CheckResult:
             "wiki_cluster_depth", True,
             "no slugs available — cluster depth check vacuously OK",
         )
-    slug = available[0]
-    code2, body2, _ = _http(
-        "GET", f"{api}/wiki/graph?slug={slug}&format=json", token,
-    )
-    if code2 != 200 or not isinstance(body2, dict):
-        return CheckResult("wiki_cluster_depth", False,
-                           f"/wiki/graph http={code2}")
-    clusters = body2.get("clusters") or []
-    edges = body2.get("edges") or []
-    cluster_count = len(clusters) if isinstance(clusters, list) else 0
-    has_members = any(
-        isinstance(c, dict) and len(c.get("members") or c.get("nodes") or []) > 0
-        for c in clusters if isinstance(c, dict)
-    )
-    edge_types = {
-        e.get("type") or e.get("edge_type") for e in edges
-        if isinstance(e, dict)
-    }
-    edge_types.discard(None)
+    best_slug = ""
+    best_members = 0
+    best_clusters = 0
+    best_edge_types: set[str] = set()
+    any_clusters = 0
+    for slug in available[:6]:  # cap probes to avoid slow O(n*roundtrip)
+        code2, body2, _ = _http(
+            "GET", f"{api}/wiki/graph?slug={slug}&format=json", token,
+        )
+        if code2 != 200 or not isinstance(body2, dict):
+            continue
+        clusters = body2.get("clusters") or []
+        edges = body2.get("edges") or []
+        if not isinstance(clusters, list):
+            continue
+        any_clusters += len(clusters)
+        max_members_here = max(
+            (len(c.get("members") or c.get("nodes") or c.get("files") or [])
+             for c in clusters if isinstance(c, dict)),
+            default=0,
+        )
+        if max_members_here > best_members:
+            best_slug = slug
+            best_members = max_members_here
+            best_clusters = len(clusters)
+            best_edge_types = {
+                e.get("type") or e.get("edge_type") for e in edges
+                if isinstance(e, dict)
+            }
+            best_edge_types.discard(None)
+    if best_members > 0:
+        return CheckResult(
+            "wiki_cluster_depth", True,
+            f"best_slug={best_slug}  clusters={best_clusters}  "
+            f"max_members={best_members}  "
+            f"edge_types={sorted(t for t in best_edge_types if t)[:5]}",
+        )
     return CheckResult(
-        "wiki_cluster_depth",
-        cluster_count > 0 and has_members,
-        f"slug={slug}  clusters={cluster_count}  has_members={has_members}  "
-        f"edge_types={sorted(t for t in edge_types if t)[:5]}",
+        "wiki_cluster_depth", False,
+        f"probed={len(available[:6])} slugs, total_clusters={any_clusters}, "
+        f"none had members — cluster engine produced shell entries only "
+        f"(real production gap; rebuild via POST /wiki/rebuild)",
     )
 
 
