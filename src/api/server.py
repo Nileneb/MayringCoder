@@ -68,6 +68,8 @@ from src.api.routes import wiki_second_opinion as _wiki_second_opinion
 app.include_router(_wiki_second_opinion.router)
 from src.api.routes import retrieval_metrics as _retrieval_metrics
 app.include_router(_retrieval_metrics.router)
+from src.api.routes import reranker_admin as _reranker_admin
+app.include_router(_reranker_admin.router)
 
 
 @app.on_event("startup")

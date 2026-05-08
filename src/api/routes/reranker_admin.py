@@ -1,0 +1,211 @@
+"""Admin endpoints to inspect retrieval data + run reranker training.
+
+Pipeline 2 of Issue #87: the production memory.db sits on the server,
+not on a developer laptop, so the export+train scripts in tools/ need
+a server-side trigger. This module wraps:
+
+  GET  /stats/admin/training-data-counts
+       Returns row counts so we know if there's enough data to bother
+       running a full training pass.
+
+  POST /stats/admin/train-reranker
+       Runs the export + train pipeline in a background subprocess.
+       Writes cache/finetuning/retrieval_dataset.jsonl and
+       cache/rerank_v2.json. Returns a job_id; status via
+       GET /stats/admin/train-reranker/{job_id}.
+
+The actual training job uses ``tools/export_retrieval_dataset.py`` and
+``tools/train_reranker.py`` so the CLI path and the API path can never
+drift. Same code, same defaults.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from src.api.auth import get_token_info
+from src.api.jwt_auth import TokenInfo
+from src.memory.store import init_memory_db
+
+router = APIRouter()
+_log = logging.getLogger(__name__)
+_ROOT = Path(__file__).parent.parent.parent.parent
+_TRAIN_JOBS: dict[str, dict[str, Any]] = {}
+
+
+def _python_exe() -> str:
+    venv = _ROOT / ".venv" / "bin" / "python"
+    return str(venv) if venv.exists() else "python"
+
+
+def _conn():
+    from src.config import CACHE_DIR
+    return init_memory_db(CACHE_DIR / "memory.db")
+
+
+def _is_admin(info: TokenInfo) -> bool:
+    return "*" in info.scopes or "admin" in info.scopes
+
+
+@router.get("/stats/admin/training-data-counts")
+async def training_data_counts(
+    info: TokenInfo = Depends(get_token_info),
+    days: int = 30,
+) -> dict:
+    """Row-count snapshot to decide whether a training run makes sense."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    conn = _conn()
+    log_count = conn.execute(
+        "SELECT COUNT(*) FROM context_feedback_log "
+        "WHERE captured_at > datetime('now', ?) "
+        "AND query != '' AND stage_scores != '{}'",
+        (f"-{days} days",),
+    ).fetchone()[0]
+    fb_total = conn.execute(
+        "SELECT COUNT(*) FROM chunk_feedback "
+        "WHERE created_at > datetime('now', ?)",
+        (f"-{days} days",),
+    ).fetchone()[0]
+    fb_pos = conn.execute(
+        "SELECT COUNT(*) FROM chunk_feedback "
+        "WHERE created_at > datetime('now', ?) "
+        "AND signal IN ('positive','1','2','3','4','5')",
+        (f"-{days} days",),
+    ).fetchone()[0]
+    fb_neg = conn.execute(
+        "SELECT COUNT(*) FROM chunk_feedback "
+        "WHERE created_at > datetime('now', ?) AND signal = 'negative'",
+        (f"-{days} days",),
+    ).fetchone()[0]
+    return {
+        "window_days": days,
+        "retrieval_log_with_features": log_count,
+        "feedback_total": fb_total,
+        "feedback_positive": fb_pos,
+        "feedback_negative": fb_neg,
+        "ready_to_train": log_count >= 50 and fb_pos >= 10,
+        "min_required": {"retrieval_log_rows": 50, "positives": 10},
+    }
+
+
+async def _run_train_subprocess(job_id: str, days: int) -> None:
+    """Spawn export → train as a subprocess so the API stays responsive."""
+    state = _TRAIN_JOBS[job_id]
+    state.update(status="running", started_at=time.time())
+    from src.config import CACHE_DIR
+    out_jsonl = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
+    out_model = CACHE_DIR / "rerank_v2.json"
+    env = {**os.environ, "PYTHONPATH": str(_ROOT)}
+    try:
+        export_cmd = [
+            _python_exe(), "tools/export_retrieval_dataset.py",
+            "--days", str(days),
+            "--out", str(out_jsonl),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *export_cmd, cwd=str(_ROOT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+        export_out, _ = await proc.communicate()
+        export_log = (export_out or b"").decode(errors="replace")
+        state.update(export_returncode=proc.returncode,
+                     export_log=export_log[-1500:])
+        if proc.returncode != 0:
+            state.update(status="error",
+                         error="export failed",
+                         ended_at=time.time())
+            return
+        rows_written = 0
+        if out_jsonl.exists():
+            try:
+                with out_jsonl.open(encoding="utf-8") as f:
+                    rows_written = sum(1 for _ in f)
+            except OSError:
+                pass
+        state.update(rows_exported=rows_written)
+        if rows_written < 50:
+            state.update(
+                status="error",
+                error=f"only {rows_written} rows exported — need ≥50 for training",
+                ended_at=time.time(),
+            )
+            return
+        train_cmd = [
+            _python_exe(), "tools/train_reranker.py",
+            "--in", str(out_jsonl),
+            "--out", str(out_model),
+        ]
+        proc2 = await asyncio.create_subprocess_exec(
+            *train_cmd, cwd=str(_ROOT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+        train_out, _ = await proc2.communicate()
+        train_log = (train_out or b"").decode(errors="replace")
+        state.update(train_returncode=proc2.returncode,
+                     train_log=train_log[-1500:])
+        model_data: dict | None = None
+        if out_model.exists():
+            try:
+                model_data = json.loads(out_model.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+        state.update(
+            status="done" if proc2.returncode == 0 else "error",
+            model=model_data,
+            model_path=str(out_model.relative_to(_ROOT)) if out_model.exists() else None,
+            ended_at=time.time(),
+        )
+    except Exception as e:
+        state.update(status="error", error=str(e), ended_at=time.time())
+        _log.exception("train-reranker job %s failed", job_id)
+
+
+@router.post("/stats/admin/train-reranker")
+async def trigger_train_reranker(
+    info: TokenInfo = Depends(get_token_info),
+    days: int = 30,
+) -> dict:
+    """Kick off the export + train pipeline. Admin scope only.
+
+    Workflow inside the spawned subprocess:
+      1. tools/export_retrieval_dataset.py → cache/finetuning/retrieval_dataset.jsonl
+      2. tools/train_reranker.py            → cache/rerank_v2.json
+
+    Each step uses the SAME script the CLI uses, so behaviour cannot
+    drift between local-dev runs and production runs.
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    job_id = f"train-{int(time.time() * 1000)}"
+    _TRAIN_JOBS[job_id] = {
+        "status": "queued",
+        "days": days,
+        "queued_at": time.time(),
+    }
+    asyncio.create_task(_run_train_subprocess(job_id, days))
+    return {"job_id": job_id, "status": "queued", "days": days}
+
+
+@router.get("/stats/admin/train-reranker/{job_id}")
+async def get_train_reranker_status(
+    job_id: str,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    state = _TRAIN_JOBS.get(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"job_id": job_id, **state}
