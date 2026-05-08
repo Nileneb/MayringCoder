@@ -52,14 +52,10 @@ jobs:
             "https://mcp.linn.games/stats/admin/training-data-counts?days=${DAYS}" \
             -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
           echo "counts: $counts"
-          # Two gates:
-          #   ready_to_train   = cold-start (no model yet, or first run)
-          #   ready_to_retrain = enough NEW rows since last training
-          # Either being true means we should run.
-          ready=$(echo "$counts" | python3 -c \
-            'import json,sys
-d=json.load(sys.stdin)
-print(bool(d.get("ready_to_train") or d.get("ready_to_retrain")))' 2>/dev/null || echo "False")
+          # Two gates: ready_to_train (cold-start) OR ready_to_retrain
+          # (enough new rows since last training). Either being true is
+          # 'go'. Single-line python keeps the YAML scanner happy.
+          ready=$(echo "$counts" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(bool(d.get("ready_to_train") or d.get("ready_to_retrain")))' 2>/dev/null || echo "False")
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
 
       - name: Skip if not ready
