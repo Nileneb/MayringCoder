@@ -117,7 +117,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         from src.memory.store import deactivate_chunks_by_source, get_chunks_by_source
         old_chunk_ids: list[str] = []
         for f in files:
-            src_id = f"repo:{repo_url}:{f['filename']}"
+            src_id = Source.make_id(repo_url, f['filename'])
             old = get_chunks_by_source(conn, src_id, active_only=False)
             old_chunk_ids.extend(c.chunk_id for c in old)
             deactivate_chunks_by_source(conn, src_id)
@@ -148,7 +148,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         _conn = init_memory_db()
         try:
             _src = Source(
-                source_id=f"repo:{repo_url}:{f['filename']}",
+                source_id=Source.make_id(repo_url, f['filename']),
                 source_type="repo_file",
                 repo=repo_url,
                 path=f["filename"],
@@ -233,7 +233,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
         wid = getattr(args, "workspace_id", "default")
         slug = _repo_slug(repo_url)
         for f in files:
-            on_post_ingest(wid, slug, f"repo:{repo_url}:{f['filename']}", chroma=chroma)
+            on_post_ingest(wid, slug, Source.make_id(repo_url, f['filename']), chroma=chroma)
     except Exception as _wiki_exc:
         import logging as _wlog
         _wlog.warning("wiki_hook failed: %s", _wiki_exc)
