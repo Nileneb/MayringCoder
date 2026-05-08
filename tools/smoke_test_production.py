@@ -623,26 +623,26 @@ def check_turbulence_endpoint(api: str, token: str) -> CheckResult:
 
 
 def check_jwt_invalid_signature_rejected(api: str, token: str) -> CheckResult:
-    """Closed Issue #94 acceptance: tampered JWTs must be rejected with 401.
+    """Closed Issue #94 acceptance: invalid bearer tokens must yield 401.
 
-    Acceptance from issue body: 'HTTP 401 bei ungültigem Token'. Was never
-    verified live — closed on synthetic unit-tests only.
+    Acceptance from issue body: 'HTTP 401 bei ungültigem Token'. Two paths:
+      a) caller has a real RS256 JWT → flip last 4 sig chars → must be 401
+      b) caller has the opaque MCP_SERVICE_TOKEN → tampering doesn't apply,
+         but a raw garbage bearer should still fail closed → must be 401.
+    Either way, the auth pipeline has to refuse the bogus token.
     """
-    # Take the real token, flip the last 4 chars of the signature segment
-    # → invalid signature, valid shape.
     parts = token.split(".")
-    if len(parts) != 3:
-        return CheckResult("jwt_invalid_signature", False,
-                           "current token is not a 3-part JWT — can't tamper")
-    tampered = ".".join([parts[0], parts[1], parts[2][:-4] + "AAAA"])
-    code, body, _ = _http(
-        "GET", f"{api}/stats/summary",
-        token=tampered,  # use the tampered token
-    )
+    if len(parts) == 3:
+        bogus = ".".join([parts[0], parts[1], parts[2][:-4] + "AAAA"])
+        mode = "tampered_jwt_sig"
+    else:
+        bogus = "deadbeef-invalid-bearer-token-not-real"
+        mode = "garbage_bearer_when_service_token"
+    code, body, _ = _http("GET", f"{api}/stats/summary", token=bogus)
     return CheckResult(
         "jwt_invalid_signature",
         code == 401,
-        f"http={code}  body={body}  (must be 401)",
+        f"mode={mode}  http={code}  body={body}  (must be 401)",
     )
 
 
