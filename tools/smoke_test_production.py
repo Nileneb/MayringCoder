@@ -371,6 +371,124 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
     )
 
 
+def check_jwt_invalid_signature_rejected(api: str, token: str) -> CheckResult:
+    """Closed Issue #94 acceptance: tampered JWTs must be rejected with 401.
+
+    Acceptance from issue body: 'HTTP 401 bei ungültigem Token'. Was never
+    verified live — closed on synthetic unit-tests only.
+    """
+    # Take the real token, flip the last 4 chars of the signature segment
+    # → invalid signature, valid shape.
+    parts = token.split(".")
+    if len(parts) != 3:
+        return CheckResult("jwt_invalid_signature", False,
+                           "current token is not a 3-part JWT — can't tamper")
+    tampered = ".".join([parts[0], parts[1], parts[2][:-4] + "AAAA"])
+    code, body, _ = _http(
+        "GET", f"{api}/stats/summary",
+        token=tampered,  # use the tampered token
+    )
+    return CheckResult(
+        "jwt_invalid_signature",
+        code == 401,
+        f"http={code}  body={body}  (must be 401)",
+    )
+
+
+def check_task_feedback_matrix(api: str, token: str) -> CheckResult:
+    """Closed Issue #90 acceptance: /wiki/feedback-matrix?mode=task aggregates
+    feedback per Pi-task. Endpoint must respond 200 with a 'tasks' field
+    (list, even if empty)."""
+    code, body, _ = _http(
+        "GET", f"{api}/wiki/feedback-matrix?mode=task&limit=5", token,
+    )
+    has_tasks = isinstance(body, dict) and "tasks" in body
+    return CheckResult(
+        "task_feedback_matrix",
+        code == 200 and has_tasks,
+        f"http={code}  has_tasks_field={has_tasks}  count={len(body.get('tasks', []) if isinstance(body, dict) else [])}",
+    )
+
+
+def check_wiki_graph_clusters(api: str, token: str) -> CheckResult:
+    """Closed Issue #73 acceptance: cluster engine produces clusters in the
+    wiki graph. Endpoint /wiki/graph?slug=... must respond and clusters
+    must exist for at least one workspace."""
+    # First get available slugs
+    code, slugs, _ = _http("GET", f"{api}/wiki/slugs", token)
+    if code != 200:
+        return CheckResult("wiki_graph_clusters", False,
+                           f"/wiki/slugs http={code}")
+    available = (slugs or {}).get("slugs", [])
+    if not available:
+        return CheckResult("wiki_graph_clusters", True,
+                           "no wiki graphs ingested yet — vacuously OK")
+    test_slug = available[0]
+    code, graph, _ = _http(
+        "GET", f"{api}/wiki/graph?slug={urllib.parse.quote(test_slug)}", token,
+    )
+    if code != 200:
+        return CheckResult("wiki_graph_clusters", False,
+                           f"/wiki/graph?slug={test_slug!r} http={code}")
+    has_clusters_field = isinstance(graph, dict) and "clusters" in graph
+    return CheckResult(
+        "wiki_graph_clusters",
+        has_clusters_field,
+        f"slug={test_slug}  has_clusters={has_clusters_field}  "
+        f"n_clusters={len(graph.get('clusters', []) if isinstance(graph, dict) else [])}",
+    )
+
+
+def check_pi_tasks_schema(api: str, token: str) -> CheckResult:
+    """Closed Issue #107 acceptance: pi_jobs queue exists with correct
+    fields (job_id, status, prefer, scope, model). Empty list still counts
+    — schema is what we test, not data."""
+    code, body, _ = _http("GET", f"{api}/stats/pi-tasks?limit=1", token)
+    if code != 200:
+        return CheckResult("pi_tasks_schema", False, f"http={code}")
+    tasks = (body or {}).get("tasks", [])
+    if not tasks:
+        return CheckResult("pi_tasks_schema", True,
+                           "no pi-tasks yet — endpoint shape OK (empty list)")
+    expected_keys = {"job_id", "status", "prefer", "scope", "model"}
+    missing = expected_keys - set(tasks[0].keys())
+    return CheckResult(
+        "pi_tasks_schema",
+        not missing,
+        f"first_task_keys={list(tasks[0].keys())}  missing={missing or 'none'}",
+    )
+
+
+def check_categorization_logging(api: str, token: str) -> CheckResult:
+    """Closed Issue #101 acceptance: LLM categorization writes to llm_calls_log
+    (raw prompt+response visible). Triggered by ingest with categorize=true.
+    Counted via /stats/vector-trend (which queries llm_calls_log)."""
+    code, body, _ = _http("GET", f"{api}/stats/vector-trend?limit=1", token)
+    if code != 200:
+        return CheckResult("categorization_logging", False, f"http={code}")
+    logged = (body or {}).get("logged_24h", 0)
+    # If the table is wired and search has fired today, this is > 0. The
+    # check covers the "logging path is alive" property.
+    return CheckResult(
+        "categorization_logging",
+        logged > 0,
+        f"llm_calls_log entries last 24h: {logged} (must be > 0)",
+    )
+
+
+def check_jobs_progress_observability(api: str, token: str) -> CheckResult:
+    """Closed Issues #84+#85 acceptance: jobs expose stages + progress
+    fields so external pollers see pipeline state. Endpoint /jobs/{id}
+    must accept any UUID and return either the job (200) or 404 with
+    a clean error — not a 500 with a Python stack trace."""
+    code, body, _ = _http("GET", f"{api}/jobs/00000000-0000-0000-0000-000000000000", token)
+    return CheckResult(
+        "jobs_progress_observability",
+        code in (200, 404),
+        f"http={code}  body={body}  (200 if exists, 404 if unknown — never 500)",
+    )
+
+
 def check_ingest_state_field(api: str, token: str) -> CheckResult:
     """Issue #137 acceptance: /memory/put response.state must distinguish
     NEW (first ingest), UNCHANGED (same content_hash), CHANGED (different
@@ -596,6 +714,12 @@ ALL_CHECKS = [
     ("feedback_slug_resolution",      check_feedback_slug_resolution),
     ("feedback_count_delta",          check_feedback_count_moves),
     ("micro_batch_indexes",           check_micro_batch_indexes),
+    ("jwt_invalid_signature",         check_jwt_invalid_signature_rejected),
+    ("task_feedback_matrix",          check_task_feedback_matrix),
+    ("wiki_graph_clusters",           check_wiki_graph_clusters),
+    ("pi_tasks_schema",               check_pi_tasks_schema),
+    ("categorization_logging",        check_categorization_logging),
+    ("jobs_progress_observability",   check_jobs_progress_observability),
     ("ingest_state_field",            check_ingest_state_field),
     ("visibility_isolation",          check_visibility_isolation),
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),

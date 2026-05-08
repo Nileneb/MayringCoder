@@ -69,8 +69,18 @@ class ClusterEngine:
                 for c in clusters
             ]
             out_path = confined_path(WIKI_DIR, graph.workspace_id, "clusters.json")
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+            # Defense-in-depth: confined_path already enforces this, but
+            # writing the property explicitly here makes the safety
+            # invariant visible to CodeQL's `py/path-injection` data-flow
+            # tracker (which can't follow our private sanitisation
+            # helper). If the resolved path escapes WIKI_DIR for any
+            # reason (symlink, race), bail silently.
+            wiki_root = Path(WIKI_DIR).resolve()
+            resolved = out_path.resolve()
+            if not resolved.is_relative_to(wiki_root):
+                return
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except Exception:
             pass
 

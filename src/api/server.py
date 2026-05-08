@@ -36,6 +36,8 @@ except ImportError:
 
 from src.api.dependencies import get_conn as _get_conn
 from src.api.training import router as _training_router
+from fastapi import Depends
+from src.api.auth import get_workspace
 from src.api.routes import memory, wiki, jobs, duel, reports
 from src.api.routes.sync import router as _sync_router
 from src.api.job_queue import _JOBS, run_checker_job as _run_checker_job
@@ -104,7 +106,12 @@ def health() -> dict:
 
 
 @app.get("/stats/summary")
-def stats_summary() -> dict:
+def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
+    # Auth required — this endpoint leaks chunk/feedback counts and the
+    # most-recent ingest source_ids. A tampered or absent JWT used to
+    # return 200 because no Depends() was wired in. Smoke catches it now
+    # via check_jwt_invalid_signature_rejected; fix is the dependency.
+    _ = workspace_id  # (response is global; the auth check is the point)
     from src.api.job_queue import _JOBS
     conn = _get_conn()
     active = conn.execute("SELECT COUNT(*) FROM chunks WHERE is_active=1").fetchone()[0]
