@@ -96,28 +96,70 @@ def _ab_pick(query_hint: str | None) -> str:
     return "v2" if int(h[:8], 16) % 2 == 0 else "v1"
 
 
+def _default_state_path() -> Path:
+    from src.config import CACHE_DIR
+    return CACHE_DIR / "rerank_default.txt"
+
+
+def _read_runtime_default() -> str:
+    """Persisted default decided by the auto-rollout cron.
+
+    Lives in cache/rerank_default.txt because env vars need a restart
+    to take effect; a tiny file lets the cron flip the default
+    runtime without touching docker-compose. Values: 'auto' / 'v1' /
+    'v2'. Default 'auto' so the system runs a 50/50 A/B from day one
+    rather than silently sitting on v1 forever.
+    """
+    p = _default_state_path()
+    try:
+        v = p.read_text(encoding="utf-8").strip().lower()
+        if v in ("v1", "v2", "auto"):
+            return v
+    except (OSError, FileNotFoundError):
+        pass
+    return "auto"
+
+
+def write_runtime_default(version: str) -> str:
+    """Set the persisted default. Used by the auto-rollout cron after
+    it sees a 25%+ uplift. Returns the value actually written."""
+    if version not in ("v1", "v2", "auto"):
+        raise ValueError(f"invalid default version: {version!r}")
+    p = _default_state_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(version, encoding="utf-8")
+    return version
+
+
 def get_active_reranker(
     query_hint: str | None = None,
     explicit_override: str | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Resolve which reranker version to use for THIS call.
 
+    Precedence (highest first):
+      1. ``explicit_override`` from request body (?reranker=v2)
+      2. ``RERANKER_VERSION`` env var
+      3. ``cache/rerank_default.txt`` runtime state file
+         (the auto-rollout cron flips this on 25%+ uplift)
+      4. fallback: ``auto`` (50/50 A/B)
+
     Args:
         query_hint: Stable string (query text or session id) that A/B
             mode hashes for the deterministic split.
-        explicit_override: Per-request override ('v1' / 'v2' / 'auto')
-            — wins over the env variable. Used by ``/memory/search``
-            when a caller passes ``?reranker=v2``.
+        explicit_override: Per-request override ('v1' / 'v2' / 'auto').
 
     Returns:
         (version, model_dict | None)
-        version is what should be reported back to the caller and logged
-        in context_feedback_log.reranker_version. model_dict is the
-        loaded cache/rerank_v2.json or None for v1.
     """
-    raw = (explicit_override or os.getenv("RERANKER_VERSION", "v1") or "v1").lower()
+    raw = (
+        explicit_override
+        or os.getenv("RERANKER_VERSION")
+        or _read_runtime_default()
+        or "auto"
+    ).lower()
     if raw not in ("v1", "v2", "auto"):
-        raw = "v1"
+        raw = "auto"
     if raw == "auto":
         raw = _ab_pick(query_hint)
     if raw == "v2":

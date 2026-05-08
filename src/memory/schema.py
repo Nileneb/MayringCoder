@@ -231,8 +231,12 @@ class RetrievalRecord:
     # Memory-Injection v2.0 — explicit logging of feedback + LLM signals
     # so the trained reranker can use them as features (avoids the
     # multi-collinearity that arises from feeding score_final back in).
-    score_feedback: float = 0.5     # [0,1]; 0.5 = neutral when no feedback
-    score_llm: float = 0.5          # [0,1]; 0.5 = neutral when advisor off
+    # NB: 0.5 here means "no signal yet" (chunk has zero feedback events
+    # and no LLM-advisor score), NOT "user said maybe". User feedback
+    # itself stays strictly binary in chunk_feedback (positive|negative)
+    # — the 422-on-neutral check in /memory/feedback enforces that.
+    score_feedback: float = 0.5     # [0,1]; 0.5 = no feedback events recorded
+    score_llm: float = 0.5          # [0,1]; 0.5 = LLM advisor not run for this chunk
     score_final: float = 0.0
     reasons: list[str] = field(default_factory=list)
     source_id: str = ""

@@ -77,9 +77,11 @@ def _normalize_features(feats: dict) -> dict | None:
     """Return a 6-key dict {v, s, r, a, sf, sl}.
 
     Old logs (before the v2-feature-set commit) only have {v, s, r, a, f}.
-    For backward compat we synthesize sf=0.5 (neutral) and sl=0.5 (neutral)
-    when the new keys are missing — those rows still contribute to the
-    model fit, just without the new signal. New logs have all 6.
+    For backward compat we synthesize sf=0.5 + sl=0.5 (= 'no signal yet'
+    sentinel value, NOT a 'neutral verdict' — user feedback itself stays
+    binary in chunk_feedback). Old rows then contribute to the model fit
+    via the other 4 features without polluting sf/sl with a fake signal.
+    New logs have all 6.
     """
     if not isinstance(feats, dict):
         return None

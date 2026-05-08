@@ -245,3 +245,131 @@ async def get_train_reranker_status(
     if not state:
         raise HTTPException(status_code=404, detail="job not found")
     return {"job_id": job_id, **state}
+
+
+@router.get("/stats/admin/reranker-default")
+async def get_reranker_default(
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Current persisted default reranker version.
+
+    Reads ``cache/rerank_default.txt``. Default 'auto' means 50/50 A/B.
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from src.memory.reranker_v2 import _read_runtime_default
+    return {"default_version": _read_runtime_default()}
+
+
+@router.post("/stats/admin/reranker-default")
+async def set_reranker_default(
+    info: TokenInfo = Depends(get_token_info),
+    version: str = "auto",
+) -> dict:
+    """Persist a new default reranker version. Auto-rollout cron writes
+    here when one version's NDCG@5 beats the other by ≥25%."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    if version not in ("v1", "v2", "auto"):
+        raise HTTPException(status_code=400, detail="version must be v1/v2/auto")
+    from src.memory.reranker_v2 import write_runtime_default
+    written = write_runtime_default(version)
+    _log.info("reranker default set to %s by workspace=%s", written, info.workspace_id)
+    return {"default_version": written}
+
+
+@router.post("/stats/admin/reranker-rollout-decision")
+async def reranker_rollout_decision(
+    info: TokenInfo = Depends(get_token_info),
+    days: int = 7,
+    k: int = 5,
+    threshold_pct: float = 25.0,
+    apply: bool = False,
+) -> dict:
+    """Inspect the A/B uplift and (optionally) flip the runtime default.
+
+    Computes NDCG@K per version from the same source as
+    /stats/retrieval-ab. If one version beats the other by >=
+    ``threshold_pct`` percent on NDCG@K AND has at least 30 queries
+    of evidence, it becomes the new default IF apply=True.
+
+    apply=False → returns the recommendation only, doesn't mutate.
+    Designed for the auto-rollout workflow to call once per day.
+
+    Decision rules:
+      * Insufficient data (queries < 30 in either bucket) → keep 'auto'
+      * v2.ndcg ≥ v1.ndcg * (1 + threshold/100) → switch to 'v2'
+      * v1.ndcg ≥ v2.ndcg * (1 + threshold/100) → switch to 'v1'
+      * else → keep 'auto' (uncertain, let A/B keep running)
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from src.api.routes.retrieval_metrics import retrieval_ab as _ab
+    from src.memory.reranker_v2 import _read_runtime_default, write_runtime_default
+    ab = await _ab(info=info, days=days, k=k)
+    by_version = ab.get("by_version") or {}
+    v1 = by_version.get("v1") or {}
+    v2 = by_version.get("v2") or {}
+    n_v1 = int(v1.get("queries") or 0)
+    n_v2 = int(v2.get("queries") or 0)
+    ndcg_v1 = float(v1.get("ndcg_at_k") or 0.0)
+    ndcg_v2 = float(v2.get("ndcg_at_k") or 0.0)
+    current = _read_runtime_default()
+    decision = "keep"
+    target = current
+    reason = ""
+    min_queries = 30
+    factor = 1.0 + (threshold_pct / 100.0)
+    if n_v1 < min_queries or n_v2 < min_queries:
+        decision = "keep"
+        target = "auto"
+        reason = (
+            f"insufficient data (v1.queries={n_v1}, v2.queries={n_v2}, "
+            f"min={min_queries}); staying 'auto' until both sides have evidence"
+        )
+    elif ndcg_v1 == 0 and ndcg_v2 == 0:
+        decision = "keep"
+        target = "auto"
+        reason = "both ndcg=0 — no labelled queries yet, staying 'auto'"
+    elif ndcg_v2 >= ndcg_v1 * factor and ndcg_v2 > 0:
+        decision = "switch"
+        target = "v2"
+        reason = (
+            f"v2 NDCG {ndcg_v2:.3f} ≥ v1 NDCG {ndcg_v1:.3f} × "
+            f"{factor:.2f} → v2 wins by ≥{threshold_pct}%"
+        )
+    elif ndcg_v1 >= ndcg_v2 * factor and ndcg_v1 > 0:
+        decision = "switch"
+        target = "v1"
+        reason = (
+            f"v1 NDCG {ndcg_v1:.3f} ≥ v2 NDCG {ndcg_v2:.3f} × "
+            f"{factor:.2f} → v1 wins by ≥{threshold_pct}%"
+        )
+    else:
+        decision = "keep"
+        target = "auto"
+        reason = (
+            f"neither beats the other by ≥{threshold_pct}% "
+            f"(v1={ndcg_v1:.3f}, v2={ndcg_v2:.3f}); 'auto' continues A/B"
+        )
+    applied = False
+    if apply and target != current:
+        write_runtime_default(target)
+        applied = True
+        _log.info(
+            "auto-rollout flipped default %s → %s (%s)", current, target, reason,
+        )
+    return {
+        "current": current,
+        "target": target,
+        "decision": decision,
+        "applied": applied,
+        "reason": reason,
+        "metrics": {
+            "v1": {"queries": n_v1, "ndcg_at_k": ndcg_v1},
+            "v2": {"queries": n_v2, "ndcg_at_k": ndcg_v2},
+        },
+        "threshold_pct": threshold_pct,
+        "min_queries": min_queries,
+        "window_days": days,
+    }

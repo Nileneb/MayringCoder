@@ -1200,6 +1200,31 @@ def check_model_identity(api: str, token: str) -> CheckResult:
     )
 
 
+def check_reranker_rollout_decision(api: str, token: str) -> CheckResult:
+    """Auto-rollout decision endpoint (Issue: 50/50 + 25% threshold).
+
+    Probe with apply=False so we don't mutate the production default
+    during smoke. Pass condition: response includes the canonical fields
+    (decision, target, reason, metrics, threshold_pct).
+    """
+    code, body, _ = _http(
+        "POST",
+        f"{api}/stats/admin/reranker-rollout-decision?days=7&k=5"
+        f"&threshold_pct=25&apply=false",
+        token,
+    )
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("reranker_rollout_decision", False,
+                           f"http={code} body={body}")
+    needed = {"decision", "target", "reason", "metrics", "threshold_pct"}
+    missing = needed - set(body.keys())
+    return CheckResult(
+        "reranker_rollout_decision", not missing,
+        f"http=200 missing={missing}  decision={body.get('decision')}  "
+        f"target={body.get('target')}  reason={body.get('reason', '')[:80]!r}",
+    )
+
+
 def check_reranker_runtime_switch(api: str, token: str) -> CheckResult:
     """Memory-Injection v2.0 acceptance: per-request reranker switch
     works AND diagnostics report the version that ran.
@@ -1437,6 +1462,7 @@ ALL_CHECKS = [
     ("retrieval_stage_attribution",   check_retrieval_stage_attribution),
     ("reranker_runtime_switch",       check_reranker_runtime_switch),
     ("retrieval_ab_endpoint",         check_retrieval_ab_endpoint),
+    ("reranker_rollout_decision",     check_reranker_rollout_decision),
 ]
 
 

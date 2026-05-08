@@ -68,11 +68,12 @@ def run_search(
                     "s":  round(getattr(r, "score_symbolic", 0.0) or 0.0, 4),
                     "r":  round(getattr(r, "score_recency", 0.0) or 0.0, 4),
                     "a":  round(getattr(r, "score_source_affinity", 0.0) or 0.0, 4),
-                    # New v2 features — direct feedback & LLM signals so
-                    # the trained reranker doesn't have to subtract them
-                    # back out of `f`. v2 trainer drops `f` to break the
-                    # collinearity (negative vector weight in v1's first
-                    # training run came from this).
+                    # v2 features — aggregate signals, not user verdicts.
+                    # 0.5 = "no signal yet" (chunk had zero feedback events
+                    # at retrieval time, or LLM advisor was disabled).
+                    # User feedback itself stays binary in chunk_feedback;
+                    # what we log here is the per-chunk RATIO computed
+                    # from those binary events.
                     "sf": round(getattr(r, "score_feedback", 0.5) or 0.5, 4),
                     "sl": round(getattr(r, "score_llm", 0.5) or 0.5, 4),
                     "f":  round(getattr(r, "score_final", 0.0) or 0.0, 4),
