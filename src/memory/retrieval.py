@@ -403,7 +403,38 @@ def _rerank(
         )
 
     records.sort(key=lambda r: r.score_final, reverse=True)
-    return records[:top_k]
+    ranked = records[:top_k]
+
+    # Issue #185/#182 follow-up: enrich each top-K record with rationale-edges
+    # from wiki_v2.db (attached as 'wikidb' in init_memory_db). Join key:
+    # chunk's source.path → wiki_edges.source. Silent skip when not attached.
+    if getattr(conn, "_wiki_attached", False) and ranked:
+        chunk_by_id = {c.chunk_id: c for c in candidates}
+        for record in ranked:
+            chunk = chunk_by_id.get(record.chunk_id)
+            if chunk is None:
+                continue
+            src_row = conn.execute(
+                "SELECT path FROM sources WHERE source_id = ?",
+                (chunk.source_id,),
+            ).fetchone()
+            if not src_row or not src_row[0]:
+                continue
+            try:
+                rows = conn.execute(
+                    "SELECT rationale, target, context FROM wikidb.wiki_edges "
+                    "WHERE source = ? AND type = 'rationale' "
+                    "AND rationale != ''",
+                    (src_row[0],),
+                ).fetchall()
+            except Exception:
+                continue
+            record.rationale_edges = [
+                {"target": t, "context": c, "why": r}
+                for r, t, c in rows
+            ]
+
+    return ranked
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +756,15 @@ def compress_for_prompt(results: list[RetrievalRecord], char_budget: int) -> str
             body = body[:per_entry_budget - 3] + "..."
 
         entry = f"- [{cats}] {r.source_id}\n  {body}"
+        if r.rationale_edges:
+            rationale_lines = ["\n  **Rationale:**"]
+            for re_dict in r.rationale_edges:
+                tgt = re_dict.get("target", "")
+                why = re_dict.get("why", "")
+                ctx = re_dict.get("context", "")
+                ctx_suffix = f" ({ctx})" if ctx else ""
+                rationale_lines.append(f"  - `{tgt}` — {why}{ctx_suffix}")
+            entry = entry + "\n".join(rationale_lines)
         entry_len = len(entry) + 1
 
         if used + entry_len > char_budget:

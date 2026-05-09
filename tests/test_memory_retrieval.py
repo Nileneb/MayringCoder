@@ -582,3 +582,144 @@ class TestFeedbackRanking:
         )
         # Both should have identical score_final (no llm bias)
         assert abs(records[0].score_final - records[1].score_final) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Task 7: rationale_edges attach + compress_for_prompt rendering
+# ---------------------------------------------------------------------------
+
+def test_search_attaches_rationale_edges(tmp_path):
+    """End-to-end: chunk im wiki-rationale-edge → rationale_edges befüllt."""
+    from src.memory.retrieval import search, invalidate_query_cache
+    from src.memory.store import init_memory_db, upsert_source, insert_chunk
+    from src.memory.schema import Source, Chunk
+    from src.wiki_v2 import store as wstore
+
+    invalidate_query_cache()
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    # Setup wiki_v2.db with one rationale-edge
+    wraw = wstore.init_wiki_db(cache / "wiki_v2.db")
+    wraw.execute(
+        "INSERT INTO wiki_edges(source, target, repo_slug, workspace_id, "
+        "type, weight, context, rationale) "
+        "VALUES('src/cli.py','cli._SLUG_RE','demo','bene','rationale',1.0,"
+        "'#185','path-traversal defence')"
+    )
+    wraw.commit()
+    wraw.close()
+
+    # Setup memory.db
+    import src.config as _cfg
+    orig_cache = _cfg.CACHE_DIR
+    _cfg.CACHE_DIR = cache
+    try:
+        conn = init_memory_db(cache / "memory.db")
+        assert conn._wiki_attached is True
+
+        src = Source(
+            source_id="src::cli",
+            source_type="repo_file",
+            repo="demo",
+            path="src/cli.py",
+            content_hash="sha256:c",
+        )
+        upsert_source(conn, src)
+        ch = Chunk(
+            chunk_id=Chunk.make_id("src::cli", 0, "function"),
+            source_id="src::cli",
+            chunk_level="function",
+            ordinal=0,
+            text="_SLUG_RE = re.compile(r'^[a-z]+$')",
+            text_hash="sha256:t",
+            category_labels=["api"],
+            created_at="2026-04-08T10:00:00+00:00",
+        )
+        insert_chunk(conn, ch)
+
+        results = search(
+            "slug regex", conn, None, "http://fake-ollama",
+            opts={"top_k": 5, "include_text": False, "llm_prefilter": False,
+                  "repo": "demo"},
+        )
+        assert len(results) >= 1
+        match = next(r for r in results if r.chunk_id == ch.chunk_id)
+        assert len(match.rationale_edges) == 1
+        e = match.rationale_edges[0]
+        assert e["target"] == "cli._SLUG_RE"
+        assert e["context"] == "#185"
+        assert e["why"] == "path-traversal defence"
+    finally:
+        _cfg.CACHE_DIR = orig_cache
+
+
+def test_search_no_rationale_when_wiki_db_missing(tmp_path):
+    """Cold-start ohne wiki_v2.db: rationale_edges == [], kein crash."""
+    from src.memory.retrieval import search, invalidate_query_cache
+    from src.memory.store import init_memory_db, upsert_source, insert_chunk
+    from src.memory.schema import Source, Chunk
+
+    invalidate_query_cache()
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    import src.config as _cfg
+    orig_cache = _cfg.CACHE_DIR
+    _cfg.CACHE_DIR = cache
+    try:
+        conn = init_memory_db(cache / "memory.db")
+        assert conn._wiki_attached is False  # no wiki_v2.db
+
+        src = Source(
+            source_id="src::cli",
+            source_type="repo_file",
+            repo="demo",
+            path="src/cli.py",
+            content_hash="sha256:c",
+        )
+        upsert_source(conn, src)
+        ch = Chunk(
+            chunk_id=Chunk.make_id("src::cli", 0, "function"),
+            source_id="src::cli",
+            chunk_level="function",
+            ordinal=0,
+            text="x = 1",
+            text_hash="sha256:t",
+            category_labels=["api"],
+            created_at="2026-04-08T10:00:00+00:00",
+        )
+        insert_chunk(conn, ch)
+
+        results = search(
+            "slug regex", conn, None, "http://fake-ollama",
+            opts={"top_k": 5, "include_text": False, "llm_prefilter": False},
+        )
+        assert len(results) >= 1
+        for r in results:
+            assert r.rationale_edges == []
+    finally:
+        _cfg.CACHE_DIR = orig_cache
+
+
+def test_compress_for_prompt_renders_rationale_block():
+    """Wenn ein Record rationale_edges hat, taucht ein '**Rationale:**'
+    Block im output auf — Claude sieht das WHY beim Inject."""
+    rec = RetrievalRecord(
+        chunk_id="c1",
+        score_final=0.5,
+        source_id="src::cli",
+        text="_SLUG_RE = re.compile(...)",
+        category_labels=["api"],
+        rationale_edges=[{
+            "target": "cli._SLUG_RE",
+            "context": "#185",
+            "why": "path-traversal defence",
+        }],
+    )
+    out = compress_for_prompt([rec], char_budget=2000)
+    assert "**Rationale:**" in out
+    assert "cli._SLUG_RE" in out
+    assert "path-traversal defence" in out
+    assert "#185" in out
