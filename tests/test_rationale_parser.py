@@ -26,3 +26,27 @@ def test_extract_simple_marker_before_assign(tmp_path: Path) -> None:
     assert e["rationale"] == "path-traversal defence"
     assert e["repo_slug"] == "demo"
     assert e["workspace_id"] == "bene"
+
+
+def test_multi_line_rationale_concatenated(tmp_path: Path) -> None:
+    """Folgezeilen mit '# ' (kein WHY-keyword) gehören zur rationale."""
+    src_file = tmp_path / "module.py"
+    src_file.write_text(
+        "# WHY(#182, performance): SQLite busy_timeout=5s.\n"
+        "# Single-Tx > 50 rows blockt smoke-test concurrent writes.\n"
+        "# CHANGE WITH CARE.\n"
+        "def commit_chunked(rows):\n"
+        "    pass\n"
+    )
+    edges = extract_rationale_edges(
+        src_file, repo_slug="demo", workspace_id="bene",
+    )
+    assert len(edges) == 1
+    e = edges[0]
+    assert e["target"] == "module.commit_chunked"
+    assert e["context"] == "#182, performance"
+    assert "SQLite busy_timeout=5s" in e["rationale"]
+    assert "Single-Tx" in e["rationale"]
+    assert "CHANGE WITH CARE" in e["rationale"]
+    # Newlines preserved as join-char
+    assert "\n" in e["rationale"]

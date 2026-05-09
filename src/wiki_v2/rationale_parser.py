@@ -26,8 +26,6 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-# Regex erfasst nur die ERSTE Zeile eines Markers.
-# Multi-Line wird in Task 3 ergänzt.
 _MARKER_RE = re.compile(r"^\s*WHY\(([^)]+)\):\s*(.+?)\s*$")
 
 
@@ -51,7 +49,6 @@ def extract_rationale_edges(
 
     module_name = file_path.stem  # without .py
 
-    # Tokenize, behalte nur Comment-Tokens mit WHY-pattern
     markers: list[tuple[int, str, str]] = []  # (line_no, refs, rationale)
     try:
         with file_path.open("rb") as f:
@@ -59,15 +56,42 @@ def extract_rationale_edges(
     except (OSError, tokenize.TokenizeError):
         return []
 
-    for tok in tokens:
+    # Tokenize, sammle WHY-marker MIT Folgezeilen (`# ...` ohne WHY-keyword)
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
         if tok.type != tokenize.COMMENT:
+            i += 1
             continue
-        # tok.string ist '# WHY(#185): ...'  oder '# something else'
         text = tok.string.lstrip("#").strip()
         m = _MARKER_RE.match(text)
         if not m:
+            i += 1
             continue
-        markers.append((tok.start[0], m.group(1).strip(), m.group(2).strip()))
+        marker_line = tok.start[0]
+        refs = m.group(1).strip()
+        rationale_lines = [m.group(2).strip()]
+        # Sammle Folgezeilen die direkt anschließen UND `# ` sind UND NICHT
+        # selbst ein WHY-marker (nächster Marker beginnt also einen neuen Block).
+        j = i + 1
+        prev_line = marker_line
+        while j < len(tokens):
+            t2 = tokens[j]
+            if t2.type == tokenize.NL:           # blank-Zeile-token
+                j += 1
+                continue
+            if t2.type != tokenize.COMMENT:
+                break
+            if t2.start[0] != prev_line + 1:     # Lücke → Block-Ende
+                break
+            t2text = t2.string.lstrip("#").strip()
+            if _MARKER_RE.match(t2text):         # neuer WHY-block
+                break
+            rationale_lines.append(t2text)
+            prev_line = t2.start[0]
+            j += 1
+        markers.append((marker_line, refs, "\n".join(rationale_lines)))
+        i = j
 
     if not markers:
         return []
