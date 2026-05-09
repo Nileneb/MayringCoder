@@ -121,6 +121,25 @@ def train(in_path: Path, out_path: Path) -> int:
     ndcg_5 = _ndcg_at_k(sorted_labels, 5)
 
     weights = {f: round(float(w), 4) for f, w in zip(FEATURES, clf.coef_[0])}
+
+    # Trainer-side Sanity-Gate: lehne degenerierte Modelle SCHON HIER ab,
+    # nicht erst beim Loader. Vector + Symbolic sind by-design retrieval-
+    # positive Signale; ein Modell mit negativen Weights auf v oder s
+    # hat aus den Daten Confounder gelernt (siehe Issue #180). Ohne
+    # diese Prüfung schreibt der Cron stillschweigend ein Modell file,
+    # das der runtime _load_model dann silent abweist → "Cron success,
+    # Modell aber nicht aktiv" wäre täglich passiert ohne dass es jemand
+    # merkt. Hier hart abbrechen + alte rerank_v2.json unangetastet.
+    v_w = float(weights.get("v", 0.0))
+    s_w = float(weights.get("s", 0.0))
+    if v_w < 0 or s_w < 0:
+        print(
+            f"REJECTED: Modell hat negative retrieval-positive weights "
+            f"(v={v_w:+.3f}, s={s_w:+.3f}). Schreibe NICHT auf {out_path}. "
+            f"Bug in features oder labels — siehe Issue #180. "
+            f"Volle Weights: {weights}"
+        )
+        return 3
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump({

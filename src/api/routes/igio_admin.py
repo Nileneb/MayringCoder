@@ -100,8 +100,14 @@ async def _run_backfill_subprocess(
         "--igio-min-confidence", str(threshold),
         "--model", model,
     ]
-    if workspace_id:
-        args += ["--workspace-id", workspace_id]
+    # IGIO-Classification operiert cross-tenant: das Modell läuft pro
+    # Chunk und schreibt igio_axis zurück, unabhängig vom Workspace
+    # des Aufrufers. Wenn der admin-Trigger keinen workspace_id mitgibt,
+    # default auf 'system' (Service-Token Maintenance-Bucket). Vorher
+    # fiel resolve_cli_workspace auf 'default' zurück, was nach dem
+    # Workspace-Refactor (commit 577d2d8) als UnknownWorkspaceError
+    # crashte → Backfill-Cron lief stündlich grün, persisted=0/0.
+    args += ["--workspace-id", workspace_id or "system"]
     try:
         proc = await asyncio.create_subprocess_exec(
             _python_exe(), *args,

@@ -150,13 +150,26 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     conn = init_memory_db(CACHE_DIR / "memory.db")
     workspace = resolve_cli_workspace(args, conn=conn, auto_create=False)
 
-    rows = conn.execute(
-        "SELECT chunk_id, text, category_labels FROM chunks "
-        "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-        "AND workspace_id = ? "
-        "ORDER BY created_at DESC LIMIT ?",
-        (workspace, limit),
-    ).fetchall()
+    # IGIO-Backfill ist Maintenance: 'system' (Service-Token) operiert
+    # cross-tenant über ALLE chunks, jeder andere workspace nur eigene.
+    # Vorher filterte die Query immer auf workspace_id=current → der
+    # Cron triggerte mit ws=system, fand 0 chunks im system-bucket
+    # (99% leben in 'bene'), persisted=0/0 jede Stunde.
+    if workspace == "system":
+        rows = conn.execute(
+            "SELECT chunk_id, text, category_labels FROM chunks "
+            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT chunk_id, text, category_labels FROM chunks "
+            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
+            "AND workspace_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (workspace, limit),
+        ).fetchall()
     if not rows:
         print(f"[igio] Nichts zu klassifizieren (workspace={workspace}).")
         conn.close()
