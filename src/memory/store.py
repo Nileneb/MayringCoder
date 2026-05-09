@@ -141,11 +141,18 @@ def _migrate_schema(conn: DBAdapter) -> None:
         ],
         # pi_jobs Phase 2: cloud-routable jobs need a worker_id, capability,
         # and a scope marker so local-only and cloud-routable rows can coexist.
+        # pi_jobs T1 (#183): in-process queue extension (kind, job_class,
+        # system_prompt, model_used, latency_ms).
         "pi_jobs": [
             ("scope", "TEXT NOT NULL DEFAULT 'local'"),
             ("capability_required", "TEXT NOT NULL DEFAULT ''"),
             ("claimed_by", "TEXT NOT NULL DEFAULT ''"),
             ("claimed_at", "TEXT NOT NULL DEFAULT ''"),
+            ("kind", "TEXT NOT NULL DEFAULT 'pi-task'"),
+            ("job_class", "TEXT NOT NULL DEFAULT 'standard'"),
+            ("system_prompt", "TEXT NOT NULL DEFAULT ''"),
+            ("model_used", "TEXT NOT NULL DEFAULT ''"),
+            ("latency_ms", "INTEGER NOT NULL DEFAULT 0"),
         ],
         # Memory-Injection v2.0 — retrieval metrics + reranker training data.
         # The hook-injection path already wrote (trigger_ids, context_text,

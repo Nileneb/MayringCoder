@@ -449,3 +449,57 @@ def test_list_recent_combines_workspace_and_scope_filters(db: Path) -> None:
         scope="cloud", workspace_id="alpha", db_path=db,
     )
     assert {j.task_text for j in out} == {"alpha-cloud"}
+
+
+# ----- Issue #183 T1: PiJob extension + classify_pi_job -------------------
+
+
+from src.agents.pi_jobs import classify_pi_job  # noqa: E402
+
+
+def test_pijob_has_new_fields() -> None:
+    """T1 fields: kind, job_class, system_prompt, model_used, latency_ms."""
+    j = pi_jobs.PiJob(job_id="x", task_text="hello")
+    assert j.kind == "pi-task"
+    assert j.job_class == "standard"
+    assert j.system_prompt == ""
+    assert j.model_used == ""
+    assert j.latency_ms == 0
+
+
+def test_classify_short_task_is_mini() -> None:
+    """Sum < 500 chars → mini."""
+    assert classify_pi_job("ping") == "mini"
+    assert classify_pi_job("a short query", "and a brief sys prompt") == "mini"
+
+
+def test_classify_long_task_is_standard() -> None:
+    """Sum >= 500 → standard."""
+    long_task = "x" * 600
+    assert classify_pi_job(long_task) == "standard"
+
+
+def test_classify_explicit_test_class() -> None:
+    """Anti-gaming probe stub — must be opt-in, not auto-classified."""
+    short = "ping"
+    assert classify_pi_job(short) == "mini"
+    assert classify_pi_job(short, kind_hint="test") == "test"
+
+
+def test_classify_5k_boundary_still_standard() -> None:
+    """At 4999 chars we're still in 'standard'."""
+    medium = "y" * 4999
+    assert classify_pi_job(medium) == "standard"
+
+
+def test_pijob_to_dict_includes_new_fields() -> None:
+    """to_dict round-trip preserves the new fields."""
+    j = pi_jobs.PiJob(
+        job_id="x", task_text="y", kind="duel",
+        job_class="mini", model_used="mistral:7b", latency_ms=120,
+    )
+    d = j.to_dict()
+    assert d["kind"] == "duel"
+    assert d["job_class"] == "mini"
+    assert d["model_used"] == "mistral:7b"
+    assert d["latency_ms"] == 120
