@@ -160,27 +160,27 @@ def _login_via_sanctum(sanctum_token: str) -> str:
 
 
 def _http(method: str, url: str, token: str, body: dict | None = None,
-          timeout: float = 10.0) -> tuple[int, dict | None, float]:
+          timeout: float = 10.0,
+          workspace_id: str | None = None) -> tuple[int, dict | None, float]:
     """Returns (status_code, parsed_json_or_None, elapsed_seconds).
 
     Retries on 502/503/504 and connection errors up to 4 times with a
     short backoff. Container restarts during deploy commonly produce a
     short window of 502s — we don't want every post-deploy smoke to
     spuriously red-flag during that window.
+
+    workspace_id (per-call): überschreibt das Service-Token-Default
+    'system' für Checks die User-Workspace-Daten brauchen
+    (memory_search, rag_function_search). Bogus-repo-Trigger
+    (pipeline_stage_observability) bleiben absichtlich OHNE → landen
+    im 'system'-Maintenance-Bucket statt in bene's Job-History.
     """
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    # Smoke-Checks bleiben STRUKTURELL im 'system'-Maintenance-Bucket
-    # (Service-Token-Default). Sonst landen alle bogus-repo-Tests
-    # ('smoke-stage-observability-bogus' etc.) als ERROR-Jobs in
-    # bene's User-Workspace und vergiften dessen Job-History.
-    # Wer Tenant-spezifische Smoke-Tests will, setzt SMOKE_WORKSPACE_ID
-    # explizit per-Run.
-    smoke_ws = os.environ.get("SMOKE_WORKSPACE_ID", "").strip()
-    if smoke_ws:
-        headers["X-Workspace-Id"] = smoke_ws
+    if workspace_id:
+        headers["X-Workspace-Id"] = workspace_id
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     t0 = time.time()
@@ -1231,12 +1231,17 @@ def check_rag_function_search_finds_source(api: str, token: str) -> CheckResult:
       - source_id ends in '.py' (any Python source)
       - score_vector > 0.05 (real vector signal, not noise)
     """
+    # Suche im User-Workspace (env-overridable für andere Tenants).
+    # Service-Token-Default ist 'system', das hat keine echten .py-
+    # source-Chunks — daher müssen wir explizit den Tenant mitgeben.
+    target_ws = os.environ.get("SMOKE_RAG_WORKSPACE", "bene")
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "_rerank candidates vector_scores top_k re-rank "
                        "memory retrieval pipeline",
               "top_k": 5, "include_text": False, "llm_prefilter": False},
         timeout=15.0,
+        workspace_id=target_ws,
     )
     if code != 200 or not isinstance(body, dict):
         return CheckResult("rag_function_search_finds_source", False,

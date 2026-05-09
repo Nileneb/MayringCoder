@@ -1,0 +1,20 @@
+# GitGuardian-Konfiguration. Reduziert false-positive-Alerts für
+# bewusst hand-craftet Test-Dummies (z.B. JWT-shaped strings in
+# PII-Scrubber-Tests).
+#
+# Echte Secrets werden weiter aufgespürt — jedes Detector-Setting
+# unten gilt NUR für tests/ und docs/.
+version: 2
+
+paths-ignore:
+  - tests/test_logging_setup.py
+  - tests/test_log_ingest_cron.py  # legacy, gelöscht in commit 8dffc46
+  - tests/test_jwt_auth.py         # signiert mit ephemeren Test-Keys
+  - tests/test_llm_provider_routing.py
+
+# Einzelne bekannte false-positives explizit:
+matches-ignore:
+  - name: "Test-JWT 'eyJzdWIiOiIxMjMifQ' (sub=123)"
+    match: 'eyJhbGciOiJSUzI1NiJ9\.eyJzdWIiOiIxMjMifQ\.signaturepart_xyz'
+  - name: "Test-JWT 'eyJzdWIiOiJ4In0' (sub=x)"
+    match: 'eyJhbGciOiJSUzI1NiJ9\.eyJzdWIiOiJ4In0\.signaturepart_xyz'
