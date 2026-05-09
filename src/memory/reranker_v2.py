@@ -32,12 +32,21 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-# Memory-Injection v2.0 — explicit per-stage features. ``f`` (score_final)
-# was the original 5th feature but caused multi-collinearity (negative
-# weight on ``v`` because ``f`` already contained 0.30*v). Replaced with
-# ``sf`` (feedback signal) + ``sl`` (LLM advisor) so the model gets the
-# full v1 signal set without any single feature being a sum of the others.
-_FEATURES = ("v", "s", "r", "a", "sf", "sl")
+# Memory-Injection v3 features (Issue #180):
+#   * `v, s, r, a`: retrieval stages (vector, symbolic, recency, source-aff)
+#   * `igio_<axis>`: one-hot of issue/goal/intervention/outcome/unknown
+#
+# Removed vs v2 setup:
+#   * `f` (linear-combo of v,s,r,a — multikollin)
+#   * `sf` (target leakage: derived from same chunk_feedback table as label)
+#   * `sl` (~70% rows have sl=0.5 default — almost constant)
+#
+# score_v2() reads these from stage_scores at runtime; chunks without
+# an IGIO axis match igio_unknown=1, all other igio_*=0. Backward
+# compatible with old v2 model files (weights for missing features are
+# treated as 0 so a 6-feature model still scores).
+_IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
+_FEATURES = ("v", "s", "r", "a") + tuple(f"igio_{a}" for a in _IGIO_AXES)
 _LOCK = threading.Lock()
 _CACHED_MODEL: dict[str, Any] | None = None
 _CACHED_MTIME: float = 0.0

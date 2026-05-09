@@ -333,16 +333,18 @@ def _rerank(
                 score_v1 = min(1.0, score_v1 + 0.10)
 
         if rr_version == "v2" and rr_model is not None:
-            # 6-feature linear model on per-stage signals: vector,
-            # symbolic, recency, source-affinity, feedback, llm-advisor.
-            # No score_final feedback-loop here — that caused the
-            # multikollinearity in the first training run (see
-            # cache/rerank_v2.json from 22:44). Result is a v2 score
-            # whose weights are interpretable per-stage.
-            score_final = score_v2(
-                {"v": sv_eff, "s": ss, "r": sr, "a": sa, "sf": sf, "sl": sl},
-                rr_model,
-            )
+            # v3-Feature-Set: retrieval stages + IGIO one-hot. sf/sl
+            # raus wegen Target-Leakage (siehe Issue #180). Für
+            # Backward-Compat zu älteren v2-Modellfiles bleibt das
+            # weights-dict 'forgiving' — fehlende keys → weight=0 in
+            # score_v2.
+            axis = (chunk.igio_axis or "unknown").lower()
+            stage = {"v": sv_eff, "s": ss, "r": sr, "a": sa,
+                     # legacy keys für alte rerank_v2.json
+                     "sf": sf, "sl": sl}
+            for a_label in ("issue", "goal", "intervention", "outcome", "unknown"):
+                stage[f"igio_{a_label}"] = 1.0 if axis == a_label else 0.0
+            score_final = score_v2(stage, rr_model)
         else:
             score_final = score_v1
 

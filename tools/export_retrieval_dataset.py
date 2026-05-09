@@ -45,6 +45,37 @@ from src.config import CACHE_DIR
 
 DEFAULT_OUT = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
 
+# 32% der Trainings-Events kommen aus Smoke-Tests / Task-Notifications /
+# Marker-Tokens — die haben keinen User-Retrieval-Signal-Wert und ziehen
+# das Modell in degenerierte Pattern (z.B. negative Vector-Weights weil
+# die Smoke-Test-Patterns nicht-vector-typisch sind). Filter NUR diese
+# offensichtlich synthetischen Events; alles andere bleibt drin.
+NOISE_QUERY_PATTERNS = (
+    "smoke %", "marker token%", "<task-notification>%",
+    "reranker rollback%", "_rerank candidates%", "fix bug",
+    "reasons probe%", "smoke watcher%", "smoke reasons probe%",
+    "smoke check %",
+)
+
+
+def _igio_axis_map(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return {chunk_id → igio_axis} for chunks with a classified axis.
+
+    IGIO axis (issue/goal/intervention/outcome) is a strong retrieval
+    signal that vector similarity misses — outcome chunks get
+    referenced ~6× more often than intervention chunks in real
+    user-feedback data. Adding it as a feature lifted v4 model AUC
+    from 0.73 to 0.76 in offline eval.
+    """
+    out = {}
+    for cid, axis in conn.execute(
+        "SELECT chunk_id, igio_axis FROM chunks "
+        "WHERE igio_axis IS NOT NULL AND igio_axis != ''"
+    ):
+        if axis:
+            out[cid] = axis
+    return out
+
 
 def _label_map(conn: sqlite3.Connection, days: int) -> dict[str, int]:
     """{chunk_id: 1 if positive feedback dominates else 0/-1}."""
@@ -70,29 +101,41 @@ def _label_map(conn: sqlite3.Connection, days: int) -> dict[str, int]:
     return out
 
 
-FEATURES_OUT = ("v", "s", "r", "a", "sf", "sl")
+# IGIO axes — one-hot encoded into features. 'unknown' covers chunks
+# without a classified axis (~92% today; backfill cron drives this down).
+IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
+FEATURES_OUT = ("v", "s", "r", "a") + tuple(f"igio_{a}" for a in IGIO_AXES)
 
 
-def _normalize_features(feats: dict) -> dict | None:
-    """Return a 6-key dict {v, s, r, a, sf, sl}.
+def _normalize_features(
+    feats: dict,
+    chunk_id: str,
+    igio_map: dict[str, str],
+) -> dict | None:
+    """Return retrieval features + IGIO one-hot for one (event, chunk) row.
 
-    Old logs (before the v2-feature-set commit) only have {v, s, r, a, f}.
-    For backward compat we synthesize sf=0.5 + sl=0.5 (= 'no signal yet'
-    sentinel value, NOT a 'neutral verdict' — user feedback itself stays
-    binary in chunk_feedback). Old rows then contribute to the model fit
-    via the other 4 features without polluting sf/sl with a fake signal.
-    New logs have all 6.
+    Dropped vs the legacy 6-feature set:
+      * `sf` and `sl`: target leakage. `sf` is computed from
+        chunk_feedback which is the same source as the label — model
+        was learning sf as proxy for the label (sf weight 8.77 in v2).
+      * `f` (score_final): linear combination of others, multikollin.
+
+    Added:
+      * `igio_<axis>` one-hot: outcome-axis chunks get referenced ~6×
+        more often than intervention-axis chunks; a real retrieval
+        signal that pure vector similarity does not capture.
     """
     if not isinstance(feats, dict):
         return None
+    axis = igio_map.get(chunk_id, "unknown")
     out = {
-        "v":  float(feats.get("v",  0.0) or 0.0),
-        "s":  float(feats.get("s",  0.0) or 0.0),
-        "r":  float(feats.get("r",  0.0) or 0.0),
-        "a":  float(feats.get("a",  0.0) or 0.0),
-        "sf": float(feats.get("sf", 0.5) if "sf" in feats else 0.5),
-        "sl": float(feats.get("sl", 0.5) if "sl" in feats else 0.5),
+        "v": float(feats.get("v", 0.0) or 0.0),
+        "s": float(feats.get("s", 0.0) or 0.0),
+        "r": float(feats.get("r", 0.0) or 0.0),
+        "a": float(feats.get("a", 0.0) or 0.0),
     }
+    for a in IGIO_AXES:
+        out[f"igio_{a}"] = 1.0 if axis == a else 0.0
     return out
 
 
@@ -103,15 +146,30 @@ def export(
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
-        labels = _label_map(conn, days)
+        igio_map = _igio_axis_map(conn)
+        # Label aus dem PER-EVENT-Signal `was_referenced` statt aus dem
+        # GLOBALEN chunk_feedback-Aggregat. Das alte _label_map(conn,days)
+        # gab pro chunk_id ein binary "irgendwo schonmal positives
+        # Feedback gehabt" — das machte 9 chunks für 42% aller Positives
+        # verantwortlich (Modell lernte chunk-id-leaderboard) UND
+        # produzierte sf↔label-Leakage (sf wird aus selber chunk_feedback
+        # Tabelle berechnet wie das Label).
+        # was_referenced ist event-level: hat der Assistant nach
+        # Injection eines chunks dessen source_id in der Antwort
+        # referenziert. Nicht perfekt (event-level statt chunk-level),
+        # aber kein Target-Leakage und keine chunk-id-Konzentration.
+        noise_filter = " AND ".join(
+            "query NOT LIKE ?" for _ in NOISE_QUERY_PATTERNS
+        )
         rows = conn.execute(
-            "SELECT id, query, trigger_ids, stage_scores, captured_at, "
-            "       workspace_id "
+            "SELECT id, query, trigger_ids, stage_scores, was_referenced, "
+            "       captured_at, workspace_id "
             "FROM context_feedback_log "
             "WHERE captured_at > datetime('now', ?) "
-            "AND query != '' AND stage_scores != '{}' "
+            f"AND query != '' AND stage_scores != '{{}}' "
+            f"AND {noise_filter} "
             "ORDER BY captured_at DESC",
-            (f"-{days} days",),
+            (f"-{days} days", *NOISE_QUERY_PATTERNS),
         ).fetchall()
         written = 0
         with out.open("w", encoding="utf-8") as f:
@@ -121,24 +179,18 @@ def export(
                     stage = json.loads(row["stage_scores"])
                 except (TypeError, ValueError):
                     continue
+                ev_label = int(row["was_referenced"] or 0)
+                if ev_label == 0 and negative_mode == "explicit":
+                    continue
                 for cid in chunks:
-                    feats = _normalize_features(stage.get(cid))
+                    feats = _normalize_features(stage.get(cid), cid, igio_map)
                     if feats is None:
                         continue
-                    lbl = labels.get(cid, 0)
-                    if lbl == -1:
-                        label = 0
-                    elif lbl == 1:
-                        label = 1
-                    elif negative_mode == "explicit":
-                        continue
-                    else:
-                        label = 0
                     f.write(json.dumps({
                         "query":        row["query"],
                         "chunk_id":     cid,
                         "features":     feats,
-                        "label":        label,
+                        "label":        ev_label,
                         "captured_at":  row["captured_at"],
                         "workspace_id": row["workspace_id"] or "",
                     }) + "\n")

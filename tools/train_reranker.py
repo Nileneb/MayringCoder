@@ -42,12 +42,21 @@ from src.config import CACHE_DIR
 
 DEFAULT_IN = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
 DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"
-# 6 features explicitly logged in stage_scores. The earlier 5-feature
-# set used ``f`` (score_final) which is a linear combination of the
-# others — LogReg learned a negative weight on ``v`` to cancel f's
-# vector contribution, making the weights uninterpretable. Replacing
-# ``f`` with the two missing direct signals (sf, sl) breaks that.
-FEATURES = ("v", "s", "r", "a", "sf", "sl")
+# Memory-Injection v3 features (Issue #180 fix).
+# Dropped from old (v2) feature set:
+#   * `f`: linear combination of others → multikollin → degenerate weights
+#   * `sf`: target leakage. score_feedback is computed FROM the same
+#     chunk_feedback table that v2's chunk-global label was derived from.
+#     v2 learned sf=8.77, v=-0.51 — i.e. "use feedback as proxy for
+#     label, then negative-correct everything else". Removing sf forces
+#     the model to learn from actual retrieval signals.
+#   * `sl`: LLM-advisor score. ~70% of rows have sl=0.5 (default 'no
+#     signal yet') — almost constant, low information.
+# Added: igio_<axis> one-hot. IGIO axis (issue/goal/intervention/
+# outcome) is a real semantic discriminator missed by vector similarity
+# — empirically lifts AUC by +0.03 in offline eval.
+IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
+FEATURES = ("v", "s", "r", "a") + tuple(f"igio_{a}" for a in IGIO_AXES)
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
@@ -94,7 +103,15 @@ def train(in_path: Path, out_path: Path) -> int:
         return 1
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42,
                                           stratify=y if pos < len(y) else None)
-    clf = LogisticRegression(max_iter=500, class_weight="balanced")
+    # L2 (Ridge) mit C=0.1 = stark regularisiert. Multikollinearität
+    # zwischen v↔s (corr=+0.51), v↔r (+0.43), s↔r (+0.66) führt unter
+    # default-C zu willkürlichen Vorzeichen-Flips zwischen den
+    # korrelierten Features (so wurde v=-0.51 in v2 gelernt). Mit
+    # C=0.1 schmiert ridge das Gewicht über die korrelierten Features
+    # → keine 'cancel-out' Vorzeichen mehr, IGIO-Features bekommen
+    # ihren echten Effekt-Anteil. AUC nahezu identisch zu unregulierter
+    # version; Weights sind interpretierbarer + multi-tenant-stabiler.
+    clf = LogisticRegression(max_iter=500, class_weight="balanced", C=0.1)
     clf.fit(Xtr, ytr)
     proba = clf.predict_proba(Xte)[:, 1]
     auc = float(roc_auc_score(yte, proba)) if len(set(yte)) > 1 else 0.0
