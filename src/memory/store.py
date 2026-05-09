@@ -366,6 +366,41 @@ def _init_schema(conn: DBAdapter) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_llm_calls_created
             ON llm_calls_log(created_at);
+
+        -- Workspace-Identity-Foundation. Bisher war workspace_id ein
+        -- freier String den jeder Code-Pfad anders auflöste:
+        --   * JWT-Pfad: f"user-{sub}" (sub = app.linn.games User.id)
+        --   * CLI/workflow-Pfad: getattr(args, "workspace_id", "default")
+        -- → derselbe Mensch landete in zwei verschiedenen Buckets je nach
+        -- Eingangsweg. Diese Tabelle macht workspace_id zu einem
+        -- typisierten First-Class-Citizen (kind=user|team|project),
+        -- erlaubt Sub-Workspaces über parent_id (z.B. user-2:mayringcoder
+        -- als Projekt-Sub-Bucket unter user-2) und ist damit die
+        -- Foundation für Multi-Tenant + Multi-User.
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id               TEXT PRIMARY KEY,
+            kind             TEXT NOT NULL CHECK(kind IN ('user', 'team', 'project', 'system')),
+            parent_id        TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+            owner_user_id    INTEGER,
+            display_name     TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_workspaces_parent
+            ON workspaces(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_workspaces_owner
+            ON workspaces(owner_user_id);
+
+        -- Aliases ermöglichen Migration ohne Datenverlust: alte Aufrufe
+        -- mit workspace_id="default" oder "nileneb-mayringcoder" werden
+        -- über diese Tabelle auf den kanonischen Workspace abgebildet.
+        CREATE TABLE IF NOT EXISTS workspace_aliases (
+            alias            TEXT PRIMARY KEY,
+            workspace_id     TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            created_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_workspace_aliases_target
+            ON workspace_aliases(workspace_id);
     """)
 
     # Migration: add missing columns to existing DBs
