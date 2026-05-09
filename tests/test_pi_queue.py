@@ -182,3 +182,107 @@ async def test_stats_empty_queue():
         assert s["by_class"] == {}
     finally:
         await q.shutdown()
+
+
+@pytest.mark.anyio
+async def test_priority_lane_runs_independently_from_background():
+    """Hook-burst auf priority lane darf background nicht ausbremsen, und
+    umgekehrt: laufender background-job blockiert nicht den priority lane."""
+    from src.agents.pi_queue import PiQueue
+    q = PiQueue.with_lanes(priority=2, standard=2, background=1)
+    handler_calls = []
+    started = asyncio.Event()
+
+    async def _handler(job: PiJob) -> dict:
+        handler_calls.append((job.job_class, job.kind))
+        if job.kind == "ingest":
+            started.set()
+            await asyncio.sleep(2.0)  # simulates long background-job
+        return {"id": job.job_id}
+
+    q.set_handler(_handler)
+    await q.start()
+    try:
+        bg_fut = q.enqueue(PiJob(job_id="bg", task_text="x", kind="ingest"))
+        await started.wait()  # ensure background-worker engaged
+
+        prio_futs = [q.enqueue(PiJob(job_id=f"p{i}", task_text="x" * 50, job_class="mini"))
+                     for i in range(5)]
+        results = await asyncio.wait_for(asyncio.gather(*prio_futs), timeout=1.0)
+        assert len(results) == 5
+        assert not bg_fut.done()
+    finally:
+        await q.shutdown()
+
+
+@pytest.mark.anyio
+async def test_lane_concurrency_caps_independent():
+    """Each lane hat seine OWN concurrency — 5 priority + 5 standard sollte
+    bis zu 4 parallel haben (2 prio + 2 standard), nicht 4 von einer lane."""
+    from src.agents.pi_queue import PiQueue
+    from collections import Counter
+    q = PiQueue.with_lanes(priority=2, standard=2, background=1)
+    in_flight_per_lane: Counter = Counter()
+    peak_per_lane: dict = {"priority": 0, "standard": 0, "background": 0}
+
+    async def _handler(job: PiJob) -> dict:
+        lane = "priority" if job.job_class == "mini" else \
+               "background" if job.kind == "ingest" else "standard"
+        in_flight_per_lane[lane] += 1
+        peak_per_lane[lane] = max(peak_per_lane[lane], in_flight_per_lane[lane])
+        await asyncio.sleep(0.1)
+        in_flight_per_lane[lane] -= 1
+        return {}
+
+    q.set_handler(_handler)
+    await q.start()
+    try:
+        futs = []
+        for i in range(5):
+            futs.append(q.enqueue(PiJob(job_id=f"p{i}", task_text="x", job_class="mini")))
+        for i in range(5):
+            futs.append(q.enqueue(PiJob(job_id=f"s{i}", task_text="x" * 1000, job_class="standard")))
+        await asyncio.gather(*futs)
+    finally:
+        await q.shutdown()
+    assert peak_per_lane["priority"] == 2, peak_per_lane
+    assert peak_per_lane["standard"] == 2, peak_per_lane
+
+
+@pytest.mark.anyio
+async def test_stats_per_lane():
+    """stats() reports per-lane counts + p50/p95."""
+    from src.agents.pi_queue import PiQueue
+    q = PiQueue.with_lanes(priority=2, standard=2, background=1)
+    async def _h(job): return {}
+    q.set_handler(_h)
+    await q.start()
+    try:
+        await q.enqueue(PiJob(job_id="p1", task_text="x", job_class="mini"))
+        await q.enqueue(PiJob(job_id="s1", task_text="x" * 1000, job_class="standard"))
+        await q.enqueue(PiJob(job_id="bg1", task_text="x", kind="ingest"))
+        await asyncio.sleep(0.1)
+        s = q.stats()
+        assert "lanes" in s
+        for lane in ("priority", "standard", "background"):
+            assert lane in s["lanes"]
+            assert "completed" in s["lanes"][lane]
+    finally:
+        await q.shutdown()
+
+
+@pytest.mark.anyio
+async def test_backward_compat_PiQueue_constructor():
+    """Original `PiQueue(concurrency=2)` muss weiter funktionieren — wir
+    mappen es als 'standard'-only-Queue hinter den Kulissen."""
+    from src.agents.pi_queue import PiQueue
+    q = PiQueue(concurrency=2)
+    async def _h(job): return {"ok": True}
+    q.set_handler(_h)
+    await q.start()
+    try:
+        fut = q.enqueue(PiJob(job_id="x", task_text="x"))
+        result = await asyncio.wait_for(fut, timeout=2.0)
+        assert result == {"ok": True}
+    finally:
+        await q.shutdown()
