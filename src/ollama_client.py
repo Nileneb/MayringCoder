@@ -26,6 +26,48 @@ _GENERATE_RETRY_DELAYS = (2, 5, 10)
 _EMBED_MAX_RETRIES = 5
 _EMBED_RETRY_DELAYS = (3, 6, 12, 20, 30)
 
+# WHY(#192, B+): Cloud-Fallback wenn lokales three.linn.games überlastet
+# ist. OLLAMA_CLOUD_API_KEY in env (GH Actions secret OLLAMA_API_KEY_CLOUD)
+# triggert den Pfad. CHANGE WITH CARE — Cloud-Calls kosten Geld, daher
+# nur bei echten Connection/Timeout-Errors am letzten Retry, nicht bei
+# 4xx-Client-Fehlern (die wären auf Cloud gleich kaputt).
+_CLOUD_URL = os.getenv("OLLAMA_CLOUD_URL", "https://ollama.com").rstrip("/")
+_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
+
+
+def _generate_call(host: str, body: dict, *, stream: bool, timeout: float,
+                    auth_token: str = "") -> str:
+    """One /api/generate-call against the given host. Auth-token optional
+    (cloud needs it, local doesn't). Raises httpx-exceptions on failure
+    so the caller can decide retry/fallback."""
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    if stream:
+        chunks: list[str] = []
+        with httpx.stream(
+            "POST", f"{host}/api/generate", json=body, headers=headers,
+            timeout=timeout, verify=_SSL_VERIFY,
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                chunks.append(data.get("response", ""))
+                if data.get("done"):
+                    break
+        return "".join(chunks)
+    resp = httpx.post(
+        f"{host}/api/generate", json=body, headers=headers,
+        timeout=timeout, verify=_SSL_VERIFY,
+    )
+    resp.raise_for_status()
+    return resp.json().get("response", "")
+
 
 def generate(
     url: str,
@@ -77,32 +119,48 @@ def generate(
 
     for attempt in range(max_retries):
         try:
-            if stream:
-                chunks: list[str] = []
-                with httpx.stream("POST", f"{base}/api/generate", json=body, timeout=timeout, verify=_SSL_VERIFY) as resp:
-                    resp.raise_for_status()
-                    for line in resp.iter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        chunks.append(data.get("response", ""))
-                        if data.get("done"):
-                            break
-                return "".join(chunks)
-            else:
-                resp = httpx.post(f"{base}/api/generate", json=body, timeout=timeout, verify=_SSL_VERIFY)
-                resp.raise_for_status()
-                return resp.json().get("response", "")
+            return _generate_call(base, body, stream=stream, timeout=timeout)
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            # WHY(#192, B+): am letzten Retry → Cloud-Fallback wenn API-Key
+            # gesetzt. ConnectError/Timeout heißt local Ollama ist down
+            # oder überlastet; Cloud ist eine teurere aber verfügbare
+            # alternative. 4xx/5xx-Errors überspringen wir (4xx = Bug,
+            # 5xx-overload-Pattern wird unten behandelt).
             if attempt < max_retries - 1:
                 delay = retry_delays[min(attempt, len(retry_delays) - 1)]
                 _log_retry("generate", label, attempt + 1, max_retries, delay)
                 time.sleep(delay)
-            else:
-                raise
+                continue
+            if _CLOUD_API_KEY and _CLOUD_URL != base:
+                try:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "ollama local→cloud fallback: %s", type(exc).__name__,
+                    )
+                    return _generate_call(
+                        _CLOUD_URL, body, stream=stream, timeout=timeout,
+                        auth_token=_CLOUD_API_KEY,
+                    )
+                except Exception:
+                    raise exc  # cloud auch broken → originaler Fehler
+            raise
+        except httpx.HTTPStatusError as exc:
+            # 503 (overload) / 429 (rate-limit) auf der LETZTEN attempt → Cloud-fallback
+            status = exc.response.status_code if exc.response is not None else 0
+            if status in (503, 529, 429) and attempt == max_retries - 1 and \
+               _CLOUD_API_KEY and _CLOUD_URL != base:
+                try:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "ollama local→cloud fallback: HTTP %s", status,
+                    )
+                    return _generate_call(
+                        _CLOUD_URL, body, stream=stream, timeout=timeout,
+                        auth_token=_CLOUD_API_KEY,
+                    )
+                except Exception:
+                    raise exc
+            raise
     raise RuntimeError("unreachable")
 
 
