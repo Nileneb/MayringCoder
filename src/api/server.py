@@ -42,6 +42,11 @@ from src.api.routes import memory, wiki, jobs, duel, reports
 from src.api.routes.sync import router as _sync_router
 from src.api.job_queue import _JOBS, run_checker_job as _run_checker_job
 
+# JSON-Log-File für log-ingest-Cron. Wird vor FastAPI() konfiguriert,
+# damit die Startup-Logs (route-include, db-init) auch landen.
+from src.logging_setup import configure_json_logging
+configure_json_logging()
+
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 
 app.add_middleware(

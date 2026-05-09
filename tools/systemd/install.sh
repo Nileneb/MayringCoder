@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Installiert mayring-log-ingester systemd-units auf u-server.
 #
-# Aufruf einmalig auf u-server:
-#   bash ~/app.linn.games/MayringCoder/tools/systemd/install.sh
+# Aufruf einmalig auf u-server (zuerst MayringCoder-clone updaten):
+#   ssh nileneb@u-server '
+#     cd ~/app.linn.games/MayringCoder && git pull origin master &&
+#     bash tools/systemd/install.sh
+#   '
+#
+# Wichtig: Der MayringCoder-Clone unter ~/app.linn.games/MayringCoder/
+# ist eine separate working tree, NICHT vom app.linn.games-checkout
+# mit `git pull` mitgepullt. Manueller pull dort nötig.
 #
 # Idempotent: re-running aktualisiert die unit-files + reload.
 

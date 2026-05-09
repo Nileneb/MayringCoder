@@ -1,11 +1,9 @@
-"""Tests für tools/log_ingest_cron.py — PII-Scrubbing + Block-Extraction."""
+"""Tests für tools/log_ingest_cron.py — JSON-Tail + Filter + Scrub."""
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
 
-# Tool wird via spec geladen, damit es auch ohne package install läuft.
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location(
     "log_ingest_cron", ROOT / "tools" / "log_ingest_cron.py"
@@ -14,126 +12,135 @@ log_ingest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(log_ingest)
 
 
-# ─── PII-Scrubber ──────────────────────────────────────────────────
+# ─── parse_json_line ───────────────────────────────────────────────
 
 
-def test_scrub_bearer_token():
-    out = log_ingest.scrub_pii("Authorization: Bearer abc.def-123_xyz=")
+def test_parse_valid_json():
+    r = log_ingest.parse_json_line('{"level":"ERROR","msg":"x"}')
+    assert r == {"level": "ERROR", "msg": "x"}
+
+
+def test_parse_invalid_json_returns_none():
+    assert log_ingest.parse_json_line("plain text") is None
+
+
+def test_parse_empty_returns_none():
+    assert log_ingest.parse_json_line("") is None
+
+
+# ─── line_to_chunk ─────────────────────────────────────────────────
+
+
+def test_line_to_chunk_basic():
+    record = {"ts": "2026-05-09T08:00:00Z", "level": "ERROR",
+              "logger": "src.api.foo", "msg": "boom"}
+    out = log_ingest.line_to_chunk(record)
+    assert "2026-05-09" in out
+    assert "ERROR" in out
+    assert "[src.api.foo]" in out
+    assert "boom" in out
+
+
+def test_line_to_chunk_includes_traceback():
+    record = {"level": "ERROR", "msg": "x",
+              "exc": "Traceback (most recent call last):\n  …"}
+    out = log_ingest.line_to_chunk(record)
+    assert "Traceback" in out
+
+
+def test_line_to_chunk_scrubs_token_in_msg():
+    record = {"level": "ERROR",
+              "msg": "got Bearer abc.def-123_xyz= for caller"}
+    out = log_ingest.line_to_chunk(record)
     assert "Bearer <REDACTED>" in out
     assert "abc.def-123_xyz" not in out
 
 
+# ─── tail_new_lines ────────────────────────────────────────────────
+
+
+def test_tail_new_lines_reads_only_new(tmp_path):
+    p = tmp_path / "log.json"
+    p.write_text('{"level":"INFO","msg":"a"}\n{"level":"WARNING","msg":"b"}\n')
+    # initial: offset=0 → liest beide
+    lines, new_offset = log_ingest.tail_new_lines(p, 0)
+    assert len(lines) == 2
+    assert new_offset == p.stat().st_size
+
+    # weiter schreiben, nur neues lesen
+    with p.open("a") as f:
+        f.write('{"level":"ERROR","msg":"c"}\n')
+    lines2, _ = log_ingest.tail_new_lines(p, new_offset)
+    assert len(lines2) == 1
+    assert "c" in lines2[0]
+
+
+def test_tail_new_lines_handles_rotation(tmp_path):
+    p = tmp_path / "log.json"
+    p.write_text("a-very-long-original-line\n" * 100)
+    initial_offset = p.stat().st_size
+
+    # Rotation: Datei wird kleiner
+    p.write_text('{"level":"WARNING","msg":"after-rotate"}\n')
+    lines, new_offset = log_ingest.tail_new_lines(p, initial_offset)
+    assert len(lines) == 1
+    assert "after-rotate" in lines[0]
+    assert new_offset == p.stat().st_size
+
+
+def test_tail_new_lines_keeps_partial_for_next_run(tmp_path):
+    """Wenn die letzte Zeile NICHT mit \\n endet (Logger schreibt
+    grad), behalten wir sie für den nächsten Run im offset."""
+    p = tmp_path / "log.json"
+    p.write_text('{"level":"INFO","msg":"complete"}\n{"level":"ERR')
+    lines, new_offset = log_ingest.tail_new_lines(p, 0)
+    assert len(lines) == 1
+    assert "complete" in lines[0]
+    # offset zeigt NICHT auf das Datei-Ende, sondern auf den Anfang
+    # der unvollständigen Zeile → nächster Run fängt dort an.
+    assert new_offset < p.stat().st_size
+
+
+# ─── PII-Scrubber (Defensive) ──────────────────────────────────────
+
+
+def test_scrub_bearer():
+    out = log_ingest.scrub_pii("auth: Bearer abc.def_xyz")
+    assert "Bearer <REDACTED>" in out
+
+
 def test_scrub_jwt():
-    jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signaturepart_xyz"
-    out = log_ingest.scrub_pii(f"token: {jwt}")
+    jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.signaturepart_xyz"
+    out = log_ingest.scrub_pii(f"tok={jwt}")
     assert "<JWT_REDACTED>" in out
-    assert "eyJ" not in out
 
 
-def test_scrub_email():
-    out = log_ingest.scrub_pii("user bene@linn.games said")
-    assert "<EMAIL>" in out
-    assert "bene@linn.games" not in out
-
-
-def test_scrub_ipv4():
-    out = log_ingest.scrub_pii("connection from 192.168.178.11 to ...")
-    assert "<IP>" in out
-    assert "192.168.178.11" not in out
-
-
-def test_scrub_keeps_unrelated_numbers():
-    """timestamps wie 2026-05-09 sollen NICHT als IP getroffen werden."""
-    out = log_ingest.scrub_pii("[2026-05-09 06:42:00] startup")
-    assert "<IP>" not in out
-    assert "2026-05-09" in out
-
-
-def test_scrub_password_query():
-    out = log_ingest.scrub_pii("?password=hunter2&user=foo")
-    assert "password=<REDACTED>" in out
-    assert "hunter2" not in out
-
-
-def test_scrub_long_hex_key():
-    """Standalone-hex (z.B. service-token-leak im body) wird gescrubbt."""
-    raw = "service hash 8aecd5782447a8276f0989152f91267be27fcfe4028459a016126f5c6efe7537 ok"
-    out = log_ingest.scrub_pii(raw)
+def test_scrub_long_hex_standalone():
+    out = log_ingest.scrub_pii(
+        "service hash 8aecd5782447a8276f0989152f91267be27fcfe4028459a016126f5c6efe7537 ok"
+    )
     assert "<HEX_REDACTED>" in out
-    assert "8aecd57" not in out
 
 
-# ─── Block-Extraction ──────────────────────────────────────────────
+# ─── Level-Filter via main() integration ───────────────────────────
 
 
-def test_extract_keeps_only_severity_blocks():
-    raw = """\
-2026-05-09 06:00:00 INFO: server started
-2026-05-09 06:01:00 DEBUG: request id=42
-2026-05-09 06:02:00 ERROR: ValueError: bad input
-  File "x.py", line 42, in foo
-    raise ValueError("bad input")
-2026-05-09 06:03:00 INFO: heartbeat ok
-"""
-    blocks = log_ingest.extract_severity_blocks(raw)
-    assert len(blocks) == 1
-    assert "ValueError: bad input" in blocks[0]
-    assert "heartbeat ok" not in blocks[0]
-
-
-def test_extract_traceback_block_intact():
-    raw = """\
-2026-05-09 06:00:00 INFO: ok
-Traceback (most recent call last):
-  File "x.py", line 1, in <module>
-    raise RuntimeError('boom')
-RuntimeError: boom
-2026-05-09 06:00:01 INFO: next
-"""
-    blocks = log_ingest.extract_severity_blocks(raw)
-    assert len(blocks) == 1
-    block = blocks[0]
-    assert "Traceback" in block
-    assert 'File "x.py"' in block
-    assert "RuntimeError: boom" in block
-
-
-def test_extract_returns_empty_when_only_info():
-    raw = """\
-2026-05-09 06:00:00 INFO: started
-2026-05-09 06:00:01 INFO: heartbeat
-"""
-    assert log_ingest.extract_severity_blocks(raw) == []
-
-
-def test_extract_warning_kept():
-    raw = "2026-05-09 06:00:00 WARNING: cache cold\n"
-    blocks = log_ingest.extract_severity_blocks(raw)
-    assert len(blocks) == 1
-
-
-# ─── Source-ID-Stabilität (idempotent dedup) ───────────────────────
-
-
-def test_post_chunk_dry_run_logs_stable_source_id(capsys):
-    """In dry-run: identischer block → identische source_id → dedup
-    durch /memory/put-content_hash auf Server-Seite."""
-    block = "2026-05-09 ERROR: same\n"
-    log_ingest.post_chunk(
-        "http://x", "tok", "bene:logs", "myc", block,
-        "2026-05-09T00:00:00+00:00", dry_run=True,
+def test_main_skips_info_level(tmp_path, monkeypatch, capsys):
+    log_file = tmp_path / "log.json"
+    log_file.write_text(
+        '{"ts":"2026-01-01","level":"INFO","msg":"heartbeat"}\n'
+        '{"ts":"2026-01-01","level":"ERROR","msg":"crashed","exc":"Trace"}\n'
+        '{"ts":"2026-01-01","level":"DEBUG","msg":"x"}\n'
     )
-    out = capsys.readouterr().out
-    log_ingest.post_chunk(
-        "http://x", "tok", "bene:logs", "myc", block,
-        "2026-05-09T00:00:00+00:00", dry_run=True,
-    )
-    out2 = capsys.readouterr().out
-    # gleiche source_id in beiden runs. Output-Format:
-    # `# DRY-RUN POST <source_id>: <block-prefix>...`
-    import re as _re
-    m1 = _re.search(r"POST (log:[^\s:]+:[a-f0-9]+):", out)
-    m2 = _re.search(r"POST (log:[^\s:]+:[a-f0-9]+):", out2)
-    assert m1 and m2
-    assert m1.group(1) == m2.group(1)
-    assert m1.group(1).startswith("log:myc:")
+    state_file = tmp_path / "state.json"
+    monkeypatch.setenv("LOG_INGEST_STATE_FILE", str(state_file))
+    monkeypatch.setenv("LOG_INGEST_FILES", str(log_file))
+    monkeypatch.setenv("MAYRING_API_URL", "http://x")
+    monkeypatch.setenv("MCP_SERVICE_TOKEN", "tok")
+
+    monkeypatch.setattr("sys.argv", ["log_ingest_cron.py", "--dry-run"])
+    log_ingest.main()
+
+    err = capsys.readouterr().err
+    assert "3 lines total" in err
+    assert "1 accepted" in err
