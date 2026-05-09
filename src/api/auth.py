@@ -16,13 +16,21 @@ _bearer = HTTPBearer(auto_error=False)
 # so users always need a proper RS256 JWT.
 _SERVICE_TOKEN = os.getenv("MCP_SERVICE_TOKEN", "")
 
+# Pre-launch beta: nur EIN User ('bene'). Service-Token-Aufrufe
+# (post-deploy-ingest, smoke, conversation_watcher) sollen IMPLIZIT
+# zu seinem Workspace gehören, nicht in einen separaten 'system'-Bucket
+# fallen. Sobald der erste echte Multi-User-Tenant kommt, wird das
+# wieder strukturell auf 'system' rückgestellt.
+_SERVICE_WORKSPACE = os.getenv("MAYRING_SERVICE_WORKSPACE", "bene")
+
 
 async def get_token_info(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> TokenInfo:
     """Validate Bearer token — accepts RS256 JWT (users) or MCP_SERVICE_TOKEN (server daemons).
 
-    Service token → workspace_id 'system', scope '*'.
+    Service token → workspace_id aus MAYRING_SERVICE_WORKSPACE
+    (default 'bene' in pre-launch — ein-User-Setup), scope '*'.
     """
     if not creds:
         raise HTTPException(
@@ -34,7 +42,7 @@ async def get_token_info(
         token.encode() if isinstance(token, str) else token,
         _SERVICE_TOKEN.encode() if isinstance(_SERVICE_TOKEN, str) else _SERVICE_TOKEN,
     ):
-        return TokenInfo(workspace_id="system", scopes=("*",))
+        return TokenInfo(workspace_id=_SERVICE_WORKSPACE, scopes=("*",))
     info = validate_jwt_token(token)
     if not info:
         raise HTTPException(
