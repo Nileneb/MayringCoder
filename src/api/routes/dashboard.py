@@ -87,8 +87,18 @@ async def jobs_history(
     """
     from src.api.job_queue import _JOBS
 
+    # Multi-Tenant: Nur Jobs des aufrufenden Workspaces zurückgeben.
+    # 'system' (Service-Token) sieht alles — ist Maintenance-Bucket.
+    # Ohne diesen Filter zeigte das memory-dashboard.blade jobs aus
+    # smoke-runs (ws=system) im User-Account, das war confusing.
+    def _ws_match(j: dict) -> bool:
+        if workspace_id == "system":
+            return True
+        return j.get("workspace_id") == workspace_id
+
     items = sorted(
-        (j for j in _JOBS.values() if not status or j.get("status") == status),
+        (j for j in _JOBS.values()
+         if _ws_match(j) and (not status or j.get("status") == status)),
         key=lambda x: x.get("started_at", ""),
         reverse=True,
     )[:limit]

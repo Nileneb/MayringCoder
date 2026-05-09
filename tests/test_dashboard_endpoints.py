@@ -279,6 +279,37 @@ def test_jobs_history_reads_in_memory_dict():
         del job_queue._JOBS["jobX"]
 
 
+def test_jobs_history_filters_other_workspaces():
+    """Bene's dashboard must not show jobs that belong to another tenant
+    or to the system maintenance bucket — pre-fix, smoke-runs (ws=system)
+    leaked into the user-facing memory-dashboard job history.
+    """
+    from src.api import job_queue
+    job_queue._JOBS.update({
+        "ws_bene":   {"job_id": "ws_bene",   "status": "done",
+                      "started_at": "2026-05-08", "workspace_id": "bene"},
+        "ws_system": {"job_id": "ws_system", "status": "done",
+                      "started_at": "2026-05-08", "workspace_id": "system"},
+        "ws_other":  {"job_id": "ws_other",  "status": "done",
+                      "started_at": "2026-05-08", "workspace_id": "alice"},
+    })
+    try:
+        # Bene-tenant: nur eigene jobs
+        res = _run(dashboard.jobs_history(workspace_id="bene"))
+        ids = {j["job_id"] for j in res["jobs"]}
+        assert "ws_bene" in ids
+        assert "ws_system" not in ids
+        assert "ws_other" not in ids
+
+        # system (Service-Token / Admin): sieht alles
+        res = _run(dashboard.jobs_history(workspace_id="system"))
+        ids = {j["job_id"] for j in res["jobs"]}
+        assert {"ws_bene", "ws_system", "ws_other"} <= ids
+    finally:
+        for k in ("ws_bene", "ws_system", "ws_other"):
+            job_queue._JOBS.pop(k, None)
+
+
 def test_jobs_history_status_filter():
     from src.api import job_queue
     job_queue._JOBS.update({
