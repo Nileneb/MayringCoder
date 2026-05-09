@@ -128,6 +128,14 @@ async def _start_pi_queue() -> None:
     async def _handler(job: PiJob) -> dict:
         import time as _time
         from src.agents.pi import run_task_with_memory
+        # T4: ModelRouter mit job_class-hint. 'mini' kann auf phi3:3.8b
+        # routen wenn yaml es definiert, 'standard' bleibt mistral:7b.
+        # Plus per-class timeout — kleine Tasks dürfen nicht 240s warten.
+        resolved_model = job.model or _model_for_job_class(job.job_class)
+        resolved_timeout = (
+            float(job.timeout_s) if job.timeout_s
+            else _timeout_for_job_class(job.job_class, fallback=240.0)
+        )
         loop = asyncio.get_event_loop()
         start = _time.monotonic()
         try:
@@ -136,17 +144,18 @@ async def _start_pi_queue() -> None:
                 lambda: run_task_with_memory(
                     task=job.task_text,
                     ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-                    model=job.model or _model_for_job_class(job.job_class),
+                    model=resolved_model,
                     repo_slug=job.repo_slug,
                     system_prompt=job.system_prompt,
-                    timeout=job.timeout_s,
+                    timeout=resolved_timeout,
                 ),
             )
             job.latency_ms = int((_time.monotonic() - start) * 1000)
-            job.model_used = job.model or _model_for_job_class(job.job_class)
+            job.model_used = resolved_model
             return result
         except Exception:
             job.latency_ms = int((_time.monotonic() - start) * 1000)
+            job.model_used = resolved_model  # log-für-stats: was wäre genutzt worden
             raise
 
     queue.set_handler(_handler)
@@ -160,10 +169,25 @@ async def _stop_pi_queue() -> None:
 
 
 def _model_for_job_class(job_class: str) -> str:
-    """T4-stub: all classes resolve to the default text model until ModelRouter
-    learns about job_class routing ('mini' → smaller models comes in T4)."""
+    """T4: ModelRouter.resolve('text', job_class) routet 'mini' → kleineres
+    Modell wenn yaml einen classes-Block hat. 'standard'/unknown fallen
+    auf den outer route — kein Breaking-Change weil yaml-Default keine
+    classes hat."""
     from src.model_router import ModelRouter
-    return ModelRouter(os.getenv("OLLAMA_URL", "http://localhost:11434")).resolve("text")
+    return ModelRouter(os.getenv("OLLAMA_URL", "http://localhost:11434")).resolve(
+        "text", job_class=job_class,
+    )
+
+
+def _timeout_for_job_class(job_class: str, fallback: float = 240.0) -> float:
+    """T4: per-class timeout aus model_routes.yaml — 'mini' typically 30s
+    statt 240s damit kleine Tasks nicht endlos auf langsame Modelle warten."""
+    from src.model_router import ModelRouter
+    return float(
+        ModelRouter(os.getenv("OLLAMA_URL", "http://localhost:11434")).timeout_for(
+            "text", job_class=job_class,
+        ) or fallback
+    )
 
 
 @app.get("/health")

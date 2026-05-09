@@ -138,3 +138,59 @@ text:
             router = ModelRouter("http://localhost:11434")
         router.set_route("vision", "llava:7b", fallback="")
         assert router.resolve("vision") == "llava:7b"
+
+
+class TestJobClassRouting:
+    """Issue #183 T4: resolve(task, job_class) routes mini → smaller model."""
+
+    def test_resolve_with_class_falls_back_to_default_when_class_missing(self):
+        from unittest.mock import patch
+        from src.model_router import ModelRouter
+        with patch("src.model_router._CONFIG_PATH") as mock_path:
+            mock_path.exists.return_value = False
+            router = ModelRouter("http://localhost:11434")
+        # No class-specific config → returns the outer route
+        assert router.resolve("text", job_class="mini") == router.resolve("text")
+        assert router.resolve("text", job_class="standard") == router.resolve("text")
+
+    def test_resolve_with_class_uses_class_specific_model(self, tmp_path):
+        from src.model_router import ModelRouter
+        cfg = tmp_path / "model_routes.yaml"
+        cfg.write_text("""
+text:
+  model: mistral:7b-instruct
+  fallback: qwen2.5-coder:7b
+  timeout: 240
+  classes:
+    mini:
+      model: phi3:3.8b
+      timeout: 30
+    standard:
+      model: mistral:7b-instruct
+      timeout: 240
+""")
+        router = ModelRouter("http://localhost:11434")
+        router.load_config(cfg)
+        assert router.resolve("text") == "mistral:7b-instruct"
+        assert router.resolve("text", job_class="mini") == "phi3:3.8b"
+        assert router.resolve("text", job_class="standard") == "mistral:7b-instruct"
+        # Unknown class → fall back to outer
+        assert router.resolve("text", job_class="bogus") == "mistral:7b-instruct"
+
+    def test_timeout_for_class(self, tmp_path):
+        from src.model_router import ModelRouter
+        cfg = tmp_path / "model_routes.yaml"
+        cfg.write_text("""
+text:
+  model: m1
+  timeout: 240
+  classes:
+    mini:
+      model: m1-small
+      timeout: 30
+""")
+        router = ModelRouter("http://localhost:11434")
+        router.load_config(cfg)
+        assert router.timeout_for("text") == 240
+        assert router.timeout_for("text", job_class="mini") == 30
+        assert router.timeout_for("text", job_class="standard") == 240  # fallback

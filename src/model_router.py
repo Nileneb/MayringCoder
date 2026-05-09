@@ -37,6 +37,10 @@ class RouteConfig:
     model: str
     fallback: str = ""
     timeout: int = 240
+    # WHY(#183, T4): per-job-class overrides für model + timeout. mini (kleine
+    # Tasks <500 chars) routet auf günstigere Modelle bei kürzerem timeout;
+    # standard nutzt den outer route. Unbekannte job_class fällt auf outer.
+    classes: dict[str, "RouteConfig"] = field(default_factory=dict)
 
 
 class ModelRouter:
@@ -86,11 +90,24 @@ class ModelRouter:
                     if "timeout" in cfg:
                         existing.timeout = int(cfg["timeout"])
                 else:
-                    self._routes[task] = RouteConfig(
+                    existing = RouteConfig(
                         model=str(cfg.get("model", "")),
                         fallback=str(cfg.get("fallback", "")),
                         timeout=int(cfg.get("timeout", 240)),
                     )
+                    self._routes[task] = existing
+                # T4: per-class overrides
+                classes_cfg = cfg.get("classes") or {}
+                if isinstance(classes_cfg, dict):
+                    existing.classes = {
+                        cls: RouteConfig(
+                            model=str(c.get("model", existing.model)),
+                            fallback=str(c.get("fallback", existing.fallback)),
+                            timeout=int(c.get("timeout", existing.timeout)),
+                        )
+                        for cls, c in classes_cfg.items()
+                        if isinstance(c, dict)
+                    }
         except Exception as e:
             import logging
             logging.warning("model_routes.yaml konnte nicht geladen werden: %s — Defaults aktiv", e)
@@ -108,16 +125,36 @@ class ModelRouter:
         with target.open("w", encoding="utf-8") as f:
             _yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
 
-    def resolve(self, task: str) -> str:
-        """Return model name for task.
+    def resolve(self, task: str, job_class: str | None = None) -> str:
+        """Return model name for task, optional job_class override.
 
-        Priority: config/model_routes.yaml → hardcoded default → "".
-        Never reads OLLAMA_MODEL env — change models via Web-UI or model_routes.yaml.
+        Priority: config/model_routes.yaml::classes[job_class] → outer route
+        → hardcoded default → "". Unknown job_class silently falls back to
+        outer (no error — opaque per spec #183).
+
+        Never reads OLLAMA_MODEL env — change models via Web-UI or
+        model_routes.yaml.
         """
         cfg = self._routes.get(task)
         if cfg is None:
             return ""
+        if job_class and cfg.classes and job_class in cfg.classes:
+            cls_cfg = cfg.classes[job_class]
+            return cls_cfg.model or cls_cfg.fallback or cfg.model or cfg.fallback or ""
         return cfg.model or cfg.fallback or ""
+
+    def timeout_for(self, task: str, job_class: str | None = None) -> int:
+        """Return timeout (seconds) for task + optional job_class.
+
+        Issue #183 T4: mini-Klasse hat strengeren timeout (z.B. 30s) damit
+        kleine Tasks nicht 240s auf langsame standard-Modelle warten.
+        """
+        cfg = self._routes.get(task)
+        if cfg is None:
+            return 240
+        if job_class and cfg.classes and job_class in cfg.classes:
+            return cfg.classes[job_class].timeout
+        return cfg.timeout
 
     def resolve_with_fallback(self, task: str) -> str:
         """Return model name, falling back to fallback if primary not available."""
