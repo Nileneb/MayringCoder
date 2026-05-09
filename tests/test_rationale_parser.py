@@ -81,3 +81,25 @@ def test_handles_async_function(tmp_path: Path) -> None:
     )
     assert len(edges) == 1
     assert edges[0]["target"] == "module.fetch"
+
+
+def test_skips_marker_before_for_loop(tmp_path: Path, caplog) -> None:
+    """Marker vor non-trivialem Target (for/if/try/while) wird geskipped
+    UND ein WARN-Log geschrieben (kein silent drop)."""
+    import logging
+    src_file = tmp_path / "module.py"
+    src_file.write_text(
+        "def main():\n"
+        "    # WHY(#X): unklar wo das hin soll\n"
+        "    for r in rows:\n"
+        "        process(r)\n"
+    )
+    with caplog.at_level(logging.WARNING):
+        edges = extract_rationale_edges(
+            src_file, repo_slug="demo", workspace_id="bene",
+        )
+    assert edges == []
+    assert any(
+        "rationale-skipped" in rec.message and "non-trivial-target" in rec.message
+        for rec in caplog.records
+    )
