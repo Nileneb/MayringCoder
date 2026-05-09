@@ -50,3 +50,34 @@ def test_multi_line_rationale_concatenated(tmp_path: Path) -> None:
     assert "CHANGE WITH CARE" in e["rationale"]
     # Newlines preserved as join-char
     assert "\n" in e["rationale"]
+
+
+def test_qualified_name_includes_class(tmp_path: Path) -> None:
+    """Marker im class body produziert 'module.Class.method'."""
+    src_file = tmp_path / "module.py"
+    src_file.write_text(
+        "class JobRunner:\n"
+        "    # WHY(#100): retry-loop avoids transient deploy 502s\n"
+        "    def run(self):\n"
+        "        pass\n"
+    )
+    edges = extract_rationale_edges(
+        src_file, repo_slug="demo", workspace_id="bene",
+    )
+    assert len(edges) == 1
+    assert edges[0]["target"] == "module.JobRunner.run"
+
+
+def test_handles_async_function(tmp_path: Path) -> None:
+    """async def wird auch erkannt (AsyncFunctionDef-Node)."""
+    src_file = tmp_path / "module.py"
+    src_file.write_text(
+        "# WHY(#88): async because the LLM-call blocks 30s\n"
+        "async def fetch():\n"
+        "    pass\n"
+    )
+    edges = extract_rationale_edges(
+        src_file, repo_slug="demo", workspace_id="bene",
+    )
+    assert len(edges) == 1
+    assert edges[0]["target"] == "module.fetch"

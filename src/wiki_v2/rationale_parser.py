@@ -96,29 +96,38 @@ def extract_rationale_edges(
     if not markers:
         return []
 
-    # Build a map: line_no → top-level ast.Node (Assign/FunctionDef/ClassDef)
-    line_to_node: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.FunctionDef,
-                             ast.AsyncFunctionDef, ast.ClassDef)):
-            line_to_node[node.lineno] = node
+    # Build a map: line_no → (target_node, parent_class_name | "")
+    line_to_node: dict[int, tuple[ast.AST, str]] = {}
+
+    def _walk_with_parent(node: ast.AST, parent_class: str = "") -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.Assign, ast.AnnAssign, ast.FunctionDef,
+                                  ast.AsyncFunctionDef, ast.ClassDef)):
+                line_to_node[child.lineno] = (child, parent_class)
+            if isinstance(child, ast.ClassDef):
+                _walk_with_parent(child, child.name)
+            else:
+                _walk_with_parent(child, parent_class)
+
+    _walk_with_parent(tree)
 
     edges: list[dict[str, Any]] = []
     for marker_line, refs, rationale in markers:
-        target_node: ast.AST | None = None
-        for delta in range(1, 6):  # max 5 lines lookahead
+        target_info: tuple[ast.AST, str] | None = None
+        for delta in range(1, 6):
             cand = line_to_node.get(marker_line + delta)
             if cand is not None:
-                target_node = cand
+                target_info = cand
                 break
-        if target_node is None:
+        if target_info is None:
             _log.warning(
                 "rationale-skipped: file=%s line=%s reason=non-trivial-target",
                 file_path, marker_line,
             )
             continue
 
-        target_name = _node_target_name(target_node, module_name)
+        target_node, parent_class = target_info
+        target_name = _node_target_name(target_node, module_name, parent_class)
         if not target_name:
             continue
         edges.append({
@@ -134,15 +143,17 @@ def extract_rationale_edges(
     return edges
 
 
-def _node_target_name(node: ast.AST, module_name: str) -> str:
-    """Module-qualified target-name. Task 4 erweitert das auf Class.method."""
+def _node_target_name(node: ast.AST, module_name: str, parent_class: str = "") -> str:
+    """Module/Class-qualified target name."""
+    prefix = f"{module_name}."
+    if parent_class:
+        prefix += f"{parent_class}."
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return f"{module_name}.{node.name}"
+        return f"{prefix}{node.name}"
     if isinstance(node, ast.Assign):
-        # Nimm den ersten Target-Namen (selten mehrere)
         if node.targets and isinstance(node.targets[0], ast.Name):
-            return f"{module_name}.{node.targets[0].id}"
+            return f"{prefix}{node.targets[0].id}"
     if isinstance(node, ast.AnnAssign):
         if isinstance(node.target, ast.Name):
-            return f"{module_name}.{node.target.id}"
+            return f"{prefix}{node.target.id}"
     return ""
