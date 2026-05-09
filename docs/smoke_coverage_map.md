@@ -136,3 +136,10 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 | 87 | Training-Data-Generator pipelines | API: `training_merge_endpoint` (200/400/401/422) + Pytest `tests/test_memory_context_generator.py` (8 tests) + workflow `training-data-pipeline.yml` daily 06:30 UTC |
 | 139 | Second-Opinion als Pi-Agent-Tool | API: `pi_second_opinion_endpoint` + MCP-Tool registriert in `local_mcp.py` + `mcp.py` |
 | 140 | ModelRouter zur Runtime konfigurierbar | API: `model_router_runtime` + `model_identity` + reset endpoint |
+
+## Recently Closed (today, 2026-05-09)
+
+| # | Description | Coverage |
+|---|---|---|
+| 182 | IGIO-Backfill hält SQLite-Lock zu lang | Pytest `tests/test_igio_backfill.py` chunked-commit + smoke `db_wal_journal_active` (Lock-acquire-Probe unter 1s) |
+| 183 | Pi-Agent: Job-Verteilung & In-Process-Queue stabilisieren | API: `pi_tasks_schema` + `/pi-jobs/stats` (job_class p50/p95) + Pytest `tests/test_pi_queue.py` (3-lane priority routing, with_lanes(), classify_pi_job) |
