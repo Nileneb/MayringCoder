@@ -271,7 +271,28 @@ async def conversation_micro_batch(
             {"categorize": True, "codebook": "social", "mode": "hybrid"},
             workspace_id,
         )
-        return {"workspace_id": workspace_id, "source_id": source_id, **result}
+
+        # Predictive Memory v2 (Issue #55): bei jeder neuen
+        # conversation_summary inkrementell die Markov-Transitions
+        # bumpen, statt auf Cron + 100-chunk-rebuild zu warten.
+        # Best-effort: ein Fehler hier darf den Ingest nicht failen.
+        transitions_updated = 0
+        try:
+            from src.memory.predictive import update_transitions_incremental
+            transitions_updated = update_transitions_incremental(
+                content, _get_conn(), request.workspace_slug,
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "predictive incremental update failed: %s", exc,
+            )
+        return {
+            "workspace_id": workspace_id,
+            "source_id": source_id,
+            "transitions_updated": transitions_updated,
+            **result,
+        }
     except HTTPException:
         raise
     except Exception as exc:

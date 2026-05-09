@@ -9,6 +9,8 @@ from src.memory.predictive import (
     predict_next_topics,
     persist_transitions,
     load_transitions,
+    update_transitions_incremental,
+    predict_next_topics_for_query,
 )
 from src.memory.store import init_memory_db
 
@@ -82,3 +84,69 @@ def test_build_transition_matrix_empty_when_no_index(tmp_path, monkeypatch):
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index", lambda slug: {})
     assert build_transition_matrix(conn) == {}
+
+
+def test_incremental_update_bumps_counts(tmp_path, monkeypatch):
+    """Issue #55 follow-up: per-conversation incremental updates instead
+    of batch rebuild. First call inserts (count=1), second on overlapping
+    pairs increments via UPSERT."""
+    import src.memory.predictive as pred_mod
+    conn = init_memory_db(tmp_path / "t.db")
+    monkeypatch.setattr(pred_mod, "_load_keyword_index",
+                        lambda slug: {"auth": ["Auth"], "billing": ["Billing"], "search": ["Search"]})
+
+    # First summary: Auth → Billing
+    n1 = update_transitions_incremental("auth flow then billing", conn, "demo")
+    assert n1 == 1
+    assert load_transitions(conn) == {"Auth": {"Billing": 1}}
+
+    # Second summary: Auth → Billing again, plus Billing → Search
+    n2 = update_transitions_incremental("auth then billing then search", conn, "demo")
+    assert n2 == 2
+    matrix = load_transitions(conn)
+    assert matrix == {"Auth": {"Billing": 2}, "Billing": {"Search": 1}}
+
+
+def test_incremental_skips_when_no_index(tmp_path, monkeypatch):
+    """No wiki_index.json yet (cold-start): hook must not crash + return 0."""
+    import src.memory.predictive as pred_mod
+    conn = init_memory_db(tmp_path / "t.db")
+    monkeypatch.setattr(pred_mod, "_load_keyword_index", lambda slug: {})
+    assert update_transitions_incremental("some text", conn, "demo") == 0
+
+
+def test_incremental_skips_self_transitions(tmp_path, monkeypatch):
+    """A → A is meaningless (text repeats same topic) — must not bump."""
+    import src.memory.predictive as pred_mod
+    conn = init_memory_db(tmp_path / "t.db")
+    monkeypatch.setattr(pred_mod, "_load_keyword_index",
+                        lambda slug: {"auth": ["Auth"], "login": ["Auth"]})
+    # extract_topics dedup'es to ["Auth"] only → no transitions possible
+    n = update_transitions_incremental("auth login auth login", conn, "demo")
+    assert n == 0
+    assert load_transitions(conn) == {}
+
+
+def test_predict_for_query_uses_persisted_matrix(tmp_path, monkeypatch):
+    """The retrieval-side predictor must read from DB, not need the in-memory
+    matrix passed by the caller."""
+    import src.memory.predictive as pred_mod
+    conn = init_memory_db(tmp_path / "t.db")
+    monkeypatch.setattr(pred_mod, "_load_keyword_index",
+                        lambda slug: {"auth": ["Auth"], "billing": ["Billing"]})
+
+    persist_transitions({"Auth": {"Billing": 4, "Search": 1}}, conn)
+
+    preds = predict_next_topics_for_query("does auth work?", conn, "demo", top_k=2)
+    assert len(preds) >= 1
+    assert preds[0].from_topic == "Auth"
+    assert preds[0].to_topic == "Billing"  # 4/5 = 0.8 wins over Search 1/5
+
+
+def test_predict_for_query_empty_when_query_has_no_known_topics(tmp_path, monkeypatch):
+    import src.memory.predictive as pred_mod
+    conn = init_memory_db(tmp_path / "t.db")
+    monkeypatch.setattr(pred_mod, "_load_keyword_index",
+                        lambda slug: {"auth": ["Auth"]})
+    persist_transitions({"Auth": {"Billing": 1}}, conn)
+    assert predict_next_topics_for_query("nothing relevant here", conn, "demo") == []

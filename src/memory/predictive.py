@@ -96,6 +96,77 @@ def predict_next_topics(
     return scored[:top_k]
 
 
+def update_transitions_incremental(
+    text: str,
+    conn: Any,
+    repo_slug: str,
+) -> int:
+    """Inkrementell pro neuer conversation_summary die Markov-counts bumpen.
+
+    Issue #55-Followup: build_transition_matrix() scannt 100 chunks und ist
+    deshalb teuer + nicht ohne Cron triggerbar. Diese Funktion macht den
+    Update pro NEUEM summary direkt im /conversation/micro-batch-Hook —
+    keine Cron, kein Plugin-systemd-Geraffel. Inkrementelle Updates
+    bedeuten: Transitions sind immer fresh, Cost ~O(topics_in_text).
+
+    Returns die Anzahl der gebumpten Topic-Paare (0 = keinen wiki_index
+    oder zu wenig Topics für mindestens 1 Übergang).
+    """
+    if not text:
+        return 0
+    kw_index = _load_keyword_index(repo_slug)
+    if not kw_index:
+        return 0
+    topics = _extract_topics_from_text(text, kw_index)
+    if len(topics) < 2:
+        return 0
+    now = datetime.utcnow().isoformat()
+    pairs = 0
+    for a, b in zip(topics, topics[1:]):
+        if a == b:
+            continue
+        conn.execute(
+            """INSERT INTO topic_transitions(from_topic, to_topic, count, last_seen)
+               VALUES(?,?,1,?)
+               ON CONFLICT(from_topic, to_topic) DO UPDATE SET
+                   count = count + 1,
+                   last_seen = ?""",
+            (a, b, now, now),
+        )
+        pairs += 1
+    conn.commit()
+    return pairs
+
+
+def predict_next_topics_for_query(
+    query: str,
+    conn: Any,
+    repo_slug: str = "",
+    top_k: int = 3,
+) -> list[TopicTransition]:
+    """Map ``query`` → top-1 topic via wiki keyword-index, return predicted
+    next-topics from the persisted transition matrix.
+
+    Used by /memory/search to widen recall: if the user asks about topic
+    A and the Markov chain says A→B with high probability, chunks tagged
+    with B can be co-injected even when their vector/symbolic score is
+    just below the cut. Empty list when no match in keyword-index OR no
+    persisted transitions yet.
+    """
+    if not query:
+        return []
+    kw_index = _load_keyword_index(repo_slug)
+    if not kw_index:
+        return []
+    topics = _extract_topics_from_text(query, kw_index)
+    if not topics:
+        return []
+    matrix = load_transitions(conn)
+    if not matrix:
+        return []
+    return predict_next_topics(topics[0], matrix, top_k=top_k)
+
+
 def persist_transitions(matrix: dict[str, dict[str, int]], conn: Any) -> None:
     """Upsert matrix into topic_transitions table."""
     now = datetime.utcnow().isoformat()

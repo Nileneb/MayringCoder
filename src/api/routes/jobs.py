@@ -60,19 +60,28 @@ async def _run_with_v2_postingest(
 
     v2_jobs: dict[str, str] = {}
 
+    # workspace_id MUSS an die subprocess-CLI weitergegeben werden — sonst
+    # crasht resolve_cli_workspace mit UnknownWorkspaceError seit dem
+    # Identity-Refactor (commit 577d2d8). Das hat seit 2026-05-04 die
+    # gesamte v2-chain still gekillt: repo_file ingestiert weiter, aber
+    # ambient_snapshot + topic_transitions blieben leer (5 Tage stale).
     for flag, label in (
         ("--generate-ambient", "ambient"),
         ("--rebuild-transitions", "predictive"),
     ):
         vid = _make_job(workspace_id)
         v2_jobs[label] = vid
-        asyncio.create_task(_run_checker_job(vid, ["--repo", repo, flag], workspace_id))
+        asyncio.create_task(_run_checker_job(
+            vid,
+            ["--repo", repo, flag, "--workspace-id", workspace_id],
+            workspace_id,
+        ))
 
     img_id = _make_job(workspace_id)
     v2_jobs["images"] = img_id
     asyncio.create_task(_run_checker_job(
         img_id,
-        ["--ingest-images", repo, "--no-limit"],
+        ["--ingest-images", repo, "--no-limit", "--workspace-id", workspace_id],
         workspace_id,
     ))
 
@@ -83,9 +92,19 @@ async def _run_with_v2_postingest(
     _JOBS[job_id]["v2_jobs"] = v2_jobs
 
     async def _overview_then_wiki() -> None:
-        await _run_checker_job(overview_id, ["--repo", repo, "--mode", "overview", "--time-budget", str(_config.ANALYSIS_TIME_BUDGET)], workspace_id)
+        await _run_checker_job(
+            overview_id,
+            ["--repo", repo, "--mode", "overview",
+             "--time-budget", str(_config.ANALYSIS_TIME_BUDGET),
+             "--workspace-id", workspace_id],
+            workspace_id,
+        )
         if _JOBS.get(overview_id, {}).get("status") == "done":
-            await _run_checker_job(wiki_id, ["--repo", repo, "--generate-wiki"], workspace_id)
+            await _run_checker_job(
+                wiki_id,
+                ["--repo", repo, "--generate-wiki", "--workspace-id", workspace_id],
+                workspace_id,
+            )
         else:
             _JOBS[wiki_id]["status"] = "error"
             _JOBS[wiki_id]["output"] = "skipped — overview job failed"
