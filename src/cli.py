@@ -185,6 +185,15 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     print(f"[igio] {len(rows)} Chunks → Klassifikator (model={model})")
     counts: dict[str, int] = {a: 0 for a in ("issue", "goal", "intervention", "outcome", "")}
     persisted = 0
+    pending = 0
+    # WHY(#182): chunked commit alle 50 rows. Der vorherige single-Tx über
+    # 1500 UPDATEs blockierte SQLite > busy_timeout=5s und kollidierte mit
+    # smoke-write-tests (database is locked → 21 fails in #181). 50 ist
+    # Kompromiss: schnell genug damit andere Writer nicht 5s warten,
+    # langsam genug dass fsync-Overhead pro Commit den Throughput nicht
+    # zerstört. CHANGE WITH CARE — niedriger erhöht IO, höher reproduziert
+    # den Lock-Bug.
+    BATCH = 50
     for r in rows:
         cats = [c for c in (r["category_labels"] or "").split(",") if c]
         verdict = classify_chunk(
@@ -198,6 +207,10 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
                 (verdict.axis, verdict.confidence, now_iso(), r["chunk_id"]),
             )
             persisted += 1
+            pending += 1
+            if pending >= BATCH:
+                conn.commit()
+                pending = 0
 
     conn.commit()
     conn.close()
