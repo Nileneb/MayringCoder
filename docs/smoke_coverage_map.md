@@ -143,3 +143,4 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 |---|---|---|
 | 182 | IGIO-Backfill hält SQLite-Lock zu lang | Pytest `tests/test_igio_backfill.py` chunked-commit + smoke `db_wal_journal_active` (Lock-acquire-Probe unter 1s) |
 | 183 | Pi-Agent: Job-Verteilung & In-Process-Queue stabilisieren | API: `pi_tasks_schema` + `/pi-jobs/stats` (job_class p50/p95) + Pytest `tests/test_pi_queue.py` (3-lane priority routing, with_lanes(), classify_pi_job) |
+| 192 | Ollama-API-Skalierung: parallel-jobs + Pi-Worker-Pool | host: OLLAMA_NUM_PARALLEL=4 + MAX_LOADED_MODELS=3 (systemd override) · code: PiQueue 3-lane (commit d0b2e5f) · resilience: cloud-fallback (commit da3ba6c) — falls lokal überlastet, OLLAMA_CLOUD_API_KEY triggert ollama.com bei letztem Retry |
