@@ -22,7 +22,13 @@ def fetch_ollama_models(ollama_url: str, timeout: int = 2) -> list[str] | None:
         resp.raise_for_status()
         data = resp.json()
         # Exclude embedding-only models — they can't be used for text generation.
-        _EMBED_KEYWORDS = ("embed", "embedding")
+        # Sentence-Transformers wie all-MiniLM, BGE, nomic-embed-text werden auf
+        # Ollama OHNE "embed" im Namen veröffentlicht ("all-minilm:l6-v2"),
+        # /api/generate quittiert sie mit 400 Bad Request. Production-incident
+        # 2026-05-09: Ambient-snapshot-Generator wählte all-minilm:l6-v2 →
+        # 0 Snapshots in 5 Tagen, niemand hat es gemerkt weil der Job-status
+        # 'done' meldet (CLI fängt den 400 silent).
+        _EMBED_KEYWORDS = ("embed", "embedding", "minilm", "bge", "gte-", "nomic-")
         models = [
             m["name"] for m in data.get("models", [])
             if "name" in m and not any(kw in m["name"].lower() for kw in _EMBED_KEYWORDS)
