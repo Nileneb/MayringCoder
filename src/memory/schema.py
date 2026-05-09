@@ -246,6 +246,10 @@ class RetrievalRecord:
     # sein, kein Hauptsignal.
     score_predicted_topic: float = 0.0
     score_final: float = 0.0
+    # Issue #185/#182 follow-up: rationale-edges aus wiki_v2 für diesen chunk.
+    # Liste von dicts {target, context, why} — wird im compress_for_prompt
+    # als '**Rationale:**' Block gerendert. Empty wenn kein wiki-Match.
+    rationale_edges: list[dict] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
     source_id: str = ""
     text: str = ""
@@ -264,6 +268,7 @@ class RetrievalRecord:
             "score_llm": round(self.score_llm, 4),
             "score_predicted_topic": round(self.score_predicted_topic, 4),
             "score_final": round(self.score_final, 4),
+            "rationale_edges": self.rationale_edges,
             "reasons": self.reasons,
             "source_id": self.source_id,
             "text": self.text,

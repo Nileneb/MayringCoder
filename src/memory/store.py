@@ -98,6 +98,22 @@ def init_memory_db(db_path: Path | None = None) -> DBAdapter:
     path.parent.mkdir(parents=True, exist_ok=True)
     adapter = DBAdapter.create(path, check_same_thread=False)
     _init_schema(adapter)
+
+    # ATTACH wiki_v2.db als 'wikidb' für Cross-DB-Joins (rationale-edges,
+    # cluster-lookups). Spec: docs/superpowers/specs/2026-05-09-rationale-edges-design.md.
+    # Cold-start ohne wiki_v2.db: Flag = False, alle JOINs silent skip.
+    wiki_path = path.parent / "wiki_v2.db"
+    adapter._wiki_attached = False  # type: ignore[attr-defined]
+    if wiki_path.exists():
+        try:
+            adapter.execute("ATTACH DATABASE ? AS wikidb", (str(wiki_path),))
+            adapter._wiki_attached = True  # type: ignore[attr-defined]
+        except sqlite3.OperationalError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "wiki_v2.db ATTACH failed (silent skip): %s", e,
+            )
+
     return adapter
 
 

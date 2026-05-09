@@ -291,3 +291,40 @@ class TestKVCache:
         kv_put("chk_del", {"chunk_id": "chk_del"})
         kv_invalidate_by_ids(["chk_del"])
         assert kv_get("chk_del") is None
+
+
+class TestInitMemoryDbWikiAttach:
+    def test_init_memory_db_attaches_wiki_v2(self, tmp_path: Path) -> None:
+        """init_memory_db attached cache/wiki_v2.db wenn vorhanden, sodass
+        Cross-DB-JOINs auf wikidb.wiki_edges direkt funktionieren."""
+        from src.wiki_v2 import store as wstore
+        import src.config as _cfg
+
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        wiki_db = cache / "wiki_v2.db"
+        wstore.init_wiki_db(wiki_db)
+
+        orig = _cfg.CACHE_DIR
+        _cfg.CACHE_DIR = cache
+        try:
+            conn = init_memory_db(cache / "memory.db")
+            assert getattr(conn, "_wiki_attached", False) is True
+            n = conn.execute("SELECT COUNT(*) FROM wikidb.wiki_edges").fetchone()[0]
+            assert n == 0
+        finally:
+            _cfg.CACHE_DIR = orig
+
+    def test_init_memory_db_skips_attach_when_no_wiki_db(self, tmp_path: Path) -> None:
+        """Cold-start ohne wiki_v2.db: Flag = False, keine Crash."""
+        import src.config as _cfg
+
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        orig = _cfg.CACHE_DIR
+        _cfg.CACHE_DIR = cache
+        try:
+            conn = init_memory_db(cache / "memory.db")
+            assert getattr(conn, "_wiki_attached", True) is False
+        finally:
+            _cfg.CACHE_DIR = orig
