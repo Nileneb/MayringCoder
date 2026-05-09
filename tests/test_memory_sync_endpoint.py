@@ -88,3 +88,57 @@ def test_changes_includes_inactive_chunks(client, _reset_conn):
                       params={"since": "2000-01-01T00:00:00", "workspace_id": "ws-test"})
     chunks = resp.json()["chunks"]
     assert any(not c["is_active"] for c in chunks)
+
+
+def test_changes_handles_chroma_numpy_embeddings(client, _reset_conn, monkeypatch):
+    """Regression: chroma >=0.5 liefert numpy.ndarray für embeddings.
+    `result.get("embeddings") or []` löste dann
+    `ValueError: truth value of an array is ambiguous` aus und der gesamte
+    chroma-fetch lief in den except-Block → Embeddings nie an Clients geliefert.
+    Nach dem Fix: numpy-arrays werden korrekt verarbeitet, embedding-Field
+    enthält die Werte als plain list."""
+    import numpy as np
+
+    _seed_chunk(_reset_conn, "chk-np", "src-np", "ws-test",
+                created_at="2026-01-01T00:00:03")
+
+    class _FakeChromaCollection:
+        def get(self, ids, include):
+            # Genau das produziert chroma >=0.5 in production
+            return {
+                "ids": ids,
+                "embeddings": np.array([[0.1, 0.2, 0.3]]),
+            }
+
+    import src.api.routes.sync as _sync_mod
+    monkeypatch.setattr(_sync_mod, "_get_chroma", lambda: _FakeChromaCollection())
+
+    resp = client.get("/memory/changes",
+                      params={"since": "2000-01-01T00:00:00", "workspace_id": "ws-test"})
+    assert resp.status_code == 200
+    chunks = resp.json()["chunks"]
+    np_chunk = next((c for c in chunks if c["chunk_id"] == "chk-np"), None)
+    assert np_chunk is not None
+    assert np_chunk["embedding"] == [0.1, 0.2, 0.3], \
+        "numpy-array embedding muss als plain list zum Client gelangen"
+
+
+def test_changes_handles_empty_chroma_response(client, _reset_conn, monkeypatch):
+    """Edge: chroma liefert None für embeddings (z.B. bei leerer Collection).
+    `or []` würde hier zwar funktionieren — aber unsere Defensive (`is not None`)
+    muss auch diesen Fall sauber abdecken."""
+    _seed_chunk(_reset_conn, "chk-empty", "src-empty", "ws-test",
+                created_at="2026-01-01T00:00:04")
+
+    class _NoEmbedCollection:
+        def get(self, ids, include):
+            return {"ids": ids, "embeddings": None}
+
+    import src.api.routes.sync as _sync_mod
+    monkeypatch.setattr(_sync_mod, "_get_chroma", lambda: _NoEmbedCollection())
+
+    resp = client.get("/memory/changes",
+                      params={"since": "2000-01-01T00:00:00", "workspace_id": "ws-test"})
+    assert resp.status_code == 200
+    chunks = resp.json()["chunks"]
+    assert any(c["chunk_id"] == "chk-empty" and c["embedding"] is None for c in chunks)

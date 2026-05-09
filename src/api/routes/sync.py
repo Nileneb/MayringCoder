@@ -92,8 +92,13 @@ def get_changes(
     try:
         col = _get_chroma()
         result = col.get(ids=chunk_ids, include=["embeddings"])
-        ids = result.get("ids") or []
-        embs = result.get("embeddings") or []
+        # chroma >=0.5 liefert numpy.ndarray für embeddings — `or []` würde
+        # bool(np.array) auslösen → "ambiguous truth value". Explizit None-
+        # Check + leere Liste.
+        ids_raw = result.get("ids")
+        embs_raw = result.get("embeddings")
+        ids = ids_raw if ids_raw is not None else []
+        embs = embs_raw if embs_raw is not None else []
         for cid, emb in zip(ids, embs):
             if emb is not None:
                 # Coerce numpy.ndarray (chromadb >=0.5) to plain list.

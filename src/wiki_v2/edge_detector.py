@@ -136,20 +136,27 @@ class EdgeDetector:
                 where={"workspace_id": {"$eq": workspace_id}},
                 include=["embeddings", "metadatas"],
             )
-            embeddings = result.get("embeddings") or []
-            metadatas = result.get("metadatas") or []
+            # chroma >=0.5: embeddings ist numpy.ndarray → kein `or []`.
+            embeddings_raw = result.get("embeddings")
+            metadatas_raw = result.get("metadatas")
+            embeddings = embeddings_raw if embeddings_raw is not None else []
+            metadatas = metadatas_raw if metadatas_raw is not None else []
         except Exception:
             return []
 
         emb_map: dict[str, list[float]] = {}
         for emb, meta in zip(embeddings, metadatas):
-            if emb and meta:
-                source_id = meta.get("source_id", "")
-                path = source_id.split(":")[-1] if ":" in source_id else source_id
-                for nid in node_ids:
-                    if path.endswith(nid) or nid.endswith(path):
-                        if nid not in emb_map:
-                            emb_map[nid] = list(emb)
+            # numpy-truthiness: `if emb` crashed bei np.ndarray. Explizit prüfen.
+            if emb is None or not meta:
+                continue
+            if hasattr(emb, "__len__") and len(emb) == 0:
+                continue
+            source_id = meta.get("source_id", "")
+            path = source_id.split(":")[-1] if ":" in source_id else source_id
+            for nid in node_ids:
+                if path.endswith(nid) or nid.endswith(path):
+                    if nid not in emb_map:
+                        emb_map[nid] = list(emb)
 
         edges = []
         nids = list(emb_map.keys())

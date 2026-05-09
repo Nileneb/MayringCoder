@@ -231,15 +231,21 @@ class ClusterEngine:
                 where={"workspace_id": {"$eq": workspace_id}},
                 include=["embeddings", "metadatas"],
             )
-            raw_embeddings = result.get("embeddings") or []
-            metadatas = result.get("metadatas") or []
+            # chroma >=0.5: embeddings ist numpy.ndarray → kein `or []`.
+            raw_embeddings_raw = result.get("embeddings")
+            metadatas_raw = result.get("metadatas")
+            raw_embeddings = raw_embeddings_raw if raw_embeddings_raw is not None else []
+            metadatas = metadatas_raw if metadatas_raw is not None else []
         except Exception:
             return []
 
         # Akkumuliere Embeddings pro Node-ID (average über alle Chunks)
         node_vecs: dict[str, list[list[float]]] = {}
         for emb, meta in zip(raw_embeddings, metadatas):
-            if not emb or not meta:
+            # numpy-truthiness vermeiden — `not emb` triggert ValueError.
+            if emb is None or not meta:
+                continue
+            if hasattr(emb, "__len__") and len(emb) == 0:
                 continue
             source_id = meta.get("source_id", "")
             path = source_id.split(":")[-1] if ":" in source_id else source_id
