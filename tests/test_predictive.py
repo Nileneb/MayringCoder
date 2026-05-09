@@ -150,3 +150,52 @@ def test_predict_for_query_empty_when_query_has_no_known_topics(tmp_path, monkey
                         lambda slug: {"auth": ["Auth"]})
     persist_transitions({"Auth": {"Billing": 1}}, conn)
     assert predict_next_topics_for_query("nothing relevant here", conn, "demo") == []
+
+
+def test_slug_aliases_includes_short_form_and_lowercase():
+    """Conversation-watcher pre-2026-05 schrieb repo='mayringcoder' (kurz),
+    der Analysis-Run nutzt repo='nileneb-mayringcoder'. Ohne Alias-Match
+    findet build_transition_matrix nur 1-2% der eigentlich verfügbaren
+    summaries."""
+    from src.memory.predictive import _slug_aliases
+    aliases = _slug_aliases("nileneb-mayringcoder")
+    assert "nileneb-mayringcoder" in aliases
+    assert "mayringcoder" in aliases  # short form
+    # mixed-case input → lowercase variant
+    aliases_mc = _slug_aliases("Nileneb-MayringCoder")
+    assert "nileneb-mayringcoder" in aliases_mc
+
+
+def test_build_transition_matches_via_short_slug(tmp_path, monkeypatch):
+    """Production-Bug 2026-05-09: 89 conversation_summary mit repo='mayringcoder',
+    1 mit 'nileneb-mayringcoder'. Vor Slug-Aliasing: build_transition_matrix
+    fand nur die 1, jetzt findet sie alle 90."""
+    import src.memory.predictive as pred_mod
+    conn = init_memory_db(tmp_path / "t.db")
+
+    # 1 source unter 'nileneb-mayringcoder', 1 unter 'mayringcoder' (legacy)
+    for ix, repo_val in enumerate(["nileneb-mayringcoder", "mayringcoder"]):
+        conn.execute(
+            'INSERT INTO sources(source_id, source_type, repo, path, branch, '
+            '"commit", content_hash, captured_at) VALUES(?,?,?,?,?,?,?,?)',
+            (f"conversation:{repo_val}:s{ix}", "conversation_summary",
+             repo_val, f"{repo_val}/x", "local", "", f"sha256:abc{ix}",
+             f"2026-01-{ix+1:02d}T00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO chunks(chunk_id, source_id, chunk_level, ordinal, "
+            "start_offset, end_offset, text, text_hash, dedup_key, created_at, "
+            "is_active) VALUES(?,?,?,?,?,?,?,?,?,?,1)",
+            (f"chk_{ix}", f"conversation:{repo_val}:s{ix}", "section", 0, 0, 10,
+             "auth flow then billing", f"h{ix}", f"d{ix}",
+             f"2026-01-{ix+1:02d}T00:00:00"),
+        )
+    conn.commit()
+
+    monkeypatch.setattr(pred_mod, "_load_keyword_index",
+                        lambda slug: {"auth": ["Auth"], "billing": ["Billing"]})
+
+    # Query mit langer Slug-Variante muss BEIDE summaries finden
+    matrix = build_transition_matrix(conn, repo_slug="nileneb-mayringcoder", limit=10)
+    # 2 summaries × 1 transition pro = 2 counts gesamt
+    assert matrix == {"Auth": {"Billing": 2}}

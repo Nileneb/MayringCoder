@@ -357,6 +357,16 @@ def main() -> None:
         or (args.mode == "turbulence" and args.llm)
         or args.resolve_model_only
         or getattr(args, "classify_igio", False)
+        # Ambient + Wiki + Recap rufen einen TEXT-Generator auf (Snapshot-
+        # Texte / Recap-Markdown). Ohne diese in _needs_llm bleibt
+        # `model = args.model or ""`, weshalb der Caller selbst
+        # resolve_model() macht — und dort fällt der Fallback auf das
+        # erste Tag (oft `all-minilm` als Embedding-Only-Modell), was
+        # /api/generate mit 400 Bad Request quittiert. Beweis-Run
+        # 2026-05-09: ambient-job done aber 0 Snapshots geschrieben.
+        or getattr(args, "generate_ambient", False)
+        or getattr(args, "generate_wiki", False)
+        or getattr(args, "generate_recap", None)
     )
     model = resolve_model(ollama_url, args.model, None) if _needs_llm else (args.model or "")
 

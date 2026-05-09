@@ -43,6 +43,36 @@ def _load_keyword_index(repo_slug: str) -> dict[str, list[str]]:
         return {}
 
 
+def _slug_aliases(repo_slug: str) -> list[str]:
+    """Return all slug variants that historically point to the same repo.
+
+    Conversation-watcher und CLI haben in ihrer Geschichte verschiedene
+    Slug-Konventionen verwendet:
+      * volle URL → ``_repo_slug`` macht ``owner-name`` (z.B. ``nileneb-mayringcoder``)
+      * watcher pre-2026-05 schrieb nur ``name`` (z.B. ``mayringcoder``)
+      * mixed-case / case-only-Variationen
+    Ohne Alias-Matching findet die Markov-Pipeline nur 1-2% ihrer
+    eigentlich verfügbaren conversation-summaries.
+    """
+    if not repo_slug:
+        return []
+    out = [repo_slug]
+    if "-" in repo_slug:
+        # owner-name → name
+        out.append(repo_slug.rsplit("-", 1)[-1])
+    out.append(repo_slug.lower())
+    if repo_slug.lower() != repo_slug:
+        out.append(repo_slug)
+    # dedup, preserve order
+    seen: set[str] = set()
+    deduped = []
+    for s in out:
+        if s not in seen:
+            seen.add(s)
+            deduped.append(s)
+    return deduped
+
+
 def build_transition_matrix(
     conn: Any,
     repo_slug: str = "",
@@ -51,16 +81,29 @@ def build_transition_matrix(
     """Scan last `limit` conversation-summary chunks, extract topic sequences,
     build sparse Markov counts {from_topic: {to_topic: count}}.
     """
-    rows = conn.execute(
-        """SELECT c.text FROM chunks c
-           JOIN sources s ON c.source_id = s.source_id
-           WHERE s.source_type = 'conversation_summary'
-             AND (s.repo = ? OR ? = '')
-             AND c.is_active = 1
-           ORDER BY s.captured_at DESC
-           LIMIT ?""",
-        (repo_slug, repo_slug, limit),
-    ).fetchall()
+    aliases = _slug_aliases(repo_slug)
+    if aliases:
+        placeholders = ",".join(["?"] * len(aliases))
+        rows = conn.execute(
+            f"""SELECT c.text FROM chunks c
+               JOIN sources s ON c.source_id = s.source_id
+               WHERE s.source_type = 'conversation_summary'
+                 AND s.repo IN ({placeholders})
+                 AND c.is_active = 1
+               ORDER BY s.captured_at DESC
+               LIMIT ?""",
+            (*aliases, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT c.text FROM chunks c
+               JOIN sources s ON c.source_id = s.source_id
+               WHERE s.source_type = 'conversation_summary'
+                 AND c.is_active = 1
+               ORDER BY s.captured_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
 
     kw_index = _load_keyword_index(repo_slug)
     if not kw_index:
