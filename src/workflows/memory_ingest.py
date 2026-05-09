@@ -63,7 +63,18 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
             print(f"[populate-memory] GPU-Monitoring aktiv → {_gpu_csv}")
 
     print(f"[populate-memory] Repository laden: {repo_url} ...")
-    _summary, _tree, _repo_content = fetch_repo(repo_url, token)
+    try:
+        _summary, _tree, _repo_content = fetch_repo(repo_url, token)
+    except Exception as exc:
+        # Domänen-saubere Behandlung: kein Stack-Trace im Job-Output
+        # für nicht-existente / nicht-erreichbare Repos. Smoke-Tests
+        # gegen 'smoke-nonexistent-test-repo' landen sonst als
+        # 30-Zeilen-Crash in der job-history.
+        from src.analysis.fetcher import RepoNotFoundError
+        if isinstance(exc, RepoNotFoundError):
+            print(f"[populate-memory] Repository nicht erreichbar: {exc}")
+            return  # Job endet sauber mit info-message statt RuntimeError
+        raise
 
     files = split_into_files(_repo_content)
     print(f"[populate-memory] {len(files)} Dateien gefunden")

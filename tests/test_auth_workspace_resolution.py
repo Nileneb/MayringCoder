@@ -8,7 +8,6 @@ workspace).
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 
@@ -17,7 +16,7 @@ from src.api.jwt_auth import TokenInfo
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.new_event_loop().run_until_complete(coro)
 
 
 def test_user_token_ignores_workspace_header():

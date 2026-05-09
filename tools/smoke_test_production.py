@@ -172,11 +172,13 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    # Service-Token mappt seit 2026-05-09 default auf workspace='system'
-    # (Multi-Tenant-sicher). Smoke-Checks gegen User-Daten (rag-search,
-    # job-history, vektor-trends) brauchen den Tenant-Workspace explizit.
-    # Pre-launch: SMOKE_WORKSPACE_ID=bene, multi-tenant: per-tenant.
-    smoke_ws = os.environ.get("SMOKE_WORKSPACE_ID", "bene").strip()
+    # Smoke-Checks bleiben STRUKTURELL im 'system'-Maintenance-Bucket
+    # (Service-Token-Default). Sonst landen alle bogus-repo-Tests
+    # ('smoke-stage-observability-bogus' etc.) als ERROR-Jobs in
+    # bene's User-Workspace und vergiften dessen Job-History.
+    # Wer Tenant-spezifische Smoke-Tests will, setzt SMOKE_WORKSPACE_ID
+    # explizit per-Run.
+    smoke_ws = os.environ.get("SMOKE_WORKSPACE_ID", "").strip()
     if smoke_ws:
         headers["X-Workspace-Id"] = smoke_ws
     data = json.dumps(body).encode() if body is not None else None

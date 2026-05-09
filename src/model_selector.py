@@ -74,20 +74,36 @@ def prompt_user_for_model(available_models: list[str]) -> str:
 
 
 def resolve_model(ollama_url: str, cli_model: str | None, env_model: str | None) -> str:
-    """Resolve the model to use, prompting interactively if nothing is configured.
+    """Resolve the model to use.
 
-    Priority: CLI flag → env var → interactive Ollama query → hardcoded fallback.
+    Priority: CLI flag → env var → MAYRING_DEFAULT_MODEL env →
+    erstes verfügbares Ollama-Modell → hardcoded fallback.
+
+    KEIN interactive prompt mehr — Backend-Pipelines (queue-worker,
+    cron-jobs, smoke) hatten sonst hängende stdin-reads bzw. fielen
+    durch EOFError auf das erste Modell der Liste, das oft ein
+    Embedding-only-Modell war. Plus: das Output 'Kein Modell
+    konfiguriert. Modell auswählen [1–15]…' verwirrte User in der
+    Job-History.
     """
     if cli_model:
         return cli_model
     if env_model:
         return env_model
 
+    import os
+    default_env = os.environ.get("MAYRING_DEFAULT_MODEL", "").strip()
+    if default_env:
+        return default_env
+
     available = fetch_ollama_models(ollama_url)
     if available:
-        selected = prompt_user_for_model(available)
-        print(f"Modell ausgewählt: {selected}", file=sys.stderr)
-        return selected
+        # Erstes nicht-embedding-Modell aus der Ollama-Liste.
+        # fetch_ollama_models filtert embeddings schon raus.
+        print(f"# resolve_model: kein --model/MAYRING_DEFAULT_MODEL gesetzt, "
+              f"nehme erstes Ollama-Modell: {available[0]}", file=sys.stderr)
+        return available[0]
 
-    print(f"Ollama nicht erreichbar — verwende Standardmodell '{_FALLBACK_MODEL}'.", file=sys.stderr)
+    print(f"# resolve_model: Ollama nicht erreichbar — fallback "
+          f"'{_FALLBACK_MODEL}'", file=sys.stderr)
     return _FALLBACK_MODEL
