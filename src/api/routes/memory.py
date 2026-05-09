@@ -55,22 +55,33 @@ async def pi_task(
     request: PiTaskRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    """Run a task via the Pi-agent (memory-augmented reasoning)."""
-    import asyncio
-    from src.agents.pi import run_task_with_memory
+    """Run a task via the Pi-agent (memory-augmented reasoning).
+
+    Issue #183 T3: jobs go through the in-process PiQueue with bounded
+    concurrency (PI_CONCURRENCY=2 default). API contract stays
+    backward-compatible — callers still await directly on the result.
+    """
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from src.agents.pi_queue import get_pi_queue
+    from src.agents.pi_jobs import PiJob, classify_pi_job
+
     _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
+    job = PiJob(
+        job_id=_uuid.uuid4().hex[:16],
+        task_text=request.task,
+        system_prompt=request.system_prompt or "",
+        repo_slug=_repo_slug,
+        workspace_id=workspace_id,
+        kind="pi-task",
+        job_class=classify_pi_job(request.task, request.system_prompt or ""),
+        timeout_s=request.timeout,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    queue = get_pi_queue()
+    fut = queue.enqueue(job)
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: run_task_with_memory(
-                task=request.task,
-                ollama_url=_OLLAMA_URL,
-                model=_model("text"),
-                repo_slug=_repo_slug,
-                system_prompt=request.system_prompt,
-                timeout=request.timeout,
-            ),
-        )
+        result = await fut
         return {"workspace_id": workspace_id, "content": result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

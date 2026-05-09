@@ -41,6 +41,7 @@ from src.api.auth import get_workspace
 from src.api.routes import memory, wiki, jobs, duel, reports
 from src.api.routes.sync import router as _sync_router
 from src.api.job_queue import _JOBS, run_checker_job as _run_checker_job
+from src.api.routes import pi_stats as _pi_stats
 
 # JSON-Log-File für log-ingest-Cron. Wird vor FastAPI() konfiguriert,
 # damit die Startup-Logs (route-include, db-init) auch landen.
@@ -75,6 +76,7 @@ from src.api.routes import retrieval_metrics as _retrieval_metrics
 app.include_router(_retrieval_metrics.router)
 from src.api.routes import reranker_admin as _reranker_admin
 app.include_router(_reranker_admin.router)
+app.include_router(_pi_stats.router)
 
 
 @app.on_event("startup")
@@ -113,6 +115,55 @@ def _run_pending_schema_migrations() -> None:
         # and the new defence-in-depth in sync.py / mcp_pi_tools handles the
         # remaining gap if this step somehow failed.
         logger.exception("server.startup: schema migration failed (non-fatal)")
+
+
+@app.on_event("startup")
+async def _start_pi_queue() -> None:
+    import asyncio
+    from src.agents.pi_queue import get_pi_queue
+    from src.agents.pi_jobs import PiJob
+
+    queue = get_pi_queue()
+
+    async def _handler(job: PiJob) -> dict:
+        import time as _time
+        from src.agents.pi import run_task_with_memory
+        loop = asyncio.get_event_loop()
+        start = _time.monotonic()
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: run_task_with_memory(
+                    task=job.task_text,
+                    ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+                    model=job.model or _model_for_job_class(job.job_class),
+                    repo_slug=job.repo_slug,
+                    system_prompt=job.system_prompt,
+                    timeout=job.timeout_s,
+                ),
+            )
+            job.latency_ms = int((_time.monotonic() - start) * 1000)
+            job.model_used = job.model or _model_for_job_class(job.job_class)
+            return result
+        except Exception:
+            job.latency_ms = int((_time.monotonic() - start) * 1000)
+            raise
+
+    queue.set_handler(_handler)
+    await queue.start()
+
+
+@app.on_event("shutdown")
+async def _stop_pi_queue() -> None:
+    from src.agents.pi_queue import get_pi_queue
+    await get_pi_queue().shutdown()
+
+
+def _model_for_job_class(job_class: str) -> str:
+    """T4-stub: all classes resolve to the default text model until ModelRouter
+    learns about job_class routing ('mini' → smaller models comes in T4)."""
+    from src.model_router import ModelRouter
+    return ModelRouter(os.getenv("OLLAMA_URL", "http://localhost:11434")).resolve("text")
 
 
 @app.get("/health")

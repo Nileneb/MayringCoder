@@ -117,3 +117,68 @@ async def test_singleton_get_pi_queue_returns_same_instance():
     q1 = get_pi_queue()
     q2 = get_pi_queue()
     assert q1 is q2
+
+
+async def test_stats_after_jobs():
+    """Stats ring-buffer tracks completed jobs per class."""
+    from src.agents.pi_queue import PiQueue
+    q = PiQueue(concurrency=1)
+
+    async def _h(job):
+        return {}
+
+    q.set_handler(_h)
+    await q.start()
+    try:
+        for i in range(3):
+            await q.enqueue(_make_job(f"j{i}", job_class="mini"))
+        await asyncio.sleep(0.2)
+        s = q.stats()
+        assert s["completed_total"] == 3
+        assert "mini" in s["by_class"]
+        assert s["by_class"]["mini"]["count"] == 3
+        assert s["in_flight"] == 0
+    finally:
+        await q.shutdown()
+
+
+async def test_stats_fallback_rate():
+    """fallback_rate is 1.0 when model_used differs from model_requested."""
+    from src.agents.pi_queue import PiQueue
+
+    q = PiQueue(concurrency=1)
+
+    async def _h(job):
+        job.model_used = "other-model"
+        return {}
+
+    q.set_handler(_h)
+    await q.start()
+    try:
+        job = _make_job("x", model="requested-model", job_class="standard")
+        await q.enqueue(job)
+        await asyncio.sleep(0.2)
+        s = q.stats()
+        assert s["by_class"]["standard"]["fallback_rate"] == 1.0
+    finally:
+        await q.shutdown()
+
+
+async def test_stats_empty_queue():
+    """stats() on a fresh queue returns zero counts."""
+    from src.agents.pi_queue import PiQueue
+
+    q = PiQueue(concurrency=1)
+
+    async def _h(job):
+        return {}
+
+    q.set_handler(_h)
+    await q.start()
+    try:
+        s = q.stats()
+        assert s["in_flight"] == 0
+        assert s["completed_total"] == 0
+        assert s["by_class"] == {}
+    finally:
+        await q.shutdown()
