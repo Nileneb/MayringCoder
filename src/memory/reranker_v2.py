@@ -76,6 +76,27 @@ def _load_model() -> dict[str, Any] | None:
             _CACHED_MODEL = None
             _CACHED_MTIME = st.st_mtime
             return None
+        # Sanity-check: ein gelerntes Modell mit NEGATIVEM Vector- ODER
+        # Symbolic-Gewicht ist degeneriert. Vector-Similarity und
+        # Symbolic-Token-Overlap sind beides retrieval-positive Signale —
+        # negative Gewichte heißen das Modell hat etwas Unsinniges aus
+        # collinearen Features oder feedback-Lecks gelernt (gesehen bei
+        # n_train=1732, sf_weight=8.77, v_weight=-0.51 → 'symbolic-only'-
+        # ranking, vector-Treffer wurden RUNTER sortiert). Lieber sauber
+        # auf v1 fallen als degenerierte rankings ausliefern. Trainings-
+        # bug muss am train_reranker.py-loop behoben werden, nicht hier.
+        weights = data.get("weights") or {}
+        v_w = float(weights.get("v") or 0.0)
+        s_w = float(weights.get("s") or 0.0)
+        if v_w < 0 or s_w < 0:
+            _log.error(
+                "rerank_v2.json degenerate (v=%.3f, s=%.3f); refusing to load. "
+                "Reject training runs with negative vector/symbolic weights — "
+                "those are retrieval-positive features.", v_w, s_w,
+            )
+            _CACHED_MODEL = None
+            _CACHED_MTIME = st.st_mtime
+            return None
         _CACHED_MODEL = data
         _CACHED_MTIME = st.st_mtime
         return data
