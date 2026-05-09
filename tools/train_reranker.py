@@ -56,7 +56,11 @@ DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"
 # outcome) is a real semantic discriminator missed by vector similarity
 # — empirically lifts AUC by +0.03 in offline eval.
 IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
-FEATURES = ("v", "s", "r", "a") + tuple(f"igio_{a}" for a in IGIO_AXES)
+# WHY(#187): pt + re sind seit commit 46e9c2e/c9db1bf live im API-Response
+# (score_predicted_topic, rationale_edges). Vorher: phantom-features ohne
+# Trainings-Pfad. Jetzt im Trainings-Set, sodass v2-Modell sie als Gewicht
+# lernen kann.
+FEATURES = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 

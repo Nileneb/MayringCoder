@@ -68,6 +68,30 @@ def test_negative_symbolic_weight_rejected(tmp_path):
     assert reranker_v2._load_model() is None
 
 
+def test_negative_pt_or_re_weight_rejected(tmp_path):
+    """Issue #187: pt (predicted-topic) und re (rationale-presence) sind
+    retrieval-positive Features. Negative weights würden chunks mit predicted-
+    topic-match oder rationale-edge AKTIV runter ranken — analog v/s-flip."""
+    from src.memory import reranker_v2
+    # pt negativ
+    _write_model(tmp_path / "rerank_v2.json", {
+        "v": 0.5, "s": 0.4, "r": 0.1, "a": 0.1,
+        "pt": -0.1, "re": 0.1,
+        "sf": 0.3, "sl": 0.2,
+    })
+    assert reranker_v2._load_model() is None
+
+    reranker_v2.invalidate_v2_cache()
+
+    # re negativ
+    _write_model(tmp_path / "rerank_v2.json", {
+        "v": 0.5, "s": 0.4, "r": 0.1, "a": 0.1,
+        "pt": 0.1, "re": -0.05,
+        "sf": 0.3, "sl": 0.2,
+    })
+    assert reranker_v2._load_model() is None
+
+
 def test_zero_weights_pass(tmp_path):
     """Zero-weight on retrieval-positive feature is suspicious but legal —
     only NEGATIVE blocks. Catches the actual production bug, doesn't

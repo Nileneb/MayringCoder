@@ -104,11 +104,18 @@ def _load_model() -> dict[str, Any] | None:
         weights = data.get("weights") or {}
         v_w = float(weights.get("v") or 0.0)
         s_w = float(weights.get("s") or 0.0)
-        if v_w < 0 or s_w < 0:
+        # Issue #187 follow-up: pt/re sind retrieval-positive analog zu v/s.
+        # Negativ-flip wäre ein Modell-Bug (z.B. wenn chunks mit rationale-
+        # edge zufällig in den Trainings-data häufiger label=0 hatten).
+        # Bei pt/re=0.0 (kein Training-Signal) → tolerieren; nur bei
+        # NEGATIV → reject mit dem v/s-Gate.
+        pt_w = float(weights.get("pt") or 0.0)
+        re_w = float(weights.get("re") or 0.0)
+        if v_w < 0 or s_w < 0 or pt_w < 0 or re_w < 0:
             _log.error(
-                "rerank_v2.json degenerate (v=%.3f, s=%.3f); refusing to load. "
-                "Reject training runs with negative vector/symbolic weights — "
-                "those are retrieval-positive features.", v_w, s_w,
+                "rerank_v2.json degenerate (v=%.3f s=%.3f pt=%.3f re=%.3f); "
+                "refusing to load. Retrieval-positive Features dürfen "
+                "nicht negativ rankt werden.", v_w, s_w, pt_w, re_w,
             )
             _CACHED_MODEL = None
             _CACHED_MTIME = st.st_mtime

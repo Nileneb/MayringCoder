@@ -104,7 +104,11 @@ def _label_map(conn: sqlite3.Connection, days: int) -> dict[str, int]:
 # IGIO axes — one-hot encoded into features. 'unknown' covers chunks
 # without a classified axis (~92% today; backfill cron drives this down).
 IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
-FEATURES_OUT = ("v", "s", "r", "a") + tuple(f"igio_{a}" for a in IGIO_AXES)
+# WHY(#187): pt (predicted-topic-boost) und re (rationale-presence) sind seit
+# commit 46e9c2e/c9db1bf live im API-Response, aber bislang nicht im Trainer
+# — Phantom-Features. Hier zur FEATURES_OUT hinzu damit der nächste
+# train_reranker.py-Run sie als Eingabe sieht und ein Gewicht lernt.
+FEATURES_OUT = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
 
 
 def _normalize_features(
@@ -133,6 +137,11 @@ def _normalize_features(
         "s": float(feats.get("s", 0.0) or 0.0),
         "r": float(feats.get("r", 0.0) or 0.0),
         "a": float(feats.get("a", 0.0) or 0.0),
+        # Issue #187: pt = score_predicted_topic, re = 1.0 wenn der chunk
+        # eine rationale-edge hatte. Defaults 0.0 für Backward-Compat mit
+        # alten context_feedback_log-rows (die sf/sl/pt/re nicht hatten).
+        "pt": float(feats.get("pt", 0.0) or 0.0),
+        "re": float(feats.get("re", 0.0) or 0.0),
     }
     for a in IGIO_AXES:
         out[f"igio_{a}"] = 1.0 if axis == a else 0.0

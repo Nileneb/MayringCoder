@@ -95,6 +95,12 @@ def run_search(
                     # from those binary events.
                     "sf": round(getattr(r, "score_feedback", 0.5) or 0.5, 4),
                     "sl": round(getattr(r, "score_llm", 0.5) or 0.5, 4),
+                    # WHY(#187): score_predicted_topic + rationale-presence als
+                    # Trainings-Features. Ohne diese loggt der context_feedback_log
+                    # die Werte nicht und der Trainer kann sie nicht lernen —
+                    # `pt` und `re` wären phantom-features im API-Response.
+                    "pt": round(getattr(r, "score_predicted_topic", 0.0) or 0.0, 4),
+                    "re": 1.0 if (getattr(r, "rationale_edges", None) or []) else 0.0,
                     "f":  round(getattr(r, "score_final", 0.0) or 0.0, 4),
                 }
                 for r in results

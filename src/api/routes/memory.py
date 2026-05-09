@@ -243,24 +243,43 @@ async def conversation_micro_batch(
         if not turns_dicts:
             raise HTTPException(status_code=400, detail="turns must not be empty")
 
+        # WHY(security, multi-tenant): workspace_slug aus dem Body ist
+        # user-controlled. Code-review fand: ein User in workspace 'bene'
+        # könnte body.workspace_slug='alice' setzen → source_id, repo,
+        # path UND topic_transitions würden unter alice's Slug indexiert.
+        # topic_transitions hat keine workspace_id-Spalte → cross-tenant
+        # Markov-poisoning. Server bindet den Slug jetzt strikt an
+        # workspace_id (JWT). Default-slug 'default' wird auch overwritten —
+        # Watcher braucht keinen body-slug mehr.
+        body_slug = (request.workspace_slug or "").strip().lower()
+        # 'default' war der pydantic-default — den droppen wir silent.
+        if body_slug and body_slug != "default" and body_slug != workspace_id.lower():
+            raise HTTPException(
+                status_code=403,
+                detail=f"workspace_slug={body_slug!r} mismatch with "
+                       f"authenticated workspace={workspace_id!r}",
+            )
+        # Ab hier: server-derived slug, nicht user-controlled
+        slug = workspace_id
+
         first_ts = turns_dicts[0].get("timestamp", "")[:10]
         batch_key = f"{request.session_id}:{len(turns_dicts)}:{turns_dicts[-1].get('timestamp', '')}"
         content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]
-        source_id = f"conversation:{request.workspace_slug}:{request.session_id[:16]}"
+        source_id = f"conversation:{slug}:{request.session_id[:16]}"
 
         summary = (
             request.presumarized
             or _summarize_turns(turns_dicts, "", _OLLAMA_URL, _model("text"))
         )
         content = (
-            f"# Session {first_ts or 'unbekannt'} | {request.workspace_slug}\n\n"
+            f"# Session {first_ts or 'unbekannt'} | {slug}\n\n"
             f"{summary}\n"
         )
         source_dict = {
             "source_id": source_id,
             "source_type": "conversation_summary",
-            "repo": request.workspace_slug,
-            "path": f"{request.workspace_slug}/incremental",
+            "repo": slug,
+            "path": f"{slug}/incremental",
             "branch": "local",
             "commit": "",
             "content_hash": content_hash,
@@ -279,8 +298,10 @@ async def conversation_micro_batch(
         transitions_updated = 0
         try:
             from src.memory.predictive import update_transitions_incremental
+            # Slug ist server-derived (siehe oben) — Markov-Transitions
+            # landen im richtigen Bucket, kein cross-tenant-poisoning mehr.
             transitions_updated = update_transitions_incremental(
-                content, _get_conn(), request.workspace_slug,
+                content, _get_conn(), slug,
             )
         except Exception as exc:
             import logging
