@@ -86,9 +86,9 @@ class TestPostIngestV2Chain:
         assert r.status_code == 200
         job_id = r.json()["job_id"]
 
-        # Chain: overview + wiki + ambient + predictive + images
+        # Chain: overview + wiki + ambient + predictive + images + rationale
         assert set(srv._JOBS[job_id]["v2_jobs"].keys()) == {
-            "overview", "wiki", "ambient", "predictive", "images",
+            "overview", "wiki", "ambient", "predictive", "images", "rationale",
         }
         for v2_id in srv._JOBS[job_id]["v2_jobs"].values():
             assert v2_id in srv._JOBS

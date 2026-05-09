@@ -103,3 +103,33 @@ def test_skips_marker_before_for_loop(tmp_path: Path, caplog) -> None:
         "rationale-skipped" in rec.message and "non-trivial-target" in rec.message
         for rec in caplog.records
     )
+
+
+def test_edge_extractor_persists_rationale_edges(tmp_path: Path) -> None:
+    """edge_extractor-Aufruf für ein Repo mit WHY-marker → wiki_edges DB
+    enthält rationale-rows."""
+    import sqlite3
+    from src.wiki_v2 import store as wstore
+    from src.wiki_v2.rationale_parser import extract_rationale_edges_for_repo
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "src").mkdir(parents=True)
+    (repo_root / "src" / "module.py").write_text(
+        "# WHY(#185): path-traversal defence\n"
+        "_SLUG_RE = 1\n"
+    )
+
+    db_path = tmp_path / "wiki.db"
+    wadapter = wstore.init_wiki_db(db_path)
+
+    n = extract_rationale_edges_for_repo(
+        repo_root, wadapter, repo_slug="demo", workspace_id="bene",
+    )
+    assert n == 1
+
+    rows = wadapter.execute(
+        "SELECT source, target, type, rationale, context FROM wiki_edges "
+        "WHERE type='rationale'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][3] == "path-traversal defence"

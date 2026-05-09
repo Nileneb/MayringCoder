@@ -96,6 +96,8 @@ def parse_args() -> argparse.Namespace:
                    help="Output-Pfad für --generate-recap (Default: wiki/<workspace>/recap-<issue>.md).")
     p.add_argument("--rebuild-transitions", action="store_true",
                    help="Scan conversation-summaries + rebuild Markov topic-transition matrix")
+    p.add_argument("--extract-rationale", action="store_true",
+                   help="Extract WHY(...)-marker comments into wiki_edges (rationale-edges)")
     p.add_argument("--wiki-type", choices=["code", "paper"], default="code",
                    help="Wiki-Modus: code (Import/Call-Graph) oder paper (Paper-Verknüpfungen)")
     p.add_argument("--wiki-cluster-strategy", choices=["louvain", "full"], default="louvain",

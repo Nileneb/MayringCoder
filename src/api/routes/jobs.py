@@ -85,6 +85,14 @@ async def _run_with_v2_postingest(
         workspace_id,
     ))
 
+    rat_id = _make_job(workspace_id)
+    v2_jobs["rationale"] = rat_id
+    asyncio.create_task(_run_checker_job(
+        rat_id,
+        ["--repo", repo, "--extract-rationale", "--workspace-id", workspace_id],
+        workspace_id,
+    ))
+
     overview_id = _make_job(workspace_id)
     wiki_id = _make_job(workspace_id)
     v2_jobs["overview"] = overview_id

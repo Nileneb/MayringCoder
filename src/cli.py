@@ -286,6 +286,25 @@ def _cmd_rebuild_transitions(args: argparse.Namespace, repo_url: str) -> None:
     print(f"[transitions] {len(matrix)} from-topics, {sum(len(v) for v in matrix.values())} edges → topic_transitions")
 
 
+def _cmd_extract_rationale(args: argparse.Namespace, repo_url: str) -> None:
+    from src.config import CACHE_DIR
+    from src.wiki_v2.rationale_parser import extract_rationale_edges_for_repo
+    from src.wiki_v2 import store as wstore
+
+    if not repo_url:
+        print("Fehler: --extract-rationale braucht --repo")
+        return
+
+    repo_root = Path.cwd()
+    wadapter = wstore.init_wiki_db(CACHE_DIR / "wiki_v2.db")
+    workspace = resolve_cli_workspace(args, conn=None, auto_create=False)
+    n = extract_rationale_edges_for_repo(
+        repo_root, wadapter, repo_slug=_repo_slug(repo_url),
+        workspace_id=workspace,
+    )
+    print(f"[rationale] persisted={n} edges")
+
+
 def _cmd_generate_ambient(args: argparse.Namespace, repo_url: str, ollama_url: str, model: str) -> None:
     from src.api.dependencies import get_conn
     from src.memory.ambient import generate_ambient_snapshot
@@ -478,6 +497,7 @@ def main() -> None:
     if getattr(args, "wiki_team_activity", False):     _cmd_wiki_team_activity(args);                         sys.exit(0)
     if getattr(args, "wiki_history_cleanup", None) is not None: _cmd_wiki_history_cleanup(args);              sys.exit(0)
     if args.rebuild_transitions:                       _cmd_rebuild_transitions(args, repo_url);               sys.exit(0)
+    if getattr(args, "extract_rationale", False):      _cmd_extract_rationale(args, repo_url);                 sys.exit(0)
     if args.generate_ambient:                          _cmd_generate_ambient(args, repo_url, ollama_url, model); sys.exit(0)
     if args.ingest_issues:                             run_ingest_issues(args, ollama_url, model);             sys.exit(0)
     if args.ingest_images:                             run_ingest_images(args, ollama_url, model);             sys.exit(0)

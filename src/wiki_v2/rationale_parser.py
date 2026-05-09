@@ -143,6 +143,38 @@ def extract_rationale_edges(
     return edges
 
 
+def extract_rationale_edges_for_repo(
+    repo_root: Path,
+    conn,
+    *,
+    repo_slug: str,
+    workspace_id: str,
+) -> int:
+    """Walk repo_root for *.py files, extract rationale-edges, UPSERT into
+    wiki_edges. Returns count of edges persisted."""
+    persisted = 0
+    for py_file in repo_root.rglob("*.py"):
+        if "/.git/" in str(py_file) or "/node_modules/" in str(py_file):
+            continue
+        edges = extract_rationale_edges(
+            py_file, repo_slug=repo_slug, workspace_id=workspace_id,
+        )
+        for e in edges:
+            conn.execute(
+                "INSERT INTO wiki_edges(source, target, repo_slug, "
+                "workspace_id, type, weight, context, rationale) "
+                "VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(source,target,type,workspace_id) DO UPDATE SET "
+                "rationale=excluded.rationale, context=excluded.context, "
+                "weight=excluded.weight",
+                (e["source"], e["target"], e["repo_slug"], e["workspace_id"],
+                 e["type"], e["weight"], e["context"], e["rationale"]),
+            )
+            persisted += 1
+    conn.commit()
+    return persisted
+
+
 def _node_target_name(node: ast.AST, module_name: str, parent_class: str = "") -> str:
     """Module/Class-qualified target name."""
     prefix = f"{module_name}."
