@@ -105,6 +105,97 @@ def test_skips_marker_before_for_loop(tmp_path: Path, caplog) -> None:
     )
 
 
+def test_extractor_writes_relative_path_not_basename(tmp_path: Path) -> None:
+    """Code-review high-issue: parser schrieb file_path.name (basename),
+    aber retrieval-JOIN matcht source.path = full repo-relative-path.
+    Production hätte 0 matches gehabt. Regression-guard: extracted edges
+    haben die FULL relative path."""
+    from src.wiki_v2 import store as wstore
+    from src.wiki_v2.rationale_parser import extract_rationale_edges_for_repo
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "src" / "deep").mkdir(parents=True)
+    (repo_root / "src" / "deep" / "module.py").write_text(
+        "# WHY(#test): regression\n"
+        "VAR = 1\n"
+    )
+    db_path = tmp_path / "wiki.db"
+    wadapter = wstore.init_wiki_db(db_path)
+    extract_rationale_edges_for_repo(
+        repo_root, wadapter, repo_slug="demo", workspace_id="bene",
+    )
+    rows = wadapter.execute(
+        "SELECT source FROM wiki_edges WHERE type='rationale'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "src/deep/module.py", (
+        f"source must be repo-relative full path, got {rows[0][0]!r}"
+    )
+
+
+def test_extractor_skips_vendor_dirs(tmp_path: Path) -> None:
+    """Code-review high-issue: rglob('*.py') unter cwd zog venv/site-packages
+    mit. WHY-marker in DritteParteien-Code würden ungewollt persistiert."""
+    from src.wiki_v2 import store as wstore
+    from src.wiki_v2.rationale_parser import extract_rationale_edges_for_repo
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "src").mkdir(parents=True)
+    (repo_root / "src" / "real.py").write_text(
+        "# WHY(#real): keep me\n"
+        "REAL = 1\n"
+    )
+    for vendor in ("venv", ".venv", "node_modules", "site-packages",
+                   "__pycache__", "build", "dist"):
+        (repo_root / vendor).mkdir(parents=True)
+        (repo_root / vendor / "vendored.py").write_text(
+            "# WHY(#vendor): IGNORE ME\n"
+            "VENDORED = 1\n"
+        )
+    db_path = tmp_path / "wiki.db"
+    wadapter = wstore.init_wiki_db(db_path)
+    extract_rationale_edges_for_repo(
+        repo_root, wadapter, repo_slug="demo", workspace_id="bene",
+    )
+    rows = wadapter.execute(
+        "SELECT source FROM wiki_edges WHERE type='rationale'"
+    ).fetchall()
+    sources = [r[0] for r in rows]
+    assert sources == ["src/real.py"], (
+        f"vendor dirs must be skipped, got: {sources}"
+    )
+
+
+def test_extractor_handles_multiline_why_block_before_far_target(tmp_path: Path) -> None:
+    """Self-test fand: 6-zeilen WHY-Block + lookahead von marker_line crashte
+    weil target > 5 lines weiter. Fix: lookahead-Anker ist last_comment_line."""
+    from src.wiki_v2 import store as wstore
+    from src.wiki_v2.rationale_parser import extract_rationale_edges_for_repo
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "src").mkdir(parents=True)
+    (repo_root / "src" / "long.py").write_text(
+        "# WHY(#x, security): line1\n"
+        "# line2\n"
+        "# line3\n"
+        "# line4\n"
+        "# line5\n"
+        "# line6\n"
+        "# line7 (delta=7 from marker)\n"
+        "VAR = 1\n"
+    )
+    db_path = tmp_path / "wiki.db"
+    wadapter = wstore.init_wiki_db(db_path)
+    extract_rationale_edges_for_repo(
+        repo_root, wadapter, repo_slug="demo", workspace_id="bene",
+    )
+    rows = wadapter.execute(
+        "SELECT target FROM wiki_edges WHERE type='rationale'"
+    ).fetchall()
+    assert len(rows) == 1, "long WHY-block must still match the next-line target"
+    assert rows[0][0] == "long.VAR"
+
+
 def test_edge_extractor_persists_rationale_edges(tmp_path: Path) -> None:
     """edge_extractor-Aufruf für ein Repo mit WHY-marker → wiki_edges DB
     enthält rationale-rows."""

@@ -35,6 +35,12 @@ _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 from src import config as _config
 
 
+# WHY(#54, #55, multi-tenant): jeder subprocess der via _run_checker_job
+# läuft, MUSS --workspace-id mitbekommen. Seit dem Identity-Refactor
+# (commit 577d2d8) gibt's keinen 'default'-Fallback mehr in resolve_cli_workspace
+# — fehlt --workspace-id, crasht der subprocess silent mit
+# UnknownWorkspaceError und v2-chain-Status meldet 'done' obwohl 0 effects.
+# Bug war 5 Tage live (ambient_snapshot last 2026-05-04 trotz daily ingest).
 async def _run_with_v2_postingest(
     job_id: str,
     args: list[str],

@@ -32,12 +32,12 @@ def _extract_topics_from_text(text: str, keyword_index: dict[str, list[str]]) ->
     return seen
 
 
-# Whitelist für repo_slug: nur ASCII-Identifier-Style. Issue #185 / CodeQL
-# #129+#130: workspace_slug kommt aus user-controlled Body im
-# /conversation/micro-batch endpoint, ein naive Path-Build wie
-# `Path("cache") / f"{slug}_wiki_index.json"` resolved bei
+# WHY(#185, security): path-traversal defence — workspace_slug kommt aus
+# user-controlled Body im /conversation/micro-batch endpoint. Ein naive
+# Path-Build wie `Path("cache") / f"{slug}_wiki_index.json"` resolved bei
 # slug='../../payload/EVIL' ausserhalb von cache/. Plus-Glück mit dem
 # _wiki_index.json-Suffix limitiert den Schaden nicht zuverlässig.
+# CHANGE WITH CARE — lockerer Regex öffnet path-traversal sofort wieder.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,63}\Z")
 
 

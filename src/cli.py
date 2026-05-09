@@ -127,6 +127,13 @@ def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str,
         print(f"Wiki 2.0 update skipped: {_e}")
 
 
+# WHY(#182, multi-tenant): IGIO-Backfill darf cross-tenant arbeiten wenn
+# Service-Token (ws='system') aufruft, sonst nur eigener workspace.
+# Vor dem Fix filterte die SQL hart auf workspace_id=current → bei
+# ws=system fand der Cron 0 chunks (99% leben in 'bene'-bucket) →
+# persisted=0/0 stündlich grün, Coverage hing bei 7.8% fest. Plus #182:
+# 1500-row-batch in einer Tx blockt SQLite > busy_timeout=5s und kollidiert
+# mit smoke-write-tests. Workaround heute: stick to limit=300 (cron default).
 def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) -> None:
     """Backfill IGIO axes for unclassified active chunks.
 
@@ -302,6 +309,14 @@ def _cmd_extract_rationale(args: argparse.Namespace, repo_url: str) -> None:
         repo_root, wadapter, repo_slug=_repo_slug(repo_url),
         workspace_id=workspace,
     )
+    # Cache-invalidate: query_cache hält RetrievalRecords inkl. ihrer
+    # rationale_edges-Liste, damit cache-hits keine stale WHY-Texte
+    # zeigen wenn sich die WHY-Marker im Code ändern.
+    try:
+        from src.memory.retrieval import invalidate_query_cache
+        invalidate_query_cache()
+    except ImportError:
+        pass
     print(f"[rationale] persisted={n} edges")
 
 

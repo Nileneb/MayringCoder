@@ -191,6 +191,13 @@ def _write_inject_state(session_id: str, chunk_pairs: list[tuple[str, str]]) -> 
         pass
 
 
+# WHY(observability): silent skip bei deploy-windows. Mayring-API restartet
+# bei jedem deploy für ~30s. Ohne 5xx-skip schreibt der Hook bei jedem
+# UserPromptSubmit einen lauten Memory-fehler-Block ins Prompt — aber
+# alle 3 lenses 502 ist kein User-actionable Fehler. Bei Mix (1× 502 + 2×
+# OK oder ein 4xx) bleibt der laute Block, weil das ist eine echte
+# Konfig-Anomalie. CHANGE WITH CARE — bei zu lauter silence verlieren wir
+# echte Probleme; bei zu sturem laut nervt der deploy-window jeden user.
 def main() -> None:
     payload = _read_payload()
     prompt = _extract_prompt(payload)

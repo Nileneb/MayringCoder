@@ -427,11 +427,21 @@ def _rerank(
                     "AND rationale != ''",
                     (src_row[0],),
                 ).fetchall()
-            except Exception:
+            except sqlite3.OperationalError:
+                # wikidb-schema mismatch oder ATTACH gone — silent skip,
+                # rationale_edges bleibt []. Typed catch fängt Tippfehler
+                # in der Query lautstark, statt sie zu maskieren.
                 continue
+            # Named row access via sqlite3.Row (DBAdapter setzt row_factory).
+            # Reihenfolge-unabhängig — falls SELECT je um eine Spalte erweitert
+            # wird, bleibt das Mapping korrekt.
             record.rationale_edges = [
-                {"target": t, "context": c, "why": r}
-                for r, t, c in rows
+                {
+                    "target": row["target"],
+                    "context": row["context"],
+                    "why": row["rationale"],
+                }
+                for row in rows
             ]
 
     return ranked

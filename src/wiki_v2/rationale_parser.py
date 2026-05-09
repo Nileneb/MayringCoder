@@ -34,6 +34,7 @@ def extract_rationale_edges(
     *,
     repo_slug: str,
     workspace_id: str,
+    repo_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Parse WHY-marker aus file_path. Returns [] bei Parse-Errors."""
     try:
@@ -90,7 +91,12 @@ def extract_rationale_edges(
             rationale_lines.append(t2text)
             prev_line = t2.start[0]
             j += 1
-        markers.append((marker_line, refs, "\n".join(rationale_lines)))
+        # `last_comment_line` ist der lookahead-Anker fürs target-symbol —
+        # bei multi-line WHY-Blöcken steht der Code mehr als 5 Zeilen nach
+        # dem ersten WHY-Token, der lookahead darf nicht ab marker_line
+        # zählen, sonst skip mit reason='non-trivial-target' obwohl direkt
+        # nach dem Block ein klares Assign/FunctionDef folgt.
+        markers.append((prev_line, refs, "\n".join(rationale_lines)))
         i = j
 
     if not markers:
@@ -130,8 +136,22 @@ def extract_rationale_edges(
         target_name = _node_target_name(target_node, module_name, parent_class)
         if not target_name:
             continue
+        # WHY(production): source MUSS der full repo-relative Pfad sein
+        # (z.B. 'src/cli.py'), nicht der basename 'cli.py'. Retrieval-JOIN
+        # in retrieval.py:_rerank matcht `source = chunk.source.path` —
+        # sources.path persistiert immer den vollen Pfad. Code-review fand
+        # diesen production-blocker: parser schrieb basename → 0 matches in
+        # production trotz grüner unit-tests.
+        if repo_root is not None:
+            try:
+                source_str = str(file_path.relative_to(repo_root))
+            except ValueError:
+                # file_path nicht unter repo_root → fallback basename
+                source_str = file_path.name
+        else:
+            source_str = file_path.name
         edges.append({
-            "source": file_path.name,
+            "source": source_str,
             "target": target_name,
             "type": "rationale",
             "weight": 1.0,
@@ -153,11 +173,22 @@ def extract_rationale_edges_for_repo(
     """Walk repo_root for *.py files, extract rationale-edges, UPSERT into
     wiki_edges. Returns count of edges persisted."""
     persisted = 0
+    # WHY(performance, #182): exclude vendor + build-artifacts. rglob('*.py')
+    # auf cwd zieht sonst venv/.venv/site-packages mit (tausende Dateien
+    # mit eigenen Comments die unsere Regex matchen könnten). Plus #182:
+    # batch-commit alle 50 rows damit SQLite-busy_timeout nicht reißt.
+    SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__",
+                 "build", "dist", "site-packages", ".tox", "cache",
+                 ".pytest_cache", ".mypy_cache"}
+    BATCH = 50
+    pending = 0
     for py_file in repo_root.rglob("*.py"):
-        if "/.git/" in str(py_file) or "/node_modules/" in str(py_file):
+        # Skip wenn IRGENDEIN parent-dir-name in SKIP_DIRS ist
+        if any(part in SKIP_DIRS for part in py_file.parts):
             continue
         edges = extract_rationale_edges(
             py_file, repo_slug=repo_slug, workspace_id=workspace_id,
+            repo_root=repo_root,
         )
         for e in edges:
             conn.execute(
@@ -171,6 +202,10 @@ def extract_rationale_edges_for_repo(
                  e["type"], e["weight"], e["context"], e["rationale"]),
             )
             persisted += 1
+            pending += 1
+            if pending >= BATCH:
+                conn.commit()
+                pending = 0
     conn.commit()
     return persisted
 

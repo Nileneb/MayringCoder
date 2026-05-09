@@ -57,6 +57,13 @@ def _model_path() -> Path:
     return CACHE_DIR / "rerank_v2.json"
 
 
+# WHY(#180): degenerate-model sanity-gate. Production-incident 2026-05-09:
+# das täglich trainierte v2-Modell hatte negative Weights auf vector + recency
+# + llm_advisor (sf=8.77 dominant durch target leakage von chunk_feedback).
+# Loader lehnt jetzt v_w<0 ODER s_w<0 ab (retrieval-positive Features dürfen
+# nicht negativ rankt werden). Alle Calls fallen lautlos auf v1-Weights
+# zurück. CHANGE WITH CARE — ohne diesen Gate war 5 Tage v2 produktiv,
+# hat aber Vector-Treffer aktiv runter gerankt.
 def _load_model() -> dict[str, Any] | None:
     """Return the v2 model dict if the file exists and parses, else None.
     Result is cached based on file mtime so retraining picks up cleanly
