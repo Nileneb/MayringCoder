@@ -56,8 +56,15 @@ jobs:
           # to keep YAML scanner happy.
           job_id=""
           for attempt in 1 2 3; do
+            # X-Workspace-Id: bene — Service-Token defaultet seit
+            # 2026-05-09 auf workspace='system' (Multi-Tenant-sicher).
+            # Ohne den Header würde der Ingest in den 'system'-Bucket
+            # landen statt in den User-Workspace. Pre-launch hardcoded
+            # auf 'bene'; sobald multi-tenant kommt: pro Repo-Owner
+            # mappen.
             response=$(curl -sS -m 30 -X POST https://mcp.linn.games/populate \
               -H "Authorization: Bearer $MCP_SERVICE_TOKEN" \
+              -H "X-Workspace-Id: bene" \
               -H "Content-Type: application/json" \
               --data '{"repo":"https://github.com/Nileneb/MayringCoder"}')
             echo "[attempt $attempt] Response: $response"

@@ -172,6 +172,13 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    # Service-Token mappt seit 2026-05-09 default auf workspace='system'
+    # (Multi-Tenant-sicher). Smoke-Checks gegen User-Daten (rag-search,
+    # job-history, vektor-trends) brauchen den Tenant-Workspace explizit.
+    # Pre-launch: SMOKE_WORKSPACE_ID=bene, multi-tenant: per-tenant.
+    smoke_ws = os.environ.get("SMOKE_WORKSPACE_ID", "bene").strip()
+    if smoke_ws:
+        headers["X-Workspace-Id"] = smoke_ws
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     t0 = time.time()
