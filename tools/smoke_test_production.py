@@ -377,6 +377,10 @@ def check_feedback_count_moves(api: str, token: str) -> CheckResult:
 def check_micro_batch_indexes(api: str, token: str) -> CheckResult:
     """Turn-capture endpoint must accept a turn pair and create a source."""
     session_id = f"smoke-{int(time.time())}"
+    # Issue #7-fix: server bindet workspace_slug strikt an JWT-workspace_id.
+    # Smoke nutzt MCP_SERVICE_TOKEN (workspace=system) — wenn wir hier
+    # 'mayringcoder' angeben, returnt 403. Slug einfach weglassen → server
+    # defaultet auf JWT-workspace.
     code, body, dt = _http(
         "POST", f"{api}/conversation/micro-batch", token,
         body={
@@ -385,7 +389,6 @@ def check_micro_batch_indexes(api: str, token: str) -> CheckResult:
                 {"role": "assistant", "content": "smoke test response", "timestamp": ""},
             ],
             "session_id": session_id,
-            "workspace_slug": "mayringcoder",
         },
         timeout=30.0,  # server summarises via LLM
     )
