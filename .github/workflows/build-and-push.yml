@@ -10,6 +10,10 @@ on:
       - 'prompts/**'
       - 'codebooks/**'
       - 'tools/**'
+      # Smoke-tests in `tools/` lesen Files aus `docs/` (coverage-map,
+      # smoke_runbook). Ohne docs/** im paths filter wird ein docs-only
+      # Commit nicht gebaut → smoke-Container hat alten Inhalt → fail.
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
