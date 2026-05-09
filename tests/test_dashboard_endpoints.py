@@ -294,6 +294,75 @@ def test_jobs_history_status_filter():
         del job_queue._JOBS["j2"]
 
 
+def test_jobs_history_includes_error_tail_for_failed_jobs():
+    """Bug: app.linn.games-Dashboard zeigte status='error' ohne jegliche
+    Detail-Info — das output-Field wurde server-side gestrippt. Fix: bei
+    status='error' liefert die Response jetzt error_tail (letzte 1200
+    chars vom output, typischerweise Traceback)."""
+    from src.api import job_queue
+    long_traceback = (
+        "INFO: starting ingestion ...\n"
+        "WARNING: connection slow\n"
+        + ("filler-line\n" * 200)
+        + "Traceback (most recent call last):\n"
+        + '  File "/app/src/foo.py", line 42, in handle\n'
+        + "    raise ValueError(\"unexpected token\")\n"
+        + "ValueError: unexpected token\n"
+    )
+    job_queue._JOBS.update({
+        "err1": {
+            "job_id": "err1", "status": "error", "started_at": "2026-05-08",
+            "workspace_id": "user-2", "output": long_traceback,
+        },
+        "ok1": {
+            "job_id": "ok1", "status": "done", "started_at": "2026-05-08",
+            "workspace_id": "user-2", "output": "all good",
+        },
+        "err_short": {
+            "job_id": "err_short", "status": "error", "started_at": "2026-05-08",
+            "workspace_id": "user-2", "output": "short fail message",
+        },
+    })
+    try:
+        res = _run(dashboard.jobs_history(workspace_id="user-2"))
+        by_id = {j["job_id"]: j for j in res["jobs"]}
+
+        # done-jobs: error_tail muss None sein (kein leak von output bei success)
+        assert by_id["ok1"]["error_tail"] is None
+
+        # error-jobs: error_tail enthält den Traceback
+        tail = by_id["err1"]["error_tail"]
+        assert tail is not None
+        assert "ValueError: unexpected token" in tail
+        assert tail.startswith("…\n"), "lange outputs müssen mit Ellipsis prefix kommen"
+        assert len(tail) <= 1300, "error_tail darf nicht das gesamte output zurückspielen"
+
+        # kurze error-outputs: kein Truncate, kein Ellipsis-prefix
+        short_tail = by_id["err_short"]["error_tail"]
+        assert short_tail == "short fail message"
+    finally:
+        for k in ("err1", "ok1", "err_short"):
+            job_queue._JOBS.pop(k, None)
+
+
+def test_jobs_history_error_tail_none_when_output_empty():
+    """Edge: wenn ein error-Job ohne output-string gespeichert wurde
+    (z.B. crash vor erstem stdout), darf error_tail nicht leerer String
+    sein — UI testet truthiness, leerer String würde 'Details'-Button
+    fälschlich aktivieren ohne Inhalt."""
+    from src.api import job_queue
+    job_queue._JOBS["empty_err"] = {
+        "job_id": "empty_err", "status": "error", "started_at": "2026-05-08",
+        "workspace_id": "user-2",
+    }
+    try:
+        res = _run(dashboard.jobs_history(workspace_id="user-2"))
+        j = next(x for x in res["jobs"] if x["job_id"] == "empty_err")
+        assert j["error_tail"] is None
+    finally:
+        del job_queue._JOBS["empty_err"]
+
+
 # ---------------------------------------------------------------------------
 # job_queue persistence: round-trip via JSON file
 # ---------------------------------------------------------------------------

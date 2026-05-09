@@ -92,6 +92,22 @@ async def jobs_history(
         key=lambda x: x.get("started_at", ""),
         reverse=True,
     )[:limit]
+    # Bei status='error' liefere die letzten 1200 chars des output-Logs
+    # zurück (typischerweise Traceback). Ohne dieses Feld zeigt das
+    # app.linn.games-Memory-Dashboard nur status='error' ohne Detail —
+    # User sieht nicht warum der Job gefailed ist.
+    def _error_tail(j: dict) -> str | None:
+        if j.get("status") != "error":
+            return None
+        out = j.get("output") or ""
+        if not out:
+            return None
+        # Letzte 1200 chars; wenn output länger ist, mit Ellipsis prefix.
+        TAIL = 1200
+        if len(out) <= TAIL:
+            return out
+        return "…\n" + out[-TAIL:]
+
     return {
         "workspace_id": workspace_id,
         "jobs": [
@@ -102,6 +118,7 @@ async def jobs_history(
                 "stages": j.get("stages", {}),
                 "progress": j.get("progress"),
                 "workspace_id": j.get("workspace_id"),
+                "error_tail": _error_tail(j),
             }
             for j in items
         ],
