@@ -184,56 +184,19 @@ async def memory_log_event(
         triggered.append({"signature": sig, "level": ev.level,
                           "logger": ev.logger})
 
-    # repository_dispatch an GitHub Action — Best-effort, blockt
-    # nicht den Endpoint.
-    if triggered and os.environ.get("GH_ERROR_TRIAGE_TOKEN"):
-        _threading.Thread(
-            target=_dispatch_error_triage,
-            args=(triggered, batch.service, workspace_id),
-            daemon=True,
-        ).start()
-
+    # KEIN repository_dispatch mehr — Triage läuft via existierender
+    # Claude-Code-Session (claude.ai/code) ODER Cloud-environments mit
+    # Repo-Connect. Ingest-only bleibt so simple wie möglich. Die
+    # `triggered`-Liste im Response zeigt dem Caller nur, welche
+    # signatures ungesehen waren (Memory-Dashboard kann das nutzen
+    # um neue ERROR-cards hervorzuheben).
     return {
         "workspace_id": workspace_id,
         "ingested": ingested,
         "triggered": len(triggered),
         "skipped_known_signatures": len(skipped_known),
+        "new_signatures": [t["signature"] for t in triggered],
     }
-
-
-def _dispatch_error_triage(triggered: list[dict], service: str,
-                           workspace_id: str) -> None:
-    """POST repository_dispatch an Nileneb/MayringCoder mit dem
-    ersten ungesehenen Error-Signature im Batch. claude-error-triage
-    workflow holt sich aus bene:logs den Kontext."""
-    import urllib.request
-    token = os.environ.get("GH_ERROR_TRIAGE_TOKEN", "").strip()
-    if not token or not triggered:
-        return
-    payload = {
-        "event_type": "claude-error-triage",
-        "client_payload": {
-            "service": service,
-            "workspace_id": workspace_id,
-            "signatures": [t["signature"] for t in triggered[:10]],
-            "first_event": triggered[0],
-        },
-    }
-    import json as _json
-    req = urllib.request.Request(
-        "https://api.github.com/repos/Nileneb/MayringCoder/dispatches",
-        data=_json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        method="POST",
-    )
-    try:
-        urllib.request.urlopen(req, timeout=8)
-    except Exception as exc:
-        _log.warning("error-triage dispatch failed: %s", exc)
 
 
 @router.post("/memory/put")
