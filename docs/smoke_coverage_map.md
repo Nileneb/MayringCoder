@@ -17,6 +17,9 @@ verifiziert, dass jedes closed Issue genau einen Eintrag hat.
 
 | # | Issue | Coverage |
 |---|---|---|
+| 185 | Path traversal CodeQL #129/#130 | Pytest `tests/test_predictive.py::test_load_keyword_index_rejects_path_traversal` (Red-Green TDD verifiziert) + CodeQL Re-Scan 0 alerts (commits 7a1b729, 2887894) |
+| 184 | Cross-DB-Join → predicted-topic-boost | Pytest `tests/test_predictive.py::test_search_boosts_chunks_matching_predicted_topics` + RetrievalRecord.score_predicted_topic field als Reranker-Trainings-Feature exposed (commit 46e9c2e) |
+| 180 | Reranker-Training liefert degeneriertes Modell | Pytest `tests/test_train_reranker.py::test_rejects_negative_vector_weight` + `test_reranker_v2_sanity.py` Sanity-Gate (commits 817bc2e, a6e2691) |
 | 138 | Memory-MCP feedback unreliable | API: `feedback_slug_resolution`, `stop_hook_e2e` |
 | 137 | Ingest NEW/CHANGED/UNCHANGED | API: `ingest_state_field` |
 | 107 | Local Pi-Agent | API: `pi_tasks_schema` |
