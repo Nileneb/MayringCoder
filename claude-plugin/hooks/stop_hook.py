@@ -35,6 +35,17 @@ import urllib.request
 _JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 _API_URL = os.environ.get("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 _TIMEOUT = 10  # micro-batch summarises a turn pair on the server (LLM call)
+
+# Local fallback queue — when /memory/feedback fails after retries (deploy
+# window, network hiccup, ANY 5xx), the entry gets appended here.
+# session_start.py::_drain_feedback_queue() replays everything to REST on
+# the next SessionStart. Successful replay → entry removed. 4xx → dropped
+# (no retry will fix it). 5xx → stays for next session.
+_FEEDBACK_QUEUE = os.path.expanduser("~/.config/mayring/feedback_queue.jsonl")
+# Same idea for /conversation/micro-batch — when the server is down or
+# slow, capture-events get queued here. Schema: full POST body of the
+# micro-batch endpoint. Drain in session_start::_drain_ingest_queue.
+_INGEST_QUEUE = os.path.expanduser("~/.config/mayring/ingest_queue.jsonl")
                # — was 5s, frequently hit the deadline mid-summary and silently
                # dropped the turn. 10s buys headroom without blocking Stop.
 
@@ -159,18 +170,68 @@ def _post_micro_batch(turns: list[dict], session_id: str, workspace_slug: str, t
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
+    # Retry on 502/503/504 + queue on persistent failure. Same pattern
+    # as _post_feedback. Without this, every deploy window dropped a
+    # turn-pair from Memory.
+    import time as _time
+    body_str = payload.decode("utf-8")
+    backoff = 0.6
+    for attempt in range(3):
+        try:
+            urllib.request.urlopen(req, timeout=_TIMEOUT)
+            return 200
+        except urllib.error.HTTPError as e:
+            if e.code in (502, 503, 504) and attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            if 400 <= e.code < 500:
+                sys.stderr.write(
+                    f"[stop_hook] micro-batch HTTP {e.code} (dropped, no retry)\n"
+                )
+                return e.code
+            _enqueue_ingest(body_str, f"http_{e.code}")
+            sys.stderr.write(
+                f"[stop_hook] micro-batch HTTP {e.code} → queued for replay\n"
+            )
+            return e.code
+        except TimeoutError:
+            if attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            _enqueue_ingest(body_str, "timeout")
+            sys.stderr.write(
+                f"[stop_hook] micro-batch TIMEOUT → queued for replay\n"
+            )
+            return 0
+        except Exception as exc:
+            if attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            _enqueue_ingest(body_str, type(exc).__name__)
+            sys.stderr.write(
+                f"[stop_hook] micro-batch {type(exc).__name__} → queued for replay\n"
+            )
+            return 0
+    return 0
+
+
+def _enqueue_ingest(body_json: str, reason: str) -> None:
+    """Append a failed micro-batch payload to the local queue."""
     try:
-        urllib.request.urlopen(req, timeout=_TIMEOUT)
-        return 200
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"[stop_hook] micro-batch HTTP {e.code}: {e.read().decode()[:200]}\n")
-        return e.code
-    except TimeoutError:
-        sys.stderr.write(f"[stop_hook] micro-batch TIMEOUT after {_TIMEOUT}s\n")
-        return 0
-    except Exception as exc:
-        sys.stderr.write(f"[stop_hook] micro-batch {type(exc).__name__}: {exc}\n")
-        return 0
+        os.makedirs(os.path.dirname(_INGEST_QUEUE), exist_ok=True)
+        # Wrap with metadata so the drain can decide if it's still relevant.
+        entry = json.dumps({
+            "body": body_json,
+            "queued_at": __import__("time").time(),
+            "reason": reason,
+        })
+        with open(_INGEST_QUEUE, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+    except OSError as exc:
+        sys.stderr.write(f"[stop_hook] could not enqueue ingest: {exc}\n")
 
 
 def extract_injected_chunks(user_text: str) -> list[tuple[str, str]]:
@@ -248,8 +309,37 @@ def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
     return "negative"
 
 
+def _enqueue_feedback(chunk_id: str, signal: str, reason: str) -> None:
+    """Append a failed feedback entry to the local queue for later replay.
+    session_start.py::_drain_feedback_queue() ships these on next session.
+
+    Schema is the SAME as the queue created by `bin/mayring-feedback` so
+    both paths share a single drain implementation:
+      {"chunk_id":"...", "signal":"positive|negative", "metadata":{...}}
+    """
+    try:
+        os.makedirs(os.path.dirname(_FEEDBACK_QUEUE), exist_ok=True)
+        entry = json.dumps({
+            "chunk_id": chunk_id,
+            "signal": signal,
+            "metadata": {"queued_by": "stop_hook", "reason": reason},
+        })
+        with open(_FEEDBACK_QUEUE, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+    except OSError as exc:
+        sys.stderr.write(
+            f"[stop_hook] could not enqueue feedback {chunk_id}/{signal}: {exc}\n"
+        )
+
+
 def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
-    """POST /memory/feedback with retry on 502/503/504 (deploy windows)."""
+    """POST /memory/feedback with retry on 502/503/504 (deploy windows).
+
+    On retry exhaustion or persistent network error: enqueue locally so
+    next SessionStart's drain can replay. Only 4xx errors are dropped
+    permanently (no retry will fix a malformed payload or unknown
+    chunk).
+    """
     import time as _time
     payload = json.dumps({"chunk_id": chunk_id, "signal": signal}).encode()
     req = urllib.request.Request(
@@ -268,9 +358,18 @@ def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
                 _time.sleep(backoff)
                 backoff *= 2
                 continue
+            if 400 <= e.code < 500:
+                # 4xx = chunk gone or invalid signal — replay won't help
+                sys.stderr.write(
+                    f"[stop_hook] feedback POST {chunk_id}/{signal}: "
+                    f"HTTP {e.code} (dropped, no retry)\n"
+                )
+                return
+            # 5xx after retries → enqueue
+            _enqueue_feedback(chunk_id, signal, f"http_{e.code}")
             sys.stderr.write(
-                f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
-                f"HTTP {e.code}\n"
+                f"[stop_hook] feedback POST {chunk_id}/{signal}: "
+                f"HTTP {e.code} → queued for replay\n"
             )
             return
         except (urllib.error.URLError, OSError) as e:
@@ -278,15 +377,17 @@ def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
                 _time.sleep(backoff)
                 backoff *= 2
                 continue
+            _enqueue_feedback(chunk_id, signal, type(e).__name__)
             sys.stderr.write(
-                f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
-                f"{type(e).__name__}: {e}\n"
+                f"[stop_hook] feedback POST {chunk_id}/{signal}: "
+                f"{type(e).__name__} → queued for replay\n"
             )
             return
         except Exception as exc:
+            _enqueue_feedback(chunk_id, signal, type(exc).__name__)
             sys.stderr.write(
-                f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
-                f"{type(exc).__name__}: {exc}\n"
+                f"[stop_hook] feedback POST {chunk_id}/{signal}: "
+                f"{type(exc).__name__}: {exc} → queued for replay\n"
             )
             return
 

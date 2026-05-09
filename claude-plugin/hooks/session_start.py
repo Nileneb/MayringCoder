@@ -22,6 +22,7 @@ PLANS_DIR = os.path.expanduser("~/.claude/plans")
 TASK_CONTEXT_BUDGET = 800
 JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 FEEDBACK_QUEUE = os.path.expanduser("~/.config/mayring/feedback_queue.jsonl")
+INGEST_QUEUE = os.path.expanduser("~/.config/mayring/ingest_queue.jsonl")
 MAYRING_API = os.environ.get("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 
 
@@ -362,11 +363,87 @@ def _drain_feedback_queue() -> None:
         )
 
 
+def _drain_ingest_queue() -> None:
+    """Replay queued /conversation/micro-batch payloads.
+
+    stop_hook enqueues here when the server returns 5xx after retries.
+    Same drop-on-4xx / keep-on-5xx semantics as feedback drain.
+    """
+    if not os.path.isfile(INGEST_QUEUE):
+        return
+    try:
+        with open(INGEST_QUEUE, encoding="utf-8") as f:
+            lines = [ln for ln in (l.strip() for l in f) if ln]
+    except OSError:
+        return
+    if not lines:
+        try:
+            os.remove(INGEST_QUEUE)
+        except OSError:
+            pass
+        return
+    try:
+        with open(JWT_FILE, encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError:
+        return
+    if not token:
+        return
+
+    remaining: list[str] = []
+    posted = 0
+    for raw in lines:
+        try:
+            entry = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        body_json = entry.get("body")
+        if not isinstance(body_json, str):
+            continue
+        body_bytes = body_json.encode("utf-8")
+        req = urllib.request.Request(
+            f"{MAYRING_API}/conversation/micro-batch",
+            data=body_bytes,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as _:
+                posted += 1
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                # 4xx → drop (malformed payload won't fix itself)
+                continue
+            remaining.append(raw)
+        except Exception:
+            remaining.append(raw)
+
+    try:
+        if remaining:
+            with open(INGEST_QUEUE, "w", encoding="utf-8") as f:
+                f.write("\n".join(remaining) + "\n")
+        else:
+            os.remove(INGEST_QUEUE)
+    except OSError:
+        pass
+
+    if posted:
+        print(
+            f"MayringCoder ingest queue: replayed {posted} entries "
+            f"({len(remaining)} pending)",
+            file=sys.stderr,
+        )
+
+
 if __name__ == "__main__":
     plugin_root = _plugin_root()
     repo_root = _repo_root(plugin_root)
     _sync_plugin_files_from_repo(plugin_root, repo_root)
     _bootstrap_if_needed()
     _drain_feedback_queue()
+    _drain_ingest_queue()
     payload = json.loads(sys.stdin.read() or "{}")
     _inject_memory(payload)
