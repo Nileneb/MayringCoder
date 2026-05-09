@@ -32,14 +32,34 @@ def _extract_topics_from_text(text: str, keyword_index: dict[str, list[str]]) ->
     return seen
 
 
-def _load_keyword_index(repo_slug: str) -> dict[str, list[str]]:
-    """Load wiki_index.json for repo_slug. Returns {} if missing."""
-    path = Path("cache") / f"{repo_slug}_wiki_index.json"
+# Whitelist für repo_slug: nur ASCII-Identifier-Style. Issue #185 / CodeQL
+# #129+#130: workspace_slug kommt aus user-controlled Body im
+# /conversation/micro-batch endpoint, ein naive Path-Build wie
+# `Path("cache") / f"{slug}_wiki_index.json"` resolved bei
+# slug='../../payload/EVIL' ausserhalb von cache/. Plus-Glück mit dem
+# _wiki_index.json-Suffix limitiert den Schaden nicht zuverlässig.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
+
+
+def _load_keyword_index(repo_slug: str | None) -> dict[str, list[str]]:
+    """Load wiki_index.json for repo_slug. Returns {} if missing OR
+    repo_slug fails the strict slug-whitelist (path-traversal defence).
+    """
+    if not repo_slug or not _SLUG_RE.match(repo_slug):
+        return {}
+    cache_dir = Path("cache").resolve()
+    path = (cache_dir / f"{repo_slug}_wiki_index.json").resolve()
+    # Defense-in-depth: even with the whitelist, ensure the resolved
+    # path stays inside cache/. Catches symlink-based escapes too.
+    try:
+        path.relative_to(cache_dir)
+    except ValueError:
+        return {}
     if not path.exists():
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return {}
 
 

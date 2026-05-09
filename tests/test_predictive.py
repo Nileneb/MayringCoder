@@ -166,6 +166,74 @@ def test_slug_aliases_includes_short_form_and_lowercase():
     assert "nileneb-mayringcoder" in aliases_mc
 
 
+def test_load_keyword_index_rejects_path_traversal(tmp_path, monkeypatch):
+    """Issue #185 / CodeQL #129+#130: repo_slug kommt aus user-controlled
+    workspace_slug im /conversation/micro-batch endpoint. Setup einen
+    'evil'-payload außerhalb von cache/ — ein NICHT-sanitizing
+    _load_keyword_index würde ihn lesen.
+
+    Construction: tmp_path/payload/EVIL_wiki_index.json existiert.
+    Mit cwd=tmp_path/work und repo_slug='../payload/EVIL' baut der
+    naive Code 'cache/../payload/EVIL_wiki_index.json' was AUF DAS
+    EVIL FILE auflöst → liest Angreifer-payload. Sicherer Code muss
+    ein leeres dict liefern."""
+    from src.memory import predictive as pred_mod
+
+    # Setup: evil payload outside cache/
+    payload_dir = tmp_path / "payload"
+    payload_dir.mkdir()
+    (payload_dir / "EVIL_wiki_index.json").write_text('{"pwned": ["yes"]}')
+
+    # Innocuous workdir with empty cache/
+    work = tmp_path / "work"
+    (work / "cache").mkdir(parents=True)
+    monkeypatch.chdir(work)
+
+    # Naive: Path("cache") / f"{slug}_wiki_index.json" mit slug='../../payload/EVIL'
+    # → "cache/../../payload/EVIL_wiki_index.json" → resolved zu
+    # tmp_path/payload/EVIL_wiki_index.json (das evil-file). Sanitized
+    # code muss diesen Aufruf abwehren und {} zurückgeben.
+    evil_slug = "../../payload/EVIL"
+    naive_path = (work / "cache" / f"{evil_slug}_wiki_index.json").resolve()
+    assert naive_path == (payload_dir / "EVIL_wiki_index.json").resolve(), \
+        f"test setup wrong: naive_path={naive_path}"
+    assert naive_path.exists(), "evil file must exist for the test to be meaningful"
+
+    # Now the actual security check: sanitized loader must NOT read it
+    assert pred_mod._load_keyword_index(evil_slug) == {}, \
+        "PATH TRAVERSAL: function read evil payload outside cache/"
+
+    # Other malicious patterns
+    assert pred_mod._load_keyword_index("/etc/passwd") == {}
+    assert pred_mod._load_keyword_index("..") == {}
+    assert pred_mod._load_keyword_index("a/b") == {}
+    assert pred_mod._load_keyword_index("") == {}
+    # None must not crash
+    assert pred_mod._load_keyword_index(None) == {}  # type: ignore[arg-type]
+
+
+def test_load_keyword_index_accepts_valid_slug(tmp_path, monkeypatch):
+    """Sanity: legitimate slugs keep working."""
+    from src.memory import predictive as pred_mod
+
+    # Setup: real keyword-index file under tmp_path/cache/
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "nileneb-mayringcoder_wiki_index.json").write_text(
+        '{"auth": ["Auth"], "billing": ["Billing"]}'
+    )
+    # Patch the cache-base so the function looks under tmp_path
+    monkeypatch.chdir(tmp_path)
+
+    out = pred_mod._load_keyword_index("nileneb-mayringcoder")
+    assert out == {"auth": ["Auth"], "billing": ["Billing"]}
+
+    # Underscore + dash + digits all allowed
+    (cache / "nileneb_mayring-coder_v2_wiki_index.json").write_text('{"x": ["X"]}')
+    out2 = pred_mod._load_keyword_index("nileneb_mayring-coder_v2")
+    assert out2 == {"x": ["X"]}
+
+
 def test_build_transition_matches_via_short_slug(tmp_path, monkeypatch):
     """Production-Bug 2026-05-09: 89 conversation_summary mit repo='mayringcoder',
     1 mit 'nileneb-mayringcoder'. Vor Slug-Aliasing: build_transition_matrix
