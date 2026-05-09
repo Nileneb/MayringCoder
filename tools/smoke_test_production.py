@@ -1806,6 +1806,48 @@ def _find_existing_issue(signature: str,
     return None
 
 
+def _close_resolved_smoke_issues() -> None:
+    """User-Anforderung: wenn smoke wieder grün ist, ALLE noch offenen
+    smoke-FAIL-issues automatisch schließen mit Verweis auf den
+    aktuellen grünen Run. Sonst muss der User manuell jedes alte issue
+    nachprüfen, obwohl der Bug längst gefixt ist.
+    """
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["gh", "issue", "list", "--repo", "Nileneb/MayringCoder",
+             "--state", "open", "--label", "smoke-failure",
+             "--json", "number,title", "--limit", "30"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode != 0:
+            print(f"# auto-close: gh issue list failed: {proc.stderr[:200]}")
+            return
+        import json as _json
+        issues = _json.loads(proc.stdout or "[]")
+    except Exception as e:
+        print(f"# auto-close: list-error {e}")
+        return
+    if not issues:
+        return
+    msg = (
+        f"Smoke ist wieder grün ({time.strftime('%Y-%m-%d %H:%M %Z')}). "
+        f"Auto-close durch tools/smoke_test_production.py."
+    )
+    for it in issues:
+        n = it["number"]
+        try:
+            subprocess.run(
+                ["gh", "issue", "close", str(n),
+                 "--repo", "Nileneb/MayringCoder",
+                 "--comment", msg, "--reason", "completed"],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            print(f"# auto-closed smoke issue #{n}: {it['title']}")
+        except Exception as e:
+            print(f"# auto-close #{n} failed: {e}")
+
+
 def _open_github_issue(failed: list[CheckResult], elapsed: float) -> bool:
     """Open or comment on a smoke-failure issue.
 
@@ -1967,9 +2009,13 @@ def main() -> int:
         if not real_failures:
             print("# all real-world checks pass — only EXPECTED_PENDING "
                   "items failed; workflow stays green.")
+            if args.alert_on_fail:
+                _close_resolved_smoke_issues()
             return 0
         return 1
     print("# all good — every critical path is actually working in prod")
+    if args.alert_on_fail:
+        _close_resolved_smoke_issues()
     return 0
 
 
