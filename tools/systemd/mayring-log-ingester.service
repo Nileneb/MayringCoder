@@ -1,0 +1,15 @@
+[Unit]
+Description=Mayring container log → memory ingester (5-min cron)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nileneb
+WorkingDirectory=/home/nileneb/app.linn.games/MayringCoder
+EnvironmentFile=/home/nileneb/app.linn.games/.env.mayring
+Environment=MAYRING_API_URL=https://mcp.linn.games
+Environment=LOG_INGEST_TARGET_SLUG=bene:logs
+ExecStart=/usr/bin/python3 /home/nileneb/app.linn.games/MayringCoder/tools/log_ingest_cron.py --once
+StandardOutput=journal
+StandardError=journal
