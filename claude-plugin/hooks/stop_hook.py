@@ -249,6 +249,8 @@ def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
 
 
 def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
+    """POST /memory/feedback with retry on 502/503/504 (deploy windows)."""
+    import time as _time
     payload = json.dumps({"chunk_id": chunk_id, "signal": signal}).encode()
     req = urllib.request.Request(
         f"{_API_URL}/memory/feedback",
@@ -256,13 +258,37 @@ def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
-    try:
-        urllib.request.urlopen(req, timeout=_TIMEOUT)
-    except Exception as exc:
-        sys.stderr.write(
-            f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
-            f"{type(exc).__name__}: {exc}\n"
-        )
+    backoff = 0.6
+    for attempt in range(3):
+        try:
+            urllib.request.urlopen(req, timeout=_TIMEOUT)
+            return
+        except urllib.error.HTTPError as e:
+            if e.code in (502, 503, 504) and attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            sys.stderr.write(
+                f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
+                f"HTTP {e.code}\n"
+            )
+            return
+        except (urllib.error.URLError, OSError) as e:
+            if attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            sys.stderr.write(
+                f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
+                f"{type(e).__name__}: {e}\n"
+            )
+            return
+        except Exception as exc:
+            sys.stderr.write(
+                f"[stop_hook] feedback POST failed for {chunk_id}/{signal}: "
+                f"{type(exc).__name__}: {exc}\n"
+            )
+            return
 
 
 def _capture_turns(payload: dict, token: str) -> list[dict]:

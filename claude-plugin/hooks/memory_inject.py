@@ -15,6 +15,7 @@ import concurrent.futures as _cf
 import json
 import os
 import sys
+import time as _time
 import urllib.request
 import urllib.error
 
@@ -98,19 +99,39 @@ def _search(
             "Content-Type": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        return {"_hook_error": f"HTTP {e.code} from /memory/search"}
-    except TimeoutError:
-        return {"_hook_error": f"TIMEOUT after {TIMEOUT}s — server is slow or down"}
-    except urllib.error.URLError as e:
-        return {"_hook_error": f"URLError: {e.reason}"}
-    except OSError as e:
-        return {"_hook_error": f"OSError {e.errno}: {e.strerror}"}
-    except ValueError as e:
-        return {"_hook_error": f"JSON parse error: {e}"}
+    # Retry on 502/503/504 — common during MayringCoder deploy windows
+    # (~30s nginx returns 502 while uvicorn restarts). Without retry,
+    # every UserPromptSubmit during a deploy fails the hook → no Memory
+    # Context injection → user sees "kein Kontext mehr injiziert".
+    # 3 attempts with backoff; total ≤ TIMEOUT - 1s budget so we don't
+    # exceed the per-request timeout.
+    last_err: str = ""
+    backoff = 0.8
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code} from /memory/search"
+            if e.code in (502, 503, 504) and attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            return {"_hook_error": last_err}
+        except TimeoutError:
+            return {"_hook_error": f"TIMEOUT after {TIMEOUT}s — server is slow or down"}
+        except urllib.error.URLError as e:
+            last_err = f"URLError: {e.reason}"
+            if attempt < 2:
+                _time.sleep(backoff)
+                backoff *= 2
+                continue
+            return {"_hook_error": last_err}
+        except OSError as e:
+            return {"_hook_error": f"OSError {e.errno}: {e.strerror}"}
+        except ValueError as e:
+            return {"_hook_error": f"JSON parse error: {e}"}
+    return {"_hook_error": last_err or "unknown"}
 
 
 def _multi_lens_search(query: str, token: str) -> dict[str, dict]:
