@@ -225,44 +225,39 @@ def test_chroma_workspace_a_cannot_see_workspace_b_data(memory_db, monkeypatch):
 # CLI: workspace_id="default" must print a visible warning
 # ---------------------------------------------------------------------------
 
-def test_default_workspace_warning(capsys, monkeypatch):
-    """main() prints Warnung when --workspace-id is not set (falls back to 'default')."""
-    import sys
-    import types
-    import src.cli as cli_mod
+def test_unknown_workspace_id_raises(monkeypatch, tmp_path):
+    """Big-Bang: 'default' ist kein Free-Pass mehr. Wer einen unbekannten
+    workspace_id übergibt UND keine MAYRING_USER_ID hat → UnknownWorkspaceError.
 
-    fake_args = types.SimpleNamespace(
-        repo="http://fake",
-        mode="ingest",
-        llm=False,
-        resolve_model_only=False,
-        model=None,
-        run_id=None,
-        cache_by_model=False,
-        log_training_data=False,
-        max_chars=None,
-        batch_size=None,
-        batch_delay=None,
-        ingest_issues=False,
-        ingest_images=False,
-        pi_task=None,
-        generate_wiki=False,
-        reset=False,
-        history=False,
-        compare=None,
-        cleanup=None,
-        codebook=None,
-        prompt=None,
-        full=False,
-        workspace_id="default",
-        populate_memory=True,
-    )
-    monkeypatch.setattr(cli_mod, "parse_args", lambda: fake_args)
-    monkeypatch.setattr(cli_mod, "run_populate_memory", lambda *a, **kw: None)
+    Vorher: silent Fallback auf 'default'-Bucket (ergab Datenchaos zwischen
+    JWT- und CLI-Pfaden).
+    """
+    from types import SimpleNamespace
+    from src.identity.cli import resolve_cli_workspace
+    from src.identity.workspace_resolver import UnknownWorkspaceError
+    from src.memory.db_adapter import DBAdapter
+    from src.memory.store import _init_schema
 
-    with pytest.raises(SystemExit):
-        cli_mod.main()
+    monkeypatch.delenv("MAYRING_USER_ID", raising=False)
+    conn = DBAdapter.create(tmp_path / "test.db", check_same_thread=False)
+    _init_schema(conn)
 
-    out = capsys.readouterr().out
-    assert "Warnung" in out
-    assert "workspace-id" in out
+    args = SimpleNamespace(workspace_id="default")
+    with pytest.raises(UnknownWorkspaceError):
+        resolve_cli_workspace(args, conn=conn)
+
+
+def test_missing_workspace_with_local_user_id_resolves(monkeypatch, tmp_path):
+    """Wenn kein --workspace-id, aber MAYRING_USER_ID gesetzt ist:
+    fall through zur kanonischen user-{id}-Form, kein Fehler."""
+    from types import SimpleNamespace
+    from src.identity.cli import resolve_cli_workspace
+    from src.memory.db_adapter import DBAdapter
+    from src.memory.store import _init_schema
+
+    monkeypatch.setenv("MAYRING_USER_ID", "7")
+    conn = DBAdapter.create(tmp_path / "test.db", check_same_thread=False)
+    _init_schema(conn)
+
+    args = SimpleNamespace(workspace_id=None)
+    assert resolve_cli_workspace(args, conn=conn) == "user-7"

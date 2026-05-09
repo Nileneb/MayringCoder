@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from src.analysis.cache import reset_repo
 from src.analysis.history import cleanup_runs, compare_runs, list_runs
 from src.cli_args import parse_args
+from src.identity.cli import resolve_cli_workspace
 from src.config import (
     CACHE_DIR,
     CODEBOOK_PATH,
@@ -38,7 +39,7 @@ from src.pipeline import (
 )
 
 def _cmd_history(args: argparse.Namespace, repo_url: str) -> None:
-    runs = list_runs(repo_url, workspace_id=getattr(args, "workspace_id", "default"))
+    runs = list_runs(repo_url, workspace_id=resolve_cli_workspace(args))
     if not runs:
         print("Keine Run-History vorhanden.")
         return
@@ -55,7 +56,7 @@ def _cmd_compare(args: argparse.Namespace, repo_url: str) -> None:
     try:
         cmp = compare_runs(
             args.compare[0], args.compare[1], repo_url,
-            workspace_id=getattr(args, "workspace_id", "default"),
+            workspace_id=resolve_cli_workspace(args),
         )
     except FileNotFoundError as exc:
         print(f"Fehler: {exc}")
@@ -86,7 +87,7 @@ def _cmd_cleanup(args: argparse.Namespace, repo_url: str) -> None:
 
 
 def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str, model: str) -> None:
-    wid = args.workspace_id or "default"
+    wid = resolve_cli_workspace(args)
     from src.api.dependencies import get_conn
     try:
         from src.analysis.context import load_overview_cache_raw
@@ -146,29 +147,18 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
 
     limit = max(1, int(getattr(args, "igio_limit", 200)))
     threshold = float(getattr(args, "igio_min_confidence", 0.5))
-    workspace = getattr(args, "workspace_id", None)
-
     conn = init_memory_db(CACHE_DIR / "memory.db")
-    # Two static SQL paths — workspace_id is the only optional filter, toggled
-    # on the SQL itself rather than concatenating WHERE fragments. Avoids the
-    # opengrep "execute-raw-query" lint without changing behaviour.
-    if workspace:
-        rows = conn.execute(
-            "SELECT chunk_id, text, category_labels FROM chunks "
-            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-            "AND workspace_id = ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (workspace, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT chunk_id, text, category_labels FROM chunks "
-            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-            "ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+    workspace = resolve_cli_workspace(args, conn=conn, auto_create=False)
+
+    rows = conn.execute(
+        "SELECT chunk_id, text, category_labels FROM chunks "
+        "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
+        "AND workspace_id = ? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (workspace, limit),
+    ).fetchall()
     if not rows:
-        print(f"[igio] Nichts zu klassifizieren (workspace={workspace or 'all'}).")
+        print(f"[igio] Nichts zu klassifizieren (workspace={workspace}).")
         conn.close()
         return
 
@@ -210,7 +200,7 @@ def _cmd_generate_recap(args: argparse.Namespace) -> None:
     if not issue_id:
         print("Fehler: --generate-recap erwartet eine Issue-ID.")
         return
-    workspace = getattr(args, "workspace_id", None) or "default"
+    workspace = resolve_cli_workspace(args)
 
     conn = init_memory_db(CACHE_DIR / "memory.db")
     recap = build_recap(issue_id, conn=conn, workspace_id=workspace)
@@ -232,7 +222,7 @@ def _cmd_generate_recap(args: argparse.Namespace) -> None:
 def _cmd_wiki_history(args: argparse.Namespace) -> None:
     import sqlite3 as _sq
     from src.wiki_v2.history import WikiHistory
-    wid = args.workspace_id or "default"
+    wid = resolve_cli_workspace(args)
     conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
     conn.row_factory = _sq.Row
     snaps = WikiHistory().timeline(conn, wid)
@@ -249,7 +239,7 @@ def _cmd_wiki_history(args: argparse.Namespace) -> None:
 def _cmd_wiki_team_activity(args: argparse.Namespace) -> None:
     import sqlite3 as _sq
     from src.wiki_v2.history import team_activity
-    wid = args.workspace_id or "default"
+    wid = resolve_cli_workspace(args)
     conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
     conn.row_factory = _sq.Row
     activity = team_activity(conn, wid)
@@ -265,7 +255,7 @@ def _cmd_wiki_team_activity(args: argparse.Namespace) -> None:
 def _cmd_wiki_history_cleanup(args: argparse.Namespace) -> None:
     import sqlite3 as _sq
     from src.wiki_v2.history import WikiHistory
-    wid = args.workspace_id or "default"
+    wid = resolve_cli_workspace(args)
     keep = args.wiki_history_cleanup
     conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
     conn.row_factory = _sq.Row
@@ -286,7 +276,7 @@ def _cmd_rebuild_transitions(args: argparse.Namespace, repo_url: str) -> None:
 def _cmd_generate_ambient(args: argparse.Namespace, repo_url: str, ollama_url: str, model: str) -> None:
     from src.api.dependencies import get_conn
     from src.memory.ambient import generate_ambient_snapshot
-    result = generate_ambient_snapshot(get_conn(), ollama_url, model, _repo_slug(repo_url), args.workspace_id)
+    result = generate_ambient_snapshot(get_conn(), ollama_url, model, _repo_slug(repo_url), resolve_cli_workspace(args))
     if result:
         print(f"[ambient] Snapshot generiert ({len(result)} Zeichen)")
     else:
@@ -307,7 +297,7 @@ def _cmd_turbulence(args: argparse.Namespace, repo_url: str, ollama_url: str) ->
 
 
 def _cmd_generate_training_data(args: argparse.Namespace) -> None:
-    wid = getattr(args, "workspace_id", "default") or "default"
+    wid = resolve_cli_workspace(args)
     pipeline = args.generate_training_data
 
     if pipeline == "kategorie":
@@ -429,7 +419,7 @@ def main() -> None:
     if args.full:
         print(f"\n{'='*60}\n  FULL SCAN — Cache wird ignoriert, kein Datei-Limit\n{'='*60}\n")
 
-    _wid_for_ops = getattr(args, "workspace_id", "default") or "default"
+    _wid_for_ops = resolve_cli_workspace(args)
     if _wid_for_ops == "default":
         print(
             "Warnung: --workspace-id nicht gesetzt, Daten landen im 'default'-Workspace. "

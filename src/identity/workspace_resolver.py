@@ -60,6 +60,11 @@ def resolve_workspace(
         IdentityRequiredError: input is None and no default_user_id
         UnknownWorkspaceError: input is a string we can't map
     """
+    # Tolerant gegen non-string Inputs (z.B. MagicMock in Tests). Production-
+    # CLI/JWT-Pfade liefern immer str | None. Alles andere wird wie missing
+    # behandelt — der hard-error kommt dann sauber über default_user_id.
+    if not isinstance(workspace_input, str):
+        workspace_input = None
     if workspace_input is None or workspace_input.strip() == "":
         if default_user_id is None:
             raise IdentityRequiredError(

@@ -14,6 +14,7 @@ from src.analysis.categorizer import (
     load_exclude_patterns,
     load_mayringignore,
 )
+from src.identity.cli import resolve_cli_workspace
 from src.analysis.fetcher import fetch_repo
 from src.analysis.splitter import split_into_files
 from src.config import CACHE_DIR, CODEBOOK_PATH, repo_slug as _repo_slug
@@ -138,7 +139,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
 
     _workers = max(1, int(getattr(args, "workers", 1) or 1))
     _delay = float(getattr(args, "batch_delay", None) or 0)
-    _workspace = getattr(args, "workspace_id", "default")
+    _workspace = resolve_cli_workspace(args)
     _do_categorize = getattr(args, "memory_categorize", True) is not False
     _codebook_profile = getattr(args, "codebook_profile", None)
 
@@ -230,7 +231,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
 
     try:
         from src.wiki_v2.watcher import on_post_ingest
-        wid = getattr(args, "workspace_id", "default")
+        wid = resolve_cli_workspace(args)
         slug = _repo_slug(repo_url)
         for f in files:
             on_post_ingest(wid, slug, Source.make_id(repo_url, f['filename']), chroma=chroma)

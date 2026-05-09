@@ -82,6 +82,7 @@ def test_run_ingest_paper_scans_directory():
                 papers_dir=tmpdir,
                 ollama_url="http://localhost:11434",
                 model="test-model",
+                workspace_id="user-1",
             )
 
         assert result["total"] == 2
@@ -95,6 +96,7 @@ def test_run_ingest_paper_missing_dir():
         papers_dir="/tmp/does_not_exist_mayring_xyz",
         ollama_url="",
         model="",
+        workspace_id="user-1",
     )
     assert result == {"ingested": 0, "skipped": 0, "failed": 0, "total": 0}
 
@@ -113,7 +115,7 @@ def test_run_ingest_paper_skips_unchanged(tmp_path):
         patch("src.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
         patch("src.memory.ingest.ingest", return_value={"chunks": 0, "state": "unchanged"}),
     ):
-        result = run_ingest_paper(papers_dir=str(tmp_path), ollama_url="", model="")
+        result = run_ingest_paper(papers_dir=str(tmp_path), ollama_url="", model="", workspace_id="user-1")
 
     assert result["skipped"] == 1
     assert result["ingested"] == 0

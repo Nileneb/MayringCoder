@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from src.model_router import ModelRouter
+from src.identity.cli import resolve_cli_workspace
 
 
 def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
@@ -27,7 +28,7 @@ def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | N
         embed_model=model,
         max_images=max_images,
         force_reingest=do_force,
-        workspace_id=getattr(args, "workspace_id", "default"),
+        workspace_id=resolve_cli_workspace(args),
     )
 
     print(

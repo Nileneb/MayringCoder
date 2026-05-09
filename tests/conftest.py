@@ -4,6 +4,19 @@ import pytest
 from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _default_test_identity(monkeypatch):
+    """Stelle eine Default-User-ID bereit, damit Mock-Tests
+    (args=MagicMock) keinen IdentityRequiredError werfen.
+
+    Test-spezifische Fixtures, die ihre eigene Identity setzen wollen,
+    können `monkeypatch.delenv("MAYRING_USER_ID")` aufrufen.
+    """
+    monkeypatch.setenv("MAYRING_USER_ID", "1")
+    # Tests sollen NICHT in das echte ~/.config/mayring schreiben.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(Path("/tmp/.mayring-test-config")))
+
+
 @pytest.fixture
 def sample_codebook(tmp_path: Path) -> Path:
     """A minimal codebook YAML file for testing."""

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from src.analysis.aggregator import aggregate_findings
+from src.identity.cli import resolve_cli_workspace
 from src.analysis.analyzer import analyze_files
 from src.analysis.cache import find_changed_files, init_db, mark_files_analyzed
 from src.analysis.categorizer import (
@@ -182,7 +183,7 @@ def run_analysis(
         conn = None
         print(f"--full (analyze): {len(filenames_to_check)} Dateien werden analysiert")
     else:
-        conn = init_db(repo_url, workspace_id=getattr(args, "workspace_id", "default"))
+        conn = init_db(repo_url, workspace_id=resolve_cli_workspace(args))
         diff = find_changed_files(conn, repo_url, files, categories, max_files, run_key=cache_run_key)
 
         n_c, n_a, n_r, n_u = (
@@ -291,7 +292,7 @@ def run_analysis(
             from src.config import CACHE_DIR
             from src.wiki_v2.graph import WikiGraph
             from src.wiki_v2.injection import WikiContextInjector
-            _wid = getattr(args, "workspace_id", "default")
+            _wid = resolve_cli_workspace(args)
             _wg = WikiGraph(_wid, _pi_repo_slug, CACHE_DIR / "wiki_v2.db")
             if _wg.node_count() > 0:
                 _inj = WikiContextInjector()
@@ -440,7 +441,7 @@ def run_analysis(
         embedding_prefilter_meta=embedding_prefilter_meta,
         full_scan=args.full,
         time_budget_hit=_time_budget_hit,
-        workspace_id=getattr(args, "workspace_id", "default"),
+        workspace_id=resolve_cli_workspace(args),
     )
     n_filtered = aggregation.get("_below_confidence_filtered", 0)
     print(f"\nReport: {report_path}")
@@ -469,14 +470,14 @@ def run_analysis(
     run_path = save_run(
         rid, repo_url, model, "analyze", results, diff, elapsed, aggregation,
         extra={"time_budget_hit": _time_budget_hit},
-        workspace_id=getattr(args, "workspace_id", "default"),
+        workspace_id=resolve_cli_workspace(args),
     )
     print(f"Run-History: {run_path.name}")
     print(f"Fertig in {elapsed:.0f}s")
 
     try:
         from src.wiki_v2.watcher import on_post_analyze, on_post_finding
-        wid = getattr(args, "workspace_id", "default")
+        wid = resolve_cli_workspace(args)
         slug = _repo_slug(repo_url)
         for r in results:
             if "error" in r or not r.get("filename"):

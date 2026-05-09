@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from src.analysis.analyzer import overview_files
+from src.identity.cli import resolve_cli_workspace
 from src.analysis.context import index_overview_to_vectordb, save_overview_context
 from src.analysis.context import load_overview_cache_raw
 from src.analysis.exporter import export_results
@@ -111,7 +112,7 @@ def _run_overview(
     rid = args.run_id or generate_run_id()
     run_path = save_run(
         rid, repo_url, model, "overview", results, diff, elapsed,
-        workspace_id=getattr(args, "workspace_id", "default"),
+        workspace_id=resolve_cli_workspace(args),
     )
     print(f"Run-History: {run_path.name}")
     print(f"Fertig in {elapsed:.0f}s")

@@ -15,8 +15,14 @@ def run_ingest_paper(
     model: str,
     repo_slug: str = "",
     force_reingest: bool = False,
-    workspace_id: str = "default",
+    workspace_id: str | None = None,
 ) -> dict:
+    if not workspace_id:
+        raise ValueError(
+            "workspace_id is required. CLI callers should use "
+            "resolve_cli_workspace(args); programmatic callers must pass "
+            "an explicit canonical id."
+        )
     """Scan papers_dir for PDF/TXT files and ingest into memory.
 
     papers_dir is mounted from linn-papers-data volume at /data/papers.

@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.config import CACHE_DIR, repo_slug as _repo_slug
+from src.identity.cli import resolve_cli_workspace
 from src.model_router import ModelRouter
 
 
@@ -72,7 +73,7 @@ def run_ingest_issues(args, ollama_url: str, model: str, router: ModelRouter | N
                     ollama_url,
                     model,
                     opts={"multiview": do_multiview} if not do_multiview else None,
-                    workspace_id=getattr(args, "workspace_id", "default"),
+                    workspace_id=resolve_cli_workspace(args),
                 )
                 dedup_count += result.get("deduped", 0)
                 ok_count += 1
