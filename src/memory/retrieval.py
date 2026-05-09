@@ -27,7 +27,7 @@ from src.memory.store import get_chunk, kv_get, get_feedback_score
 # Query-Cache (in-process, invalidated on any memory mutation)
 # ---------------------------------------------------------------------------
 
-_QUERY_CACHE: dict[str, list[tuple[str, float]]] = {}  # cache_key → [(chunk_id, score)]
+_QUERY_CACHE: dict[str, list["RetrievalRecord"]] = {}  # cache_key → ranked records (text stripped)
 
 
 def _cache_key(query: str, opts: dict, session_compacted: bool) -> str:
@@ -417,22 +417,26 @@ def search(
     org_id: str | None = opts.get("org_id")
     user_id: str | None = opts.get("user_id")
 
-    # Query-Cache check — hit: re-hydrate from SQLite and return early
+    # Query-Cache check — hit: clone records, repopulate text on demand.
+    # Bug history: cache used to store only (chunk_id, score_final), so
+    # cache-hits returned chunks with score_vector=0 and reasons=[]. The
+    # smoke check_rag_function_search_finds_source then saw v=0 and the
+    # check_retrieval_reasons_field saw no reasons. Fix: cache the whole
+    # ranked record (text stripped to keep memory bounded), and on hit
+    # re-hydrate text from SQLite only when the caller asked for it.
     _ck = _cache_key(query, opts, session_compacted)
     if _ck in _QUERY_CACHE:
+        import dataclasses as _dc
         opts["_vector_diag"] = "query_cache_hit"
         hydrated: list[RetrievalRecord] = []
-        for cid, score_final in _QUERY_CACHE[_ck]:
-            chunk = get_chunk(conn, cid)
-            if chunk:
-                hydrated.append(RetrievalRecord(
-                    chunk_id=chunk.chunk_id,
-                    score_final=score_final,
-                    source_id=chunk.source_id,
-                    text=chunk.text if include_text else "",
-                    summary=chunk.summary,
-                    category_labels=chunk.category_labels,
-                ))
+        for cached in _QUERY_CACHE[_ck]:
+            if include_text:
+                chunk = get_chunk(conn, cached.chunk_id)
+                if not chunk:
+                    continue
+                hydrated.append(_dc.replace(cached, text=chunk.text))
+            else:
+                hydrated.append(_dc.replace(cached))
         return hydrated
 
     # Stage 1: scope filter
@@ -635,8 +639,12 @@ def search(
     except Exception:
         pass
 
-    # Store in query cache (IDs + score_final only, no full text)
-    _QUERY_CACHE[_ck] = [(r.chunk_id, r.score_final) for r in ranked]
+    # Store full records in query cache (text stripped — re-fetched on
+    # hit). Caching only (chunk_id, score_final) used to drop all stage
+    # scores + reasons on hit, which is why the smoke RAG check kept
+    # seeing score_vector=0 for cache-hot queries.
+    import dataclasses as _dc
+    _QUERY_CACHE[_ck] = [_dc.replace(r, text="") for r in ranked]
     return ranked
 
 

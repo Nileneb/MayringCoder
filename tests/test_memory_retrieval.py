@@ -365,6 +365,53 @@ class TestQueryCache:
         assert k1 != k3
         assert k2 != k3
 
+    def test_cache_hit_preserves_stage_scores_and_reasons(self, tmp_path) -> None:
+        """Regression: pre-fix the cache stored only (chunk_id, score_final),
+        so cache-hits returned records with score_vector=0, reasons=[].
+        That's why the production smoke kept seeing v=0 for cache-hot RAG
+        queries even after the workspace fix landed.
+        """
+        from src.memory.retrieval import search, invalidate_query_cache
+
+        invalidate_query_cache()
+        conn, chunk = self._make_source_and_chunk(tmp_path)
+
+        r1 = search("hello world", conn, None, "http://localhost:11434",
+                    opts={"top_k": 5})
+        r2 = search("hello world", conn, None, "http://localhost:11434",
+                    opts={"top_k": 5})
+        assert len(r1) == 1 and len(r2) == 1
+
+        # Stage scores + reasons survive the cache round-trip
+        assert r2[0].score_vector == r1[0].score_vector
+        assert r2[0].score_symbolic == r1[0].score_symbolic
+        assert r2[0].score_final == r1[0].score_final
+        assert r2[0].reasons == r1[0].reasons
+
+    def test_cache_hit_repopulates_text_when_requested(self, tmp_path) -> None:
+        """Cache strips .text to keep memory bounded — but a cache-hit with
+        include_text=True must re-fetch the text from the chunk store so
+        callers that need full bodies (e.g. compress_for_prompt) work."""
+        from src.memory.retrieval import search, invalidate_query_cache
+
+        invalidate_query_cache()
+        conn, chunk = self._make_source_and_chunk(tmp_path)
+
+        # First call: cold (populates cache, stripped of text)
+        r1 = search("hello world", conn, None, "http://localhost:11434",
+                    opts={"top_k": 5, "include_text": True})
+        # Second call: hot (must still produce text via re-hydration)
+        r2 = search("hello world", conn, None, "http://localhost:11434",
+                    opts={"top_k": 5, "include_text": True})
+
+        assert r1[0].text == chunk.text
+        assert r2[0].text == chunk.text
+
+        # And include_text=False on a hot cache returns empty text
+        r3 = search("hello world", conn, None, "http://localhost:11434",
+                    opts={"top_k": 5, "include_text": False})
+        assert r3[0].text == ""
+
 
 class TestVectorStretch:
     """Vector scores get stretched per-query so the best Chroma hit wins.
