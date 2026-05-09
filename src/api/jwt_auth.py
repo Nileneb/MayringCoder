@@ -105,11 +105,14 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
         return None
     sub_str = str(sub_raw).strip()
 
+    # email-Claim ist PFLICHT — kein user-N-Fallback. JwtIssuer in
+    # app.linn.games schickt 'email' seit 2026-04-18. Token ohne email
+    # = invalid (z.B. battlefield-JWT mit anderer audience landet hier
+    # eh nicht, weil aud-check vorher).
     from src.identity.workspace_resolver import email_to_slug
-    email = payload.get("email")
-    workspace_id = (
-        email_to_slug(email) if email else None
-    ) or f"user-{sub_str}"
+    workspace_id = email_to_slug(payload.get("email") or "")
+    if not workspace_id:
+        return None
 
     raw_scopes = payload.get("scope", [])
     if isinstance(raw_scopes, str):

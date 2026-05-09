@@ -103,10 +103,17 @@ def resolve_workspace(
                 "Set MAYRING_USER_ID env or run `mayring login`, or pass "
                 "--workspace explicitly."
             )
-        # Email → Slug. Wenn keine email da ist, fallback auf user-N
-        # (legacy, sollte nur für mock-tests oder alte JWT-Tokens
-        # passieren).
-        canonical = email_to_slug(default_email or "") or f"user-{default_user_id}"
+        # Email → Slug. KEIN user-N-Fallback: pre-launch heißt
+        # alle echten User haben Email. Fehlt sie → echter Bug, hart
+        # failen statt Datenmüll-Bucket schreiben.
+        canonical = email_to_slug(default_email or "")
+        if not canonical:
+            raise IdentityRequiredError(
+                f"Workspace-Auflösung für user_id={default_user_id} braucht "
+                f"eine Email — sub-only-Tokens werden nicht mehr akzeptiert. "
+                f"JwtIssuer (app.linn.games) schickt 'email'-Claim seit 2026-04-18, "
+                f"CLI: mayring login schreibt sie in identity.json."
+            )
         if auto_create_user_workspace:
             ensure_user_workspace(
                 conn, default_user_id,
@@ -126,27 +133,10 @@ def resolve_workspace(
             ensure_system_workspace(conn)
         return candidate
 
-    # 'user-N' Pattern → kanonisch, ensure existence.
-    m = USER_WORKSPACE_RE.match(candidate)
-    if m:
-        user_id = int(m.group(1))
-        sub_slug = m.group(2)
-        if auto_create_user_workspace:
-            ensure_user_workspace(conn, user_id)
-            if sub_slug:
-                ensure_project_workspace(conn, user_id, sub_slug)
-            return candidate
-        # Read-only-Modus: pattern matcht zwar, aber Workspace muss
-        # bereits existieren, sonst hat der Caller eine ungültige ID.
-        existing = conn.execute(
-            "SELECT id FROM workspaces WHERE id = ?", (candidate,)
-        ).fetchone()
-        if existing:
-            return candidate
-        raise UnknownWorkspaceError(
-            f"workspace_id={candidate!r} matches user-N pattern but does "
-            f"not exist (auto_create disabled)."
-        )
+    # USER_WORKSPACE_RE-Shortcut wurde 2026-05-09 entfernt: pre-launch,
+    # daher kein impliziter user-N-Bucket mehr. Workspaces müssen
+    # explizit via ensure_user_workspace(slug, email, ...) angelegt
+    # werden, NICHT durch resolve('user-2').
 
     # Lookup direct workspace
     row = conn.execute(
@@ -192,14 +182,15 @@ def ensure_user_workspace(
     email: str | None = None,
     display_name: str | None = None,
 ) -> str:
-    """Upsert kind=user workspace.
-
-    Bevorzugt slug aus email — fallback user-N nur wenn weder slug
-    noch email mitgegeben werden (legacy / mock-tests).
-    """
-    workspace_id = slug or email_to_slug(email or "") or f"user-{user_id}"
+    """Upsert kind=user workspace. Email PFLICHT — kein user-N-Fallback."""
+    workspace_id = slug or email_to_slug(email or "")
+    if not workspace_id:
+        raise IdentityRequiredError(
+            f"ensure_user_workspace(user_id={user_id}) braucht email oder slug. "
+            f"User-N-Buckets sind seit 2026-05-09 verboten."
+        )
     now = datetime.now(timezone.utc).isoformat()
-    pretty_name = display_name or email or f"User {user_id}"
+    pretty_name = display_name or email or workspace_id
     conn.execute(
         """INSERT INTO workspaces (id, kind, owner_user_id, email,
                                    display_name, created_at, updated_at)
@@ -215,13 +206,29 @@ def ensure_user_workspace(
 
 
 def ensure_project_workspace(
-    conn: DBAdapter, user_id: int, slug: str
+    conn: DBAdapter,
+    user_id: int,
+    slug: str,
+    *,
+    email: str,
+    parent_slug: str | None = None,
+    display_name: str | None = None,
 ) -> str:
-    """Upsert kind=project sub-workspace under user-{id}."""
-    parent = f"user-{user_id}"
+    """Upsert kind=project sub-workspace unter dem User-Workspace.
+
+    parent_slug optional — wenn nicht gegeben, wird er aus email
+    abgeleitet. Email ist PFLICHT (kein user-N-Fallback).
+    """
+    parent = parent_slug or email_to_slug(email)
+    if not parent:
+        raise IdentityRequiredError(
+            "ensure_project_workspace braucht email oder parent_slug."
+        )
     workspace_id = f"{parent}:{slug}"
     now = datetime.now(timezone.utc).isoformat()
-    ensure_user_workspace(conn, user_id)
+    ensure_user_workspace(
+        conn, user_id, slug=parent, email=email, display_name=display_name,
+    )
     conn.execute(
         """INSERT INTO workspaces (id, kind, parent_id, owner_user_id,
                                    display_name, created_at, updated_at)

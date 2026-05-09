@@ -247,17 +247,24 @@ def test_unknown_workspace_id_raises(monkeypatch, tmp_path):
         resolve_cli_workspace(args, conn=conn)
 
 
-def test_missing_workspace_with_local_user_id_resolves(monkeypatch, tmp_path):
-    """Wenn kein --workspace-id, aber MAYRING_USER_ID gesetzt ist:
-    fall through zur kanonischen user-{id}-Form, kein Fehler."""
+def test_missing_workspace_with_local_email_resolves(monkeypatch, tmp_path):
+    """Wenn kein --workspace-id, aber identity.json mit email vorhanden ist:
+    Slug aus email-localpart, kein user-N-Fallback."""
+    import json
     from types import SimpleNamespace
     from src.identity.cli import resolve_cli_workspace
     from src.memory.db_adapter import DBAdapter
     from src.memory.store import _init_schema
 
+    cfg_dir = tmp_path / ".config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg_dir))
     monkeypatch.setenv("MAYRING_USER_ID", "7")
+    (cfg_dir / "mayring").mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "mayring" / "identity.json").write_text(json.dumps({
+        "user_id": 7, "email": "alice@x.de", "token": None,
+    }))
     conn = DBAdapter.create(tmp_path / "test.db", check_same_thread=False)
     _init_schema(conn)
 
     args = SimpleNamespace(workspace_id=None)
-    assert resolve_cli_workspace(args, conn=conn) == "user-7"
+    assert resolve_cli_workspace(args, conn=conn) == "alice"

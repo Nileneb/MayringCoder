@@ -47,12 +47,11 @@ _MCP_SCOPE = ["mcp:memory"]
 
 def _sign(private_pem: str, **claims) -> str:
     claims.setdefault("scope", _MCP_SCOPE)
-    # workspace_id is now derived from sub server-side; tests that previously
-    # passed workspace_id="bene-workspace" need a sub instead. We default sub
-    # so callers that only care about other claims don't need to set it.
     claims.setdefault("sub", "2")
-    # Strip workspace_id from claims — it's ignored by the validator now and
-    # would only confuse readers comparing test fixture vs. result.
+    # workspace_id wird seit 2026-05-09 aus dem email-claim als slug
+    # abgeleitet (statt aus sub als 'user-N' gebaut). Tests, die nur
+    # andere claims interessieren, bekommen eine Default-Email.
+    claims.setdefault("email", "test@example.com")
     claims.pop("workspace_id", None)
     return pyjwt.encode(claims, private_pem, algorithm="RS256")
 
@@ -68,24 +67,26 @@ def test_valid_tenant_token(configured_env):
         aud="mayringcoder",
         exp=int(time.time()) + 300,
         sub="2",
+        email="bene@linn.games",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    # workspace_id is deterministically derived from sub — no per-token
-    # variation, no drift across claude.ai web vs. CLI for the same user.
-    assert info.workspace_id == "user-2"
+    # workspace_id ist email-slug deterministisch — keine Drift zwischen
+    # claude.ai web vs. CLI für denselben User (gleiche email = gleicher slug).
+    assert info.workspace_id == "bene"
     assert info.sub == "2"
     assert info.is_admin is False
 
 
 def test_workspace_id_claim_is_ignored(configured_env):
-    """A `workspace_id` claim in the JWT is no longer authoritative — sub wins."""
+    """Ein `workspace_id`-Claim im JWT wird ignoriert — email-slug wins."""
     token = pyjwt.encode(
         {
             "iss": "https://app.linn.games",
             "aud": "mayringcoder",
             "exp": int(time.time()) + 300,
             "sub": "7",
+            "email": "alice@x.de",
             "workspace_id": "totally-different-workspace",  # ignored
             "scope": ["mcp:memory"],
         },
@@ -94,7 +95,23 @@ def test_workspace_id_claim_is_ignored(configured_env):
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    assert info.workspace_id == "user-7"
+    assert info.workspace_id == "alice"
+
+
+def test_token_without_email_is_rejected(configured_env):
+    """Pre-launch: kein email-claim → 401, kein silent user-N-Fallback."""
+    token = pyjwt.encode(
+        {
+            "iss": "https://app.linn.games",
+            "aud": "mayringcoder",
+            "exp": int(time.time()) + 300,
+            "sub": "9",
+            "scope": ["mcp:memory"],
+        },
+        configured_env,
+        algorithm="RS256",
+    )
+    assert jwt_auth.validate_jwt_token(token) is None
 
 
 def test_admin_scope_list(configured_env):
@@ -321,17 +338,18 @@ def test_protected_path_still_requires_token(configured_env):
 
 
 def test_sub_trimmed(configured_env):
-    """Whitespace around sub is stripped before workspace_id derivation."""
+    """Whitespace around sub is stripped — email-slug bleibt deterministisch."""
     token = _sign(
         configured_env,
         iss="https://app.linn.games",
         aud="mayringcoder",
         exp=int(time.time()) + 300,
         sub="  42  ",
+        email="dora@x.de",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    assert info.workspace_id == "user-42"
+    assert info.workspace_id == "dora"
     assert info.sub == "42"
 
 
@@ -376,13 +394,14 @@ class TestMiddlewareEnabled:
             aud="mayringcoder",
             exp=int(time.time()) + 300,
             sub="11",
+            email="erika@x.de",
         )
 
         async def _run():
             sent, downstream, scope = await _drive(mw, token=token)
             assert sent == []
             downstream.assert_awaited_once()
-            assert scope["workspace_id"] == "user-11"
+            assert scope["workspace_id"] == "erika"
 
         anyio.run(_run)
 
@@ -394,12 +413,14 @@ class TestMiddlewareEnabled:
             aud="mayringcoder",
             exp=int(time.time()) + 300,
             sub="22",
+            email="charlie@x.de",
         )
 
         async def _run():
             sent, downstream, scope = await _drive(mw, token=token, bearer=True)
             assert sent == []
-            assert scope["workspace_id"] == "user-22"
+            # Workspace = email-slug, NICHT 'user-22' (Refactor 2026-05-09).
+            assert scope["workspace_id"] == "charlie"
 
         anyio.run(_run)
 

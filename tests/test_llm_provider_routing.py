@@ -74,6 +74,8 @@ def _sign(priv: str, **claims) -> str:
     claims.setdefault("iat", int(time.time()))
     claims.setdefault("workspace_id", "ws_test")
     claims.setdefault("sub", "42")
+    # Email-Claim ist seit 2026-05-09 PFLICHT (Workspace-Slug-Quelle).
+    claims.setdefault("email", "test@example.com")
     return pyjwt.encode(claims, priv, algorithm="RS256")
 
 

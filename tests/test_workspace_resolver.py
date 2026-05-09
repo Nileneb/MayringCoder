@@ -54,10 +54,10 @@ def test_resolve_with_email_creates_slug_workspace(conn):
     assert tuple(row) == ("user", 2, "bene@linn.games", "Benedikt Linn")
 
 
-def test_resolve_without_email_falls_back_to_user_n(conn):
-    """Legacy/mock-tests ohne email → 'user-N' bleibt funktional."""
-    result = resolve_workspace(conn, None, default_user_id=2)
-    assert result == "user-2"
+def test_resolve_without_email_raises(conn):
+    """Pre-launch: kein user-N-Fallback. Email PFLICHT für Workspace-Resolution."""
+    with pytest.raises(IdentityRequiredError):
+        resolve_workspace(conn, None, default_user_id=2)
 
 
 def test_system_workspace_resolves_without_seed(conn):
@@ -69,41 +69,39 @@ def test_system_workspace_resolves_without_seed(conn):
     assert tuple(row) == ("system",)
 
 
-def test_user_n_pattern_resolves_to_canonical(conn):
-    """JWT-Pfad: 'user-2' ist immer kanonisch und wird auto-created."""
-    result = resolve_workspace(conn, "user-2")
-    assert result == "user-2"
-    row = conn.execute(
-        "SELECT kind, owner_user_id FROM workspaces WHERE id='user-2'"
-    ).fetchone()
-    assert tuple(row) == ("user", 2)
+def test_user_n_input_no_longer_auto_created(conn):
+    """Pre-launch: 'user-N' als input-string wird NICHT mehr auto-created."""
+    with pytest.raises(UnknownWorkspaceError):
+        resolve_workspace(conn, "user-2")
 
 
-def test_user_pattern_with_subslug_creates_project_workspace(conn):
-    """user-2:mayringcoder → kind=project mit parent=user-2."""
-    result = resolve_workspace(conn, "user-2:mayringcoder")
-    assert result == "user-2:mayringcoder"
-    parent = conn.execute(
-        "SELECT id, kind FROM workspaces WHERE id='user-2'"
-    ).fetchone()
-    sub = conn.execute(
+def test_project_workspace_under_email_slug(conn):
+    """Project-Sub-Workspaces hängen unter dem email-slug."""
+    sub = ensure_project_workspace(
+        conn, 2, "mayringcoder", email="bene@linn.games",
+    )
+    assert sub == "bene:mayringcoder"
+    assert tuple(conn.execute(
+        "SELECT id, kind FROM workspaces WHERE id='bene'"
+    ).fetchone()) == ("bene", "user")
+    assert tuple(conn.execute(
         "SELECT id, kind, parent_id, owner_user_id FROM workspaces "
-        "WHERE id='user-2:mayringcoder'"
-    ).fetchone()
-    assert tuple(parent) == ("user-2", "user")
-    assert tuple(sub) == ("user-2:mayringcoder", "project", "user-2", 2)
+        "WHERE id='bene:mayringcoder'"
+    ).fetchone()) == ("bene:mayringcoder", "project", "bene", 2)
 
 
 # ─── None + default_user_id ─────────────────────────────────────────
 
 
-def test_none_with_default_user_id_resolves_and_creates(conn):
-    result = resolve_workspace(conn, None, default_user_id=5)
-    assert result == "user-5"
+def test_none_with_email_resolves_to_slug(conn):
+    result = resolve_workspace(
+        conn, None, default_user_id=5, default_email="alice@x.de",
+    )
+    assert result == "alice"
     row = conn.execute(
-        "SELECT kind FROM workspaces WHERE id='user-5'"
+        "SELECT kind, email FROM workspaces WHERE id='alice'"
     ).fetchone()
-    assert tuple(row) == ("user",)
+    assert tuple(row) == ("user", "alice@x.de")
 
 
 def test_none_without_default_raises(conn):
@@ -124,73 +122,53 @@ def test_empty_string_treated_as_none(conn):
 
 
 def test_alias_resolves_to_canonical(conn):
-    ensure_user_workspace(conn, 2)
-    add_alias(conn, "default", "user-2")
-    add_alias(conn, "nileneb-mayringcoder", "user-2")
-
-    assert resolve_workspace(conn, "default") == "user-2"
-    assert resolve_workspace(conn, "nileneb-mayringcoder") == "user-2"
+    ensure_user_workspace(conn, 2, email="bene@linn.games")
+    add_alias(conn, "nileneb-mayringcoder", "bene")
+    assert resolve_workspace(conn, "nileneb-mayringcoder") == "bene"
 
 
 def test_alias_to_unknown_workspace_rejects(conn):
-    """Foreign-key-style validation: alias darf nur auf existierende
-    canonical workspaces zeigen."""
     with pytest.raises(UnknownWorkspaceError):
-        add_alias(conn, "anything", "user-99")
+        add_alias(conn, "anything", "ghost-workspace")
 
 
 # ─── Unknown workspace ──────────────────────────────────────────────
 
 
 def test_unknown_string_raises(conn):
-    """Kein Auto-Create für free-form Strings — sonst wäre die Mapping-
-    Tabelle nutzlos."""
     with pytest.raises(UnknownWorkspaceError):
         resolve_workspace(conn, "some-random-name")
-
-
-# ─── ensure_project_workspace ───────────────────────────────────────
-
-
-def test_ensure_project_creates_parent_implicitly(conn):
-    """Aufruf nur mit project-slug → parent user-N wird mitangelegt."""
-    sub = ensure_project_workspace(conn, 7, "myproject")
-    assert sub == "user-7:myproject"
-    assert tuple(conn.execute(
-        "SELECT kind FROM workspaces WHERE id='user-7'"
-    ).fetchone()) == ("user",)
 
 
 # ─── list_workspaces_for_user ───────────────────────────────────────
 
 
 def test_list_for_user_includes_user_and_projects(conn):
-    ensure_user_workspace(conn, 3)
-    ensure_project_workspace(conn, 3, "alpha")
-    ensure_project_workspace(conn, 3, "beta")
-    ensure_user_workspace(conn, 4)  # different user, must not appear
+    ensure_user_workspace(conn, 3, email="alice@x.de")
+    ensure_project_workspace(conn, 3, "alpha", email="alice@x.de")
+    ensure_project_workspace(conn, 3, "beta", email="alice@x.de")
+    ensure_user_workspace(conn, 4, email="bob@x.de")
 
     items = list_workspaces_for_user(conn, 3)
     ids = sorted(i["id"] for i in items)
-    assert ids == ["user-3", "user-3:alpha", "user-3:beta"]
+    assert ids == ["alice", "alice:alpha", "alice:beta"]
 
 
 # ─── Idempotency ─────────────────────────────────────────────────────
 
 
 def test_resolve_is_idempotent(conn):
-    """Wiederholte Aufrufe ändern nichts und behalten dieselbe ID."""
-    a = resolve_workspace(conn, "user-2")
-    b = resolve_workspace(conn, "user-2")
-    c = resolve_workspace(conn, "user-2")
-    assert a == b == c == "user-2"
+    ensure_user_workspace(conn, 2, email="bene@linn.games")
+    a = resolve_workspace(conn, "bene")
+    b = resolve_workspace(conn, "bene")
+    assert a == b == "bene"
     cnt = conn.execute(
-        "SELECT COUNT(*) FROM workspaces WHERE id='user-2'"
+        "SELECT COUNT(*) FROM workspaces WHERE id='bene'"
     ).fetchone()[0]
     assert cnt == 1
 
 
-def test_auto_create_can_be_disabled(conn):
-    """Für Read-only-Pfade: auto_create=False prüft nur Existenz."""
-    with pytest.raises(UnknownWorkspaceError):
-        resolve_workspace(conn, "user-99", auto_create_user_workspace=False)
+def test_ensure_user_workspace_without_email_or_slug_raises(conn):
+    """Pre-launch: keine user-N-Buckets mehr generierbar."""
+    with pytest.raises(IdentityRequiredError):
+        ensure_user_workspace(conn, 2)

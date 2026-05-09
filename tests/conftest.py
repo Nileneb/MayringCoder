@@ -5,16 +5,25 @@ from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
-def _default_test_identity(monkeypatch):
-    """Stelle eine Default-User-ID bereit, damit Mock-Tests
-    (args=MagicMock) keinen IdentityRequiredError werfen.
+def _default_test_identity(monkeypatch, tmp_path_factory):
+    """Stelle eine Default-Test-Identity (User+Email) bereit, damit
+    Mock-Tests (args=MagicMock) keinen IdentityRequiredError werfen.
 
     Test-spezifische Fixtures, die ihre eigene Identity setzen wollen,
-    können `monkeypatch.delenv("MAYRING_USER_ID")` aufrufen.
+    können MAYRING_USER_ID/Email override oder die identity.json löschen.
     """
+    # Pre-launch: Email ist PFLICHT — Test-Default 'test@example.com'.
+    cfg_dir = tmp_path_factory.mktemp("mayring-test-config")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg_dir))
     monkeypatch.setenv("MAYRING_USER_ID", "1")
-    # Tests sollen NICHT in das echte ~/.config/mayring schreiben.
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(Path("/tmp/.mayring-test-config")))
+    # identity.json mit Test-Email schreiben, damit local_identity().email
+    # für CLI-Pfade gefüllt ist.
+    import json
+    mr_dir = cfg_dir / "mayring"
+    mr_dir.mkdir(parents=True, exist_ok=True)
+    (mr_dir / "identity.json").write_text(json.dumps({
+        "user_id": 1, "email": "test@example.com", "token": None,
+    }))
 
 
 @pytest.fixture
