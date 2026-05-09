@@ -31,6 +31,15 @@ def conn(tmp_path):
 # ─── kind=user Pattern ──────────────────────────────────────────────
 
 
+def test_system_workspace_resolves_without_seed(conn):
+    """'system'-bucket: Service-Tokens, Cron-Jobs, ambient. Resolver
+    akzeptiert das Wort direkt + ensures the row (idempotent)."""
+    result = resolve_workspace(conn, "system")
+    assert result == "system"
+    row = conn.execute("SELECT kind FROM workspaces WHERE id='system'").fetchone()
+    assert tuple(row) == ("system",)
+
+
 def test_user_n_pattern_resolves_to_canonical(conn):
     """JWT-Pfad: 'user-2' ist immer kanonisch und wird auto-created."""
     result = resolve_workspace(conn, "user-2")

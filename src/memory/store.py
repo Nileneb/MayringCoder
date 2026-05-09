@@ -414,6 +414,20 @@ def _init_schema(conn: DBAdapter) -> None:
         "CREATE INDEX IF NOT EXISTS idx_sources_workspace_id ON sources(workspace_id)"
     )
 
+    # System-Workspace seedet sich beim DB-init. Verwendet von Service-
+    # Tokens (src/api/auth.py:37), post-deploy-ingest, conversation_watcher,
+    # ambient-Snapshots. Ohne diese Row würde der workspace_resolver mit
+    # UnknownWorkspaceError werfen, sobald irgendein Cron-Job läuft.
+    _now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO workspaces (id, kind, owner_user_id, display_name,
+                                   created_at, updated_at)
+           VALUES ('system', 'system', NULL,
+                   'System (Service-Token / Cron)', ?, ?)
+           ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at""",
+        (_now, _now),
+    )
+
     conn.commit()
 
 

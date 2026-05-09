@@ -79,6 +79,15 @@ def resolve_workspace(
 
     candidate = workspace_input.strip()
 
+    # 'system' ist ein reservierter Server-Side-Bucket: post-deploy-ingest,
+    # Service-Token-Aufrufe (api/auth.py:37), conversation_watcher,
+    # ambient-Snapshots. Wird beim DB-init via ensure_system_workspace
+    # angelegt; Resolver akzeptiert ihn auch wenn die Row noch fehlt.
+    if candidate == "system":
+        if auto_create_user_workspace:
+            ensure_system_workspace(conn)
+        return candidate
+
     # 'user-N' Pattern → kanonisch, ensure existence.
     m = USER_WORKSPACE_RE.match(candidate)
     if m:
@@ -120,6 +129,21 @@ def resolve_workspace(
         f"workspace_id={candidate!r} is neither a known workspace nor a "
         f"registered alias. Use `mayring workspace add` or pass user-N."
     )
+
+
+def ensure_system_workspace(conn: DBAdapter) -> str:
+    """Upsert kind=system workspace (Service-Token, Cron-Jobs, ambient)."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO workspaces (id, kind, owner_user_id, display_name,
+                                   created_at, updated_at)
+           VALUES ('system', 'system', NULL, 'System (Service-Token / Cron)',
+                   ?, ?)
+           ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at""",
+        (now, now),
+    )
+    conn.commit()
+    return "system"
 
 
 def ensure_user_workspace(conn: DBAdapter, user_id: int) -> str:
