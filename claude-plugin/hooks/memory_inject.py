@@ -106,23 +106,28 @@ def _search(
     # 3 attempts with backoff; total ≤ TIMEOUT - 1s budget so we don't
     # exceed the per-request timeout.
     last_err: str = ""
-    backoff = 0.8
-    for attempt in range(3):
+    last_status: int = 0
+    # 4 attempts, exponentielles Backoff: 1.0 + 2.0 + 4.0 = 7s wait
+    # zwischen request 1 und 4 → bridge typische 30s-Deploy-Windows
+    # bei mayring-stack-restart (Container-stop + start + healthcheck).
+    backoff = 1.0
+    for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
             last_err = f"HTTP {e.code} from /memory/search"
-            if e.code in (502, 503, 504) and attempt < 2:
+            last_status = e.code
+            if e.code in (502, 503, 504) and attempt < 3:
                 _time.sleep(backoff)
                 backoff *= 2
                 continue
-            return {"_hook_error": last_err}
+            return {"_hook_error": last_err, "_status": last_status}
         except TimeoutError:
             return {"_hook_error": f"TIMEOUT after {TIMEOUT}s — server is slow or down"}
         except urllib.error.URLError as e:
             last_err = f"URLError: {e.reason}"
-            if attempt < 2:
+            if attempt < 3:
                 _time.sleep(backoff)
                 backoff *= 2
                 continue
@@ -199,8 +204,18 @@ def main() -> None:
     results = _multi_lens_search(prompt, token)
     primary = results.get("primary") or {}
     if "_hook_error" in primary:
-        # Loud error so silent-failure can never come back. Lists ALL three
-        # lens errors at once instead of bailing on the first.
+        # Sonderfall: deploy-typische 5xx (502/503/504) sind transient
+        # — der Stack restartet gerade, in 10s ist alles wieder gut.
+        # Kein lauter warning-block, weil das den User pro prompt
+        # nervt und keine Aktion erfordert.
+        all_5xx = all(
+            (r or {}).get("_status") in (502, 503, 504)
+            for r in results.values() if "_hook_error" in (r or {})
+        )
+        if all_5xx:
+            return  # silent skip — Memory injizieren wir beim nächsten prompt
+        # Sonst: laut, weil der Fehler eine Aktion braucht (4xx, parse,
+        # OSError, timeout). Lists ALL three lens errors at once.
         errs = [
             f"  - {lens}: {(r or {}).get('_hook_error', 'no response')}"
             for lens, r in results.items()
