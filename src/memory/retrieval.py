@@ -259,6 +259,7 @@ def _rerank(
     llm_scores: dict[str, float] | None = None,
     reranker_query_hint: str | None = None,
     reranker_override: str | None = None,
+    predicted_topics: set[str] | None = None,
 ) -> list[RetrievalRecord]:
     """Combine scores and return top_k RetrievalRecords sorted by score_final DESC.
 
@@ -302,6 +303,12 @@ def _rerank(
     else:
         stretched_vec = {}
 
+    predicted_topics = predicted_topics or set()
+    # Predicted-topic-Boost (Issue #184): chunk.category_labels OR chunk.text
+    # gegen die Markov-Chain-Vorhersagen abgleichen. Bewusst kleines Gewicht
+    # (0.05), damit es Recall erweitert ohne den Mainstream-Score zu kapern.
+    _PRED_BOOST = 0.05
+
     for chunk in candidates:
         sv_raw = vector_scores.get(chunk.chunk_id, 0.0)         # for the record
         sv_eff = stretched_vec.get(chunk.chunk_id, 0.0)         # for ranking
@@ -311,6 +318,17 @@ def _rerank(
         sf = get_feedback_score(conn, chunk.chunk_id)
         sl = llm_scores.get(chunk.chunk_id, 0.5)  # neutral default
 
+        # score_predicted_topic: 1.0 wenn ANY chunk-tag (category_label oder
+        # ein lowercased Wort im Text der ersten 200 Zeichen) zu einem
+        # vorhergesagten Folgethema matcht. Lowercase auf beiden Seiten
+        # damit "MCP" vs "mcp" matcht.
+        sp = 0.0
+        if predicted_topics and (chunk.category_labels or chunk.text):
+            chunk_tags = {lbl.lower() for lbl in (chunk.category_labels or [])}
+            text_words = set((chunk.text or "")[:200].lower().split())
+            if (predicted_topics & chunk_tags) or (predicted_topics & text_words):
+                sp = 1.0
+
         score_v1 = (
             _WEIGHTS["vector"] * sv_eff
             + _WEIGHTS["symbolic"] * ss
@@ -318,6 +336,7 @@ def _rerank(
             + _WEIGHTS["source_affinity"] * sa
             + _WEIGHTS["feedback"] * (sf * 2.0 - 1.0)   # [0,1]→[-1,1] × 0.15 → ±0.15
             + _WEIGHTS["llm_advisor"] * sl
+            + _PRED_BOOST * sp
         )
 
         # Asymmetric negative penalty: a chunk users repeatedly mark as
@@ -373,6 +392,7 @@ def _rerank(
                 score_source_affinity=sa,
                 score_feedback=sf,
                 score_llm=sl,
+                score_predicted_topic=sp,
                 score_final=score_final,
                 reasons=reasons,
                 source_id=chunk.source_id,
@@ -615,6 +635,24 @@ def search(
         ).fetchall()
         source_type_map = {r[0]: r[1] for r in rows}
 
+    # Stage 3c: Predicted-Topics (Issue #184) — Markov-Chain auf
+    # conversation_summaries fragt: nach Topic A folgt typischerweise B+C.
+    # Chunks mit B/C in category_labels oder Text bekommen einen kleinen
+    # Score-Boost — erweitert Recall ohne Mainstream-Score zu kapern.
+    # Skip wenn kein repo_slug oder kein keyword_index → predicted_topics
+    # bleibt leer und der Boost ist 0 (no-op).
+    predicted_topics: set[str] = set()
+    _pred_repo = opts.get("predicted_repo_slug") or repo
+    if _pred_repo:
+        try:
+            from src.memory.predictive import predict_next_topics_for_query
+            preds = predict_next_topics_for_query(
+                query, conn, _pred_repo, top_k=5,
+            )
+            predicted_topics = {p.to_topic.lower() for p in preds}
+        except Exception:
+            predicted_topics = set()
+
     # Stage 4: re-rank — v1 (hand-tuned _WEIGHTS) by default; v2 (learned)
     # when RERANKER_VERSION=v2 (or =auto and the hash splits this way) AND
     # cache/rerank_v2.json exists. See src/memory/reranker_v2.py.
@@ -630,6 +668,7 @@ def search(
         llm_scores=llm_scores,
         reranker_query_hint=query,
         reranker_override=opts.get("reranker_version"),
+        predicted_topics=predicted_topics,
     )
 
     # Enrich with cross-source refs (same text found in other sources)

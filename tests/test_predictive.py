@@ -234,6 +234,94 @@ def test_load_keyword_index_accepts_valid_slug(tmp_path, monkeypatch):
     assert out2 == {"x": ["X"]}
 
 
+def test_search_boosts_chunks_matching_predicted_topics(tmp_path, monkeypatch):
+    """Issue #184: when /memory/search predicts that the user-query about
+    topic A is likely followed by topic B, chunks tagged with B (in
+    category_labels OR text) should rank higher than otherwise-identical
+    peers. End-to-end test through retrieval.search().
+
+    Setup:
+      - 2 chunks with same vector/symbolic features, same source
+      - chunk_match.category_labels = ['MCP'] (matches a predicted topic)
+      - chunk_other.category_labels = ['unrelated']
+      - persisted topic_transitions: Auth → MCP (high count)
+      - query 'auth setup' → predicted next-topics include 'MCP'
+      - chunk_match must rank above chunk_other in the result
+    """
+    import src.memory.predictive as pred_mod
+    from src.memory.retrieval import search
+    from src.memory.schema import Chunk, Source
+    from src.memory.store import insert_chunk, upsert_source
+
+    conn = init_memory_db(tmp_path / "t.db")
+
+    # Setup keyword-index so 'auth' maps to topic 'Auth'
+    monkeypatch.setattr(pred_mod, "_load_keyword_index",
+                        lambda slug: {"auth": ["Auth"], "mcp": ["MCP"]})
+
+    # Persist transition: Auth → MCP with high count
+    pred_mod.persist_transitions({"Auth": {"MCP": 10}}, conn)
+
+    # 2 sources + 2 chunks, identical retrieval features, different category
+    src_match = Source(
+        source_id="src::match", source_type="repo_file",
+        repo="https://github.com/x/y", path="src/match.py",
+        content_hash="sha256:m",
+    )
+    src_other = Source(
+        source_id="src::other", source_type="repo_file",
+        repo="https://github.com/x/y", path="src/other.py",
+        content_hash="sha256:o",
+    )
+    upsert_source(conn, src_match)
+    upsert_source(conn, src_other)
+
+    chunk_match = Chunk(
+        chunk_id=Chunk.make_id("src::match", 0, "function"),
+        source_id="src::match", chunk_level="function", ordinal=0,
+        text="def auth_handler(): return jwt", text_hash="sha256:tm",
+        category_labels=["MCP"],   # matches predicted topic
+        created_at="2026-04-08T10:00:00+00:00",
+    )
+    chunk_other = Chunk(
+        chunk_id=Chunk.make_id("src::other", 0, "function"),
+        source_id="src::other", chunk_level="function", ordinal=0,
+        text="def auth_handler(): return jwt", text_hash="sha256:to",
+        category_labels=["unrelated"],
+        created_at="2026-04-08T10:00:00+00:00",
+    )
+    insert_chunk(conn, chunk_match)
+    insert_chunk(conn, chunk_other)
+
+    # Search with predicted-topic boost enabled. predict_next_topics_for_query
+    # liest _load_keyword_index — wir patchen den slug "demo" damit das
+    # zu unserer monkeypatched lambda matcht.
+    results = search(
+        "auth setup", conn, None, "http://fake-ollama",
+        opts={"top_k": 5, "include_text": False, "llm_prefilter": False,
+              "predicted_repo_slug": "demo"},
+    )
+    assert len(results) >= 2, f"got {len(results)} results, expected >=2"
+
+    # chunk_match must rank above chunk_other
+    rank_match = next(i for i, r in enumerate(results) if r.chunk_id == chunk_match.chunk_id)
+    rank_other = next(i for i, r in enumerate(results) if r.chunk_id == chunk_other.chunk_id)
+    assert rank_match < rank_other, (
+        f"chunk_match (with predicted topic 'MCP') should rank ABOVE "
+        f"chunk_other; got rank_match={rank_match}, rank_other={rank_other}"
+    )
+
+    # And the matched chunk's score_predicted_topic must be > 0
+    match_record = results[rank_match]
+    assert match_record.score_predicted_topic > 0, (
+        f"score_predicted_topic must be > 0 on the matched chunk; got "
+        f"{match_record.score_predicted_topic}"
+    )
+    # The unrelated chunk should have score_predicted_topic == 0
+    other_record = results[rank_other]
+    assert other_record.score_predicted_topic == 0
+
+
 def test_build_transition_matches_via_short_slug(tmp_path, monkeypatch):
     """Production-Bug 2026-05-09: 89 conversation_summary mit repo='mayringcoder',
     1 mit 'nileneb-mayringcoder'. Vor Slug-Aliasing: build_transition_matrix

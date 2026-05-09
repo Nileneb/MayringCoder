@@ -237,6 +237,14 @@ class RetrievalRecord:
     # — the 422-on-neutral check in /memory/feedback enforces that.
     score_feedback: float = 0.5     # [0,1]; 0.5 = no feedback events recorded
     score_llm: float = 0.5          # [0,1]; 0.5 = LLM advisor not run for this chunk
+    # Issue #184: Markov-Chain-Vorhersage. predict_next_topics_for_query()
+    # mappt die User-Query auf das wahrscheinlichste Topic, fragt dann das
+    # transitions-DB nach Folgethemen und vergleicht diese gegen
+    # category_labels des chunks. 1.0 wenn ein Folgethema in den Labels
+    # auftaucht, 0.0 sonst. Im Reranker mit kleinem positiven Gewicht
+    # (analog zu source_affinity) verrechnet — soll Recall-Erweiterung
+    # sein, kein Hauptsignal.
+    score_predicted_topic: float = 0.0
     score_final: float = 0.0
     reasons: list[str] = field(default_factory=list)
     source_id: str = ""
@@ -254,6 +262,7 @@ class RetrievalRecord:
             "score_source_affinity": round(self.score_source_affinity, 4),
             "score_feedback": round(self.score_feedback, 4),
             "score_llm": round(self.score_llm, 4),
+            "score_predicted_topic": round(self.score_predicted_topic, 4),
             "score_final": round(self.score_final, 4),
             "reasons": self.reasons,
             "source_id": self.source_id,
