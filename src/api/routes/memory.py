@@ -15,6 +15,8 @@ from src.api.dependencies import get_chroma as _get_chroma, get_conn as _get_con
 from src.api.memory_service import run_ingest as _run_ingest, run_search as _run_search
 from src.api.routes.models import (
     ConversationMicroBatchRequest,
+    LogEvent,
+    LogEventBatch,
     MemoryFeedbackRequest,
     MemoryInvalidateRequest,
     MemoryPutRequest,
@@ -99,6 +101,139 @@ async def memory_search(
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _signature_for_event(ev: LogEvent) -> str:
+    """Stable hash über logger + msg-skeleton (timestamps/IDs/UUIDs raus).
+    Identische Logik-Errors aus verschiedenen Requests bekommen die
+    gleiche signature → Dedup beim claude-error-triage trigger.
+    """
+    import re as _re
+    skeleton = ev.msg or ""
+    skeleton = _re.sub(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b",
+                       "<UUID>", skeleton, flags=_re.I)
+    skeleton = _re.sub(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\S*\b",
+                       "<TS>", skeleton)
+    skeleton = _re.sub(r"\b\d+\b", "<N>", skeleton)
+    skeleton = _re.sub(r"\s+", " ", skeleton).strip()
+    base = f"{ev.logger}|{ev.level}|{skeleton}"
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
+
+
+@router.post("/memory/log-event")
+async def memory_log_event(
+    batch: LogEventBatch,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Batch-Ingest von App-Logger-Events.
+
+    Pro Event:
+      1. error_signature berechnen (falls nicht mitgesendet)
+      2. ALS chunk in workspace ingesten (typisch 'bene:logs' via
+         X-Workspace-Id-Header bei service-token caller)
+      3. Wenn level ≥ ERROR und KEIN bestehender chunk in
+         '<workspace>:analyses' mit dieser signature → repository_dispatch
+         an claude-error-triage. Verhindert Doppel-Agent-Spawn für
+         denselben Bug.
+    """
+    triggered = []
+    skipped_known = []
+    ingested = 0
+    severe_levels = {"ERROR", "CRITICAL", "EXCEPTION", "FATAL"}
+    conn = _get_conn()
+    chroma = _get_chroma()
+    for ev in batch.events:
+        sig = ev.error_signature or _signature_for_event(ev)
+        # 1. Ingest as memory chunk
+        source_id = f"log:{batch.service}:{sig}:{ev.ts}"
+        content = (
+            f"[{ev.ts}] {ev.level} [{ev.logger}] {ev.msg}"
+            + (f"\n{ev.exc}" if ev.exc else "")
+        )
+        try:
+            _run_ingest(
+                {"source_id": source_id, "source_type": "log_event",
+                 "repo": "", "path": batch.service},
+                content, conn, chroma, _OLLAMA_URL, _model("text"),
+                {"categorize": False, "error_signature": sig},
+                workspace_id,
+            )
+            ingested += 1
+        except Exception as exc:
+            _log.warning("log-event ingest failed: %s", exc)
+            continue
+
+        # 2. Trigger-decision für severe levels
+        if ev.level.upper() not in severe_levels:
+            continue
+
+        # Memory-Injection-check: existiert eine Analyse für diese
+        # signature? Wenn ja → kein neuer Agent.
+        analyses_ws = f"{workspace_id}:analyses"
+        try:
+            sr = _run_search(
+                f"error_signature:{sig}", analyses_ws, conn, chroma,
+                _OLLAMA_URL, top_k=1,
+            )
+            if sr.get("results"):
+                skipped_known.append(sig)
+                continue
+        except Exception:
+            pass  # bei search-fail trotzdem triggern (besser doppelt
+            # als gar nicht)
+        triggered.append({"signature": sig, "level": ev.level,
+                          "logger": ev.logger})
+
+    # repository_dispatch an GitHub Action — Best-effort, blockt
+    # nicht den Endpoint.
+    if triggered and os.environ.get("GH_ERROR_TRIAGE_TOKEN"):
+        _threading.Thread(
+            target=_dispatch_error_triage,
+            args=(triggered, batch.service, workspace_id),
+            daemon=True,
+        ).start()
+
+    return {
+        "workspace_id": workspace_id,
+        "ingested": ingested,
+        "triggered": len(triggered),
+        "skipped_known_signatures": len(skipped_known),
+    }
+
+
+def _dispatch_error_triage(triggered: list[dict], service: str,
+                           workspace_id: str) -> None:
+    """POST repository_dispatch an Nileneb/MayringCoder mit dem
+    ersten ungesehenen Error-Signature im Batch. claude-error-triage
+    workflow holt sich aus bene:logs den Kontext."""
+    import urllib.request
+    token = os.environ.get("GH_ERROR_TRIAGE_TOKEN", "").strip()
+    if not token or not triggered:
+        return
+    payload = {
+        "event_type": "claude-error-triage",
+        "client_payload": {
+            "service": service,
+            "workspace_id": workspace_id,
+            "signatures": [t["signature"] for t in triggered[:10]],
+            "first_event": triggered[0],
+        },
+    }
+    import json as _json
+    req = urllib.request.Request(
+        "https://api.github.com/repos/Nileneb/MayringCoder/dispatches",
+        data=_json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=8)
+    except Exception as exc:
+        _log.warning("error-triage dispatch failed: %s", exc)
 
 
 @router.post("/memory/put")

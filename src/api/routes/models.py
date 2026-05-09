@@ -85,6 +85,33 @@ class MemoryPutRequest(BaseModel):
     categorize: bool = False
 
 
+class LogEvent(BaseModel):
+    """Single log-event from MemoryIngestHandler."""
+    ts: str
+    level: str
+    logger: str = ""
+    msg: str
+    exc: str | None = None
+    # error_signature wird server-side gehasht falls nicht mitgesendet,
+    # damit Sender-Bugs nicht zu fehlender Dedup führen.
+    error_signature: str | None = None
+    # Free-form additional context the logger appended via extra={}.
+    context: dict | None = None
+
+
+class LogEventBatch(BaseModel):
+    """Batch von Log-Events vom App-Logger.
+
+    Trigger-Quelle: MemoryIngestHandler in MayringCoder bzw.
+    äquivalenter Monolog-Handler in Laravel. Batches kommen rein
+    wenn entweder (a) buffer voll (default 100) oder
+    (b) ein Event mit level >= ERROR den sofort-Flush ausgelöst
+    hat.
+    """
+    service: str  # "mayring-api", "laravel-app", etc.
+    events: list[LogEvent]
+
+
 class DuelRequest(BaseModel):
     task: str
     model_a: str

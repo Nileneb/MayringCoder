@@ -1,0 +1,97 @@
+name: Claude Error Triage
+
+# Wird via repository_dispatch von /memory/log-event getriggert,
+# sobald ein ERROR/CRITICAL-Event mit unbekannter signature reinkommt
+# (Memory-Injection-check verhindert Doppel-spawn für bekannte
+# error-signatures).
+#
+# Payload-Format:
+#   client_payload:
+#     service: "mayring-api" | "laravel-app" | …
+#     workspace_id: "bene:logs"
+#     signatures: [str, …]   (max 10)
+#     first_event: {signature, level, logger}
+
+on:
+  repository_dispatch:
+    types: [claude-error-triage]
+  workflow_dispatch:
+    inputs:
+      signature:
+        description: "error_signature für manuellen re-triage"
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve signature
+        id: sig
+        run: |
+          SIG="${{ github.event.client_payload.first_event.signature || github.event.inputs.signature }}"
+          SVC="${{ github.event.client_payload.service || 'manual' }}"
+          if [ -z "$SIG" ]; then
+            echo "::error::no signature in payload"; exit 1
+          fi
+          echo "sig=$SIG" >> "$GITHUB_OUTPUT"
+          echo "service=$SVC" >> "$GITHUB_OUTPUT"
+
+      - name: Pull last 10 chunks for signature from memory
+        id: ctx
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_SERVICE_TOKEN }}
+        run: |
+          set -eo pipefail
+          curl -sf -X POST https://mcp.linn.games/memory/search \
+            -H "Authorization: Bearer $MCP_TOKEN" \
+            -H "X-Workspace-Id: bene:logs" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"${{ steps.sig.outputs.sig }}\",\"top_k\":10}" \
+            > /tmp/ctx.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/ctx.json'))
+          chunks = d.get('results') or []
+          print(f'pulled {len(chunks)} chunks for signature')
+          " || true
+
+      - name: Open issue with context (placeholder for agent integration)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Phase 1: erstmal nur Issue öffnen mit Kontext-Snapshot.
+          # Phase 2: hier Anthropic-API/claude-action callen für
+          # automatischen fix-Vorschlag (vor merge).
+          TITLE="🔥 Production-Error in ${{ steps.sig.outputs.service }} — sig=${{ steps.sig.outputs.sig }}"
+          BODY="## Error-Triage Auto-Issue
+
+          **Service:** \`${{ steps.sig.outputs.service }}\`
+          **Signature:** \`${{ steps.sig.outputs.sig }}\`
+          **Triggered:** $(date --iso-8601=seconds)
+
+          Memory-Suche für diese Signature lieferte den Kontext oben.
+
+          Manueller re-triage:
+          \`\`\`
+          gh workflow run claude-error-triage.yml -f signature=${{ steps.sig.outputs.sig }}
+          \`\`\`
+
+          Wenn Analyse fertig ist, in bene:logs:analyses ein chunk
+          mit metadata.error_signature=${{ steps.sig.outputs.sig }} ablegen,
+          dann blockt /memory/log-event den nächsten Doppel-Trigger
+          für diesen Bug."
+
+          gh issue create \
+            --repo Nileneb/MayringCoder \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "bug,auto-triage" \
+            || echo "issue creation skipped"
