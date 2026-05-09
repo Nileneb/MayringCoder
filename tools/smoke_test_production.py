@@ -1956,9 +1956,18 @@ def main() -> int:
     print()
     print(f"# {len(results) - len(failed)}/{len(results)} passed  ({elapsed:.1f}s total)")
     if failed:
+        # EXPECTED_PENDING-Failures sollen weder Issue NOCH Workflow-Email
+        # auslösen. Vorher kam für jeden Pending-Failure der ganze
+        # Workflow rot → Mail an User. Issue-Anlegen war schon
+        # gefiltert, die Workflow-Mail nicht.
+        real_failures = [r for r in failed if r.name not in EXPECTED_PENDING_FAILURES]
         print(f"# FAIL: {', '.join(r.name for r in failed)}")
         if args.alert_on_fail:
             _open_github_issue(failed, elapsed)
+        if not real_failures:
+            print("# all real-world checks pass — only EXPECTED_PENDING "
+                  "items failed; workflow stays green.")
+            return 0
         return 1
     print("# all good — every critical path is actually working in prod")
     return 0
