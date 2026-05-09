@@ -1,53 +1,73 @@
-# MayringCoder Memory-Workflow
+# MayringCoder Plugin — Memory + Pi-Agent + Reranker
 
-Memory-Server (`mcp.linn.games/sse`) wird über das **Claude.ai-Cloud-Profil**
-des Users verbunden — nicht über dieses Plugin. Die `mcp__claude_ai_Memory__*`
-Tools unten kommen also von dort, nicht aus `.mcp.json`.
+Memory-Server: `mcp.linn.games` (Claude.ai-Cloud-Profil-Connector,
+nicht aus `.mcp.json`). Plugin liefert lokal: `memory-agents` MCP-Server
+(Pi-Agent-Tools) + Hooks für UserPromptSubmit + Stop-Capture.
 
-Das Plugin selbst liefert ausschließlich den **lokalen** `memory-agents`
-MCP-Server (Pi-Agent: `pi_task`, `ingest`, `duel`, `benchmark_tasks`),
-plus die Hooks für Session-Lifecycle und Conversation-Capture.
+Workspace-ID kommt aus dem JWT — typischer Slug: `bene` (per email-slug
+aus `benedikt.linn@code.berlin`). Service-Token-Calls landen unter
+`workspace_id="system"`.
 
-Workspace-ID: `system` (intern) oder Projekt-Slug
+---
 
-## 1. Sessionbeginn / neuer Task
-```
+## 1. Memory-Pipeline-Workflow
+
+### Sessionbeginn / neuer Task
+Hook macht UserPromptSubmit-Suche automatisch. Manueller Call wenn die
+Hook-Suche zu unspezifisch war:
+
+```python
 mcp__claude_ai_Memory__search_memory(query="<aktueller Task>", workspace_id="<slug>")
 ```
-Die zurückgegebenen `chunk_id`s für Feedback merken.
 
-## 2. Nach /compact
-```
+Die zurückgegebenen `chunk_id`s für späteres Feedback merken (Stop-Hook
+bewertet sie auch automatisch wenn die source_id-Pfade in deiner
+Antwort vorkommen).
+
+### Nach `/compact`
+```python
 mcp__claude_ai_Memory__search_memory(query="<Task>", workspace_id="<slug>", compacted=True)
 ```
 
-## 3. Chunk-Feedback (nach jedem abgeschlossenen Task)
-- Hilfreich → `mcp__claude_ai_Memory__feedback(chunk_id="...", signal="positive", metadata={"task":"..."})`
-- Irrelevant → `mcp__claude_ai_Memory__feedback(chunk_id="...", signal="negative")`
-
-## 4. Session-Zusammenfassung speichern (Sessionende / nach Großaufgabe)
+### Chunk-Feedback (PFLICHT nach jedem Task)
+```python
+mcp__claude_ai_Memory__feedback(chunk_id="...", signal="positive", metadata={"task":"..."})
+mcp__claude_ai_Memory__feedback(chunk_id="...", signal="negative")  # irrelevant
 ```
+
+Stop-Hook macht Auto-Feedback per Pfad-Match — du kannst das in
+unsicheren Fällen explizit überschreiben.
+
+### Info ingesten (Mayring-Vorverarbeitung)
+1. **Paraphrase** — Kernaussage ohne Füllwörter
+2. **Generalisieren** — Meta-Kategorie (architecture / debug / config / decision)
+3. **Reduzieren** — Ein Satz
+
+```python
 mcp__claude_ai_Memory__ingest(
-  source="<was wurde entschieden/gebaut — 2-3 Sätze: Entscheidungen, geänderte Dateien, Ergebnisse>",
-  source_id="session:<YYYY-MM-DD-kurzbeschreibung>",
+  source="<reduzierter Kerninhalt>",
+  source_id="<kategorie>:<YYYY-MM-DD-thema>",
   workspace_id="<slug>"
 )
 ```
 
-## 5. Einzelne Erkenntnis direkt speichern
-```
-mcp__claude_ai_Memory__ingest(
-  source="<Erkenntnis als vollständiger Satz>",
-  source_id="context:<datei-oder-thema>",
-  workspace_id="<slug>"
-)
-```
+Quell-Typen: `session-memory:` · `architecture:` · `debug:` · `config:` ·
+`session:` (für End-Of-Session-Zusammenfassungen) · `context:` (für
+Datei/Thema-bezogene Erkenntnisse).
 
-## 6. Pi-Agent Dispatch Policy (default-first)
+Nach jedem `git push` auf MayringCoder triggert die v2-chain auto-ingest.
 
-**Regel: Bei jeder Coding-Aufgabe zuerst pi_task verwenden. Claude-eigene Subagents sind der Fallback, nicht der Default.**
+---
 
-```
+## 2. Pi-Agent (#183 in-process Queue)
+
+**Stand 2026-05-09**: Pi-Agent läuft über eine in-process `PiQueue` mit
+2 Worker-Coroutines. `/pi-task` enqueued einen `PiJob`, awaited das
+Future, gibt `{workspace_id, content}` zurück (backward-compat).
+
+**MCP-Tool für Cloud-Pi-Tasks** (Subagent-Alternative):
+
+```python
 mcp__plugin_mayring-coder_memory-agents__pi_task(
   task="<Aufgabenbeschreibung>",
   repo_slug="<repo-slug>",
@@ -55,26 +75,109 @@ mcp__plugin_mayring-coder_memory-agents__pi_task(
 )
 ```
 
-### pi_task verwenden für
-- Konkrete Implementierungsaufgaben (Datei lesen, Funktion patchen, Bug fixen)
-- "Find the file / locate the function / patch this bug"
-- Iterative Loops: Tests laufen lassen → fixen → wiederholen
-- Repo-/Konventionsfragen mit Memory-Kontext
-- Code-Analyse, Refactors, TODOs abarbeiten
+### pi_task vs Subagent vs Self
 
-### pi_task NICHT verwenden für
-- Reine Architektur-/Strategieentscheidungen ohne Code-Arbeit
-- Multi-File-Refactoring das direkten Dateizugriff von Claude braucht
-- Sensitive Secrets oder Credentials
-- Wenn pi_task fehlschlägt (`{"error": "..."}`) — dann selbst antworten und Fehler nennen
+| Use-Case | Tool |
+|---|---|
+| Konkrete Implementierung mit Memory-Kontext | `pi_task` (lokales Ollama) |
+| Find / locate / patch this bug | `pi_task` |
+| Test-Loop iterieren | `pi_task` |
+| Code-Review / Multi-File-Refactor | Subagent (mit Pre-Fetch!) |
+| Architektur-/Strategieentscheidung | Self (main session) |
+| Sensitive Secrets | Self (kein subprocess) |
 
-### Wie pi_task funktioniert
-pi_task via MCP (Plugin `mayring-coder`, Server `memory-agents`) ruft `run_task_with_memory()` direkt auf — kein pi_server.py nötig.
-Voraussetzung: Ollama läuft lokal (`http://localhost:11434`), PI_AGENT_URL=direct (Standardwert in local_mcp.py).
+### Pi-Job-Klassen (#183 T1-T4)
 
-Verwandte Tools desselben Servers: `mcp__plugin_mayring-coder_memory-agents__ingest`, `__duel`, `__benchmark_tasks`.
+`classify_pi_job(task, system_prompt)` mappt heuristisch:
+- `mini` (< 500 chars total) → `phi3:3.8b` mit 30s timeout (wenn yaml-config classes-Block)
+- `standard` → `mistral:7b-instruct` mit 240s
+- `test` → opt-in via `kind_hint` (Anti-Gaming-Probe-Stub)
 
-`pi_server.py` (Port 8091) ist ein optionaler HTTP-Proxy für nicht-MCP-Clients — nicht für Claude Code nötig.
+`/pi-jobs/stats` liefert p50/p95-Latenz pro job_class + fallback_rate.
 
-Wenn `{"error": "Ollama nicht erreichbar"}` → Ollama fehlt lokal.
-Wenn Tool `mcp__plugin_mayring-coder_memory-agents__pi_task` nicht existiert → Plugin `mayring-coder@mayring-local` nicht enabled oder MCP-Server nicht gestartet (`claude plugin list`, dann `/reload-plugins` bzw. Restart).
+### Wenn pi_task fehlschlägt
+- `{"error": "Ollama nicht erreichbar"}` → Ollama fehlt lokal
+- Tool nicht da → Plugin nicht enabled (`claude plugin list`, dann `/reload-plugins`)
+
+---
+
+## 3. Reranker-v2 (Issue #180/#184/#187)
+
+**Stand 2026-05-09**: v2-Modell trainiert, sanity-gated, A/B-aktiv.
+
+- `cache/rerank_default.txt` steuert: `v1` | `v2` | `auto` (50/50 hash-split)
+- Sanity-Gate: `_load_model()` lehnt Modelle mit `v_w<0` oder `s_w<0` (oder `pt_w<0`/`re_w<0`) ab — fallback v1
+- Trainings-Features: `(v, s, r, a, pt, re, igio_*)` — pt = predicted-topic-boost, re = rationale-edge-presence
+- Training-Pipeline-Cron: täglich 07:30 UTC (`train-reranker.yml`)
+- Auto-Rollout-Cron: 08:00 UTC, flippt default wenn ndcg-Uplift ≥25% bei n_v2 ≥30 queries
+
+### Manueller Train-Run + Switch
+```bash
+ssh nileneb@u-server 'docker exec mayring-mayring-api-1 sh -c "cd /app && \
+  PYTHONPATH=. python3 tools/export_retrieval_dataset.py --days 30 && \
+  PYTHONPATH=. python3 tools/train_reranker.py"'
+
+ssh nileneb@u-server 'docker exec mayring-mayring-api-1 sh -c "echo v2 > cache/rerank_default.txt"'
+```
+
+---
+
+## 4. Rationale-Edges (Issue #185)
+
+WHY-Marker im Code werden beim repo-analyze als `wiki_edges` mit
+`type='rationale'` persistiert und ins `/memory/search`-Result als
+`rationale_edges`-Block co-injected.
+
+Format:
+
+```python
+# WHY(#issue, kategorie): freier text, multi-line ok wenn nächste
+# zeile mit '# ' weitergeht. CHANGE WITH CARE wenn defensive.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}\Z")
+```
+
+Targets: nur `Assign`/`FunctionDef`/`AsyncFunctionDef`/`ClassDef`
+direkt nach dem Marker. Vor `for`/`if`/`try` → skip + warn.
+
+---
+
+## 5. IGIO Classifier
+
+`igio_axis` (issue/goal/intervention/outcome) wird per Hintergrund-Cron
+auf chunks gesetzt. Coverage > 80% Stand 2026-05-09. Test-Pending bis
+ratio ≥ 50% (`smoke check_igio_axis_on_chunks` als Trigger).
+
+Backfill manuell:
+```bash
+ssh nileneb@u-server 'TOK=$(grep ^MCP_SERVICE_TOKEN= ~/app.linn.games/.env | cut -d= -f2-); \
+  curl -X POST "https://mcp.linn.games/stats/igio-backfill?limit=1500&min_confidence=0.4" \
+       -H "Authorization: Bearer $TOK"'
+```
+
+---
+
+## 6. Hooks (Plugin-managed)
+
+- `UserPromptSubmit` (claude-plugin/hooks/memory_inject.py): 3 lens-search
+  (primary + ambient + conversation), 4 retries bei 5xx, silent-skip
+  während deploy-windows, persistiert chunk-IDs für Stop-Auto-Feedback.
+- `Stop` hook (claude-plugin/hooks/stop_hook.py): liest inject-state,
+  matcht source_ids gegen Assistant-Antwort, ratet jede Chunk-ID
+  positive/negative.
+
+Plugin-troubleshooting: `claude plugin list`, dann `/reload-plugins`.
+Bei 5xx aus dem Hook-Log: API-Healthcheck (`curl https://mcp.linn.games/health`)
+oder deploy-window abwarten (~30s).
+
+---
+
+## 7. Wichtige Dateien (für Subagent-Pre-Fetch-Queries)
+
+- `src/memory/retrieval.py::search` — 4-stage Hybrid-Search
+- `src/memory/predictive.py` — Markov-Transitions + path-traversal-defense
+- `src/wiki_v2/rationale_parser.py` — WHY-marker-AST-parser
+- `src/agents/pi_queue.py` — in-process PiQueue (#183 T2)
+- `src/api/routes/memory.py::pi_task` — refactored zu queue (#183 T3)
+- `src/api/routes/jobs.py::_run_with_v2_postingest` — v2-chain (ambient/predictive/images/rationale/overview→wiki)
+- `tools/subagent_prefetch.py` — Memory-block-Generator für Subagent-Dispatch
+- `tools/train_reranker.py` + `tools/export_retrieval_dataset.py` — Trainings-Pipeline mit pt + re Features
