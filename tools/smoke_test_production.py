@@ -231,19 +231,22 @@ def check_health(api: str, token: str) -> CheckResult:
 def check_workspace_scoped(api: str, token: str) -> CheckResult:
     """Stats endpoints must respond with a sane workspace_id.
 
-    Accepts:
-      • "user-<id>" — JWT.sub-derived (smoke ran with user/Sanctum token)
-      • "system"   — service-token path (smoke ran with MCP_SERVICE_TOKEN)
-    Rejects: legacy UUID, "default", or empty — these would mean either
-    workspace-id derivation is broken or the auth fell through to a
-    non-tenant default.
+    Accepts (seit 2026-05-09 email-slug-Refactor):
+      • email-slug    — JWT.email-derived (z.B. "bene" für bene@linn.games)
+      • "system"      — service-token ohne X-Workspace-Id-Override
+    Rejects: legacy "user-N", "default", oder leer — wären Indizien
+    für eine Auth-/Workspace-Auflösungs-Regression.
     """
     code, body, dt = _http("GET", f"{api}/stats/workspaces", token)
     if code != 200:
         return CheckResult("workspace_scoping", False,
                            f"/stats/workspaces http={code}: {body}")
     ws = (body or {}).get("workspace_id", "")
-    is_sane = ws.startswith("user-") or ws == "system"
+    import re as _re
+    # Email-slug-pattern: lowercase alphanumeric + dash, kein 'user-N',
+    # kein 'default'.
+    is_email_slug = bool(_re.match(r"^[a-z0-9][a-z0-9-]*$", ws or "")) and not ws.startswith("user-") and ws != "default"
+    is_sane = is_email_slug or ws == "system"
     return CheckResult(
         "workspace_scoping",
         is_sane,
