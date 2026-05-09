@@ -12,6 +12,7 @@ from src.identity.workspace_resolver import (
     IdentityRequiredError,
     UnknownWorkspaceError,
     add_alias,
+    email_to_slug,
     ensure_project_workspace,
     ensure_user_workspace,
     list_workspaces_for_user,
@@ -29,6 +30,34 @@ def conn(tmp_path):
 
 
 # ─── kind=user Pattern ──────────────────────────────────────────────
+
+
+def test_email_to_slug_basic():
+    assert email_to_slug("bene@linn.games") == "bene"
+    assert email_to_slug("foo.bar@example.com") == "foo-bar"
+    assert email_to_slug("admin+tag@firma.de") == "admin-tag"
+    assert email_to_slug("") == ""
+    assert email_to_slug(None) == ""
+
+
+def test_resolve_with_email_creates_slug_workspace(conn):
+    """Email als default → workspace.id = slug, NICHT 'user-N'."""
+    result = resolve_workspace(
+        conn, None,
+        default_user_id=2, default_email="bene@linn.games",
+        default_display_name="Benedikt Linn",
+    )
+    assert result == "bene"
+    row = conn.execute(
+        "SELECT kind, owner_user_id, email, display_name FROM workspaces WHERE id='bene'"
+    ).fetchone()
+    assert tuple(row) == ("user", 2, "bene@linn.games", "Benedikt Linn")
+
+
+def test_resolve_without_email_falls_back_to_user_n(conn):
+    """Legacy/mock-tests ohne email → 'user-N' bleibt funktional."""
+    result = resolve_workspace(conn, None, default_user_id=2)
+    assert result == "user-2"
 
 
 def test_system_workspace_resolves_without_seed(conn):

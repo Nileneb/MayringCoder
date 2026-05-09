@@ -14,7 +14,7 @@ auto-create wünscht: explizit `auto_create=False` setzen.
 """
 from __future__ import annotations
 
-from src.identity.local_identity import get_local_user_id
+from src.identity.local_identity import get_local_user_id, load_identity
 from src.identity.workspace_resolver import resolve_workspace
 from src.memory.db_adapter import DBAdapter
 
@@ -33,9 +33,11 @@ def resolve_cli_workspace(
         from src.memory.store import init_memory_db
         conn = init_memory_db(CACHE_DIR / "memory.db")
 
+    ident = load_identity()
     return resolve_workspace(
         conn,
         candidate,
         default_user_id=get_local_user_id(),
+        default_email=ident.email if ident else None,
         auto_create_user_workspace=auto_create,
     )

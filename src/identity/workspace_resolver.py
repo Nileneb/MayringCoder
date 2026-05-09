@@ -1,21 +1,25 @@
 """Kanonische Workspace-Auflösung.
 
 Diese Schicht ist die EINE Quelle der Wahrheit für workspace_id.
-Davor:
-  - JWT-Pfad: f"user-{sub}"
-  - CLI-Pfad: args.workspace_id or "default"
-  → gleicher User → 2 verschiedene Buckets je nach Eingangsweg.
 
-Jetzt:
-  resolve_workspace(input, default_user_id) → kanonischer Workspace-ID,
-  validiert gegen die `workspaces`-Tabelle, ggf. via aliases-Lookup.
+Workspace-IDs sind seit 2026-05-09 KEINE 'user-N'-Krücken mehr,
+sondern human-readable Slugs aus dem Email-Localpart (z.B. 'bene'
+für bene@linn.games). Vorteile:
+  - Logs lesbar: 'workspace=bene' statt 'workspace=user-2'.
+  - Multi-Tenant-vorbereitet: 'team-acme', 'bene', 'system' im selben
+    Bucket-Namespace ohne Prefix-Konflikte.
+  - Deterministisch: gleiche Email → gleicher Slug, auch wenn 3 Apps
+    parallel JWT-Tokens minten.
 
 Auflösungs-Reihenfolge:
-  1. input ist None → fallback auf default_user_id → user-{id}
-  2. input matcht 'user-N' Pattern → ensure(id, kind=user, owner=N)
-  3. input ist canonical workspace (existiert) → return as-is
+  1. input ist None + default_user_id+default_email → ensure_user_workspace
+  2. 'system' → kanonischer system-bucket
+  3. input existiert in workspaces → return as-is
   4. input ist alias → return aliased canonical
-  5. else: raise UnknownWorkspaceError
+  5. legacy 'user-N' Pattern (für alte JWT-Tokens vor dem Refactor)
+     → ensure(slug=user-N, owner=N) als Fallback bis alle Clients
+     emails senden
+  6. else: raise UnknownWorkspaceError
 """
 from __future__ import annotations
 
@@ -35,11 +39,38 @@ class IdentityRequiredError(ValueError):
     """Raised when no workspace_id and no default_user_id was provided."""
 
 
+def email_to_slug(email: str) -> str:
+    """Email → human-readable slug für Workspace-IDs.
+
+    'bene@linn.games' → 'bene'
+    'foo.bar@example.com' → 'foo-bar'
+    'admin+tag@firma.de' → 'admin-tag'
+
+    Slugs sind ASCII-only, lowercase, ohne special chars außer '-'.
+    Idempotent: slug(slug(x)) == slug(x).
+    """
+    local = (email or "").split("@", 1)[0].strip().lower()
+    if not local:
+        return ""
+    out = []
+    prev_dash = False
+    for ch in local:
+        if ch.isalnum():
+            out.append(ch)
+            prev_dash = False
+        elif not prev_dash:
+            out.append("-")
+            prev_dash = True
+    return "".join(out).strip("-")
+
+
 def resolve_workspace(
     conn: DBAdapter,
     workspace_input: str | None,
     *,
     default_user_id: int | None = None,
+    default_email: str | None = None,
+    default_display_name: str | None = None,
     auto_create_user_workspace: bool = True,
 ) -> str:
     """Resolve a free-form workspace identifier to its canonical form.
@@ -72,9 +103,16 @@ def resolve_workspace(
                 "Set MAYRING_USER_ID env or run `mayring login`, or pass "
                 "--workspace explicitly."
             )
-        canonical = f"user-{default_user_id}"
+        # Email → Slug. Wenn keine email da ist, fallback auf user-N
+        # (legacy, sollte nur für mock-tests oder alte JWT-Tokens
+        # passieren).
+        canonical = email_to_slug(default_email or "") or f"user-{default_user_id}"
         if auto_create_user_workspace:
-            ensure_user_workspace(conn, default_user_id)
+            ensure_user_workspace(
+                conn, default_user_id,
+                slug=canonical, email=default_email,
+                display_name=default_display_name,
+            )
         return canonical
 
     candidate = workspace_input.strip()
@@ -146,16 +184,31 @@ def ensure_system_workspace(conn: DBAdapter) -> str:
     return "system"
 
 
-def ensure_user_workspace(conn: DBAdapter, user_id: int) -> str:
-    """Upsert kind=user workspace for app.linn.games User.id."""
-    workspace_id = f"user-{user_id}"
+def ensure_user_workspace(
+    conn: DBAdapter,
+    user_id: int,
+    *,
+    slug: str | None = None,
+    email: str | None = None,
+    display_name: str | None = None,
+) -> str:
+    """Upsert kind=user workspace.
+
+    Bevorzugt slug aus email — fallback user-N nur wenn weder slug
+    noch email mitgegeben werden (legacy / mock-tests).
+    """
+    workspace_id = slug or email_to_slug(email or "") or f"user-{user_id}"
     now = datetime.now(timezone.utc).isoformat()
+    pretty_name = display_name or email or f"User {user_id}"
     conn.execute(
-        """INSERT INTO workspaces (id, kind, owner_user_id, display_name,
-                                   created_at, updated_at)
-           VALUES (?, 'user', ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at""",
-        (workspace_id, user_id, f"User {user_id}", now, now),
+        """INSERT INTO workspaces (id, kind, owner_user_id, email,
+                                   display_name, created_at, updated_at)
+           VALUES (?, 'user', ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+               email = COALESCE(excluded.email, workspaces.email),
+               display_name = COALESCE(excluded.display_name, workspaces.display_name),
+               updated_at = excluded.updated_at""",
+        (workspace_id, user_id, email, pretty_name, now, now),
     )
     conn.commit()
     return workspace_id

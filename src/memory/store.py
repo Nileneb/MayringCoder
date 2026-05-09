@@ -143,6 +143,12 @@ def _migrate_schema(conn: DBAdapter) -> None:
             # v2.0 reranker A/B logging — which formula scored this row.
             ("reranker_version", "TEXT NOT NULL DEFAULT 'v1'"),
         ],
+        # Email-slug Workspace-IDs ab 2026-05-09 (statt user-N).
+        # email-Spalte für display-name + multi-tenant-vorbereitete
+        # Lookups.
+        "workspaces": [
+            ("email", "TEXT DEFAULT NULL"),
+        ],
     }
     for table, columns in migrations.items():
         existing = conn.get_columns(table)
@@ -382,6 +388,7 @@ def _init_schema(conn: DBAdapter) -> None:
             kind             TEXT NOT NULL CHECK(kind IN ('user', 'team', 'project', 'system')),
             parent_id        TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
             owner_user_id    INTEGER,
+            email            TEXT,
             display_name     TEXT NOT NULL DEFAULT '',
             created_at       TEXT NOT NULL,
             updated_at       TEXT NOT NULL

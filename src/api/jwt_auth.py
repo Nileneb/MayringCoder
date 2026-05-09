@@ -91,17 +91,25 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     except jwt.InvalidTokenError:
         return None
 
-    # workspace_id is ALWAYS derived from the JWT's `sub` claim
-    # (= app.linn.games User.id, integer-as-string). This is the only way
-    # to stop the same human ending up with three different workspaces just
-    # because claude.ai web, claude-cli, and the dashboard happen to mint
-    # tokens with different workspace_id claims. app.linn.games owns user
-    # identity → app.linn.games owns workspace identity, full stop.
+    # workspace_id wird seit 2026-05-09 aus dem email-Claim als Slug
+    # abgeleitet ('bene@linn.games' → 'bene') statt als 'user-N' aus
+    # sub gebaut. Vorteil: lesbare Logs + Multi-Tenant-vorbereitet.
+    # Determinismus bleibt: gleiche Email → gleicher Slug, auch wenn
+    # 3 Apps parallel JWT-Tokens minten (User-Identity bleibt
+    # serverseitig in app.linn.games entschieden via email).
+    #
+    # Fallback auf 'user-N' nur wenn weder workspace_id-Claim noch
+    # email gesetzt sind — z.B. legacy Tokens oder Battlefield-JWTs.
     sub_raw = payload.get("sub")
     if sub_raw is None or not str(sub_raw).strip():
         return None
     sub_str = str(sub_raw).strip()
-    workspace_id = f"user-{sub_str}"
+
+    from src.identity.workspace_resolver import email_to_slug
+    email = payload.get("email")
+    workspace_id = (
+        email_to_slug(email) if email else None
+    ) or f"user-{sub_str}"
 
     raw_scopes = payload.get("scope", [])
     if isinstance(raw_scopes, str):
