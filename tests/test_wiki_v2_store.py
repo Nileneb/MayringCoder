@@ -174,3 +174,29 @@ def test_upsert_node_preserves_cluster_id_on_re_ingest(tmp_path):
     assert len(clusters) == 1
     assert clusters[0].members == ["src/foo.py"]
     conn.close()
+
+
+def test_init_db_adds_rationale_column_to_edges(tmp_path):
+    """Issue #185/#182 follow-up: rationale column must exist on wiki_edges
+    after init_wiki_db. Idempotent: multiple init calls must not fail."""
+    from src.wiki_v2 import store as s
+    db_path = tmp_path / "wiki.db"
+    conn = s.init_wiki_db(db_path)
+
+    # Check column exists
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(wiki_edges)")}
+    assert "rationale" in cols, "rationale column must exist on wiki_edges table"
+
+    # Verify it's TEXT
+    col_info = conn.execute("PRAGMA table_info(wiki_edges)").fetchall()
+    rationale_col = next((r for r in col_info if r[1] == "rationale"), None)
+    assert rationale_col is not None
+    assert rationale_col[2] == "TEXT", "rationale column must be TEXT type"
+
+    # Idempotency: second init call must not crash
+    conn2 = s.init_wiki_db(db_path)
+    cols2 = {row[1] for row in conn2.execute("PRAGMA table_info(wiki_edges)")}
+    assert "rationale" in cols2
+
+    conn.close()
+    conn2.close()

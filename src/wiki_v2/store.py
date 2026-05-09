@@ -79,6 +79,20 @@ def _init_schema(conn: DBAdapter) -> None:
     );
     """)
     conn.commit()
+    _ensure_rationale_column(conn)
+
+
+def _ensure_rationale_column(conn: DBAdapter) -> None:
+    """Idempotent ALTER TABLE for the rationale column.
+
+    Issue #185/#182 follow-up: rationale-edges document WHY-knowledge
+    that's risky to lose during refactoring. Idempotent so repeated
+    init_wiki_db calls (test fixtures, container restart) don't crash.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(wiki_edges)")}
+    if "rationale" not in cols:
+        conn.execute("ALTER TABLE wiki_edges ADD COLUMN rationale TEXT DEFAULT ''")
+        conn.commit()
 
 
 # --- Node CRUD ---
