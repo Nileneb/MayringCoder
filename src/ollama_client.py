@@ -34,6 +34,28 @@ _EMBED_RETRY_DELAYS = (3, 6, 12, 20, 30)
 _CLOUD_URL = os.getenv("OLLAMA_CLOUD_URL", "https://ollama.com").rstrip("/")
 _CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
 
+# WHY(2026-05-10): User-Auftrag — cloud-fallback war über wochen bei 0%
+# usage weil cloud nur als RETRY-fallback bei local-error eingesprungen
+# wäre. Die freie tier-quota soll aktiv genutzt werden. Anteil X% (default
+# 20%) der calls geht primär direkt an cloud, mit local als reverse-
+# fallback. Override via OLLAMA_CLOUD_PRIMARY_RATIO (0.0..1.0).
+_CLOUD_PRIMARY_RATIO = max(0.0, min(1.0, float(
+    os.getenv("OLLAMA_CLOUD_PRIMARY_RATIO", "0.2")
+)))
+
+
+def _should_route_cloud_primary() -> bool:
+    """Per-call random sampling: returns True wenn diese call cloud-primär läuft.
+
+    Hash-frei + thread-safe — `random.random()` reicht da der entscheidung-
+    state nicht persistiert sein muss (anteil mittelt sich über N calls aus).
+    Skip wenn kein API-key gesetzt.
+    """
+    if not _CLOUD_API_KEY or _CLOUD_PRIMARY_RATIO <= 0:
+        return False
+    import random as _rnd
+    return _rnd.random() < _CLOUD_PRIMARY_RATIO
+
 
 def _generate_call(host: str, body: dict, *, stream: bool, timeout: float,
                     auth_token: str = "") -> str:
@@ -116,6 +138,27 @@ def generate(
     if options:
         merged_options.update(options)
     body["options"] = merged_options
+
+    # WHY(2026-05-10 cloud-primary-routing): X% der calls direkt an cloud
+    # (free-tier quota nutzen) — wenn cloud fail't, fallback auf local.
+    # Reduziert local-overload UND nutzt die kostenlose cloud-quota.
+    if _should_route_cloud_primary():
+        try:
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                "ollama cloud-primary route (%.0f%% ratio)", _CLOUD_PRIMARY_RATIO * 100,
+            )
+            return _generate_call(
+                _CLOUD_URL, body, stream=stream, timeout=timeout,
+                auth_token=_CLOUD_API_KEY,
+            )
+        except Exception as cloud_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "cloud-primary failed, fallback local: %s",
+                type(cloud_exc).__name__,
+            )
+            # weiter in den normalen local-pfad fallen
 
     for attempt in range(max_retries):
         try:
