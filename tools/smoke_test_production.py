@@ -1091,10 +1091,18 @@ def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
     # Drive the actual auto_feedback function — same path the live hook
     # takes when claude-code fires Stop. This will POST to /memory/feedback
     # for each chunk.
+    # WHY: assistant_text MUST mention each chunk's source-path AND be ≥200
+    # chars. Otherwise classify_chunk_relevance returns "skip" (kein POST)
+    # für unklare matches — verhindert false-negatives für generic files
+    # in production, würde den e2e-counter aber auf 0 stellen.
+    path_mentions = " ".join(s for _, s in pairs)
     fake_turns = [
         {"role": "user", "content": "smoke e2e test prompt", "timestamp": ""},
         {"role": "assistant",
-         "content": "smoke e2e test response — no source paths mentioned",
+         "content": (
+             "smoke e2e test response — paths referenced: " + path_mentions
+             + ". " + "x" * 200
+         ),
          "timestamp": ""},
     ]
     sh._auto_feedback(fake_turns, session_id, token)
