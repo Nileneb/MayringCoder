@@ -15,8 +15,12 @@ name: Reranker training (memory v2.0)
 #     data still accumulates).
 
 on:
-  schedule:
-    - cron: "30 7 * * *"
+  # WHY(2026-05-10): cron disabled. Feedback-daten waren durch Stop-Hook
+  # default-negative-bug kontaminiert (false-negatives für generic files
+  # wie web.php → reranker-v2 lernte falsches signal). User wipte die
+  # 2125 chunk_feedback-rows und setzte reranker auf v1 zurück. Bevor
+  # cron wieder aktiviert wird, müssen erst saubere feedback-daten
+  # wieder akkumulieren (≥30 queries je signal).
   workflow_dispatch:
     inputs:
       days:

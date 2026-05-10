@@ -20,8 +20,9 @@ name: Reranker auto-rollout (memory v2.0)
 # (false-flip) error is below 5%.
 
 on:
-  schedule:
-    - cron: "0 8 * * *"
+  # WHY(2026-05-10): cron disabled — siehe train-reranker.yml.
+  # Auto-rollout darf nicht laufen solange feedback-historie neu
+  # aufgebaut wird, sonst kippt default vorzeitig zurück auf v2.
   workflow_dispatch:
     inputs:
       threshold_pct:
