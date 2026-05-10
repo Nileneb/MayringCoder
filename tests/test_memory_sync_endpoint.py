@@ -6,19 +6,29 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import app
-from src.api.auth import get_workspace
+from src.api.auth import get_token_info, get_workspace
+from src.api.jwt_auth import TokenInfo
 import src.api.dependencies as _deps
 
 
 @pytest.fixture(autouse=True)
 def _override_workspace():
-    prev = app.dependency_overrides.get(get_workspace)
+    prev_ws = app.dependency_overrides.get(get_workspace)
+    prev_ti = app.dependency_overrides.get(get_token_info)
+    # V2: /memory/changes now reads memberships+sub from TokenInfo to scope
+    # the visibility filter. Provide a minimal stub for legacy tests.
+    test_info = TokenInfo(workspace_id="ws-test", sub="0", scopes=("mcp:memory",))
     app.dependency_overrides[get_workspace] = lambda: "ws-test"
+    app.dependency_overrides[get_token_info] = lambda: test_info
     yield
-    if prev is None:
+    if prev_ws is None:
         app.dependency_overrides.pop(get_workspace, None)
     else:
-        app.dependency_overrides[get_workspace] = prev
+        app.dependency_overrides[get_workspace] = prev_ws
+    if prev_ti is None:
+        app.dependency_overrides.pop(get_token_info, None)
+    else:
+        app.dependency_overrides[get_token_info] = prev_ti
 
 
 @pytest.fixture(autouse=True)

@@ -83,6 +83,10 @@ class MemoryPutRequest(BaseModel):
     path: str = ""
     content: str
     categorize: bool = False
+    # V2 visibility — optional; defaults to 'private' downstream.
+    # 'org' requires membership in org_id (or first org_id if not given).
+    visibility: str | None = None
+    org_id: str | None = None
 
 
 class LogEvent(BaseModel):

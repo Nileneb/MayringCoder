@@ -12,6 +12,7 @@ from src.api.mcp_auth import (
     _effective_workspace_id,
     _effective_user_id,
     _effective_org_id,
+    _effective_org_ids,
     _current_raw_jwt,
 )
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
@@ -72,10 +73,10 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 "include_text": include_text,
                 "source_affinity": source_affinity,
                 "workspace_id": ws,
-                # user_id + org_id let visibility='user' / 'org' chunks
-                # surface across workspaces of the same human user / org.
+                # user_id + org_ids let visibility='user' / 'org' chunks
+                # surface across workspaces of the same human user / orgs.
                 "user_id": _effective_user_id(),
-                "org_id": _effective_org_id(),
+                "org_ids": _effective_org_ids(),
                 "task_context": task_context,
             }
             result = _run_search(query, _get_conn(), _get_chroma(),
