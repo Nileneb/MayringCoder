@@ -284,29 +284,26 @@ def clear_inject_state(session_id: str) -> None:
 
 
 def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
-    """positive iff the chunk's path/basename appears in the assistant's answer.
+    """positive | negative | skip.
 
-    The match is intentionally simple: split source_id on the last colon to
-    get the path tail, then check substring + basename. Examples that match
-    a chunk like `repo:https://github.com/x/y:src/agents/pi.py`:
-
-      • assistant mentions `src/agents/pi.py`     → positive
-      • assistant mentions `pi.py`                → positive (len > 5)
-      • assistant mentions `agents/`              → positive (path substring)
-      • assistant says only "the pi agent runs…"  → negative
-
-    Heuristic, not semantic. Good enough as a signal — far better than the
-    neutral-everything autorater it replaces.
+    WHY(2026-05-10 web.php-bug): vorher default-negative wenn pfad-match
+    fehlschlug. Generische files wie `routes/web.php` oder `app/Models/User.php`
+    werden in der Antwort selten beim filename genannt — Reranker-v2 hat sie
+    daraufhin als irrelevant gelernt. Korrekt: nur negative wenn die Antwort
+    substantiell war (≥200 chars) UND wir trotzdem nichts finden. Sonst
+    "skip" — caller postet kein feedback, statt false-negatives zu erzeugen.
+    User-design ist binary (positive | negative), neutral ist server-side
+    rejected — daher hier "skip" als sentinel, nicht als feedback-signal.
     """
     if not source_id or not assistant_text:
-        return "negative"
+        return "skip"
     path_key = source_id.rsplit(":", 1)[-1]
     if path_key and len(path_key) >= _PATH_KEY_MIN_LEN and path_key in assistant_text:
         return "positive"
     basename = path_key.rsplit("/", 1)[-1] if "/" in path_key else path_key
     if basename and len(basename) >= _PATH_KEY_MIN_LEN and basename in assistant_text:
         return "positive"
-    return "negative"
+    return "negative" if len(assistant_text) >= 200 else "skip"
 
 
 def _enqueue_feedback(chunk_id: str, signal: str, reason: str) -> None:
@@ -429,11 +426,17 @@ def _auto_feedback(turns: list[dict], session_id: str, token: str) -> None:
         return
     assistant_text = turns[1].get("content", "")
     posted = 0
+    skipped = 0
     for chunk_id, source_id in pairs[:_AUTO_FEEDBACK_LIMIT]:
         signal = classify_chunk_relevance(source_id, assistant_text)
+        if signal == "skip":
+            skipped += 1
+            continue
         _post_feedback(chunk_id, signal, token)
         posted += 1
-    sys.stderr.write(f"[stop_hook] auto_feedback: posted {posted} ratings\n")
+    sys.stderr.write(
+        f"[stop_hook] auto_feedback: posted {posted}, skipped {skipped} (unklar)\n"
+    )
     clear_inject_state(session_id)
 
 

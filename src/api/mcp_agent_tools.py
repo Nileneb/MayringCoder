@@ -413,3 +413,37 @@ def register_agent_tools(mcp: FastMCP) -> None:
             return {**resp.json(), "workspace_id": ws}
         except Exception as exc:
             return {"error": str(exc), "workspace_id": ws}
+
+    @mcp.tool()
+    def diff_history(
+        file: str,
+        commits: int = 15,
+        model: str | None = None,
+    ) -> dict:
+        """Architektur-Trajektorie einer Datei via lokalem Pi-Agent.
+
+        Lädt die letzten N commits einer Datei (`git log --follow -p`) und
+        lässt qwen2.5-coder:7b (oder ModelRouter('text')) eine drei-teilige
+        Synthese erzeugen: Trajektorie / Obsolete / Aktiv. Verwendung BEVOR
+        Du große refactor-/issue-Entscheidungen über eine Datei triffst —
+        verhindert dass entfernte konzepte (z.B. Langdock, deprecated APIs)
+        wieder reingebaut werden.
+
+        Args:
+            file: Repo-relativer oder absoluter Pfad zur Datei
+            commits: Anzahl letzte commits (default 15)
+            model: Override Ollama-Modell
+
+        Returns:
+            {file, commits, model, summary} oder {error}
+        """
+        from src.agents.diff_history import DiffHistoryError, run as _run
+        try:
+            return _run(
+                file,
+                commits=commits,
+                model=model,
+                ollama_url=_OLLAMA_URL,
+            )
+        except DiffHistoryError as exc:
+            return {"error": str(exc), "file": file}
