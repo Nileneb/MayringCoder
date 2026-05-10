@@ -164,10 +164,21 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
           workspace_id: str | None = None) -> tuple[int, dict | None, float]:
     """Returns (status_code, parsed_json_or_None, elapsed_seconds).
 
-    Retries on 502/503/504 and connection errors up to 4 times with a
+    Retries on 502/503/504 and connection errors up to 6 times with a
     short backoff. Container restarts during deploy commonly produce a
     short window of 502s — we don't want every post-deploy smoke to
     spuriously red-flag during that window.
+
+    SMOKE-TEST-STABILITY POLICY (V2 Stufe 6):
+      1. Jeder neue check muss einen Red-Green-Beweis liefern (failed vor
+         fix, passt nach). Sonst ist es Theatre.
+      2. Flaky tests (>=2× transient rot in 7d wegen 502/503/504): root-cause
+         fixen oder den check droppen — KEIN dauerhaftes EXPECTED_PENDING
+         als Workaround.
+      3. EXPECTED_PENDING > 30d → automatisch dropped (manueller Audit
+         nötig). Generiert sonst Email-Spam ohne Aktionsmöglichkeit.
+      4. _http retries 6× weil deploy-windows + Container-Migration
+         manchmal >10s dauern. Wenn nach 6×2s=12s noch 5xx → echter Bug.
 
     workspace_id (per-call): überschreibt das Service-Token-Default
     'system' für Checks die User-Workspace-Daten brauchen
@@ -184,10 +195,10 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     t0 = time.time()
-    backoff = 1.5
+    backoff = 2.0
     last_code = 0
     last_body: dict | None = None
-    for attempt in range(4):
+    for attempt in range(6):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode()
