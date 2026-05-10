@@ -259,6 +259,13 @@ def generate(
     raise RuntimeError("unreachable")
 
 
+# WHY(2026-05-10 embed-cloud-immunity): _should_route_cloud_primary()
+# wird hier BEWUSST NICHT aufgerufen. Ollama-cloud (ollama.com) hat keine
+# embedding-modelle wie nomic-embed-text — ein cloud-route würde 404
+# "model not found" zurückgeben. Falls eine zukünftige refactor-runde
+# das "cloud für alles"-routing erweitern will: embeds MÜSSEN separates
+# routing/skipping bekommen, niemals dieselbe random-ratio. Verify mit
+# `tests/test_ollama_cloud_routing.py::test_embed_does_not_route_cloud`.
 def embed_batch(
     url: str,
     model: str,

@@ -285,6 +285,7 @@ def _rerank(
     reranker_query_hint: str | None = None,
     reranker_override: str | None = None,
     predicted_topics: set[str] | None = None,
+    category_hint: list[str] | None = None,
 ) -> list[RetrievalRecord]:
     """Combine scores and return top_k RetrievalRecords sorted by score_final DESC.
 
@@ -334,6 +335,16 @@ def _rerank(
     # (0.05), damit es Recall erweitert ohne den Mainstream-Score zu kapern.
     _PRED_BOOST = 0.05
 
+    # WHY(2026-05-10 multi-cat prompt-decomp): wenn der hook prompt-
+    # kategorien mitsendet ("auth + caching + deployment"), boosten wir
+    # chunks deren category_labels mit DIESEN kategorien überlappen.
+    # Bewusst klein (0.08) — bias soll recall verbessern, nicht ein
+    # einzelnes label dominieren. Normalisieren auf set für O(1)-overlap.
+    _CAT_HINT_BOOST = 0.08
+    cat_hint_set: set[str] = {
+        c.lower() for c in (category_hint or []) if c
+    }
+
     for chunk in candidates:
         sv_raw = vector_scores.get(chunk.chunk_id, 0.0)         # for the record
         sv_eff = stretched_vec.get(chunk.chunk_id, 0.0)         # for ranking
@@ -354,6 +365,14 @@ def _rerank(
             if (predicted_topics & chunk_tags) or (predicted_topics & text_words):
                 sp = 1.0
 
+        # Category-hint overlap: 1.0 wenn ANY chunk-label im hint-set,
+        # sonst 0.0. Auf labels-side bereits lowercase normalize.
+        sc = 0.0
+        if cat_hint_set and chunk.category_labels:
+            chunk_cats = {lbl.lower().strip() for lbl in chunk.category_labels}
+            if cat_hint_set & chunk_cats:
+                sc = 1.0
+
         score_v1 = (
             _WEIGHTS["vector"] * sv_eff
             + _WEIGHTS["symbolic"] * ss
@@ -362,6 +381,7 @@ def _rerank(
             + _WEIGHTS["feedback"] * (sf * 2.0 - 1.0)   # [0,1]→[-1,1] × 0.15 → ±0.15
             + _WEIGHTS["llm_advisor"] * sl
             + _PRED_BOOST * sp
+            + _CAT_HINT_BOOST * sc
         )
 
         # Asymmetric negative penalty: a chunk users repeatedly mark as
@@ -746,6 +766,7 @@ def search(
         reranker_query_hint=query,
         reranker_override=opts.get("reranker_version"),
         predicted_topics=predicted_topics,
+        category_hint=opts.get("category_hint"),
     )
 
     # Enrich with cross-source refs (same text found in other sources).

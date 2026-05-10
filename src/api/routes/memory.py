@@ -118,6 +118,12 @@ async def memory_search(
             # Forward per-request override to _rerank() — used by /stats/
             # retrieval-ab to compare v1/v2 head-to-head on the same query.
             opts["reranker_version"] = request.reranker_version
+        if request.category_hint:
+            # WHY(2026-05-10): chunks die mit prompt-categories überlappen
+            # bekommen einen score-boost im _rerank. Normalize zu lowercase.
+            opts["category_hint"] = [
+                c.lower().strip() for c in request.category_hint if c and c.strip()
+            ]
         result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
                              opts, request.char_budget)
         return {"workspace_id": workspace_id, **result}

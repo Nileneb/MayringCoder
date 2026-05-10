@@ -97,6 +97,7 @@ def _extract_prompt(payload: dict) -> str:
 def _search(
     query: str, token: str, *, top_k: int = TOP_K_PRIMARY,
     source_type: str | None = None, char_budget: int = CHAR_BUDGET,
+    category_hint: list[str] | None = None,
 ) -> dict:
     """Run one /memory/search lens.
 
@@ -123,6 +124,8 @@ def _search(
     }
     if source_type:
         body_dict["source_type"] = source_type
+    if category_hint:
+        body_dict["category_hint"] = category_hint
     body = json.dumps(body_dict).encode()
     req = urllib.request.Request(
         f"{API}/memory/search",
@@ -284,15 +287,16 @@ def _categorize_prompt(prompt: str) -> list[str]:
     return matched
 
 
-def _multi_lens_search(query: str, token: str) -> dict[str, dict]:
+def _multi_lens_search(query: str, token: str, *,
+                       category_hint: list[str] | None = None) -> dict[str, dict]:
     """Run three lens-searches concurrently; one entry per lens.
 
     Each value is either a real search response or a `{_hook_error: ...}`
     sentinel. Cancellation/timeout in the futures executor itself also
     surfaces as `_hook_error` so the user actually sees what's wrong.
     """
-    lenses = {
-        "primary":      {},
+    lenses: dict[str, dict] = {
+        "primary":      {"category_hint": category_hint},
         "ambient":      {"source_type": "ambient_snapshot", "top_k": TOP_K_LENS, "char_budget": 1000},
         "conversation": {"source_type": "conversation_summary", "top_k": TOP_K_LENS, "char_budget": 1000},
     }
@@ -427,7 +431,7 @@ def main() -> None:
     # einfach ohne hint suchen (ungefilterter fallback).
     prompt_categories = _categorize_prompt(prompt)
 
-    results = _multi_lens_search(prompt, token)
+    results = _multi_lens_search(prompt, token, category_hint=prompt_categories or None)
     primary = results.get("primary") or {}
     if "_hook_error" in primary:
         # Sonderfall: deploy-typische 5xx (502/503/504) sind transient

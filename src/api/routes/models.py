@@ -74,6 +74,13 @@ class MemorySearchRequest(BaseModel):
     # variable RERANKER_VERSION decides; default is v1 so behaviour
     # never changes silently.
     reranker_version: str | None = None
+    # WHY(2026-05-10 multi-cat prompt-decomp): wenn der hook prompt-
+    # kategorien via mistral:7b-instruct extrahiert hat, kann er sie als
+    # hint mitsenden. Chunks deren category_labels mit diesen kategorien
+    # überlappen bekommen einen score-boost im _rerank — der user-prompt
+    # "auth + caching + deployment" rankt dann chunks mit auth/caching/
+    # deployment labels höher als nur durch vector-similarity möglich.
+    category_hint: list[str] | None = None
 
 
 class MemoryPutRequest(BaseModel):
