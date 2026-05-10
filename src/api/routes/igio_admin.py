@@ -21,8 +21,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.auth import get_token_info
+from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
-from src.memory.store import init_memory_db
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -34,11 +34,6 @@ _ROOT = Path(__file__).parent.parent.parent.parent
 def _python_exe() -> str:
     venv = _ROOT / ".venv" / "bin" / "python"
     return str(venv) if venv.exists() else "python"
-
-
-def _conn():
-    from src.config import CACHE_DIR
-    return init_memory_db(CACHE_DIR / "memory.db")
 
 
 def _is_admin(info: TokenInfo) -> bool:

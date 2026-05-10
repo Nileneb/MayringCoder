@@ -17,6 +17,27 @@ import sys
 import urllib.request
 import urllib.error
 
+# Module-level import des silent-skip-counter mit no-op-Fallback wenn das
+# Sister-Modul nicht da ist (z.B. wenn der Hook standalone aus altem Snapshot
+# läuft). Vermeidet sys.path-Manipulation pro Aufruf (Sourcery-suggestion #4)
+# UND robust gegen fehlende dependency.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _silent_skip_counter import (
+        recent_skip_count as _silent_skip_recent,
+        reset_counter as _silent_skip_reset,
+        should_warn as _silent_skip_should_warn,
+    )
+except ImportError:
+    def _silent_skip_recent(window_hours: float = 24.0) -> int:  # type: ignore[misc]
+        return 0
+
+    def _silent_skip_reset() -> None:  # type: ignore[misc]
+        pass
+
+    def _silent_skip_should_warn(threshold: int = 5, window_hours: float = 24.0) -> bool:  # type: ignore[misc]
+        return False
+
 
 PLANS_DIR = os.path.expanduser("~/.claude/plans")
 TASK_CONTEXT_BUDGET = 800
@@ -438,6 +459,29 @@ def _drain_ingest_queue() -> None:
         )
 
 
+def _warn_if_silent_skips_accumulated() -> None:
+    """V2 Stufe 2.2: zeige einmal pro Session den Stand des silent-skip-counters.
+
+    Wenn memory_inject in 24h ≥5 silent-skips gemacht hat (alle 3 lenses
+    5xx → kein lauter Block mehr, weil deploy-typisch), ist das Pattern
+    chronisch und braucht User-Aktion. Banner wird gezeigt + counter
+    reset, damit nicht jede Session denselben Banner zeigt.
+    """
+    if not _silent_skip_should_warn(threshold=5):
+        return
+    try:
+        n = _silent_skip_recent(window_hours=24)
+        print(
+            f"## Memory-Hook: chronische silent-skips ({n}/24h)\n"
+            f"_Der UserPromptSubmit-Hook hat zuletzt {n}× nichts injiziert "
+            f"(alle 3 lens-searches → 5xx). Wenn das anhält: API healthcheck "
+            f"`curl https://mcp.linn.games/health` oder `/reload-plugins`._"
+        )
+        _silent_skip_reset()
+    except OSError as e:
+        print(f"MayringCoder: skip-counter check failed — {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     plugin_root = _plugin_root()
     repo_root = _repo_root(plugin_root)
@@ -445,5 +489,6 @@ if __name__ == "__main__":
     _bootstrap_if_needed()
     _drain_feedback_queue()
     _drain_ingest_queue()
+    _warn_if_silent_skips_accumulated()
     payload = json.loads(sys.stdin.read() or "{}")
     _inject_memory(payload)

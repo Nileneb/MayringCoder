@@ -25,15 +25,10 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from src.api.auth import get_token_info
+from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
-from src.memory.store import init_memory_db
 
 router = APIRouter()
-
-
-def _conn():
-    from src.config import CACHE_DIR
-    return init_memory_db(CACHE_DIR / "memory.db")
 
 
 def _is_admin(info: TokenInfo) -> bool:

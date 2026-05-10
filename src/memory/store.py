@@ -172,6 +172,26 @@ def _migrate_schema(conn: DBAdapter) -> None:
         "workspaces": [
             ("email", "TEXT DEFAULT NULL"),
         ],
+        # WHY(v2-stufe1, multi-tenant): Schema-Test
+        # `assert_no_unworkspaced_table` failt für jede user-data-Tabelle
+        # ohne workspace_id. Vor V2 hatten topic_transitions/chunk_feedback/
+        # wiki_paper_cache/ingestion_log keinen Tenant-Filter — d.h. alice
+        # konnte bene's Markov-Edges, Feedback-Signale, Paper-Cache und
+        # Ingest-Events sehen. Idempotente Migrations: bestehende DBs
+        # bekommen die Spalte mit DEFAULT 'default' (legacy-Zeilen sammeln
+        # sich da, gehören dem 'default'-Bucket).
+        "topic_transitions": [
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
+        "chunk_feedback": [
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
+        "wiki_paper_cache": [
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
+        "ingestion_log": [
+            ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
     }
     for table, columns in migrations.items():
         existing = conn.get_columns(table)

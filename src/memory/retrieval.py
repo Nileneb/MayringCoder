@@ -233,7 +233,10 @@ def _llm_relevance_scores(
                 stream=False, timeout=timeout, num_predict=8,
             ).strip()
             scores[chunk.chunk_id] = max(0.0, min(1.0, float(raw)))
-        except Exception:
+        except (ConnectionError, TimeoutError, OSError, ValueError):
+            # WHY(v2-stufe2.1): LLM-Advisor ist Best-Effort — fallback 0.5
+            # bedeutet "keine starke Aussage". Konkrete Fehlerklassen
+            # benannt; alles andere (z.B. AssertionError aus mock) muss laut.
             scores[chunk.chunk_id] = 0.5
     return scores
 
@@ -244,6 +247,9 @@ def _llm_relevance_scores(
 
 def _recency_score(chunk: Chunk) -> float:
     """Decay: 1.0 for brand-new chunks, 0.0 for chunks >30 days old."""
+    # WHY(v2-stufe2.1): nur konkrete Parser-Fehler schlucken — sonst
+    # legacy created_at-Format würde alle Chunks scoren mit 0.0 und
+    # fail wäre unsichtbar.
     try:
         created = datetime.fromisoformat(chunk.created_at)
         if created.tzinfo is None:
@@ -251,7 +257,7 @@ def _recency_score(chunk: Chunk) -> float:
         now = datetime.now(timezone.utc)
         days_old = (now - created).total_seconds() / 86400.0
         return max(0.0, 1.0 - days_old / _RECENCY_DECAY_DAYS)
-    except Exception:
+    except (ValueError, TypeError):
         return 0.0
 
 
@@ -548,7 +554,9 @@ def search(
                 chunk = Chunk.from_dict(cached)
                 candidates.append(chunk)
                 continue
-            except Exception:
+            except (KeyError, TypeError, ValueError):
+                # WHY(v2-stufe2.1): KV-Cache-Eintrag aus älterem Schema
+                # — fallthrough zu DB-Read; nicht silent für allg. Errors.
                 pass
         chunk = get_chunk(conn, cid)
         if chunk is not None:
@@ -717,7 +725,9 @@ def search(
                 query, conn, _pred_repo, top_k=5,
             )
             predicted_topics = {p.to_topic.lower() for p in preds}
-        except Exception:
+        except (ImportError, sqlite3.OperationalError, AttributeError):
+            # WHY(v2-stufe2.1): predictive-Modul Optional. konkrete Fehler
+            # schlucken; anderes muss laut.
             predicted_topics = set()
 
     # Stage 4: re-rank — v1 (hand-tuned _WEIGHTS) by default; v2 (learned)
@@ -738,13 +748,15 @@ def search(
         predicted_topics=predicted_topics,
     )
 
-    # Enrich with cross-source refs (same text found in other sources)
+    # Enrich with cross-source refs (same text found in other sources).
+    # WHY(v2-stufe2.1): cross-source-Anreicherung ist nice-to-have; konkrete
+    # sqlite-Fehler schlucken; anderes muss laut.
     try:
         from src.memory.store import get_source_refs
         for r in ranked:
             all_refs = get_source_refs(conn, r.chunk_id)
             r.also_in_sources = [s for s in all_refs if s != r.source_id]
-    except Exception:
+    except sqlite3.OperationalError:
         pass
 
     # Store full records in query cache (text stripped — re-fetched on

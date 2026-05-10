@@ -29,6 +29,18 @@ API = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 # we drop a small state file here that the Stop hook picks up.
 INJECT_STATE_DIR = os.path.expanduser("~/.config/mayring/inject-state")
 
+
+# WHY(v2-stufe2.2): silent-skip-counter trackt deploy-window-Skips, damit
+# chronische Hook-Failures nicht permanent unsichtbar bleiben.
+def _record_silent_skip(reason: str) -> None:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from _silent_skip_counter import record_silent_skip  # noqa: PLC0415
+        record_silent_skip(reason=reason)
+    except (ImportError, OSError) as e:
+        # Counter ist best-effort — aber wir schweigen nicht ganz: log to stderr.
+        print(f"[memory_inject] could not record silent skip: {e}", file=sys.stderr)
+
 # Per-request timeout budget. Was 4.0s but the hybrid search auto-activates
 # the PI-advisor LLM stage when the scope-filter returns >10 candidates,
 # which is normal for any populated workspace — that stage adds 2-4s on top
@@ -220,7 +232,12 @@ def main() -> None:
             for r in results.values() if "_hook_error" in (r or {})
         )
         if all_5xx:
-            return  # silent skip — Memory injizieren wir beim nächsten prompt
+            # silent skip — Memory injizieren wir beim nächsten prompt.
+            # Counter trackt das, damit chronische 5xx-Schleifen vom
+            # SessionStart-Hook gemeldet werden statt für immer unsichtbar
+            # zu bleiben (V2 Stufe 2.2).
+            _record_silent_skip(reason="all_5xx")
+            return
         # Sonst: laut, weil der Fehler eine Aktion braucht (4xx, parse,
         # OSError, timeout). Lists ALL three lens errors at once.
         errs = [

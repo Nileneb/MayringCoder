@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
@@ -95,8 +96,14 @@ def register_memory_tools(mcp: FastMCP) -> None:
                      datetime.now(timezone.utc).isoformat()),
                 )
                 _conn.commit()
-            except Exception:
-                pass  # non-critical; never block the search result
+            except (sqlite3.OperationalError, sqlite3.IntegrityError) as log_exc:
+                # WHY(v2-stufe2.1): das ist Telemetrie-Insert für IGIO,
+                # niemals der hot-path. Schlucken nur konkreten DB-Klassen,
+                # alles andere (z.B. unerwartetes JSON-Encoding) muss laut.
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "context_feedback_log insert skipped: %s", log_exc,
+                )
             return result
         except Exception as exc:
             return {"error": str(exc), "results": [], "prompt_context": ""}
@@ -294,13 +301,21 @@ def register_memory_tools(mcp: FastMCP) -> None:
                     source_dict, source, _get_conn(), _get_chroma(),
                     ollama_url, model, {"categorize": True}, ws,
                 )
-                try:
-                    httpx.post(f"{_api}/wiki/generate",
-                               json={"workspace_id": ws}, headers=headers, timeout=5.0)
-                    httpx.post(f"{_api}/ambient/snapshot",
-                               json={"repo": ws}, headers=headers, timeout=5.0)
-                except Exception:
-                    pass
+                # WHY(v2-stufe2.1): wiki/generate + ambient/snapshot sind
+                # post-ingest-side-effects. Netzwerk/Timeout sind erwartbar
+                # und blocken den Caller nicht — aber wir loggen statt schlucken.
+                for endpoint, body in (
+                    ("/wiki/generate", {"workspace_id": ws}),
+                    ("/ambient/snapshot", {"repo": ws}),
+                ):
+                    try:
+                        httpx.post(f"{_api}{endpoint}",
+                                   json=body, headers=headers, timeout=5.0)
+                    except (httpx.HTTPError, httpx.TimeoutException) as side_exc:
+                        import logging as _logging
+                        _logging.getLogger(__name__).warning(
+                            "post-ingest %s skipped: %s", endpoint, side_exc,
+                        )
                 return {"source_id": sid, "workspace_id": ws, **result}
             except Exception as exc:
                 return {"error": str(exc), "workspace_id": ws}
@@ -411,9 +426,10 @@ def register_memory_tools(mcp: FastMCP) -> None:
             {chunk_id, recorded: True}
         """
         try:
-            import json as _json
             enriched = dict(metadata or {})
             conn = _get_conn()
+            # WHY(v2-stufe2.1): Anreichern mit query_context ist optional;
+            # konkrete sqlite-Fehler werden geloggt, nicht geschluckt.
             try:
                 row = conn.execute(
                     "SELECT id, context_text FROM context_feedback_log"
@@ -430,8 +446,11 @@ def register_memory_tools(mcp: FastMCP) -> None:
                         (log_id,),
                     )
                     conn.commit()
-            except Exception:
-                pass
+            except sqlite3.OperationalError as log_exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "feedback enrich skipped: %s", log_exc,
+                )
             add_feedback(conn, chunk_id, signal, enriched)
             invalidate_query_cache()
             return {"chunk_id": chunk_id, "recorded": True}

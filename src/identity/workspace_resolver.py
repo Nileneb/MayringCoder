@@ -25,8 +25,12 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from src.memory.db_adapter import DBAdapter
+
+if TYPE_CHECKING:
+    from src.api.jwt_auth import TokenInfo
 
 USER_WORKSPACE_RE = re.compile(r"^user-(\d+)(?::([\w\-]+))?$")
 
@@ -37,6 +41,51 @@ class UnknownWorkspaceError(ValueError):
 
 class IdentityRequiredError(ValueError):
     """Raised when no workspace_id and no default_user_id was provided."""
+
+
+# WHY(v2-stufe1-SoT, identity): Diese Funktion ist die EINZIGE quelle
+# der wahrheit für workspace_id pro request. Vor dem refactor gab es
+# 4+ resolution-pfade (api.auth.get_workspace, mcp_auth._effective_*,
+# ad-hoc f"user-{sub}" string-builder, jwt-claim-derivation in
+# validate_jwt_token). Mehrere unfixed callsites = workspace=system-leaks.
+# Audit: docs/v2-master-audit.md W1.
+def resolve_workspace_from_token(
+    info: "TokenInfo",
+    override_header: str | None = None,
+) -> str:
+    """ONLY function used to determine workspace_id for any request.
+
+    Args:
+        info: Validated TokenInfo (from auth dependency or middleware).
+        override_header: Value of X-Workspace-Id header, if any.
+
+    Resolution rules:
+        - Service-Token (scope='*') + override-Header → return override
+          (admin-tool case: post-deploy-ingest, smoke, cron writes for
+          a specific tenant).
+        - Service-Token w/o override → return token.workspace_id (typically
+          'system').
+        - User-JWT (scope='mcp:memory'[+'admin']) → return token.workspace_id.
+          Override-Header IGNORIERT (User darf nicht in fremde Buckets).
+
+    Raises:
+        ValueError: info is None, or token has empty workspace_id.
+    """
+    if info is None:
+        raise ValueError("resolve_workspace_from_token: info is None")
+    workspace_id = info.workspace_id
+    if not workspace_id:
+        raise ValueError(
+            "resolve_workspace_from_token: TokenInfo.workspace_id is empty — "
+            "JWT must carry email-claim (-> slug), service-token must default "
+            "to 'system'."
+        )
+    is_service_token = "*" in info.scopes
+    if is_service_token and override_header:
+        candidate = override_header.strip()
+        if candidate:
+            return candidate
+    return workspace_id
 
 
 def email_to_slug(email: str) -> str:
