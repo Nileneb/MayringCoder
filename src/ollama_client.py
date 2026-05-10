@@ -43,6 +43,55 @@ _CLOUD_PRIMARY_RATIO = max(0.0, min(1.0, float(
     os.getenv("OLLAMA_CLOUD_PRIMARY_RATIO", "0.2")
 )))
 
+# WHY(2026-05-10): ollama-cloud hat ein eigenes modell-set
+# (glm-4.6, ministral-3:3b, gemma3:4b, qwen3-coder:480b, ...) — die
+# local-modelle (mistral:7b-instruct, qwen2.5-coder:7b) gibts NICHT.
+# /api/tags via cloud-API zeigt die liste; siehe ollama.com/cloud.
+# Mapping: kleine/mittlere general-purpose → ministral-3:3b oder
+# gemma3:4b (free-tier-tauglich); code-tasks → qwen3-coder-next.
+# Override per env: OLLAMA_CLOUD_MODEL_MAP="local1:cloud1,local2:cloud2"
+_CLOUD_MODEL_MAP_DEFAULT = {
+    "mistral:7b-instruct": "gemma3:4b",
+    "mistral:7b": "gemma3:4b",
+    "mistral": "gemma3:4b",
+    "qwen2.5-coder:7b": "qwen3-coder-next",
+    "qwen2.5-coder": "qwen3-coder-next",
+    "qwen3.5:2b": "ministral-3:3b",
+    "qwen3:2b": "ministral-3:3b",
+    "phi3:3.8b": "ministral-3:3b",
+}
+
+
+def _parse_cloud_map() -> dict[str, str]:
+    raw = os.getenv("OLLAMA_CLOUD_MODEL_MAP", "")
+    mapping = dict(_CLOUD_MODEL_MAP_DEFAULT)
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if ":" not in pair:
+            continue
+        # split nur am ersten ":" — model-names enthalten oft ":7b"
+        local_part, cloud_part = pair.split(":", 1)
+        if local_part and cloud_part:
+            mapping[local_part.strip()] = cloud_part.strip()
+    return mapping
+
+
+_CLOUD_MODEL_MAP = _parse_cloud_map()
+# Default cloud-modell wenn local-name nicht in map — gemma3:4b ist klein,
+# schnell und für 90% der pi-task-prompts ausreichend.
+_CLOUD_DEFAULT_MODEL = os.getenv("OLLAMA_CLOUD_DEFAULT_MODEL", "gemma3:4b")
+
+
+def _resolve_cloud_model(local_model: str) -> str:
+    """Map local model-name → cloud-equivalent. Falls unmapped: default."""
+    if local_model in _CLOUD_MODEL_MAP:
+        return _CLOUD_MODEL_MAP[local_model]
+    # Family-prefix-lookup: "mistral:7b-instruct-q4" → versucht "mistral"
+    family = local_model.split(":", 1)[0]
+    if family in _CLOUD_MODEL_MAP:
+        return _CLOUD_MODEL_MAP[family]
+    return _CLOUD_DEFAULT_MODEL
+
 
 def _should_route_cloud_primary() -> bool:
     """Per-call random sampling: returns True wenn diese call cloud-primär läuft.
@@ -144,18 +193,21 @@ def generate(
     # Reduziert local-overload UND nutzt die kostenlose cloud-quota.
     if _should_route_cloud_primary():
         try:
+            cloud_model = _resolve_cloud_model(model)
+            cloud_body = dict(body, model=cloud_model)
             import logging as _logging
-            _logging.getLogger(__name__).info(
-                "ollama cloud-primary route (%.0f%% ratio)", _CLOUD_PRIMARY_RATIO * 100,
+            _logging.getLogger(__name__).warning(
+                "ollama generate cloud-primary: %s → %s (%.0f%% ratio)",
+                model, cloud_model, _CLOUD_PRIMARY_RATIO * 100,
             )
             return _generate_call(
-                _CLOUD_URL, body, stream=stream, timeout=timeout,
+                _CLOUD_URL, cloud_body, stream=stream, timeout=timeout,
                 auth_token=_CLOUD_API_KEY,
             )
         except Exception as cloud_exc:
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "cloud-primary failed, fallback local: %s",
+                "cloud-primary failed (%s), fallback local",
                 type(cloud_exc).__name__,
             )
             # weiter in den normalen local-pfad fallen
@@ -329,17 +381,19 @@ def chat(
     # generate() — siehe _should_route_cloud_primary docstring).
     if _should_route_cloud_primary():
         try:
+            cloud_model = _resolve_cloud_model(model)
+            cloud_body = dict(body, model=cloud_model)
             import logging as _logging
-            _logging.getLogger(__name__).info(
-                "ollama chat cloud-primary route (%.0f%% ratio)",
-                _CLOUD_PRIMARY_RATIO * 100,
+            _logging.getLogger(__name__).warning(
+                "ollama chat cloud-primary: %s → %s (%.0f%% ratio)",
+                model, cloud_model, _CLOUD_PRIMARY_RATIO * 100,
             )
-            return _chat_call(_CLOUD_URL, body, timeout=timeout,
+            return _chat_call(_CLOUD_URL, cloud_body, timeout=timeout,
                               auth_token=_CLOUD_API_KEY)
         except Exception as cloud_exc:
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "chat cloud-primary failed, fallback local: %s",
+                "chat cloud-primary failed (%s), fallback local",
                 type(cloud_exc).__name__,
             )
 
