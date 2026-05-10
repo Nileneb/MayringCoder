@@ -186,7 +186,7 @@ def test_pi_tasks_no_pi_jobs_table_returns_empty(seeded_db):
 # ---------------------------------------------------------------------------
 
 def test_workspaces_tenant_sees_only_own(seeded_db, monkeypatch):
-    """Non-admin token: scoped to own workspace_id."""
+    """Non-admin token without memberships: scoped to active workspace_id only."""
     from src.api.jwt_auth import TokenInfo
     from src.api import mcp_auth as mcp_mod
     mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=()))
@@ -195,6 +195,44 @@ def test_workspaces_tenant_sees_only_own(seeded_db, monkeypatch):
         assert len(res["workspaces"]) == 1
         assert res["workspaces"][0]["workspace_id"] == "user-2"
         assert res["workspaces"][0]["chunks"] == 1
+    finally:
+        mcp_mod._TOKEN_CTX.set(None)
+
+
+def test_workspaces_tenant_with_memberships_sees_all(seeded_db, monkeypatch):
+    """V2: token with memberships[] lists every ws the user is a member of.
+    Regression for #195: pre-V2 the non-admin branch returned exactly 1 row,
+    hiding org-workspaces from the dashboard even when chunks were ingested."""
+    from src.api.jwt_auth import TokenInfo, Membership
+    from src.api import mcp_auth as mcp_mod
+    # Seed: insert source FIRST (FK from chunks.source_id), then chunk.
+    seeded_db.execute(
+        "INSERT INTO sources (source_id, workspace_id, source_type, repo, path, captured_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("src-org", "ws-acme", "memory", "", "manual", "2026-05-10T10:00:00Z"),
+    )
+    seeded_db.execute(
+        "INSERT INTO chunks (chunk_id, source_id, workspace_id, text, "
+        "created_at, is_active) VALUES (?, ?, ?, ?, ?, 1)",
+        ("c-org-1", "src-org", "ws-acme", "org-content", "2026-05-10T10:00:00Z"),
+    )
+    seeded_db.commit()
+
+    mcp_mod._TOKEN_CTX.set(TokenInfo(
+        workspace_id="user-2",
+        scopes=(),
+        memberships=(
+            Membership(id="user-2", type="personal", role="owner"),
+            Membership(id="ws-acme", type="organization", role="editor"),
+        ),
+    ))
+    try:
+        res = _run(dashboard.workspaces(workspace_id="user-2"))
+        ws_ids = {w["workspace_id"] for w in res["workspaces"]}
+        assert ws_ids == {"user-2", "ws-acme"}
+        types = {w["workspace_id"]: w["type"] for w in res["workspaces"]}
+        assert types["user-2"] == "personal"
+        assert types["ws-acme"] == "organization"
     finally:
         mcp_mod._TOKEN_CTX.set(None)
 

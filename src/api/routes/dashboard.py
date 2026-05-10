@@ -363,15 +363,28 @@ async def activations(
 
 @router.get("/stats/workspaces")
 async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
-    """Per-workspace activity. Admins see all, tenants see just their own.
+    """Per-workspace activity.
 
-    Useful to spot drift (one user with 3 parallel workspaces) or stale
-    workspaces that haven't been touched in months.
+    Admins see all workspaces in the DB. Tenants see every workspace they're
+    a member of — derived from the JWT `memberships[]` claim (V2). For
+    backward-compat with old JWTs without memberships, falls back to the
+    single active workspace_id.
     """
     from src.api.mcp_auth import _TOKEN_CTX
 
     info = _TOKEN_CTX.get()
     is_admin = bool(info and "admin" in (info.scopes or ()))
+    # WHY(#195, v2): pre-V2 the non-admin branch listed exactly one row
+    # (the active workspace). After V2 a user in N workspaces sees all N.
+    # Source-of-truth is the JWT `memberships[]` claim from Laravel; falls
+    # back to {workspace_id} for legacy JWTs without the field.
+    member_ws_ids: set[str] = {workspace_id}
+    member_ws_types: dict[str, str] = {}
+    if info and getattr(info, "memberships", None):
+        for m in info.memberships:
+            if m.id:
+                member_ws_ids.add(m.id)
+                member_ws_types[m.id] = m.type
 
     conn = _conn()
     if is_admin:
@@ -384,12 +397,16 @@ async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
             "GROUP BY c.workspace_id ORDER BY 4 DESC"
         ).fetchall()
     else:
+        # SAFE: placeholders is "?,?,?" — no user-input concatenation.
+        placeholders = ",".join("?" * len(member_ws_ids))
         rows = conn.execute(
-            "SELECT ?, COUNT(DISTINCT c.chunk_id), "
-            "       COUNT(DISTINCT s.source_id), MAX(c.created_at) "
-            "FROM chunks c LEFT JOIN sources s ON s.workspace_id = c.workspace_id "
-            "WHERE c.workspace_id = ?",
-            (workspace_id, workspace_id),
+            f"SELECT c.workspace_id, "
+            f"       COUNT(DISTINCT c.chunk_id), "
+            f"       COUNT(DISTINCT s.source_id), MAX(c.created_at) "
+            f"FROM chunks c LEFT JOIN sources s ON s.workspace_id = c.workspace_id "
+            f"WHERE c.workspace_id IN ({placeholders}) "
+            f"GROUP BY c.workspace_id ORDER BY 4 DESC",
+            tuple(member_ws_ids),
         ).fetchall()
 
     return {
@@ -397,6 +414,7 @@ async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
         "workspaces": [
             {
                 "workspace_id": r[0],
+                "type": member_ws_types.get(r[0], "personal" if r[0] == workspace_id else "unknown"),
                 "chunks": r[1],
                 "sources": r[2],
                 "last_activity": r[3],
