@@ -54,15 +54,22 @@ def _conn() -> sqlite3.Connection:
 def load_chunks_without_labels(conn: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
     """Aktive chunks ohne category_labels — newest first damit ein
     abgebrochener run die aktuellsten chunks zuerst hat."""
+    # WHY: source_type liegt in `sources`, nicht in `chunks` → LEFT JOIN.
     return conn.execute(
         """
-        SELECT chunk_id, source_id, source_type, text, chunk_level, workspace_id
-        FROM chunks
-        WHERE is_active = 1
-          AND (category_labels IS NULL OR TRIM(category_labels) = '')
-          AND text IS NOT NULL
-          AND LENGTH(text) >= 20
-        ORDER BY created_at DESC
+        SELECT c.chunk_id,
+               c.source_id,
+               COALESCE(s.source_type, 'repo_file') AS source_type,
+               c.text,
+               c.chunk_level,
+               c.workspace_id
+        FROM chunks c
+        LEFT JOIN sources s ON s.source_id = c.source_id
+        WHERE c.is_active = 1
+          AND (c.category_labels IS NULL OR TRIM(c.category_labels) = '')
+          AND c.text IS NOT NULL
+          AND LENGTH(c.text) >= 20
+        ORDER BY c.created_at DESC
         LIMIT ?
         """,
         (limit,),
@@ -80,14 +87,13 @@ def categorize_one(row: sqlite3.Row, *, ollama_url: str, model: str,
     chunk = Chunk(
         chunk_id=row["chunk_id"],
         source_id=row["source_id"] or "",
-        source_type=row["source_type"] or "repo_file",
         chunk_level=row["chunk_level"] or "function",
         ordinal=0,
         text=row["text"] or "",
-        token_count=0,
-        embed_status="",
         workspace_id=row["workspace_id"] or "default",
     )
+    # source_type wird über das mayring_categorize-arg gepasst,
+    # nicht über das Chunk-feld (das hat's nicht).
     result = mayring_categorize(
         [chunk], ollama_url=ollama_url, model=model,
         mode=mode, codebook=codebook,
@@ -95,8 +101,13 @@ def categorize_one(row: sqlite3.Row, *, ollama_url: str, model: str,
     )
     if not result:
         return []
-    cat_raw = (result[0].category_labels or "").strip()
-    return [c.strip() for c in cat_raw.split(",") if c.strip()]
+    cats = result[0].category_labels
+    if not cats:
+        return []
+    # Chunk.category_labels kann list[str] ODER string sein — defensive
+    if isinstance(cats, list):
+        return [str(c).strip() for c in cats if str(c).strip()]
+    return [c.strip() for c in str(cats).split(",") if c.strip()]
 
 
 def main() -> int:
