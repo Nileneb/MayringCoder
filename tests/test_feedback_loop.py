@@ -42,7 +42,7 @@ def test_feedback_score_all_positive():
     db = _db()
     _make_chunk("chk1", "src1", "text", db)
     for _ in range(5):
-        add_feedback(db, "chk1", "positive")
+        add_feedback(db, "chk1", "5")
     assert get_feedback_score(db, "chk1") == 1.0
 
 
@@ -50,15 +50,15 @@ def test_feedback_score_all_negative():
     db = _db()
     _make_chunk("chk2", "src2", "text", db)
     for _ in range(3):
-        add_feedback(db, "chk2", "negative")
+        add_feedback(db, "chk2", "1")
     assert get_feedback_score(db, "chk2") == 0.0
 
 
 def test_feedback_score_mixed():
     db = _db()
     _make_chunk("chk3", "src3", "text", db)
-    add_feedback(db, "chk3", "positive")
-    add_feedback(db, "chk3", "negative")
+    add_feedback(db, "chk3", "5")
+    add_feedback(db, "chk3", "1")
     score = get_feedback_score(db, "chk3")
     assert score == 0.5
 
@@ -76,7 +76,7 @@ def test_positive_feedback_boosts_ranking():
     chunk_nofb = _make_chunk("chk-nofb", "src-nofb", "authentication flow context", db)
 
     for _ in range(5):
-        add_feedback(db, "chk-fb", "positive")
+        add_feedback(db, "chk-fb", "5")
 
     # Equal vector + symbolic scores — only feedback should differ
     vector_scores = {"chk-fb": 0.6, "chk-nofb": 0.6}
@@ -101,7 +101,7 @@ def test_negative_feedback_lowers_ranking():
     chunk_clean = _make_chunk("chk-clean", "src-clean", "some context", db)
 
     for _ in range(5):
-        add_feedback(db, "chk-neg", "negative")
+        add_feedback(db, "chk-neg", "1")
 
     vector_scores = {"chk-neg": 0.6, "chk-clean": 0.6}
     symbolic_scores = {"chk-neg": 0.4, "chk-clean": 0.4}
@@ -117,13 +117,14 @@ def test_negative_feedback_lowers_ranking():
 
 
 def test_neutral_feedback_is_rejected():
-    """Binary-only contract: add_feedback raises on 'neutral'.
-
-    Was previously a soft no-op (neutral row persisted but didn't shift
-    score). The auto-rater used to spam 3243 such rows — they were both
-    pointless and actively diluted real signals (1 pos + 10 neutral
-    yielded 0.545 instead of 1.0). Now the data layer rejects it loud."""
+    """Rating-only contract (rating-migration 2026-05-10): add_feedback
+    raises on any non-rating string. Binary positive/negative + neutral
+    all komplett raus."""
     import pytest as _pt
     db = _db()
-    with _pt.raises(ValueError, match="positive.*negative"):
+    with _pt.raises(ValueError, match="rating '1'..'5'"):
         add_feedback(db, "chk-anything", "neutral")
+    with _pt.raises(ValueError, match="rating '1'..'5'"):
+        add_feedback(db, "chk-anything", "positive")
+    with _pt.raises(ValueError, match="rating '1'..'5'"):
+        add_feedback(db, "chk-anything", "negative")

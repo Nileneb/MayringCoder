@@ -51,7 +51,7 @@ class TestKategorieCoaching:
         )
         conn.execute(
             "INSERT INTO chunk_feedback (chunk_id, signal, created_at) VALUES (?,?,?)",
-            ("chk1", "positive", "2026-01-01"),
+            ("chk1", "5", "2026-01-01"),
         )
         conn.commit()
 
@@ -71,7 +71,7 @@ class TestKategorieCoaching:
         )
         conn.execute(
             "INSERT INTO chunk_feedback (chunk_id, signal, created_at) VALUES (?,?,?)",
-            ("chk2", "negative", "2026-01-01"),
+            ("chk2", "1", "2026-01-01"),
         )
         conn.commit()
 

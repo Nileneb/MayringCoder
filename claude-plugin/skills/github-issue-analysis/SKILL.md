@@ -113,16 +113,15 @@ Turbulenz: <risiko>, gelöst durch: <1 Satz>"
    )
    ```
 
-2. **Feedback für Memory-Chunks**
-   Für jeden Chunk aus Phase 1 der tatsächlich relevant war:
+2. **Feedback für Memory-Chunks** (rating 1..5, seit 2026-05-10 kein binary mehr)
    ```
    mcp__claude_ai_Memory__feedback(
      chunk_id="<id>",
-     signal="positive",
+     signal="5",  # 4=wichtig, 5=primärquelle, 3=neutral, 2=kaum, 1=schadhaft
      metadata={"issue":"<nummer>","task":"<titel>"}
    )
    ```
-   Irrelevante Chunks: `signal="negative"`.
+   Irrelevante Chunks: `signal="2"` oder `"1"`.
 
 ## Red Flags — STOP
 

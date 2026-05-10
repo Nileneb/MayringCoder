@@ -139,6 +139,7 @@ def test_state_file_path_does_drive_feedback(stop_hook, tmp_path, monkeypatch):
     )
     stop_hook._auto_feedback(turns, session_id, "fake-token")
 
-    assert ("chk_aaaaaaaaaaaaaaaa", "positive") in posted
-    assert ("chk_bbbbbbbbbbbbbbbb", "negative") in posted
+    # rating-migration: "positive" → "4" (path-match rating), "negative" → "2"
+    assert ("chk_aaaaaaaaaaaaaaaa", "4") in posted
+    assert ("chk_bbbbbbbbbbbbbbbb", "2") in posted
     assert not state_path.exists(), "state file must be cleared post-drain"

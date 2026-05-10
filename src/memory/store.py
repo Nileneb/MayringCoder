@@ -655,16 +655,17 @@ def add_feedback(
     signal: str,
     metadata: dict | None = None,
 ) -> None:
-    """Insert a feedback row. Binary-only — `neutral` is rejected.
+    """Insert a feedback row. Rating-only — '1'..'5' string.
 
-    Raises ``ValueError`` if anything other than positive/negative is
-    passed; the API route also validates this, but defending the data
-    layer here means a future mis-call from another caller fails loud
-    instead of silently writing a row that distorts scoring.
+    WHY(2026-05-10 rating-migration): binary positive/negative komplett
+    rausgenommen. Skalares rating gibt reranker echten gradient + erlaubt
+    "wichtig aber nicht primär" auszudrücken.
+
+    Raises ``ValueError`` für jeden anderen wert.
     """
-    if signal not in ("positive", "negative"):
+    if signal not in ("1", "2", "3", "4", "5"):
         raise ValueError(
-            f"add_feedback: signal must be 'positive' or 'negative', got {signal!r}"
+            f"add_feedback: signal must be a rating '1'..'5', got {signal!r}"
         )
     conn.execute(
         """
@@ -677,13 +678,11 @@ def add_feedback(
 
 
 def get_feedback_score(conn: DBAdapter, chunk_id: str) -> float:
-    """Net feedback: 1.0 = all positive, 0.0 = all negative.
+    """Average rating, normalized to [0..1]. No feedback → 0.5.
 
-    With binary-only signals (no neutral writes), the formula reduces to
-    pos / (pos+neg) → directly the positive ratio. Chunks without any
-    feedback return 0.5: that's a *scoring default* for "no information",
-    not a third semantic class. The DB never holds a literal 'neutral'
-    row.
+    Mapping: rating 1→0.0, 2→0.25, 3→0.5, 4→0.75, 5→1.0. Used by reranker
+    feature `sf`. Default 0.5 (no rating) ≡ rating 3 (neutral), so chunks
+    without history score the same as explicitly-neutral ones.
     """
     rows = conn.execute(
         "SELECT signal FROM chunk_feedback WHERE chunk_id = ?",
@@ -691,9 +690,18 @@ def get_feedback_score(conn: DBAdapter, chunk_id: str) -> float:
     ).fetchall()
     if not rows:
         return 0.5
-    pos = sum(1 for (s,) in rows if s == "positive")
-    neg = sum(1 for (s,) in rows if s == "negative")
-    return max(0.0, min(1.0, (pos - neg) / len(rows) * 0.5 + 0.5))
+    ratings: list[int] = []
+    for (s,) in rows:
+        try:
+            r = int(s)
+            if 1 <= r <= 5:
+                ratings.append(r)
+        except (TypeError, ValueError):
+            continue
+    if not ratings:
+        return 0.5
+    avg = sum(ratings) / len(ratings)
+    return max(0.0, min(1.0, (avg - 1.0) / 4.0))
 
 
 # ---------------------------------------------------------------------------

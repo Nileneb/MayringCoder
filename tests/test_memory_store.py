@@ -240,10 +240,10 @@ class TestFeedback:
         upsert_source(conn, _make_source())
         chunk = _make_chunk()
         insert_chunk(conn, chunk)
-        add_feedback(conn, chunk.chunk_id, "positive", {"query": "auth flow"})
+        add_feedback(conn, chunk.chunk_id, "5", {"query": "auth flow"})
         rows = conn.execute("SELECT * FROM chunk_feedback").fetchall()
         assert len(rows) == 1
-        assert rows[0]["signal"] == "positive"
+        assert rows[0]["signal"] == "5"
         meta = json.loads(rows[0]["metadata"])
         assert meta["query"] == "auth flow"
 
@@ -251,20 +251,20 @@ class TestFeedback:
         conn = init_memory_db(tmp_path / "m.db")
         assert get_feedback_score(conn, "nonexistent-chunk-id") == 0.5
 
-    def test_feedback_score_all_positive(self, tmp_path: Path) -> None:
+    def test_feedback_score_all_rating5(self, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")
         upsert_source(conn, _make_source())
         chunk = _make_chunk()
         insert_chunk(conn, chunk)
-        add_feedback(conn, chunk.chunk_id, "positive")
+        add_feedback(conn, chunk.chunk_id, "5")
         assert get_feedback_score(conn, chunk.chunk_id) == 1.0
 
-    def test_feedback_score_all_negative(self, tmp_path: Path) -> None:
+    def test_feedback_score_all_rating1(self, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")
         upsert_source(conn, _make_source())
         chunk = _make_chunk()
         insert_chunk(conn, chunk)
-        add_feedback(conn, chunk.chunk_id, "negative")
+        add_feedback(conn, chunk.chunk_id, "1")
         assert get_feedback_score(conn, chunk.chunk_id) == 0.0
 
     def test_feedback_score_balanced(self, tmp_path: Path) -> None:
@@ -272,8 +272,9 @@ class TestFeedback:
         upsert_source(conn, _make_source())
         chunk = _make_chunk()
         insert_chunk(conn, chunk)
-        add_feedback(conn, chunk.chunk_id, "positive")
-        add_feedback(conn, chunk.chunk_id, "negative")
+        add_feedback(conn, chunk.chunk_id, "5")
+        add_feedback(conn, chunk.chunk_id, "1")
+        # avg(5,1)=3 → (3-1)/4 = 0.5
         assert get_feedback_score(conn, chunk.chunk_id) == 0.5
 
 

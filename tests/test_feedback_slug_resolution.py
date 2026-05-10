@@ -68,7 +68,7 @@ def test_feedback_accepts_source_id_slug(db_with_source):
     client = TestClient(app)
     r = client.post(
         "/memory/feedback",
-        json={"chunk_id": "github-issue:demo:slug-feedback", "signal": "positive"},
+        json={"chunk_id": "github-issue:demo:slug-feedback", "signal": "5"},
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -81,7 +81,7 @@ def test_feedback_with_real_chunk_id_still_works(db_with_source):
     client = TestClient(app)
     r = client.post(
         "/memory/feedback",
-        json={"chunk_id": "chk_slug_1", "signal": "negative"},
+        json={"chunk_id": "chk_slug_1", "signal": "1"},
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -93,7 +93,7 @@ def test_feedback_unknown_slug_returns_404(db_with_source):
     client = TestClient(app)
     r = client.post(
         "/memory/feedback",
-        json={"chunk_id": "github-issue:nope:never", "signal": "positive"},
+        json={"chunk_id": "github-issue:nope:never", "signal": "5"},
     )
     assert r.status_code == 404
     assert "no active chunks" in r.json()["detail"]

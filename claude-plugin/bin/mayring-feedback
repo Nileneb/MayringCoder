@@ -40,8 +40,14 @@ def main(argv: list[str]) -> int:
     if len(argv) < 3:
         _usage_and_exit()
     chunk_id, signal = argv[1], argv[2]
-    if signal not in ("positive", "negative"):
-        sys.stderr.write(f"signal must be 'positive' or 'negative', got {signal!r}\n")
+    # WHY(2026-05-10 rating-migration): nur rating '1'..'5'. Legacy
+    # positive/negative mapping NICHT — wir wollen keine fake-3en aus
+    # historischen scripts; user soll rating explizit setzen.
+    if signal not in ("1", "2", "3", "4", "5"):
+        sys.stderr.write(
+            f"signal must be a rating '1'..'5' (1=schadhaft, 3=neutral, "
+            f"5=primärquelle), got {signal!r}\n"
+        )
         return 2
     metadata: dict
     if len(argv) >= 4:

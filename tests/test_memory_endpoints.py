@@ -144,7 +144,7 @@ def test_memory_invalidate_deactivates_chunks(client, seeded_chunk):
 
 def test_memory_feedback_records(client, seeded_chunk):
     r = client.post("/memory/feedback", json={
-        "chunk_id": seeded_chunk, "signal": "positive", "metadata": {"label": "relevant"}
+        "chunk_id": seeded_chunk, "signal": "5", "metadata": {"label": "relevant"}
     })
     assert r.status_code == 200
     assert r.json()["recorded"] is True

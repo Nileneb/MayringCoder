@@ -31,12 +31,15 @@ mcp__claude_ai_Memory__search_memory(query="<Task>", workspace_id="<slug>", comp
 
 ### Chunk-Feedback (PFLICHT nach jedem Task)
 ```python
-mcp__claude_ai_Memory__feedback(chunk_id="...", signal="positive", metadata={"task":"..."})
-mcp__claude_ai_Memory__feedback(chunk_id="...", signal="negative")  # irrelevant
+# Rating 1..5 (binary positive/negative seit 2026-05-10 raus):
+#   1 = schadhaft/irrelevant   3 = neutral   5 = primärquelle
+mcp__claude_ai_Memory__feedback(chunk_id="...", signal="5", metadata={"task":"..."})
+mcp__claude_ai_Memory__feedback(chunk_id="...", signal="2")  # kaum relevant
 ```
 
-Stop-Hook macht Auto-Feedback per Pfad-Match — du kannst das in
-unsicheren Fällen explizit überschreiben.
+Stop-Hook macht Auto-Feedback per LLM-judge (mistral:7b-instruct), bewertet
+inhaltliche Verwendung in der Antwort statt Pfad-Match. In unsicheren
+Fällen kannst du explizit überschreiben mit einem höheren/niedrigeren Rating.
 
 ### Info ingesten (Mayring-Vorverarbeitung)
 1. **Paraphrase** — Kernaussage ohne Füllwörter

@@ -138,11 +138,12 @@ class MemoryReindexRequest(BaseModel):
 
 class MemoryFeedbackRequest(BaseModel):
     chunk_id: str
-    # Binary by design — see /memory/feedback route for rationale. The
-    # validator here makes the OpenAPI schema and any pydantic-aware
-    # client (Laravel etc.) reject neutral before the request even hits
-    # the network.
-    signal: Literal["positive", "negative"]
+    # WHY(2026-05-10 rating-migration): binary signal komplett raus, nur
+    # noch rating 1-5. Auto-rater (path-match heuristik) lieferte gift-
+    # signale für generic files (codebook.yaml +/web.php -) und der
+    # binary-feature dominierte reranker-v2-weights mit 17× (issue #180).
+    # Rating gibt skalares signal: 1=schadhaft, 3=neutral, 5=primärquelle.
+    signal: Literal["1", "2", "3", "4", "5"]
     metadata: dict | None = None
 
 

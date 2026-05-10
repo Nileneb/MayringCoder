@@ -415,11 +415,15 @@ def register_memory_tools(mcp: FastMCP) -> None:
         signal: str,
         metadata: dict | None = None,
     ) -> dict:
-        """Record usage feedback for a memory chunk (training signal).
+        """Record rating-feedback for a memory chunk (training signal).
+
+        WHY(2026-05-10 rating-migration): binary positive/negative entfernt.
+        Nur noch rating 1..5 als skalares signal.
 
         Args:
             chunk_id: The chunk that was used
-            signal: "positive" | "negative" | "1"–"5" (star rating)
+            signal: rating '1'..'5'. 1=schadhaft / verwirrend, 2=irrelevant,
+                3=neutral, 4=wichtig, 5=primärquelle der antwort.
             metadata: Optional context (e.g. {"query": "...", "task": "..."})
 
         Returns:

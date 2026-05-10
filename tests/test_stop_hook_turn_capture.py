@@ -173,23 +173,23 @@ def test_extract_injected_chunks_empty_on_no_block(stop_hook):
     assert stop_hook.extract_injected_chunks("") == []
 
 
-def test_classify_positive_on_full_path(stop_hook):
+def test_classify_rating4_on_full_path(stop_hook):
     src = "repo:https://github.com/x/y:src/agents/pi.py"
     answer = "I edited src/agents/pi.py to fix the loop."
-    assert stop_hook.classify_chunk_relevance(src, answer) == "positive"
+    assert stop_hook.classify_chunk_relevance(src, answer) == "4"
 
 
-def test_classify_positive_on_basename(stop_hook):
+def test_classify_rating4_on_basename(stop_hook):
     src = "repo:https://github.com/x/y:src/agents/pi.py"
     answer = "Look at pi.py for context."
-    assert stop_hook.classify_chunk_relevance(src, answer) == "positive"
+    assert stop_hook.classify_chunk_relevance(src, answer) == "4"
 
 
-def test_classify_negative_when_path_unmentioned_long_answer(stop_hook):
-    """Substantial answer (>=200 chars) without path-match -> negative."""
+def test_classify_rating2_when_path_unmentioned_long_answer(stop_hook):
+    """Substantial answer (>=200 chars) without path-match -> rating 2."""
     src = "repo:https://github.com/x/y:src/agents/pi.py"
     answer = "Ich habe keine Ahnung was du willst. " + "x" * 200
-    assert stop_hook.classify_chunk_relevance(src, answer) == "negative"
+    assert stop_hook.classify_chunk_relevance(src, answer) == "2"
 
 
 def test_classify_skip_when_path_unmentioned_short_answer(stop_hook):
@@ -212,7 +212,7 @@ def test_classify_handles_non_repo_source_ids(stop_hook):
     assert stop_hook.classify_chunk_relevance(
         "conversation:mayringcoder:abc123",
         "context recap: refer back to mayringcoder session abc123",
-    ) == "positive"
+    ) == "4"
     assert stop_hook.classify_chunk_relevance(
         "ambient:foo:snapshot", "completely unrelated"
     ) == "skip"

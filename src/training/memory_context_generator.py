@@ -95,14 +95,18 @@ def generate_auto_feedback(
 
 
 def _signal_to_score(signal: str) -> float:
-    """Convert signal string to float score.
+    """Convert rating '1'..'5' to [-1, +1] training-score.
 
-    Accepts both legacy strings (positive/negative/neutral) and
-    1–5 star ratings (stored as "1"–"5").
+    WHY(2026-05-10 rating-migration): legacy positive/negative/neutral
+    komplett raus — würden nur das skalare signal verdünnen.
     """
-    if signal in ("1", "2", "3", "4", "5"):
-        return (float(signal) - 3.0) / 2.0  # maps 1→-1, 3→0, 5→+1
-    return {"positive": 1.0, "negative": -1.0, "neutral": 0.1}.get(signal, 0.0)
+    try:
+        rating = int(signal)
+        if 1 <= rating <= 5:
+            return (rating - 3.0) / 2.0  # 1→-1, 3→0, 5→+1
+    except (TypeError, ValueError):
+        pass
+    return 0.0
 
 
 def _feedback_score_for_source(

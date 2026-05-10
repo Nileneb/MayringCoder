@@ -76,15 +76,18 @@ async def training_data_counts(
         "WHERE created_at > datetime('now', ?)",
         (f"-{days} days",),
     ).fetchone()[0]
+    # WHY(2026-05-10 rating-migration): nur noch rating 1..5. fb_pos =
+    # rating >= 4, fb_neg = rating <= 2. Binary positive/negative entfernt.
     fb_pos = conn.execute(
         "SELECT COUNT(*) FROM chunk_feedback "
         "WHERE created_at > datetime('now', ?) "
-        "AND signal IN ('positive','1','2','3','4','5')",
+        "AND signal IN ('4','5')",
         (f"-{days} days",),
     ).fetchone()[0]
     fb_neg = conn.execute(
         "SELECT COUNT(*) FROM chunk_feedback "
-        "WHERE created_at > datetime('now', ?) AND signal = 'negative'",
+        "WHERE created_at > datetime('now', ?) "
+        "AND signal IN ('1','2')",
         (f"-{days} days",),
     ).fetchone()[0]
 

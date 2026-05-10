@@ -102,9 +102,11 @@ def test_auto_rating_2star_for_file_overview_no_labels(conn):
     assert rating == "2"
 
 
-def test_signal_to_score_binary_legacy():
-    assert _signal_to_score("positive") == pytest.approx(1.0)
-    assert _signal_to_score("negative") == pytest.approx(-1.0)
+def test_signal_to_score_legacy_strings_now_zero():
+    # rating-migration 2026-05-10: legacy strings nicht mehr erkannt -> 0.0
+    assert _signal_to_score("positive") == pytest.approx(0.0)
+    assert _signal_to_score("negative") == pytest.approx(0.0)
+    assert _signal_to_score("neutral") == pytest.approx(0.0)
 
 
 def test_signal_to_score_star_ratings():

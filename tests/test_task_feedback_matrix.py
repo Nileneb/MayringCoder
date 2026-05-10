@@ -28,9 +28,9 @@ def test_task_feedback_matrix_groups_by_query():
     db = _db()
     _insert_chunk(db, "chk_a", "src/api/auth.py")
     _insert_chunk(db, "chk_b", "src/api/jwt.py")
-    add_feedback(db, "chk_a", "positive", {"query_context": "fix auth bug"})
-    add_feedback(db, "chk_b", "negative", {"query_context": "fix auth bug"})
-    add_feedback(db, "chk_a", "positive", {"query_context": "optimize search"})
+    add_feedback(db, "chk_a", "5", {"query_context": "fix auth bug"})
+    add_feedback(db, "chk_b", "1", {"query_context": "fix auth bug"})
+    add_feedback(db, "chk_a", "5", {"query_context": "optimize search"})
 
     result = get_task_feedback_matrix(db, limit=50)
     queries = [t["query"] for t in result]
@@ -43,7 +43,7 @@ def test_task_feedback_matrix_groups_by_query():
 def test_task_feedback_matrix_skips_no_query():
     db = _db()
     _insert_chunk(db, "chk_c")
-    add_feedback(db, "chk_c", "positive", {})
+    add_feedback(db, "chk_c", "5", {})
     result = get_task_feedback_matrix(db, limit=50)
     assert all(t["query"] for t in result)
 
@@ -51,7 +51,7 @@ def test_task_feedback_matrix_skips_no_query():
 def test_task_feedback_matrix_query_filter():
     db = _db()
     _insert_chunk(db, "chk_d")
-    add_feedback(db, "chk_d", "positive", {"query_context": "memory search performance"})
+    add_feedback(db, "chk_d", "5", {"query_context": "memory search performance"})
     result = get_task_feedback_matrix(db, limit=50, query_filter="memory")
     assert len(result) >= 1
     assert all("memory" in t["query"].lower() for t in result)

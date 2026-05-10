@@ -36,22 +36,27 @@ def _is_admin(info: TokenInfo) -> bool:
 
 
 def _label_map(rows: list[Any]) -> dict[str, int]:
-    """Aggregate {chunk_id: 1 if any positive feedback, 0 otherwise}.
+    """Aggregate {chunk_id: 1 if avg rating >= 3.5, 0 otherwise}.
 
-    A chunk with mixed signals counts as positive when the positive count
-    strictly exceeds the negative — a single negative on an otherwise
-    well-rated chunk shouldn't drop it out of the dataset.
+    WHY(2026-05-10 rating-migration): NDCG braucht binary label. Mapping:
+    avg rating >= 3.5 → 1 (relevant), sonst 0. Replaces alte positive>negative-
+    logik — eine rating 5 + rating 2 ergibt jetzt avg 3.5 → 1, statt
+    "1pos 1neg → 0" wie vorher.
     """
-    counts: dict[str, dict[str, int]] = {}
+    accum: dict[str, list[int]] = {}
     for r in rows:
         cid = r["chunk_id"]
         sig = r["signal"]
-        bucket = counts.setdefault(cid, {"pos": 0, "neg": 0})
-        if sig in ("positive", "1", "2", "3", "4", "5"):
-            bucket["pos"] += 1
-        elif sig == "negative":
-            bucket["neg"] += 1
-    return {cid: 1 if v["pos"] > v["neg"] else 0 for cid, v in counts.items()}
+        try:
+            rating = int(sig)
+            if 1 <= rating <= 5:
+                accum.setdefault(cid, []).append(rating)
+        except (TypeError, ValueError):
+            continue
+    return {
+        cid: 1 if (sum(rs) / len(rs)) >= 3.5 else 0
+        for cid, rs in accum.items()
+    }
 
 
 def _ndcg(labels: list[int], k: int) -> float:

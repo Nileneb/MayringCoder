@@ -30,9 +30,9 @@ def build_feedback_tab(
                 placeholder="chk_a1b2c3d4e5f6...",
             )
             feedback_signal = gr.Radio(
-                choices=["positive", "negative", "neutral"],
-                value="positive",
-                label="Signal",
+                choices=["1", "2", "3", "4", "5"],
+                value="5",
+                label="Rating (1=schadhaft, 3=neutral, 5=primärquelle)",
             )
             feedback_label = gr.Textbox(
                 label="Freies Label (optional)",

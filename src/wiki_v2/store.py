@@ -265,18 +265,24 @@ def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
     Returns:
         List of {chunk_id, source_id, category_labels, positive, negative, neutral, net_score}
     """
+    # WHY(2026-05-10 rating-migration): aggregate rating 1..5. Columns
+    # 'positive'/'negative'/'neutral' bleiben für UI-back-compat: rating>=4
+    # → positive-bucket, rating<=2 → negative, =3 → neutral. net_score
+    # rechnet jetzt avg(rating)/5 statt (pos-neg)/total.
     rows = memory_conn.execute(
         """
         SELECT
             cf.chunk_id,
             COALESCE(c.source_id, '') AS source_id,
             COALESCE(c.category_labels, '') AS category_labels,
-            SUM(CASE WHEN cf.signal = 'positive' THEN 1 ELSE 0 END) AS positive,
-            SUM(CASE WHEN cf.signal = 'negative' THEN 1 ELSE 0 END) AS negative,
-            SUM(CASE WHEN cf.signal NOT IN ('positive','negative') THEN 1 ELSE 0 END) AS neutral,
+            SUM(CASE WHEN CAST(cf.signal AS INT) >= 4 THEN 1 ELSE 0 END) AS positive,
+            SUM(CASE WHEN CAST(cf.signal AS INT) <= 2 AND CAST(cf.signal AS INT) >= 1 THEN 1 ELSE 0 END) AS negative,
+            SUM(CASE WHEN CAST(cf.signal AS INT) = 3 THEN 1 ELSE 0 END) AS neutral,
+            AVG(CAST(cf.signal AS REAL)) AS avg_rating,
             COUNT(*) AS total
         FROM chunk_feedback cf
         LEFT JOIN chunks c ON c.chunk_id = cf.chunk_id
+        WHERE cf.signal IN ('1','2','3','4','5')
         GROUP BY cf.chunk_id
         ORDER BY total DESC
         LIMIT ?
@@ -287,8 +293,9 @@ def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
     for r in rows:
         pos = r[3] if isinstance(r, tuple) else r["positive"]
         neg = r[4] if isinstance(r, tuple) else r["negative"]
-        total = r[6] if isinstance(r, tuple) else r["total"]
-        net = round((pos - neg) / max(total, 1), 2)
+        avg = r[6] if isinstance(r, tuple) else r["avg_rating"]
+        # net_score in [0..1]: avg-rating normalized.
+        net = round(((avg or 3.0) - 1.0) / 4.0, 2)
         result.append({
             "chunk_id": r[0] if isinstance(r, tuple) else r["chunk_id"],
             "source_id": r[1] if isinstance(r, tuple) else r["source_id"],
@@ -296,6 +303,7 @@ def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
             "positive": pos,
             "negative": neg,
             "neutral": r[5] if isinstance(r, tuple) else r["neutral"],
+            "avg_rating": round(avg or 0.0, 2),
             "net_score": net,
         })
     return result

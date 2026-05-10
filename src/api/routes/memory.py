@@ -526,15 +526,15 @@ async def memory_feedback(
     request: MemoryFeedbackRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    # Binary-only by design. The earlier "neutral" signal was both useless
-    # in scoring (identical to no-feedback default 0.5) and actively
-    # harmful when emitted in bulk by the old auto-rater (diluted real
-    # signals). Reject it loud rather than silently accept and write a
-    # row that contributes nothing.
-    if request.signal not in ("positive", "negative"):
+    # WHY(2026-05-10 rating-migration): only rating 1..5 accepted. Binary
+    # positive/negative dominated reranker-v2-weights (issue #180) and
+    # the auto-rater's path-match heuristik produced gift-signale für
+    # generic files. Rating ist skalar — reranker bekommt echten gradient,
+    # judge kann "wichtig aber nicht primär" ausdrücken statt "ja/nein".
+    if request.signal not in ("1", "2", "3", "4", "5"):
         raise HTTPException(
             status_code=400,
-            detail="signal must be 'positive' or 'negative' — neutral is no longer accepted"
+            detail="signal must be a rating '1'..'5' — binary positive/negative no longer accepted"
         )
     from src.memory.store import add_feedback, get_chunks_by_source
 
@@ -580,9 +580,10 @@ async def memory_feedback(
             )
         for ch in chunks:
             add_feedback(_get_conn(), ch.chunk_id, request.signal, request.metadata or {})
-        # Positive feedback flips referenced flag — chunks the user found
-        # useful retroactively count toward Memory-Effizienz quote.
-        if request.signal == "positive":
+        # rating >= 4 flips referenced-flag (chunks die der user als
+        # wichtig oder primärquelle bewertet hat — pendant zum alten
+        # positive-signal für die Memory-Effizienz-quote).
+        if int(request.signal) >= 4:
             _mark_referenced([ch.chunk_id for ch in chunks])
         return {
             "workspace_id": workspace_id,
@@ -592,7 +593,7 @@ async def memory_feedback(
             "recorded": True,
         }
     add_feedback(_get_conn(), cid, request.signal, request.metadata or {})
-    if request.signal == "positive":
+    if int(request.signal) >= 4:
         _mark_referenced([cid])
     return {"workspace_id": workspace_id, "chunk_id": cid, "recorded": True}
 

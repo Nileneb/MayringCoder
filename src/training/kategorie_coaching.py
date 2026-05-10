@@ -1,9 +1,10 @@
 """Pipeline 1 (Issue #87): Kategorie-Coaching für Mayring-Klassifizierung.
 
 Generiert Trainings-Paare: Code-Chunk → Mayring-Kategorie-Labels.
-Nur Chunks mit positivem Feedback-Signal (rating ≥ 4 oder signal=positive)
-werden als Gold-Labels verwendet — fehlerhafte Kategorisierungen werden
-nicht in Trainingsdaten übernommen.
+Nur Chunks mit positivem Feedback-Signal (rating ≥ 4) werden als
+Gold-Labels verwendet — fehlerhafte Kategorisierungen kommen nicht
+in Trainingsdaten. Seit 2026-05-10 ist rating skalar 1..5, kein
+binary positive/negative mehr.
 
 CLI:
     python -m src.cli --generate-training-data kategorie --workspace-id <id>
@@ -45,8 +46,8 @@ _SYSTEM_PROMPT = (
 
 
 def _is_positive(signal: str) -> bool:
-    if signal in ("positive",):
-        return True
+    # WHY(2026-05-10 rating-migration): rating 4/5 = positive coaching-pair.
+    # Binary 'positive' string komplett raus.
     try:
         return int(signal) >= 4
     except (ValueError, TypeError):

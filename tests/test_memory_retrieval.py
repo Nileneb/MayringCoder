@@ -495,7 +495,7 @@ class TestFeedbackRanking:
         cb = _make_chunk(src.source_id, 1, text="def process(): return result")
         insert_chunk(conn, ca)
         insert_chunk(conn, cb)
-        add_feedback(conn, ca.chunk_id, "positive")
+        add_feedback(conn, ca.chunk_id, "5")
 
         records = _rerank(
             [ca, cb],
@@ -514,7 +514,7 @@ class TestFeedbackRanking:
         cb = _make_chunk(src.source_id, 1, text="def compute(): pass")
         insert_chunk(conn, ca)
         insert_chunk(conn, cb)
-        add_feedback(conn, ca.chunk_id, "negative")
+        add_feedback(conn, ca.chunk_id, "1")
 
         records = _rerank(
             [ca, cb],

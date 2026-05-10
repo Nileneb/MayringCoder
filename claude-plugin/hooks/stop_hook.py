@@ -301,7 +301,7 @@ def clear_inject_state(session_id: str) -> None:
 
 
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-_JUDGE_MODEL = os.environ.get("MAYRING_JUDGE_MODEL", "qwen2.5-coder:7b")
+_JUDGE_MODEL = os.environ.get("MAYRING_JUDGE_MODEL", "mistral:7b-instruct")
 _JUDGE_TIMEOUT = float(os.environ.get("MAYRING_JUDGE_TIMEOUT", "20"))
 
 
@@ -314,18 +314,28 @@ def _judge_chunks_with_llm(
     model: str = _JUDGE_MODEL,
     timeout: float = _JUDGE_TIMEOUT,
 ) -> dict[str, str] | None:
-    """Batch-LLM judge: did the assistant_text use each chunk's CONTENT?
+    """Batch-LLM judge: how much did the assistant USE each chunk's content?
 
-    WHY(2026-05-10 strukturfix): Pfad-Match (alte heuristik) hatte zwei
-    systematische biases:
+    Returns rating '1'..'5' per chunk:
+      1 = chunk content irrelevant / actively misleading
+      2 = barely related, didn't shape the answer
+      3 = neutral / loosely relevant
+      4 = clearly relevant, used to inform parts of the answer
+      5 = primary source — answer relies heavily on this chunk
+
+    WHY(2026-05-10 rating-migration): Pfad-Match (alte heuristik) hatte
+    zwei systematische biases:
       - codebook.yaml/categorizer.py: positiv weil filename in jeder
         meta-talk-antwort vorkommt — obwohl der inhalt nie hilfreich war.
       - routes/web.php/MayringMcpClient.php: negativ weil generic files
         selten beim namen genannt werden — der inhalt aber tatsächlich
         verwendet wurde.
-    LLM-judge bewertet **inhaltliche** überlappung statt namens-match.
+    Rating-skala (statt binary) gibt reranker echten gradient statt
+    "war es nützlich ja/nein". Default-model mistral:7b-instruct hat
+    sich für mayring-kategorisierung am besten bewährt (2026-04-25 fix,
+    config/model_routes.yaml::mayring_code).
 
-    Returns: {chunk_id: "positive"|"negative"} oder None bei error/no-text.
+    Returns: {chunk_id: "1".."5"} oder None bei error/no-text.
     Caller fällt bei None zurück auf path-match-heuristik (legacy state).
     """
     chunks_with_text = [c for c in chunks if c.get("text")]
@@ -341,11 +351,15 @@ def _judge_chunks_with_llm(
         f"User asked:\n{user_prompt[:500] or '(unknown)'}\n\n"
         f"Assistant answered:\n{assistant_text[:1500]}\n\n"
         f"Available memory chunks (numbered):\n{numbered}\n\n"
-        "For each chunk, decide: did the assistant's answer USE THE CONTENT "
-        "of this chunk (not just mention the filename)? Respond with EXACTLY "
-        f"{len(chunks_with_text)} comma-separated yes/no values, in order. "
-        "Example: yes,no,no,yes\n\n"
-        "Answer:"
+        "For each chunk, rate how much the assistant's answer USED its content "
+        "(not just mentioned the filename):\n"
+        "1 = irrelevant or misleading\n"
+        "2 = barely related\n"
+        "3 = loosely relevant / neutral\n"
+        "4 = clearly used in parts of the answer\n"
+        "5 = primary source — answer relies heavily on it\n\n"
+        f"Respond with EXACTLY {len(chunks_with_text)} comma-separated ratings "
+        "(1-5), in order. Example: 5,2,3,4\n\nAnswer:"
     )
     body = json.dumps({
         "model": model,
@@ -367,40 +381,42 @@ def _judge_chunks_with_llm(
         sys.stderr.write(f"[stop_hook] judge fail ({type(exc).__name__}) — fallback path-match\n")
         return None
 
-    raw = (payload.get("response") or "").strip().lower()
+    raw = (payload.get("response") or "").strip()
     tokens = [t.strip() for t in re.split(r"[,\s]+", raw) if t.strip()]
     out: dict[str, str] = {}
     for i, c in enumerate(chunks_with_text):
         cid = c["chunk_id"]
         if i >= len(tokens):
-            continue  # nicht genug antworten — skip diesen chunk
+            continue  # nicht genug antworten — skip
         tok = tokens[i]
-        if tok.startswith("y"):
-            out[cid] = "positive"
-        elif tok.startswith("n"):
-            out[cid] = "negative"
-        # andere antwort → skip (kein eintrag im out-dict)
+        # nur die erste ziffer 1-5 nehmen ("4.", " 5", "rating: 3")
+        m = re.search(r"[1-5]", tok)
+        if m:
+            out[cid] = m.group(0)
+        # andere antwort → skip (kein eintrag)
     return out
 
 
 def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
-    """LEGACY path-match — fallback nur wenn LLM-judge nicht verfügbar
-    (kein chunk-text im inject-state, ollama unerreichbar, oder altes
-    state-format ohne text).
+    """LEGACY path-match — fallback when LLM-judge unavailable.
 
-    positive iff path/basename appears, skip wenn unklar (kurze antwort
-    ohne match), negative wenn substanzielle antwort (≥200 chars) ohne
-    match. Bekannte biases, siehe _judge_chunks_with_llm-WHY.
+    Returns rating-string oder "skip". WHY rating + skip statt yes/no:
+    siehe _judge_chunks_with_llm. Pfad-match ist nur eine grobe heuristik
+    weshalb wir die ratings konservativ vergeben:
+      "4" — path/basename appears (mid-strong evidence chunk wurde genutzt)
+      "2" — substanzielle antwort (>=200 chars) ohne match — wahrscheinlich
+            irrelevant aber nicht eindeutig schädlich
+      "skip" — unklar (kurze antwort ohne match, leere inputs)
     """
     if not source_id or not assistant_text:
         return "skip"
     path_key = source_id.rsplit(":", 1)[-1]
     if path_key and len(path_key) >= _PATH_KEY_MIN_LEN and path_key in assistant_text:
-        return "positive"
+        return "4"
     basename = path_key.rsplit("/", 1)[-1] if "/" in path_key else path_key
     if basename and len(basename) >= _PATH_KEY_MIN_LEN and basename in assistant_text:
-        return "positive"
-    return "negative" if len(assistant_text) >= 200 else "skip"
+        return "4"
+    return "2" if len(assistant_text) >= 200 else "skip"
 
 
 def _enqueue_feedback(chunk_id: str, signal: str, reason: str) -> None:
@@ -409,7 +425,7 @@ def _enqueue_feedback(chunk_id: str, signal: str, reason: str) -> None:
 
     Schema is the SAME as the queue created by `bin/mayring-feedback` so
     both paths share a single drain implementation:
-      {"chunk_id":"...", "signal":"positive|negative", "metadata":{...}}
+      {"chunk_id":"...", "signal":"1"|"2"|"3"|"4"|"5", "metadata":{...}}
     """
     try:
         os.makedirs(os.path.dirname(_FEEDBACK_QUEUE), exist_ok=True)
@@ -559,7 +575,7 @@ def _auto_feedback(turns: list[dict], session_id: str, token: str) -> None:
             continue
         if judged is not None:
             signal = judged.get(cid)
-            if signal not in ("positive", "negative"):
+            if signal not in ("1", "2", "3", "4", "5"):
                 skipped += 1
                 continue
         else:
