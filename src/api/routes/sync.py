@@ -77,6 +77,10 @@ def get_changes(
     org_params: list = []
     if org_ids:
         placeholders = ",".join("?" * len(org_ids))
+        # Safe against SQLi: `placeholders` is only `?,?,...` — pure
+        # parameter placeholder string, never user data. The actual values
+        # bind via `params` (db.execute(sql, tuple(params))). Sourcery's
+        # generic f-string-with-SQL pattern flags this as false positive.
         org_clause = f" OR (s.visibility = 'org' AND s.org_id IN ({placeholders}))"
         org_params = list(org_ids)
 

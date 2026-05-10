@@ -284,6 +284,9 @@ async def memory_put(
             ).start()
         return {"workspace_id": workspace_id, **result}
     except HTTPException:
+        # Re-raise as-is so the 403 (membership/auth) and 404 codes
+        # survive — without this guard the broader Exception handler
+        # below would mask them as 500. Not a no-op.
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
