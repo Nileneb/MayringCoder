@@ -275,6 +275,20 @@ def embed_single(
     raise RuntimeError("unreachable")
 
 
+def _chat_call(host: str, body: dict, *, timeout: float,
+               auth_token: str = "") -> dict:
+    """Single /api/chat POST gegen den gegebenen host. Auth optional."""
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    resp = httpx.post(
+        f"{host}/api/chat", json=body, headers=headers,
+        timeout=timeout, verify=_SSL_VERIFY,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def chat(
     url: str,
     model: str,
@@ -288,6 +302,10 @@ def chat(
     keep_alive: str | None = None,
 ) -> dict:
     """POST to /api/chat and return the parsed JSON response dict.
+
+    Routes X% (env OLLAMA_CLOUD_PRIMARY_RATIO, default 0.2) primär an
+    cloud — matched routing-logik in generate(). Pi-Agent nutzt chat() für
+    tool-calling, weshalb cloud-quota sonst ungenutzt bliebe.
 
     Raises httpx exceptions on failure — callers handle retries/errors.
     """
@@ -306,9 +324,26 @@ def chat(
     if keep_alive is not None:
         body["keep_alive"] = keep_alive
 
-    resp = httpx.post(f"{url.rstrip('/')}/api/chat", json=body, timeout=timeout, verify=_SSL_VERIFY)
-    resp.raise_for_status()
-    return resp.json()
+    base = url.rstrip("/")
+    # Cloud-primary X% mit local als reverse-fallback (gleicher anteil wie
+    # generate() — siehe _should_route_cloud_primary docstring).
+    if _should_route_cloud_primary():
+        try:
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                "ollama chat cloud-primary route (%.0f%% ratio)",
+                _CLOUD_PRIMARY_RATIO * 100,
+            )
+            return _chat_call(_CLOUD_URL, body, timeout=timeout,
+                              auth_token=_CLOUD_API_KEY)
+        except Exception as cloud_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "chat cloud-primary failed, fallback local: %s",
+                type(cloud_exc).__name__,
+            )
+
+    return _chat_call(base, body, timeout=timeout)
 
 
 def check_ollama(url: str) -> tuple[bool, list[str]]:
