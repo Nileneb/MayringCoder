@@ -203,20 +203,44 @@ def _multi_lens_search(query: str, token: str) -> dict[str, dict]:
     return results
 
 
-def _write_inject_state(session_id: str, chunk_pairs: list[tuple[str, str]]) -> None:
-    """Persist (chunk_id, source_id) pairs so the Stop hook can rate them.
+def _write_inject_state(
+    session_id: str,
+    chunk_pairs: list[tuple[str, str]],
+    chunk_texts: dict[str, str] | None = None,
+    user_prompt: str = "",
+) -> None:
+    """Persist injected-chunk meta + text so the Stop hook can LLM-judge them.
 
     Path: ~/.config/mayring/inject-state/<session_id>.json. Stop hook
     reads + deletes after rating. Best-effort, never raises.
+
+    WHY(2026-05-10 strukturfix-feedback): vorher persistierten wir nur
+    (chunk_id, source_id) und der Stop-Hook ratete via Pfad-Match → bias
+    (codebook.yaml etc. fälschlich positive, web.php fälschlich negative).
+    Mit chunk-text + user-prompt im state kann der Stop-Hook einen lokalen
+    LLM-judge fragen ob der CHUNK-INHALT in der Antwort genutzt wurde —
+    inhaltliches signal statt namens-match.
     """
     if not session_id or not chunk_pairs:
         return
     try:
         os.makedirs(INJECT_STATE_DIR, exist_ok=True)
         path = os.path.join(INJECT_STATE_DIR, f"{session_id}.json")
+        chunks_payload = []
+        for c, s in chunk_pairs:
+            entry = {"chunk_id": c, "source_id": s}
+            t = (chunk_texts or {}).get(c)
+            if t:
+                # 600 chars: enough für LLM-judge, klein genug damit
+                # 8 chunks × 600 + prompt < 8k context-fenster.
+                entry["text"] = t[:600]
+            chunks_payload.append(entry)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(
-                {"chunks": [{"chunk_id": c, "source_id": s} for c, s in chunk_pairs]},
+                {
+                    "chunks": chunks_payload,
+                    "user_prompt": user_prompt[:600],
+                },
                 f,
             )
     except OSError:
@@ -350,11 +374,12 @@ def main() -> None:
             sections.append("\n### Vorherige Sessions / Decisions")
             sections.append(conv_ctx)
 
-    # Pair each chunk with its source_id so the Stop hook can classify
-    # positive/negative automatically (path match against the assistant
-    # answer). Format is parsed by stop_hook._CHUNK_LINE_RE — keep stable.
+    # Pair each chunk with its source_id + capture text so the Stop hook
+    # can LLM-judge whether the chunk's content was actually used in the
+    # answer. Format is parsed by stop_hook._CHUNK_LINE_RE — keep stable.
     seen_ids: set[str] = set()
     chunk_pairs: list[tuple[str, str]] = []
+    chunk_texts: dict[str, str] = {}
     for r in (primary, ambient, conv):
         if not r or "_hook_error" in r:
             continue
@@ -364,9 +389,17 @@ def main() -> None:
             if cid and cid not in seen_ids:
                 seen_ids.add(cid)
                 chunk_pairs.append((cid, sid))
+                txt = chunk.get("text") or ""
+                if txt:
+                    chunk_texts[cid] = txt
 
     # Persist for the Stop hook (transcript doesn't capture this block).
-    _write_inject_state(payload.get("session_id", ""), chunk_pairs[:8])
+    _write_inject_state(
+        payload.get("session_id", ""),
+        chunk_pairs[:8],
+        chunk_texts=chunk_texts,
+        user_prompt=prompt,
+    )
 
     chunk_id_hint = ""
     if chunk_pairs:

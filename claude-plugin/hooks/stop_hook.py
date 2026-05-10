@@ -254,23 +254,40 @@ def extract_injected_chunks(user_text: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def read_inject_state(session_id: str) -> list[tuple[str, str]]:
-    """Read the (chunk_id, source_id) pairs memory_inject wrote for this session."""
+def read_inject_state(session_id: str) -> dict:
+    """Read inject-state: chunks (with text) + user_prompt.
+
+    Schema (since 2026-05-10):
+        {
+          "chunks": [{"chunk_id": ..., "source_id": ..., "text": ...?}, ...],
+          "user_prompt": "..."
+        }
+
+    Legacy state (vor strukturfix): only chunk_id+source_id, no text/prompt
+    → caller fällt zurück auf path-match-heuristik.
+    """
     if not session_id:
-        return []
+        return {"chunks": [], "user_prompt": ""}
     path = os.path.join(_INJECT_STATE_DIR, f"{session_id}.json")
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError, ValueError):
-        return []
-    pairs: list[tuple[str, str]] = []
+        return {"chunks": [], "user_prompt": ""}
+    out_chunks: list[dict] = []
     for entry in data.get("chunks", []):
         cid = (entry or {}).get("chunk_id")
-        sid = (entry or {}).get("source_id", "")
-        if cid:
-            pairs.append((cid, sid))
-    return pairs
+        if not cid:
+            continue
+        out_chunks.append({
+            "chunk_id": cid,
+            "source_id": (entry or {}).get("source_id", ""),
+            "text": (entry or {}).get("text", ""),
+        })
+    return {
+        "chunks": out_chunks,
+        "user_prompt": data.get("user_prompt", "") or "",
+    }
 
 
 def clear_inject_state(session_id: str) -> None:
@@ -283,17 +300,97 @@ def clear_inject_state(session_id: str) -> None:
         pass
 
 
-def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
-    """positive | negative | skip.
+_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+_JUDGE_MODEL = os.environ.get("MAYRING_JUDGE_MODEL", "qwen2.5-coder:7b")
+_JUDGE_TIMEOUT = float(os.environ.get("MAYRING_JUDGE_TIMEOUT", "20"))
 
-    WHY(2026-05-10 web.php-bug): vorher default-negative wenn pfad-match
-    fehlschlug. Generische files wie `routes/web.php` oder `app/Models/User.php`
-    werden in der Antwort selten beim filename genannt — Reranker-v2 hat sie
-    daraufhin als irrelevant gelernt. Korrekt: nur negative wenn die Antwort
-    substantiell war (≥200 chars) UND wir trotzdem nichts finden. Sonst
-    "skip" — caller postet kein feedback, statt false-negatives zu erzeugen.
-    User-design ist binary (positive | negative), neutral ist server-side
-    rejected — daher hier "skip" als sentinel, nicht als feedback-signal.
+
+def _judge_chunks_with_llm(
+    chunks: list[dict],
+    user_prompt: str,
+    assistant_text: str,
+    *,
+    ollama_url: str = _OLLAMA_URL,
+    model: str = _JUDGE_MODEL,
+    timeout: float = _JUDGE_TIMEOUT,
+) -> dict[str, str] | None:
+    """Batch-LLM judge: did the assistant_text use each chunk's CONTENT?
+
+    WHY(2026-05-10 strukturfix): Pfad-Match (alte heuristik) hatte zwei
+    systematische biases:
+      - codebook.yaml/categorizer.py: positiv weil filename in jeder
+        meta-talk-antwort vorkommt — obwohl der inhalt nie hilfreich war.
+      - routes/web.php/MayringMcpClient.php: negativ weil generic files
+        selten beim namen genannt werden — der inhalt aber tatsächlich
+        verwendet wurde.
+    LLM-judge bewertet **inhaltliche** überlappung statt namens-match.
+
+    Returns: {chunk_id: "positive"|"negative"} oder None bei error/no-text.
+    Caller fällt bei None zurück auf path-match-heuristik (legacy state).
+    """
+    chunks_with_text = [c for c in chunks if c.get("text")]
+    if not chunks_with_text or not assistant_text:
+        return None
+
+    numbered = "\n".join(
+        f"[{i+1}] source={c.get('source_id', '?')[:80]}\n"
+        f"    text: {(c.get('text') or '')[:500].replace(chr(10), ' ')}"
+        for i, c in enumerate(chunks_with_text)
+    )
+    prompt = (
+        f"User asked:\n{user_prompt[:500] or '(unknown)'}\n\n"
+        f"Assistant answered:\n{assistant_text[:1500]}\n\n"
+        f"Available memory chunks (numbered):\n{numbered}\n\n"
+        "For each chunk, decide: did the assistant's answer USE THE CONTENT "
+        "of this chunk (not just mention the filename)? Respond with EXACTLY "
+        f"{len(chunks_with_text)} comma-separated yes/no values, in order. "
+        "Example: yes,no,no,yes\n\n"
+        "Answer:"
+    )
+    body = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"num_predict": 64, "temperature": 0.0},
+        "think": False,
+    }).encode()
+    req = urllib.request.Request(
+        f"{ollama_url}/api/generate",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read())
+    except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"[stop_hook] judge fail ({type(exc).__name__}) — fallback path-match\n")
+        return None
+
+    raw = (payload.get("response") or "").strip().lower()
+    tokens = [t.strip() for t in re.split(r"[,\s]+", raw) if t.strip()]
+    out: dict[str, str] = {}
+    for i, c in enumerate(chunks_with_text):
+        cid = c["chunk_id"]
+        if i >= len(tokens):
+            continue  # nicht genug antworten — skip diesen chunk
+        tok = tokens[i]
+        if tok.startswith("y"):
+            out[cid] = "positive"
+        elif tok.startswith("n"):
+            out[cid] = "negative"
+        # andere antwort → skip (kein eintrag im out-dict)
+    return out
+
+
+def classify_chunk_relevance(source_id: str, assistant_text: str) -> str:
+    """LEGACY path-match — fallback nur wenn LLM-judge nicht verfügbar
+    (kein chunk-text im inject-state, ollama unerreichbar, oder altes
+    state-format ohne text).
+
+    positive iff path/basename appears, skip wenn unklar (kurze antwort
+    ohne match), negative wenn substanzielle antwort (≥200 chars) ohne
+    match. Bekannte biases, siehe _judge_chunks_with_llm-WHY.
     """
     if not source_id or not assistant_text:
         return "skip"
@@ -329,16 +426,28 @@ def _enqueue_feedback(chunk_id: str, signal: str, reason: str) -> None:
         )
 
 
-def _post_feedback(chunk_id: str, signal: str, token: str) -> None:
+def _post_feedback(
+    chunk_id: str,
+    signal: str,
+    token: str,
+    metadata: dict | None = None,
+) -> None:
     """POST /memory/feedback with retry on 502/503/504 (deploy windows).
 
     On retry exhaustion or persistent network error: enqueue locally so
     next SessionStart's drain can replay. Only 4xx errors are dropped
     permanently (no retry will fix a malformed payload or unknown
     chunk).
+
+    metadata persistiert task-context (issue #90: feedback-matrix nach
+    task) + judging-method, damit reranker-training weiß ob das signal
+    aus path-match (rauschig) oder LLM-judge (sauberer) stammt.
     """
     import time as _time
-    payload = json.dumps({"chunk_id": chunk_id, "signal": signal}).encode()
+    body: dict = {"chunk_id": chunk_id, "signal": signal}
+    if metadata:
+        body["metadata"] = metadata
+    payload = json.dumps(body).encode()
     req = urllib.request.Request(
         f"{_API_URL}/memory/feedback",
         data=payload,
@@ -417,25 +526,56 @@ def _auto_feedback(turns: list[dict], session_id: str, token: str) -> None:
     """
     if len(turns) < 2:
         return
-    pairs = read_inject_state(session_id)
-    if not pairs:
+    state = read_inject_state(session_id)
+    chunks = state.get("chunks") or []
+    user_prompt_state = state.get("user_prompt", "")
+    if not chunks:
         # Fallback for legacy/test paths that do embed the block inline
         user_text = turns[0].get("content", "")
-        pairs = extract_injected_chunks(user_text)
-    if not pairs:
+        legacy_pairs = extract_injected_chunks(user_text)
+        chunks = [{"chunk_id": c, "source_id": s, "text": ""} for c, s in legacy_pairs]
+        user_prompt_state = user_text
+    if not chunks:
         return
+    chunks = chunks[:_AUTO_FEEDBACK_LIMIT]
     assistant_text = turns[1].get("content", "")
+    user_text = user_prompt_state or turns[0].get("content", "")
+
+    # Try LLM-judge first (inhaltlicher signal). Only works wenn jeder
+    # chunk text mitgebracht hat (state-format ≥2026-05-10) UND ollama
+    # erreichbar ist. Fallback ist die path-match-heuristik.
+    judged = _judge_chunks_with_llm(chunks, user_text, assistant_text)
+
     posted = 0
     skipped = 0
-    for chunk_id, source_id in pairs[:_AUTO_FEEDBACK_LIMIT]:
-        signal = classify_chunk_relevance(source_id, assistant_text)
-        if signal == "skip":
-            skipped += 1
+    method = "llm_judge" if judged else "path_match"
+    judge_model = _JUDGE_MODEL if judged else None
+    task_short = (user_text or "")[:200].replace("\n", " ")
+
+    for entry in chunks:
+        cid = entry.get("chunk_id")
+        sid = entry.get("source_id", "")
+        if not cid:
             continue
-        _post_feedback(chunk_id, signal, token)
+        if judged is not None:
+            signal = judged.get(cid)
+            if signal not in ("positive", "negative"):
+                skipped += 1
+                continue
+        else:
+            signal = classify_chunk_relevance(sid, assistant_text)
+            if signal == "skip":
+                skipped += 1
+                continue
+        meta = {"task": task_short, "method": method, "source_id": sid[:200]}
+        if judge_model:
+            meta["judge_model"] = judge_model
+        _post_feedback(cid, signal, token, metadata=meta)
         posted += 1
+
     sys.stderr.write(
-        f"[stop_hook] auto_feedback: posted {posted}, skipped {skipped} (unklar)\n"
+        f"[stop_hook] auto_feedback: posted {posted}, skipped {skipped} "
+        f"(method={method})\n"
     )
     clear_inject_state(session_id)
 

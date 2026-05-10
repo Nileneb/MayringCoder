@@ -124,16 +124,18 @@ def test_state_file_path_does_drive_feedback(stop_hook, tmp_path, monkeypatch):
     ]}))
     monkeypatch.setattr(stop_hook, "_INJECT_STATE_DIR", str(state_dir))
 
+    # Long answer (>=200 chars) triggers the negative branch for the second
+    # chunk (no path-match) AND a positive for the first (path-match).
     turns = [
         {"role": "user", "content": "any user text", "timestamp": ""},
         {"role": "assistant",
-         "content": "I touched src/foo.py and ran the tests.",
+         "content": "I touched src/foo.py and ran the tests. " + "x" * 200,
          "timestamp": ""},
     ]
     posted: list[tuple[str, str]] = []
     monkeypatch.setattr(
         stop_hook, "_post_feedback",
-        lambda cid, sig, tok: posted.append((cid, sig)),
+        lambda cid, sig, tok, metadata=None: posted.append((cid, sig)),
     )
     stop_hook._auto_feedback(turns, session_id, "fake-token")
 

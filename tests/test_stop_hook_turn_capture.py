@@ -185,17 +185,26 @@ def test_classify_positive_on_basename(stop_hook):
     assert stop_hook.classify_chunk_relevance(src, answer) == "positive"
 
 
-def test_classify_negative_when_path_unmentioned(stop_hook):
+def test_classify_negative_when_path_unmentioned_long_answer(stop_hook):
+    """Substantial answer (>=200 chars) without path-match -> negative."""
+    src = "repo:https://github.com/x/y:src/agents/pi.py"
+    answer = "Ich habe keine Ahnung was du willst. " + "x" * 200
+    assert stop_hook.classify_chunk_relevance(src, answer) == "negative"
+
+
+def test_classify_skip_when_path_unmentioned_short_answer(stop_hook):
+    """Short answer (<200 chars) without path-match -> skip (kein false-negative
+    fuer generic files wie web.php deren name selten erwaehnt wird)."""
     src = "repo:https://github.com/x/y:src/agents/pi.py"
     answer = "Ich habe keine Ahnung was du willst."
-    assert stop_hook.classify_chunk_relevance(src, answer) == "negative"
+    assert stop_hook.classify_chunk_relevance(src, answer) == "skip"
 
 
-def test_classify_negative_on_too_short_basename(stop_hook):
-    """Avoid matching `a.py` against the letter `a` in the answer."""
+def test_classify_skip_on_too_short_basename(stop_hook):
+    """Avoid matching `a.py` against `a` — short answer also -> skip."""
     src = "repo:x:a.py"
     answer = "wir tun a und b"
-    assert stop_hook.classify_chunk_relevance(src, answer) == "negative"
+    assert stop_hook.classify_chunk_relevance(src, answer) == "skip"
 
 
 def test_classify_handles_non_repo_source_ids(stop_hook):
@@ -206,9 +215,9 @@ def test_classify_handles_non_repo_source_ids(stop_hook):
     ) == "positive"
     assert stop_hook.classify_chunk_relevance(
         "ambient:foo:snapshot", "completely unrelated"
-    ) == "negative"
+    ) == "skip"
 
 
-def test_classify_negative_on_empty_inputs(stop_hook):
-    assert stop_hook.classify_chunk_relevance("", "anything") == "negative"
-    assert stop_hook.classify_chunk_relevance("repo:x:y.py", "") == "negative"
+def test_classify_skip_on_empty_inputs(stop_hook):
+    assert stop_hook.classify_chunk_relevance("", "anything") == "skip"
+    assert stop_hook.classify_chunk_relevance("repo:x:y.py", "") == "skip"
