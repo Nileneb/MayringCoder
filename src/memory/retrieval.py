@@ -195,6 +195,82 @@ def _normalize_vector_scores(
 
 
 # ---------------------------------------------------------------------------
+# IGIO-intent detection — outcome/issue/goal/intervention boost
+# ---------------------------------------------------------------------------
+
+# WHY(2026-05-10 IGIO-utilisation): outcome ist die wichtigste axis für
+# "was kam dabei raus / wirkung / konsequenz"-fragen, wurde aber im v1-
+# rerank ignoriert. Dieser intent-detector ist KEYWORD-basiert (kein LLM)
+# damit jede search-call ihn aufrufen kann ohne extra-latenz. Treffer-
+# patterns kalibriert auf DE+EN, da user häufig deutsch fragt.
+_IGIO_INTENT_PATTERNS: dict[str, tuple[str, ...]] = {
+    "outcome": (
+        # de
+        "ergebnis", "ergebnisse", "konsequenz", "konsequenzen", "wirkung",
+        "auswirkung", "auswirkungen", "resultat", "resultate", "was kam dabei raus",
+        "was kam raus", "was passierte", "was hat sich geändert", "fazit",
+        "outcome", "outcomes",
+        # en
+        "result", "results", "consequence", "consequences", "effect", "effects",
+        "what happened", "what changed", "impact",
+    ),
+    "issue": (
+        # de
+        "problem", "probleme", "bug", "fehler", "issue", "warum", "wieso",
+        "weshalb", "ursache", "ursachen",
+        # en
+        "issues", "bugs", "error", "errors", "why does", "why is",
+        "root cause", "broken",
+    ),
+    "goal": (
+        # de
+        "ziel", "ziele", "vorhaben", "soll", "möchte", "möchten", "plan",
+        "planung", "intention",
+        # en
+        "goal", "goals", "objective", "objectives", "target", "we want",
+        "intend", "intent", "plan to",
+    ),
+    "intervention": (
+        # de
+        "wie umsetzen", "wie implementieren", "wie löse", "wie löst",
+        "wie fixe", "wie repariere", "wie baue", "schritte", "anleitung",
+        "how to fix", "how to implement",
+        # en
+        "implementation", "implement", "how do i", "how can i", "fix it",
+        "steps", "approach",
+    ),
+}
+
+
+def detect_igio_intent(query: str) -> str | None:
+    """Erkenne welche IGIO-axis die query primär anspricht.
+
+    Returns "outcome" | "issue" | "goal" | "intervention" oder None wenn
+    kein klares signal. Bei mehrfach-treffern wins die axis mit der
+    höchsten match-zahl. Bei gleichstand wins outcome > issue > goal >
+    intervention (ranking nach informationsgehalt — outcome ist am
+    spezifischsten).
+    """
+    if not query:
+        return None
+    q = query.lower()
+    counts: dict[str, int] = {}
+    for axis, patterns in _IGIO_INTENT_PATTERNS.items():
+        n = sum(1 for p in patterns if p in q)
+        if n > 0:
+            counts[axis] = n
+    if not counts:
+        return None
+    # Wins-priority bei tie: outcome > issue > goal > intervention
+    priority = ("outcome", "issue", "goal", "intervention")
+    max_count = max(counts.values())
+    for axis in priority:
+        if counts.get(axis, 0) == max_count:
+            return axis
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Stage 3b: Optional LLM pre-filter
 # ---------------------------------------------------------------------------
 
@@ -286,6 +362,7 @@ def _rerank(
     reranker_override: str | None = None,
     predicted_topics: set[str] | None = None,
     category_hint: list[str] | None = None,
+    igio_intent: str | None = None,
 ) -> list[RetrievalRecord]:
     """Combine scores and return top_k RetrievalRecords sorted by score_final DESC.
 
@@ -345,6 +422,17 @@ def _rerank(
         c.lower() for c in (category_hint or []) if c
     }
 
+    # WHY(2026-05-10 IGIO-intent-boost): wir klassifizieren chunks auf
+    # issue/goal/intervention/outcome-axis (igio_classifier.py), nutzen die
+    # axis aber im aktiven v1-rerank GAR NICHT (nur disabled v2 hat sie
+    # als one-hot-feature). Konsequenz: wenn user nach "konsequenzen",
+    # "ergebnissen", "was kam dabei raus" fragt, werden outcome-chunks
+    # NICHT priorisiert — outcome ist die wichtigste axis für
+    # nach-fakten-fragen, geht aber im scoring unter. Fix: chunks die zu
+    # der detected intent-axis matchen kriegen +0.10 boost.
+    _IGIO_INTENT_BOOST = 0.10
+    igio_intent_axis = (igio_intent or "").lower().strip()
+
     for chunk in candidates:
         sv_raw = vector_scores.get(chunk.chunk_id, 0.0)         # for the record
         sv_eff = stretched_vec.get(chunk.chunk_id, 0.0)         # for ranking
@@ -373,6 +461,13 @@ def _rerank(
             if cat_hint_set & chunk_cats:
                 sc = 1.0
 
+        # IGIO-intent boost: 1.0 wenn chunk.igio_axis zur intent passt.
+        # Beispiel: query="was kam dabei raus" → intent="outcome",
+        # chunk mit igio_axis="outcome" bekommt +0.10.
+        si = 0.0
+        if igio_intent_axis and (chunk.igio_axis or "").lower() == igio_intent_axis:
+            si = 1.0
+
         score_v1 = (
             _WEIGHTS["vector"] * sv_eff
             + _WEIGHTS["symbolic"] * ss
@@ -382,6 +477,7 @@ def _rerank(
             + _WEIGHTS["llm_advisor"] * sl
             + _PRED_BOOST * sp
             + _CAT_HINT_BOOST * sc
+            + _IGIO_INTENT_BOOST * si
         )
 
         # Asymmetric negative penalty: a chunk users repeatedly mark as
@@ -757,6 +853,11 @@ def search(
     rr_version, _ = _get_active(query_hint=query,
                                 explicit_override=opts.get("reranker_version"))
     opts["_reranker_used"] = rr_version  # bubbled into diagnostics
+    # IGIO-intent: query nach outcome/issue/goal/intervention scannen.
+    # Override per opts["igio_intent"] möglich (z.B. explicit aus UI).
+    igio_intent = opts.get("igio_intent") or detect_igio_intent(query)
+    opts["_igio_intent"] = igio_intent  # für diagnostics
+
     ranked = _rerank(
         candidates, vector_scores, symbolic_scores, top_k, conn,
         affinity_source_id,
@@ -767,6 +868,7 @@ def search(
         reranker_override=opts.get("reranker_version"),
         predicted_topics=predicted_topics,
         category_hint=opts.get("category_hint"),
+        igio_intent=igio_intent,
     )
 
     # Enrich with cross-source refs (same text found in other sources).

@@ -205,3 +205,79 @@ def test_judge_returns_none_when_no_text():
     sh = _load_stop_hook()
     chunks = [{"chunk_id": "a", "source_id": "s", "text": ""}]
     assert sh._judge_chunks_with_llm(chunks, "q", "a") is None
+
+
+# ---------------------------------------------------------------------------
+# 4) IGIO-intent detection + outcome-boost (user-feedback "outcome wird
+#    nirgendwo genutzt")
+# ---------------------------------------------------------------------------
+
+def test_detect_igio_intent_outcome_de():
+    from src.memory.retrieval import detect_igio_intent
+    assert detect_igio_intent("Was kam dabei raus?") == "outcome"
+    assert detect_igio_intent("Welche Konsequenzen hat das?") == "outcome"
+    assert detect_igio_intent("Was war das ergebnis der refactoring?") == "outcome"
+    assert detect_igio_intent("Wie war die wirkung auf die latenz?") == "outcome"
+
+
+def test_detect_igio_intent_outcome_en():
+    from src.memory.retrieval import detect_igio_intent
+    assert detect_igio_intent("what happened after the deploy?") == "outcome"
+    assert detect_igio_intent("Show me the results") == "outcome"
+    assert detect_igio_intent("what was the impact?") == "outcome"
+
+
+def test_detect_igio_intent_issue():
+    from src.memory.retrieval import detect_igio_intent
+    assert detect_igio_intent("Was ist das Problem mit der auth?") == "issue"
+    assert detect_igio_intent("warum failed der test?") == "issue"
+    assert detect_igio_intent("what's the root cause?") == "issue"
+
+
+def test_detect_igio_intent_intervention():
+    from src.memory.retrieval import detect_igio_intent
+    assert detect_igio_intent("wie implementieren wir das?") == "intervention"
+    assert detect_igio_intent("how do I fix this?") == "intervention"
+
+
+def test_detect_igio_intent_none_for_generic_query():
+    from src.memory.retrieval import detect_igio_intent
+    assert detect_igio_intent("zeig mir den code") is None
+    assert detect_igio_intent("xyz") is None
+    assert detect_igio_intent("") is None
+
+
+def test_rerank_outcome_chunk_boosted_with_outcome_intent():
+    """Outcome-chunk muss höher ranken als non-outcome bei outcome-intent."""
+    from src.memory.retrieval import _rerank
+    from src.memory.schema import Chunk
+
+    chunk_outcome = Chunk(
+        chunk_id="chk_out", source_id="s1", chunk_level="function",
+        ordinal=0, text="test passed in 2s", category_labels=["testing"],
+        igio_axis="outcome", workspace_id="default",
+    )
+    chunk_intervention = Chunk(
+        chunk_id="chk_int", source_id="s2", chunk_level="function",
+        ordinal=0, text="implementation steps", category_labels=["api"],
+        igio_axis="intervention", workspace_id="default",
+    )
+    vs = {"chk_out": 0.5, "chk_int": 0.5}
+    ss = {"chk_out": 0.5, "chk_int": 0.5}
+
+    out_with_intent = _rerank(
+        [chunk_outcome, chunk_intervention], vs, ss,
+        top_k=2, conn=_empty_conn(), igio_intent="outcome",
+    )
+    out_no_intent = _rerank(
+        [chunk_outcome, chunk_intervention], vs, ss,
+        top_k=2, conn=_empty_conn(),
+    )
+
+    score_out_intent = next(r for r in out_with_intent if r.chunk_id == "chk_out").score_final
+    score_int_intent = next(r for r in out_with_intent if r.chunk_id == "chk_int").score_final
+    assert score_out_intent > score_int_intent
+
+    score_out_baseline = next(r for r in out_no_intent if r.chunk_id == "chk_out").score_final
+    # Boost ist _IGIO_INTENT_BOOST = 0.10
+    assert score_out_intent - score_out_baseline >= 0.09
