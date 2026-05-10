@@ -209,15 +209,18 @@ def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
     active = conn.execute("SELECT COUNT(*) FROM chunks WHERE is_active=1").fetchone()[0]
     total  = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    # WHY(2026-05-10 rating-migration): nur noch rating-buckets. Legacy
+    # positive/negative/neutral counts bleiben aus UI-back-compat als
+    # synonyme zu rating>=4 / rating<=2 / =3.
     fb_rows = conn.execute("SELECT signal, COUNT(*) FROM chunk_feedback GROUP BY signal").fetchall()
     fb = {r[0]: r[1] for r in fb_rows}
-    star_pos   = sum(fb.get(str(s), 0) for s in (4, 5))
-    star_neg   = sum(fb.get(str(s), 0) for s in (1, 2))
-    star_neu   = fb.get("3", 0)
+    star_pos = sum(fb.get(str(s), 0) for s in (4, 5))
+    star_neg = sum(fb.get(str(s), 0) for s in (1, 2))
+    star_neu = fb.get("3", 0)
     feedback_summary = {
-        "positive": fb.get("positive", 0) + star_pos,
-        "negative": fb.get("negative", 0) + star_neg,
-        "neutral":  fb.get("neutral",  0) + star_neu,
+        "positive": star_pos,   # = rating 4+5 (für UI-back-compat)
+        "negative": star_neg,   # = rating 1+2
+        "neutral":  star_neu,   # = rating 3
         "stars":    {str(i): fb.get(str(i), 0) for i in range(1, 6)},
     }
     last_hour = conn.execute(

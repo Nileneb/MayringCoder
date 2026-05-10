@@ -308,15 +308,20 @@ def check_memory_search_returns_vector_hits(api: str, token: str) -> CheckResult
 
 
 def check_feedback_binary_only(api: str, token: str) -> CheckResult:
-    """Neutral signal must be rejected (Issue: silent neutral pollution)."""
-    code, body, _ = _http(
-        "POST", f"{api}/memory/feedback", token,
-        body={"chunk_id": "chk_smoke_test_dummy_1", "signal": "neutral"},
-    )
+    """Legacy signals must be rejected (rating-migration 2026-05-10:
+    only '1'..'5' accepted, positive/negative/neutral all rejected)."""
+    rejected = []
+    for legacy in ("neutral", "positive", "negative"):
+        code, body, _ = _http(
+            "POST", f"{api}/memory/feedback", token,
+            body={"chunk_id": "chk_smoke_test_dummy_1", "signal": legacy},
+        )
+        rejected.append((legacy, code, code in (400, 422)))
+    all_ok = all(r[2] for r in rejected)
     return CheckResult(
-        "feedback_neutral_rejected",
-        code in (400, 422),
-        f"http={code} body={body} — must be 400 (route) or 422 (pydantic)",
+        "feedback_legacy_rejected",
+        all_ok,
+        f"rejected={rejected} — alle legacy-signals müssen 400/422 sein",
     )
 
 
@@ -335,7 +340,7 @@ def check_feedback_slug_resolution(api: str, token: str) -> CheckResult:
 
     code, body, _ = _http(
         "POST", f"{api}/memory/feedback", token,
-        body={"chunk_id": sid, "signal": "positive"},
+        body={"chunk_id": sid, "signal": "5"},
     )
     if code != 200:
         return CheckResult("feedback_slug_resolution", False,
@@ -368,7 +373,7 @@ def check_feedback_count_moves(api: str, token: str) -> CheckResult:
 
     fb_code, fb_body, _ = _http(
         "POST", f"{api}/memory/feedback", token,
-        body={"chunk_id": cid, "signal": "positive"},
+        body={"chunk_id": cid, "signal": "5"},
     )
     if fb_code != 200:
         return CheckResult("feedback_count_delta", False,
