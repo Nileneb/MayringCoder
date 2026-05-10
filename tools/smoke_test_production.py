@@ -355,13 +355,14 @@ def check_feedback_slug_resolution(api: str, token: str) -> CheckResult:
 
 def check_feedback_count_moves(api: str, token: str) -> CheckResult:
     """POST one positive feedback, verify the count actually increased."""
+    # WHY(2026-05-10 no-legacy): /stats/summary feedback hat KEIN positive
+    # mehr — nur stars{1..5}+total+avg. Smoke prüft total (kein bucket-mapping).
     pre_code, pre, _ = _http("GET", f"{api}/stats/summary", token)
     if pre_code != 200:
         return CheckResult("feedback_count_delta", False,
                            f"pre /stats/summary http={pre_code}")
-    pre_pos = (pre or {}).get("feedback", {}).get("positive", 0)
+    pre_total = (pre or {}).get("feedback", {}).get("total", 0)
 
-    # Get a real chunk_id
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "stop hook", "top_k": 1, "include_text": False,
@@ -381,12 +382,12 @@ def check_feedback_count_moves(api: str, token: str) -> CheckResult:
 
     time.sleep(1)
     post_code, post, _ = _http("GET", f"{api}/stats/summary", token)
-    post_pos = (post or {}).get("feedback", {}).get("positive", 0)
-    delta = post_pos - pre_pos
+    post_total = (post or {}).get("feedback", {}).get("total", 0)
+    delta = post_total - pre_total
     return CheckResult(
         "feedback_count_delta",
         delta >= 1,
-        f"pre.positive={pre_pos}  post.positive={post_pos}  delta={delta}",
+        f"pre.total={pre_total}  post.total={post_total}  delta={delta}",
     )
 
 
@@ -1060,8 +1061,7 @@ def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
     pre_code, pre, _ = _http("GET", f"{api}/stats/summary", token)
     if pre_code != 200:
         return CheckResult("stop_hook_e2e", False, f"pre summary http={pre_code}")
-    pre_total = ((pre or {}).get("feedback", {}).get("positive", 0)
-                 + (pre or {}).get("feedback", {}).get("negative", 0))
+    pre_total = (pre or {}).get("feedback", {}).get("total", 0)
 
     # Get 2 real chunks via search to feed into the hook
     code, body, _ = _http(
@@ -1118,8 +1118,7 @@ def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
     # Post: count again, expect +len(pairs)
     time.sleep(1)
     post_code, post, _ = _http("GET", f"{api}/stats/summary", token)
-    post_total = ((post or {}).get("feedback", {}).get("positive", 0)
-                  + (post or {}).get("feedback", {}).get("negative", 0))
+    post_total = (post or {}).get("feedback", {}).get("total", 0)
     delta = post_total - pre_total
     return CheckResult(
         "stop_hook_e2e",
