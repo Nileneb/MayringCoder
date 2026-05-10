@@ -265,19 +265,21 @@ def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
     Returns:
         List of {chunk_id, source_id, category_labels, positive, negative, neutral, net_score}
     """
-    # WHY(2026-05-10 rating-migration): aggregate rating 1..5. Columns
-    # 'positive'/'negative'/'neutral' bleiben für UI-back-compat: rating>=4
-    # → positive-bucket, rating<=2 → negative, =3 → neutral. net_score
-    # rechnet jetzt avg(rating)/5 statt (pos-neg)/total.
+    # WHY(2026-05-10 rating-migration v2): pro chunk die VOLLE rating-1..5
+    # distribution + avg + total. Bucket-counts (positive/negative/neutral)
+    # bleiben für back-compat aber UI sollte stars[] nutzen für echte
+    # rating-verteilung statt 3-bucket-collapse.
     rows = memory_conn.execute(
         """
         SELECT
             cf.chunk_id,
             COALESCE(c.source_id, '') AS source_id,
             COALESCE(c.category_labels, '') AS category_labels,
-            SUM(CASE WHEN CAST(cf.signal AS INT) >= 4 THEN 1 ELSE 0 END) AS positive,
-            SUM(CASE WHEN CAST(cf.signal AS INT) <= 2 AND CAST(cf.signal AS INT) >= 1 THEN 1 ELSE 0 END) AS negative,
-            SUM(CASE WHEN CAST(cf.signal AS INT) = 3 THEN 1 ELSE 0 END) AS neutral,
+            SUM(CASE WHEN CAST(cf.signal AS INT) = 1 THEN 1 ELSE 0 END) AS r1,
+            SUM(CASE WHEN CAST(cf.signal AS INT) = 2 THEN 1 ELSE 0 END) AS r2,
+            SUM(CASE WHEN CAST(cf.signal AS INT) = 3 THEN 1 ELSE 0 END) AS r3,
+            SUM(CASE WHEN CAST(cf.signal AS INT) = 4 THEN 1 ELSE 0 END) AS r4,
+            SUM(CASE WHEN CAST(cf.signal AS INT) = 5 THEN 1 ELSE 0 END) AS r5,
             AVG(CAST(cf.signal AS REAL)) AS avg_rating,
             COUNT(*) AS total
         FROM chunk_feedback cf
@@ -291,18 +293,24 @@ def get_feedback_matrix(memory_conn: DBAdapter, limit: int = 50) -> list[dict]:
     ).fetchall()
     result = []
     for r in rows:
-        pos = r[3] if isinstance(r, tuple) else r["positive"]
-        neg = r[4] if isinstance(r, tuple) else r["negative"]
-        avg = r[6] if isinstance(r, tuple) else r["avg_rating"]
-        # net_score in [0..1]: avg-rating normalized.
+        is_tuple = isinstance(r, tuple)
+        r1 = r[3] if is_tuple else r["r1"]
+        r2 = r[4] if is_tuple else r["r2"]
+        r3 = r[5] if is_tuple else r["r3"]
+        r4 = r[6] if is_tuple else r["r4"]
+        r5 = r[7] if is_tuple else r["r5"]
+        avg = r[8] if is_tuple else r["avg_rating"]
+        total = r[9] if is_tuple else r["total"]
         net = round(((avg or 3.0) - 1.0) / 4.0, 2)
         result.append({
-            "chunk_id": r[0] if isinstance(r, tuple) else r["chunk_id"],
-            "source_id": r[1] if isinstance(r, tuple) else r["source_id"],
-            "category_labels": r[2] if isinstance(r, tuple) else r["category_labels"],
-            "positive": pos,
-            "negative": neg,
-            "neutral": r[5] if isinstance(r, tuple) else r["neutral"],
+            "chunk_id": r[0] if is_tuple else r["chunk_id"],
+            "source_id": r[1] if is_tuple else r["source_id"],
+            "category_labels": r[2] if is_tuple else r["category_labels"],
+            # WHY(2026-05-10 user-mandate "no legacy"): keine
+            # back-compat-felder mehr. UIs müssen auf stars[]
+            # + avg_rating + net_score migrieren — sonst fail-loud.
+            "stars": {"1": r1, "2": r2, "3": r3, "4": r4, "5": r5},
+            "total": total,
             "avg_rating": round(avg or 0.0, 2),
             "net_score": net,
         })

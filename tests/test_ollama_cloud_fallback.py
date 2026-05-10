@@ -122,9 +122,14 @@ def test_503_on_final_retry_falls_back_to_cloud(monkeypatch):
 
 
 def test_4xx_does_NOT_trigger_cloud_fallback(monkeypatch):
-    """400/404 (Client-Bug) → kein Cloud-Fallback (wäre auch dort kaputt)."""
+    """400/404 (Client-Bug) → kein Cloud-Fallback (wäre auch dort kaputt).
+
+    WHY: ratio=0 damit der 20%-cloud-primary-pfad nicht versehentlich
+    feuert und den 4xx-pfad camoufliert.
+    """
     monkeypatch.setattr("src.ollama_client._CLOUD_API_KEY", "sk-test")
     monkeypatch.setattr("src.ollama_client._CLOUD_URL", "https://cloud.fake")
+    monkeypatch.setattr("src.ollama_client._CLOUD_PRIMARY_RATIO", 0.0)
 
     bad_resp = MagicMock()
     bad_resp.status_code = 404
