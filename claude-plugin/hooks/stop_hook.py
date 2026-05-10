@@ -342,24 +342,33 @@ def _judge_chunks_with_llm(
     if not chunks_with_text or not assistant_text:
         return None
 
+    # WHY(2026-05-11): source_id ABSICHTLICH NICHT mehr im prompt — der
+    # judge gewichtet sonst "thematische ähnlichkeit zum dateinamen" hoch
+    # (codebook.yaml bekam immer 5★ weil text "kategorien…" enthält und
+    # judge dachte "das ist die quelle für kategorisierungs-fragen"). Mit
+    # nur chunk-text vergleicht er rein inhaltliche evidenz.
     numbered = "\n".join(
-        f"[{i+1}] source={c.get('source_id', '?')[:80]}\n"
-        f"    text: {(c.get('text') or '')[:500].replace(chr(10), ' ')}"
+        f"[{i+1}] {(c.get('text') or '')[:500].replace(chr(10), ' ')}"
         for i, c in enumerate(chunks_with_text)
     )
     prompt = (
         f"User asked:\n{user_prompt[:500] or '(unknown)'}\n\n"
         f"Assistant answered:\n{assistant_text[:1500]}\n\n"
-        f"Available memory chunks (numbered):\n{numbered}\n\n"
-        "For each chunk, rate how much the assistant's answer USED its content "
-        "(not just mentioned the filename):\n"
-        "1 = irrelevant or misleading\n"
-        "2 = barely related\n"
-        "3 = loosely relevant / neutral\n"
-        "4 = clearly used in parts of the answer\n"
-        "5 = primary source — answer relies heavily on it\n\n"
+        f"Memory chunks (numbered):\n{numbered}\n\n"
+        "Score each chunk by whether the ANSWER demonstrably uses INFORMATION "
+        "from that chunk — not by topic similarity, not by whether the chunk "
+        "looks 'important'. Evidence = the answer mentions specific facts, "
+        "names, numbers, code, or arguments that are visibly from this chunk.\n\n"
+        "If the answer would be IDENTICAL without this chunk → low rating, "
+        "regardless of how thematically related it is.\n\n"
+        "1 = no evidence the chunk shaped the answer (default for unused)\n"
+        "2 = vague overlap of topic, no specific borrowed content\n"
+        "3 = answer mentions something also in chunk, but might be coincidence\n"
+        "4 = answer clearly uses specific content from this chunk\n"
+        "5 = chunk is THE primary source; answer fails without it\n\n"
+        "IMPORTANT: most chunks score 1 or 2. 5 should be RARE. Be strict.\n\n"
         f"Respond with EXACTLY {len(chunks_with_text)} comma-separated ratings "
-        "(1-5), in order. Example: 5,2,3,4\n\nAnswer:"
+        "(1-5), in order. Example: 1,2,1,4,1\n\nAnswer:"
     )
     body = json.dumps({
         "model": model,
