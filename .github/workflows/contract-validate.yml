@@ -1,0 +1,25 @@
+name: Contract Validate
+
+on:
+  pull_request:
+    paths:
+      - 'docs/cross-repo-contracts/**'
+      - 'src/api/jwt_auth.py'
+      - 'scripts/validate_contract.py'
+  push:
+    branches: [master]
+    paths:
+      - 'docs/cross-repo-contracts/**'
+      - 'src/api/jwt_auth.py'
+      - 'scripts/validate_contract.py'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - run: python scripts/validate_contract.py
