@@ -14,6 +14,7 @@ from __future__ import annotations
 import concurrent.futures as _cf
 import json
 import os
+import re
 import sys
 import time as _time
 import urllib.request
@@ -171,6 +172,118 @@ def _search(
     return {"_hook_error": last_err or "unknown"}
 
 
+_CATEGORIZE_OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+_CATEGORIZE_MODEL = os.environ.get("MAYRING_PROMPT_CATEGORIZE_MODEL", "mistral:7b-instruct")
+_CATEGORIZE_TIMEOUT = float(os.environ.get("MAYRING_PROMPT_CATEGORIZE_TIMEOUT", "4"))
+# WHY(2026-05-10 multi-category-prompt): cache categories pro repo-profile in
+# memory zum prompt-categorize-call. List wird einmal pro hook-process geladen.
+_CATEGORIZE_CACHED: dict | None = None
+_MIN_PROMPT_SIM_THRESHOLD = 0.4   # darunter → "no prior context"
+
+
+def _load_active_categories() -> list[str]:
+    """Universal codebook-categories als domäne für prompt-categorize.
+
+    WHY: User-design — wir nutzen das schon existierende mayring-kategorien-
+    system (codebooks/profiles) statt eigene labels zu erfinden. Universal
+    ist sprachunabhängig + reicht für 90% der prompts.
+    """
+    global _CATEGORIZE_CACHED
+    if _CATEGORIZE_CACHED is not None:
+        return _CATEGORIZE_CACHED
+    paths = [
+        "/home/nileneb/Desktop/MayringCoder/codebooks/profiles/universal.yaml",
+        os.path.expanduser("~/.config/mayring/categories.txt"),
+    ]
+    cats: list[str] = []
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                content = f.read()
+            # crude yaml-list parse — vermeidet pyyaml-dependency im hook
+            in_cats = False
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("categories:"):
+                    in_cats = True
+                    continue
+                if in_cats:
+                    if stripped.startswith("- "):
+                        cat = stripped[2:].strip().rstrip(":")
+                        if cat and not cat.startswith("#"):
+                            cats.append(cat)
+                    elif stripped and not stripped.startswith("#") and ":" in stripped:
+                        # next key — end of categories block
+                        break
+            if cats:
+                break
+        except OSError:
+            continue
+    _CATEGORIZE_CACHED = cats or [
+        # absolute fallback wenn codebook nicht gefunden
+        "api", "data_access", "domain", "infrastructure", "auth",
+        "config", "utils", "testing", "frontend", "deployment",
+    ]
+    return _CATEGORIZE_CACHED
+
+
+def _categorize_prompt(prompt: str) -> list[str]:
+    """Ask mistral:7b-instruct welche kategorien der user-prompt berührt.
+
+    Returns 1..3 kategorien aus _load_active_categories(). Bei timeout/
+    error: leere liste (caller fällt zurück auf unifiltrierte search).
+    """
+    if not prompt or len(prompt) < MIN_PROMPT_LEN:
+        return []
+    cats = _load_active_categories()
+    if not cats:
+        return []
+    cat_list = ", ".join(cats[:60])  # truncate auf ~60 zum prompt-budget
+    body = json.dumps({
+        "model": _CATEGORIZE_MODEL,
+        "prompt": (
+            f"User-prompt:\n{prompt[:600]}\n\n"
+            f"Verfügbare Kategorien: {cat_list}\n\n"
+            "Wähle 1-3 Kategorien die der prompt INHALTLICH berührt. "
+            "Ein prompt kann mehrere themen enthalten — gib ALLE relevanten an. "
+            "Antworte NUR mit kommaseparierten kategorie-namen aus der liste, "
+            "kein erklärtext. Beispiel: api, auth\n\nAntwort:"
+        ),
+        "stream": False,
+        "options": {"num_predict": 32, "temperature": 0.1},
+        "think": False,
+    }).encode()
+    req = urllib.request.Request(
+        f"{_CATEGORIZE_OLLAMA}/api/generate",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_CATEGORIZE_TIMEOUT) as resp:
+            payload = json.loads(resp.read())
+    except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+        # Best-effort — Ollama unerreichbar / langsam → kein cat-filter
+        sys.stderr.write(
+            f"[memory_inject] prompt-categorize fail ({type(exc).__name__}) "
+            f"→ ungefiltert\n"
+        )
+        return []
+    raw = (payload.get("response") or "").strip().lower()
+    # ',' or whitespace separated
+    valid = {c.lower() for c in cats}
+    matched: list[str] = []
+    for token in re.split(r"[,;\n]+", raw):
+        token = token.strip().strip(".").strip()
+        if token in valid and token not in matched:
+            matched.append(token)
+        if len(matched) >= 3:
+            break
+    return matched
+
+
 def _multi_lens_search(query: str, token: str) -> dict[str, dict]:
     """Run three lens-searches concurrently; one entry per lens.
 
@@ -307,6 +420,13 @@ def main() -> None:
     pinned_block = _render_pinned_block()
     pinned_prefix = (pinned_block + "\n\n---\n\n") if pinned_block else ""
 
+    # WHY(2026-05-10 prompt-categorize): vor der search erst kategorien
+    # extrahieren. Ein prompt kann mehrere themen berühren (auth + caching +
+    # deployment) → wir geben sie als hint an die search weiter damit
+    # treffer in passenden kategorien hoch-gerankt werden. Bei timeout/leer
+    # einfach ohne hint suchen (ungefilterter fallback).
+    prompt_categories = _categorize_prompt(prompt)
+
     results = _multi_lens_search(prompt, token)
     primary = results.get("primary") or {}
     if "_hook_error" in primary:
@@ -346,17 +466,42 @@ def main() -> None:
     primary_ctx = (primary.get("prompt_context") or "").strip()
     primary_diag = (primary.get("diagnostics") or {}).get("vector_stage", "?")
 
-    if not primary_ctx:
+    # WHY(2026-05-10 soft-skip): wenn ALLE max_sim-werte schwach sind, ist
+    # die search rauschen. Lieber explizit "kein prior context" ausgeben
+    # statt das LLM mit halbrelevanten chunks zu vergiften. Hard-block ist
+    # falsch — Opus arbeitet weiter, nur ohne kontext-bias.
+    def _max_sim(r: dict) -> float:
+        diag = (r or {}).get("diagnostics") or {}
+        vs = diag.get("vector_stage") or ""
+        m = re.search(r"max_score=([0-9.]+)", vs if isinstance(vs, str) else "")
+        if m:
+            try:
+                return float(m.group(1))
+            except (TypeError, ValueError):
+                return 0.0
+        return 0.0
+
+    all_weak = all(
+        _max_sim(r) < _MIN_PROMPT_SIM_THRESHOLD
+        for r in (primary, results.get("ambient"), results.get("conversation"))
+        if r and "_hook_error" not in r
+    )
+    cat_hint = (f" · kategorien={','.join(prompt_categories)}"
+                if prompt_categories else "")
+
+    if not primary_ctx or all_weak:
         print(
             pinned_prefix
-            + f"## Memory: keine Treffer für diesen Prompt "
-            f"(vector_stage={primary_diag}, candidates={(primary.get('diagnostics') or {}).get('candidates', 0)})"
+            + f"## Memory: _No prior context — Thema neu_\n"
+            f"_diag: {primary_diag}{cat_hint}_\n"
+            f"_max_sim<{_MIN_PROMPT_SIM_THRESHOLD} bei allen lenses — keine "
+            f"halb-relevanten chunks injiziert, damit nichts den fokus verwischt._"
         )
         return
 
     sections: list[str] = [
-        f"### Code/Findings (semantic search)",
-        f"_diag: {primary_diag}_",
+        "### Code/Findings (semantic search)",
+        f"_diag: {primary_diag}{cat_hint}_",
         primary_ctx,
     ]
 
