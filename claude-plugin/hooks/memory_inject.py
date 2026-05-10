@@ -22,6 +22,20 @@ import urllib.error
 JWT_FILE = os.path.expanduser("~/.config/mayring/hook.jwt")
 API = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
 
+# WHY(v2-pinned-sources): User-Auftrag — "WIE BEKOMMEN WIR DEIN
+# NUTZLOSES SELBST ERSTELLTES FEEDBACK IN JEDEN SCHEISS PROMPT ALS
+# KONTEXT?". Hier: ein file-Pfad-Liste die UNABHÄNGIG vom search-result
+# bei jedem prompt als pinned-block injektet wird. Inhalt sind die
+# master-audit-files (frust-patterns, regeln, V2-spec) — der LLM-Advisor
+# hat damit immer die User-Constraints im Kopf.
+PINNED_FILES_CONFIG = os.path.expanduser("~/.config/mayring/pinned_files.json")
+PINNED_DEFAULT_FILES = [
+    "/home/nileneb/Desktop/MayringCoder/docs/v2-master-audit.md",
+    "/home/nileneb/Desktop/MayringCoder/docs/v2-frustration-patterns.md",
+    "/home/nileneb/Desktop/MayringCoder/docs/v2-workspaces-spec.md",
+]
+PINNED_CHAR_BUDGET = 1500  # gesamt — gekürzt sonst frisst es den prompt
+
 # Persistent state for the Stop hook. The injected chunk_id list does NOT
 # survive in the user-turn content of the JSONL transcript — Claude Code
 # treats hook output as prompt prefix, not user-typed text. So the Stop
@@ -95,10 +109,16 @@ def _search(
         "top_k": top_k,
         "include_text": True,
         "char_budget": char_budget,
-        # Hook runs in the prompt critical path — skip the LLM advisor
-        # stage that adds 2-4s on a populated workspace. Symbolic + vector
-        # are still ranked; only the post-hoc relevance scoring is off.
-        "llm_prefilter": False,
+        # WHY(v2-llm-advisor-on): User-Auftrag — "GIBT ES EINEN GUTEN GRUND,
+        # EINEN LLM ADVISOR FÜR DUMME AI ZU HABEN??? ICH SAGE JA". Vorher
+        # default-disabled wegen 9s-budget; jetzt enabled mit kleinem
+        # qwen3.5:2b-Modell + top_k=5 (≤5s Budget). Der Advisor kennt
+        # die User-Regeln (KISS, no-legacy, no-silent) aus den
+        # always-injected pinned sources und nutzt sie als task_context.
+        "llm_prefilter": True,
+        "llm_prefilter_model": os.environ.get(
+            "MAYRING_LLM_ADVISOR_MODEL", "qwen3.5:2b",
+        ),
     }
     if source_type:
         body_dict["source_type"] = source_type
@@ -210,6 +230,44 @@ def _write_inject_state(session_id: str, chunk_pairs: list[tuple[str, str]]) -> 
 # OK oder ein 4xx) bleibt der laute Block, weil das ist eine echte
 # Konfig-Anomalie. CHANGE WITH CARE — bei zu lauter silence verlieren wir
 # echte Probleme; bei zu sturem laut nervt der deploy-window jeden user.
+def _render_pinned_block() -> str:
+    """V2-pinned-lens: User-Auftrag-Inhalte (master-audit, frust-patterns,
+    spec) IMMER injizieren — search-result-unabhängig.
+
+    Liest entweder aus ~/.config/mayring/pinned_files.json (User-Override)
+    oder aus PINNED_DEFAULT_FILES. Fail-soft: fehlende Files werden
+    übersprungen, hook bricht NIE deswegen ab.
+    """
+    files = PINNED_DEFAULT_FILES
+    try:
+        if os.path.exists(PINNED_FILES_CONFIG):
+            cfg = json.loads(open(PINNED_FILES_CONFIG).read())
+            files = cfg.get("files") or PINNED_DEFAULT_FILES
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    snippets: list[str] = []
+    remaining = PINNED_CHAR_BUDGET
+    for fp in files:
+        if remaining <= 100:
+            break
+        try:
+            text = open(fp).read()
+        except OSError:
+            continue
+        # nur die ersten ~remaining/N chars pro file
+        per_file = max(300, remaining // max(1, len(files) - len(snippets)))
+        snippet = text[:per_file].rstrip()
+        snippets.append(f"#### {os.path.basename(fp)}\n{snippet}")
+        remaining -= len(snippet)
+    if not snippets:
+        return ""
+    return (
+        "### Pinned User-Constraints (master-audit + spec, IMMER aktiv)\n\n"
+        + "\n\n".join(snippets)
+    )
+
+
 def main() -> None:
     payload = _read_payload()
     prompt = _extract_prompt(payload)
@@ -219,6 +277,11 @@ def main() -> None:
     token = _load_token()
     if not token:
         return
+
+    # Pinned-block IMMER vorab — auch wenn search server down ist, sollen
+    # die User-Constraints (master-audit, frust-patterns, spec) sichtbar sein.
+    pinned_block = _render_pinned_block()
+    pinned_prefix = (pinned_block + "\n\n---\n\n") if pinned_block else ""
 
     results = _multi_lens_search(prompt, token)
     primary = results.get("primary") or {}
@@ -232,11 +295,11 @@ def main() -> None:
             for r in results.values() if "_hook_error" in (r or {})
         )
         if all_5xx:
-            # silent skip — Memory injizieren wir beim nächsten prompt.
-            # Counter trackt das, damit chronische 5xx-Schleifen vom
-            # SessionStart-Hook gemeldet werden statt für immer unsichtbar
-            # zu bleiben (V2 Stufe 2.2).
+            # Silent skip auf API-Side, ABER pinned-block trotzdem injizieren
+            # damit User-Constraints im prompt sind auch wenn search down ist.
             _record_silent_skip(reason="all_5xx")
+            if pinned_block:
+                print(pinned_block)
             return
         # Sonst: laut, weil der Fehler eine Aktion braucht (4xx, parse,
         # OSError, timeout). Lists ALL three lens errors at once.
@@ -246,7 +309,8 @@ def main() -> None:
             if (r or {}).get("_hook_error")
         ]
         print(
-            "## Memory: Hook konnte Memory nicht laden\n"
+            pinned_prefix
+            + "## Memory: Hook konnte Memory nicht laden\n"
             f"_API={API}_  _prompt[:50]={prompt[:50]!r}_\n"
             + "\n".join(errs)
             + "\n\n_Wenn dieser Block wiederholt erscheint: API-Healthcheck "
@@ -260,7 +324,8 @@ def main() -> None:
 
     if not primary_ctx:
         print(
-            f"## Memory: keine Treffer für diesen Prompt "
+            pinned_prefix
+            + f"## Memory: keine Treffer für diesen Prompt "
             f"(vector_stage={primary_diag}, candidates={(primary.get('diagnostics') or {}).get('candidates', 0)})"
         )
         return
@@ -311,7 +376,8 @@ def main() -> None:
         )
 
     print(
-        f"## Memory-Kontext für diesen Prompt\n\n"
+        pinned_prefix
+        + f"## Memory-Kontext für diesen Prompt\n\n"
         + "\n\n".join(sections)
         + chunk_id_hint
     )
