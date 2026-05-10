@@ -34,12 +34,20 @@ EXEMPT_FILES = {
 # Pattern: except Exception(:\s|\sas\s\w+:)\s*\n\s+(pass|return None)
 # negative-only matcher — fängt nicht "except Exception as exc:\n  log + raise"
 # sondern nur wirklich silent fallbacks.
+# WHY(Sourcery #3 PR201): die regex muss `except Exception as exc: pass` UND
+# `return error_dict` und `return {}` matchen, nicht nur bare `:` und
+# `return None`. Sonst rutscht silent-fallback durch (siehe heutiger
+# MayringMcpClient → 671 sources im falschen workspace).
 SILENT_FAIL_RE = re.compile(
-    r"except\s+Exception\s*:\s*\n\s+pass\b",
+    r"except\s+Exception(?:\s+as\s+\w+)?\s*:\s*\n\s+pass\b",
     re.MULTILINE,
 )
 SILENT_RETURN_NONE_RE = re.compile(
-    r"except\s+Exception\s*:\s*\n\s+return\s+None\b",
+    r"except\s+Exception(?:\s+as\s+\w+)?\s*:\s*\n\s+return\s+(None|\{\}|\[\]|\"\"|'')\b",
+    re.MULTILINE,
+)
+SILENT_RETURN_ERROR_DICT_RE = re.compile(
+    r"except\s+Exception(?:\s+as\s+\w+)?\s*:\s*\n\s+return\s+\{[\"']error[\"']",
     re.MULTILINE,
 )
 

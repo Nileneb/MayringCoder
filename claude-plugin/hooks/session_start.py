@@ -17,6 +17,27 @@ import sys
 import urllib.request
 import urllib.error
 
+# Module-level import des silent-skip-counter mit no-op-Fallback wenn das
+# Sister-Modul nicht da ist (z.B. wenn der Hook standalone aus altem Snapshot
+# läuft). Vermeidet sys.path-Manipulation pro Aufruf (Sourcery-suggestion #4)
+# UND robust gegen fehlende dependency.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _silent_skip_counter import (
+        recent_skip_count as _silent_skip_recent,
+        reset_counter as _silent_skip_reset,
+        should_warn as _silent_skip_should_warn,
+    )
+except ImportError:
+    def _silent_skip_recent(window_hours: float = 24.0) -> int:  # type: ignore[misc]
+        return 0
+
+    def _silent_skip_reset() -> None:  # type: ignore[misc]
+        pass
+
+    def _silent_skip_should_warn(threshold: int = 5, window_hours: float = 24.0) -> bool:  # type: ignore[misc]
+        return False
+
 
 PLANS_DIR = os.path.expanduser("~/.claude/plans")
 TASK_CONTEXT_BUDGET = 800
@@ -446,21 +467,18 @@ def _warn_if_silent_skips_accumulated() -> None:
     chronisch und braucht User-Aktion. Banner wird gezeigt + counter
     reset, damit nicht jede Session denselben Banner zeigt.
     """
+    if not _silent_skip_should_warn(threshold=5):
+        return
     try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from _silent_skip_counter import (
-            recent_skip_count, reset_counter, should_warn,
+        n = _silent_skip_recent(window_hours=24)
+        print(
+            f"## Memory-Hook: chronische silent-skips ({n}/24h)\n"
+            f"_Der UserPromptSubmit-Hook hat zuletzt {n}× nichts injiziert "
+            f"(alle 3 lens-searches → 5xx). Wenn das anhält: API healthcheck "
+            f"`curl https://mcp.linn.games/health` oder `/reload-plugins`._"
         )
-        if should_warn(threshold=5):
-            n = recent_skip_count(window_hours=24)
-            print(
-                f"## Memory-Hook: chronische silent-skips ({n}/24h)\n"
-                f"_Der UserPromptSubmit-Hook hat zuletzt {n}× nichts injiziert "
-                f"(alle 3 lens-searches → 5xx). Wenn das anhält: API healthcheck "
-                f"`curl https://mcp.linn.games/health` oder `/reload-plugins`._"
-            )
-            reset_counter()
-    except (ImportError, OSError) as e:
+        _silent_skip_reset()
+    except OSError as e:
         print(f"MayringCoder: skip-counter check failed — {e}", file=sys.stderr)
 
 

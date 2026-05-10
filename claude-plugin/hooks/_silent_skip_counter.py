@@ -58,13 +58,22 @@ def record_silent_skip(reason: str = "unknown") -> None:
     _save(data)
 
 
+def _parse_ts(evt: dict) -> float:
+    """Defensive ts-parse: malformed JSON (manual edits, partial writes)
+    would otherwise abort the whole counter. Bad rows count as 0 → expire."""
+    try:
+        return float(evt.get("ts", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def recent_skip_count(window_hours: float = 24.0) -> int:
     """Count skip-events within the last `window_hours`."""
     data = _load()
     cutoff = time.time() - window_hours * 3600
     return sum(
         1 for evt in data.get("events", [])
-        if isinstance(evt, dict) and float(evt.get("ts", 0)) >= cutoff
+        if isinstance(evt, dict) and _parse_ts(evt) >= cutoff
     )
 
 
