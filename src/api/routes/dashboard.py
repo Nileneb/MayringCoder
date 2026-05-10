@@ -16,16 +16,9 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from src.api.auth import get_workspace
-from src.memory.store import init_memory_db
+from src.api.dependencies import get_conn as _conn
 
 router = APIRouter()
-
-
-# Single shared connection — same pattern memory.py uses, avoids per-request
-# init cost. Lazy because pytest fixtures may swap CACHE_DIR.
-def _conn():
-    from src.config import CACHE_DIR
-    return init_memory_db(CACHE_DIR / "memory.db")
 
 
 # ---------------------------------------------------------------------------

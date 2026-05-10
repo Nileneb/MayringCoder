@@ -32,9 +32,39 @@ def _current_raw_jwt() -> "str | None":
 
 
 def _effective_workspace_id(caller_default: str = "default") -> str:
+    """Backward-compat shim — delegates to resolve_workspace_from_token().
+
+    Vor V2 hatte dies eigenen TokenInfo-Read; jetzt ist
+    workspace_resolver.resolve_workspace_from_token die einzige SoT.
+    Wenn kein TokenInfo (Tests / manueller MCP-Call), fallback auf
+    caller_default ('default').
+    """
     info = _TOKEN_CTX.get(None)
     if info is None:
         return caller_default or "default"
+    from src.identity.workspace_resolver import resolve_workspace_from_token
+    return resolve_workspace_from_token(info, override_header=None)
+
+
+def _enforce_tenant(requested: str | None) -> str | None:
+    """MCP-tool-arg-driven workspace override.
+
+    Anders als get_workspace (HTTP-Header-Pfad), ist `requested` hier ein
+    explizit von der Tool-Signature übergebener Wert (z.B.
+    `search_memory(workspace_id='other')`). Admin-USER UND Service-Token
+    dürfen damit cross-workspace lesen — der Tool-Caller hat den Wert
+    bewusst gesetzt, kein silent header-Override. Reguläre Token-User
+    werden auf ihren Workspace gepinnt.
+
+    WHY(v2-stufe1.1): NICHT via resolve_workspace_from_token, weil das
+    nur Service-Token-Override erlaubt. Hier ist die Semantik anders
+    (MCP-explicit-arg vs HTTP-header).
+    """
+    info = _TOKEN_CTX.get(None)
+    if info is None:
+        return requested
+    if info.is_admin:
+        return requested
     return info.workspace_id
 
 
@@ -62,15 +92,6 @@ def _effective_org_ids() -> tuple[str, ...]:
     """V2: all organization-workspace ids the caller is a member of."""
     info = _TOKEN_CTX.get(None)
     return info.org_ids if info is not None else ()
-
-
-def _enforce_tenant(requested: str | None) -> str | None:
-    info = _TOKEN_CTX.get(None)
-    if info is None:
-        return requested
-    if info.is_admin:
-        return requested
-    return info.workspace_id
 
 
 class JWTAuthMiddleware:

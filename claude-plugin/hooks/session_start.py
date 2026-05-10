@@ -438,6 +438,32 @@ def _drain_ingest_queue() -> None:
         )
 
 
+def _warn_if_silent_skips_accumulated() -> None:
+    """V2 Stufe 2.2: zeige einmal pro Session den Stand des silent-skip-counters.
+
+    Wenn memory_inject in 24h ≥5 silent-skips gemacht hat (alle 3 lenses
+    5xx → kein lauter Block mehr, weil deploy-typisch), ist das Pattern
+    chronisch und braucht User-Aktion. Banner wird gezeigt + counter
+    reset, damit nicht jede Session denselben Banner zeigt.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from _silent_skip_counter import (
+            recent_skip_count, reset_counter, should_warn,
+        )
+        if should_warn(threshold=5):
+            n = recent_skip_count(window_hours=24)
+            print(
+                f"## Memory-Hook: chronische silent-skips ({n}/24h)\n"
+                f"_Der UserPromptSubmit-Hook hat zuletzt {n}× nichts injiziert "
+                f"(alle 3 lens-searches → 5xx). Wenn das anhält: API healthcheck "
+                f"`curl https://mcp.linn.games/health` oder `/reload-plugins`._"
+            )
+            reset_counter()
+    except (ImportError, OSError) as e:
+        print(f"MayringCoder: skip-counter check failed — {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     plugin_root = _plugin_root()
     repo_root = _repo_root(plugin_root)
@@ -445,5 +471,6 @@ if __name__ == "__main__":
     _bootstrap_if_needed()
     _drain_feedback_queue()
     _drain_ingest_queue()
+    _warn_if_silent_skips_accumulated()
     payload = json.loads(sys.stdin.read() or "{}")
     _inject_memory(payload)

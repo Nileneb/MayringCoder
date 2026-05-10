@@ -77,6 +77,8 @@ app.include_router(_retrieval_metrics.router)
 from src.api.routes import reranker_admin as _reranker_admin
 app.include_router(_reranker_admin.router)
 app.include_router(_pi_stats.router)
+from src.api.routes import reconcile_admin as _reconcile_admin
+app.include_router(_reconcile_admin.router)
 
 
 @app.on_event("startup")

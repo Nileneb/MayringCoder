@@ -98,6 +98,9 @@ def _score_entry(
 
     prefix = entry_text.strip()[:40]
     if conn is not None and prefix:
+        # WHY(v2-stufe2.1): nur konkrete sqlite-Fehler schlucken (DB-locked,
+        # Spalte fehlt nach migration). Alles andere muss laut.
+        import sqlite3 as _sqlite3
         try:
             row = conn.execute(
                 "SELECT COUNT(*) FROM context_feedback_log WHERE context_text LIKE ? AND was_referenced = 1",
@@ -105,7 +108,7 @@ def _score_entry(
             ).fetchone()
             if row:
                 score += 0.2 * min(int(row[0]), 3)
-        except Exception:
+        except _sqlite3.OperationalError:
             pass
 
     return round(score, 4)
@@ -255,14 +258,20 @@ def compute_feedback(
     relevance_score = 0.0
 
     if context_text and llm_response and ollama_url:
+        # WHY(v2-stufe2.1): embed-call kann timeout/connection-error werfen
+        # — log statt silent. Empty embed = keine relevance-score, fairer
+        # default ist 0.0 + was_referenced=False.
         try:
             from src.analysis.context import _embed_texts
             vecs = _embed_texts([context_text, llm_response], ollama_url)
             if len(vecs) == 2:
                 relevance_score = round(_cosine(vecs[0], vecs[1]), 4)
                 was_referenced = relevance_score >= 0.65
-        except Exception:
-            pass
+        except (ConnectionError, TimeoutError, OSError, ValueError) as e:
+            import logging as _logging
+            _logging.getLogger(__name__).debug(
+                "context-feedback embed skipped: %s", e,
+            )
 
     captured_at = datetime.utcnow().isoformat()
     fb = ContextFeedback(
@@ -274,6 +283,9 @@ def compute_feedback(
         captured_at=captured_at,
     )
 
+    # WHY(v2-stufe2.1): Telemetrie-Insert. sqlite-Fehler (DB-locked,
+    # Spalte fehlt) schlucken; alles andere muss laut.
+    import sqlite3 as _sqlite3
     try:
         with batch_context(conn):
             conn.execute(
@@ -284,8 +296,11 @@ def compute_feedback(
                  int(was_referenced), int(led_to_retrieval),
                  relevance_score, captured_at),
             )
-    except Exception:
-        pass
+    except (_sqlite3.OperationalError, _sqlite3.IntegrityError) as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "context_feedback_log insert skipped: %s", e,
+        )
 
     return fb
 
@@ -446,15 +461,17 @@ def build_context(
     cache_dir = Path("cache").resolve()
     idx_path = _safe_cache_file(cache_dir, safe_repo_slug, "wiki_index.json")
     emb_path = _safe_cache_file(cache_dir, safe_repo_slug, "wiki_clusters_emb.json")
+    # WHY(v2-stufe2.1): cache-files sind optional; konkrete IO/JSON-errors
+    # schlucken (corrupt cache, partial write). Anderes muss laut.
     if idx_path and idx_path.exists():
         try:
             keyword_index = json.loads(idx_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError):
             pass
     if emb_path and emb_path.exists():
         try:
             cluster_embs = json.loads(emb_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError):
             pass
 
     result = trigger_scan(task, keyword_index, cluster_embs, ollama_url, conn=conn)
@@ -476,6 +493,8 @@ def build_context(
 
     retrieval_section = ""
     if chroma_collection is not None:
+        # WHY(v2-stufe2.1): retrieval-fail darf snapshot-Aufbau nicht stoppen,
+        # aber konkret typisieren statt Exception schlucken.
         try:
             from src.memory.retrieval import search, compress_for_prompt
             hits = search(
@@ -483,8 +502,11 @@ def build_context(
                 opts={"top_k": 5, "repo": safe_repo_slug or None},
             )
             retrieval_section = compress_for_prompt(hits, char_budget=retrieval_budget)
-        except Exception:
-            pass
+        except (ConnectionError, TimeoutError, OSError, ValueError, KeyError) as e:
+            import logging as _logging
+            _logging.getLogger(__name__).debug(
+                "ambient retrieval-section skipped: %s", e,
+            )
 
     parts = [f"## Projekt-Snapshot\n{snapshot}"]
     if trigger_hint:
@@ -492,7 +514,10 @@ def build_context(
     if retrieval_section:
         parts.append(f"## Relevante Erinnerungen\n{retrieval_section}")
 
-    # Predictive topic hook (silent if no transitions persisted yet)
+    # Predictive topic hook (silent if no transitions persisted yet).
+    # WHY(v2-stufe2.1): konkrete sqlite/import-Fehler schlucken, aber
+    # alles andere (z.B. AttributeError nach API-Change) muss laut.
+    import sqlite3 as _sqlite3
     try:
         from src.memory.predictive import load_transitions, predict_next_topics
         matrix = load_transitions(conn)
@@ -507,7 +532,10 @@ def build_context(
                 if preds:
                     pred_lines = [f"- {p.to_topic} (p={p.probability:.2f})" for p in preds]
                     parts.append("## Wahrscheinlich relevant\n" + "\n".join(pred_lines))
-    except Exception:
-        pass
+    except (_sqlite3.OperationalError, ImportError) as e:
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "predictive section skipped: %s", e,
+        )
 
     return "\n\n".join(parts)

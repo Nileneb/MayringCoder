@@ -51,20 +51,13 @@ async def get_workspace(
     info: TokenInfo = Depends(get_token_info),
     x_workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
 ) -> str:
-    """Workspace-Resolution mit Multi-Tenant-Guarantees:
+    """Workspace-Resolution mit Multi-Tenant-Guarantees.
 
-    - User-JWT: workspace_id ist deterministisch aus email-slug; ein
-      X-Workspace-Id-Header wird IGNORIERT (User darf nicht in fremde
-      Workspaces schreiben).
-    - Service-Token (scope='*'): X-Workspace-Id-Header ist erlaubt
-      und überschreibt den Default 'system'. So können post-deploy-
-      ingest, smoke etc. explizit in den Tenant-Workspace eines
-      bestimmten Users schreiben (X-Workspace-Id: bene), ohne dass
-      der einzige globale Service-Token alle anderen Workspaces
-      vergiftet.
+    Delegiert an `resolve_workspace_from_token` — die EINZIGE quelle
+    der wahrheit für workspace_id (V2 Stufe 1.1 SoT, audit Section 6
+    Regel 4). Vor V2 gab es 4+ resolution-pfade die divergieren konnten;
+    jetzt sind alle FastAPI- und MCP-Pfade auf diesen einen call
+    konsolidiert.
     """
-    if "*" in info.scopes and x_workspace_id:
-        candidate = x_workspace_id.strip()
-        if candidate:
-            return candidate
-    return info.workspace_id
+    from src.identity.workspace_resolver import resolve_workspace_from_token
+    return resolve_workspace_from_token(info, override_header=x_workspace_id)
