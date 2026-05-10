@@ -10,8 +10,9 @@ _log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.auth import get_workspace
+from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_chroma as _get_chroma, get_conn as _get_conn
+from src.api.jwt_auth import TokenInfo
 from src.api.memory_service import run_ingest as _run_ingest, run_search as _run_search
 from src.api.routes.models import (
     ConversationMicroBatchRequest,
@@ -91,10 +92,20 @@ async def pi_task(
 async def memory_search(
     request: MemorySearchRequest,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Search workspace memory."""
     try:
-        opts: dict[str, Any] = {"top_k": request.top_k, "workspace_id": workspace_id}
+        # WHY(L7, v2-workspaces): without user_id + org_ids the retrieval
+        # scope_filter sees only public+private — chunks shared via
+        # visibility='user' or 'org' silently never surface for REST callers
+        # (Laravel, hooks). MCP path already does this; REST was the gap.
+        opts: dict[str, Any] = {
+            "top_k": request.top_k,
+            "workspace_id": workspace_id,
+            "user_id": info.sub,
+            "org_ids": info.org_ids,
+        }
         if request.repo:
             opts["repo"] = request.repo
         if request.source_type:
@@ -214,11 +225,54 @@ async def memory_log_event(
 async def memory_put(
     request: MemoryPutRequest,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> dict:
-    """Ingest content into workspace memory."""
+    """Ingest content into workspace memory.
+
+    WHY(L3, v2-workspaces): when caller asks for visibility='org' the source
+    needs an org_id stamp — otherwise the chunk is invisible to org members
+    (scope_filter requires s.org_id = caller_org). We resolve org_id from
+    the JWT memberships: if the caller passed one, verify they're a member
+    (else 403); if they didn't, default to their first org-membership.
+    """
     try:
-        source_dict = {"source_id": request.source_id, "source_type": request.source_type,
-                       "repo": request.repo, "path": request.path}
+        source_dict: dict[str, Any] = {
+            "source_id": request.source_id,
+            "source_type": request.source_type,
+            "repo": request.repo,
+            "path": request.path,
+        }
+        if request.visibility:
+            source_dict["visibility"] = request.visibility
+        if request.visibility == "org":
+            org_member_ids = set(info.org_ids)
+            if request.org_id:
+                if request.org_id not in org_member_ids:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"caller is not a member of org_id={request.org_id!r}",
+                    )
+                source_dict["org_id"] = request.org_id
+            else:
+                if not org_member_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="visibility='org' requires org membership or explicit org_id",
+                    )
+                # First org-membership as default — log so silent picks
+                # are visible in production grepping.
+                first_org = next(iter(info.org_ids))
+                _log.warning(
+                    "memory.put visibility=org without org_id — "
+                    "defaulting to first membership %r (caller=%s)",
+                    first_org, info.sub,
+                )
+                source_dict["org_id"] = first_org
+        elif request.org_id:
+            # Honor explicit org_id even outside visibility=org (e.g. when
+            # caller wants to stamp the source for later promotion).
+            source_dict["org_id"] = request.org_id
+
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
                              _OLLAMA_URL, _model("text"), {"categorize": request.categorize},
                              workspace_id)
@@ -229,6 +283,11 @@ async def memory_put(
                 daemon=True,
             ).start()
         return {"workspace_id": workspace_id, **result}
+    except HTTPException:
+        # Re-raise as-is so the 403 (membership/auth) and 404 codes
+        # survive — without this guard the broader Exception handler
+        # below would mask them as 500. Not a no-op.
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -561,16 +620,41 @@ async def patch_source_visibility(
     source_id: str,
     request: PatchVisibilityRequest,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> dict:
-    """Update visibility (and optionally org_id) for a source."""
-    if request.visibility not in ("private", "org", "public"):
-        raise HTTPException(status_code=400, detail="visibility must be private|org|public")
+    """Update visibility (and optionally org_id) for a source.
+
+    WHY(L8, v2-workspaces): without ownership-check this endpoint allowed
+    cross-tenant vandalism — any authed caller could flip visibility on
+    another user's sources. V2 enforces: owner (same workspace OR same sub)
+    or admin (scope * / admin). 'user' added to the visibility whitelist.
+    """
+    if request.visibility not in ("private", "org", "public", "user"):
+        raise HTTPException(
+            status_code=400,
+            detail="visibility must be private|org|public|user",
+        )
     conn = _get_conn()
     row = conn.execute(
-        "SELECT source_id FROM sources WHERE source_id = ?", (source_id,)
+        "SELECT workspace_id, user_id FROM sources WHERE source_id = ?",
+        (source_id,),
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="source not found")
+    src_ws = row["workspace_id"] if hasattr(row, "keys") else row[0]
+    src_user = row["user_id"] if hasattr(row, "keys") else row[1]
+
+    is_admin = "*" in info.scopes or "admin" in info.scopes
+    is_owner = (
+        src_ws == workspace_id
+        or (src_user is not None and info.sub is not None and src_user == info.sub)
+    )
+    if not (is_admin or is_owner):
+        raise HTTPException(
+            status_code=403,
+            detail="not authorized to change visibility of this source",
+        )
+
     conn.execute(
         "UPDATE sources SET visibility = ?, org_id = ? WHERE source_id = ?",
         (request.visibility, request.org_id, source_id),

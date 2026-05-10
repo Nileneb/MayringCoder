@@ -46,8 +46,22 @@ def _effective_user_id() -> str | None:
 
 
 def _effective_org_id() -> str | None:
+    """Legacy single-org accessor. Prefer _effective_org_ids() in new code."""
     info = _TOKEN_CTX.get(None)
-    return info.org_id if info is not None else None
+    if info is None:
+        return None
+    if info.org_id:
+        return info.org_id
+    # Fall back to first membership-derived org so legacy callsites still
+    # surface at least one org bucket post-V2-JWT-rollout.
+    org_ids = info.org_ids
+    return org_ids[0] if org_ids else None
+
+
+def _effective_org_ids() -> tuple[str, ...]:
+    """V2: all organization-workspace ids the caller is a member of."""
+    info = _TOKEN_CTX.get(None)
+    return info.org_ids if info is not None else ()
 
 
 def _enforce_tenant(requested: str | None) -> str | None:

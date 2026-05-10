@@ -70,17 +70,22 @@ def _scope_filter(
     source_type: str | None = None,
     workspace_id: str | None = None,
     org_id: str | None = None,
+    org_ids: tuple[str, ...] | list[str] | None = None,
     user_id: str | None = None,
 ) -> list[str]:
     """Return chunk_ids of active chunks matching hard scope filters.
 
     Visibility model — a chunk is visible to the caller when ANY of:
-      - visibility='public'                              (everyone)
-      - visibility='org'     AND s.org_id   = caller_org   (same organization)
-      - visibility='user'    AND s.user_id  = caller_sub   (same human user,
-                                                            any workspace —
-                                                            claude.ai vs CLI)
-      - visibility='private' AND c.workspace_id = caller_ws (legacy default)
+      - visibility='public'                                  (everyone)
+      - visibility='org'     AND s.org_id   IN caller_orgs   (any of caller's orgs)
+      - visibility='user'    AND s.user_id  = caller_sub     (same human user,
+                                                              any workspace —
+                                                              claude.ai vs CLI)
+      - visibility='private' AND c.workspace_id = caller_ws  (legacy default)
+
+    org_ids supersedes the legacy single org_id param (V2 multi-org JWT).
+    Both are accepted: callers passing org_id (singular) are folded into the
+    list so every existing call-site keeps working.
     """
     query = """
         SELECT c.chunk_id, c.category_labels
@@ -90,15 +95,29 @@ def _scope_filter(
     """
     params: list = []
 
+    # Normalise org input: org_ids (V2) wins; otherwise fold legacy org_id.
+    effective_org_ids: tuple[str, ...]
+    if org_ids:
+        effective_org_ids = tuple(o for o in org_ids if o)
+    elif org_id:
+        effective_org_ids = (org_id,)
+    else:
+        effective_org_ids = ()
+
     if workspace_id:
+        if effective_org_ids:
+            placeholders = ",".join("?" * len(effective_org_ids))
+            org_clause = f" OR (s.visibility = 'org' AND s.org_id IN ({placeholders}))"
+        else:
+            org_clause = ""
         query += (
             " AND (s.visibility = 'public'"
-            " OR (s.visibility = 'org' AND s.org_id = ?)"
             " OR (s.visibility = 'user' AND s.user_id = ?)"
+            f"{org_clause}"
             " OR (s.visibility = 'private' AND c.workspace_id = ?))"
         )
-        params.append(org_id)
         params.append(user_id)
+        params.extend(effective_org_ids)
         params.append(workspace_id)
     if repo:
         query += " AND s.repo = ?"
@@ -478,6 +497,12 @@ def search(
     include_text: bool = bool(opts.get("include_text", True))
     workspace_id: str | None = opts.get("workspace_id")
     org_id: str | None = opts.get("org_id")
+    org_ids_opt = opts.get("org_ids")
+    org_ids: tuple[str, ...] | None
+    if org_ids_opt:
+        org_ids = tuple(org_ids_opt)
+    else:
+        org_ids = None
     user_id: str | None = opts.get("user_id")
 
     # Query-Cache check — hit: clone records, repopulate text on demand.
@@ -505,7 +530,8 @@ def search(
     # Stage 1: scope filter
     candidate_ids = _scope_filter(
         conn, repo=repo, categories=categories, source_type=source_type,
-        workspace_id=workspace_id, org_id=org_id, user_id=user_id,
+        workspace_id=workspace_id, org_id=org_id, org_ids=org_ids,
+        user_id=user_id,
     )
     if not candidate_ids:
         # Tell callers WHY the result is empty: scope filter excluded

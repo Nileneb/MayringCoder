@@ -19,6 +19,18 @@ import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
+
+
+class Membership(NamedTuple):
+    """Single workspace-membership entry from the JWT `memberships[]` claim.
+
+    Issued by app.linn.games JwtIssuer. type is 'personal' or 'organization';
+    role is 'owner' | 'editor' | 'viewer'. See docs/v2-workspaces-spec.md.
+    """
+    id: str
+    type: str
+    role: str
 
 
 @dataclass(frozen=True)
@@ -33,7 +45,14 @@ class TokenInfo:
     llm_requires_key: bool = False    # True → Worker muss Key via Callback holen
     sub: str | None = None            # User-ID, wird für Key-Cache genutzt
     iat: int | None = None            # Issued-at, Teil des Key-Cache-Keys
-    org_id: str | None = None         # Org membership, for shared-memory visibility
+    # WHY(v2-workspaces): replaced single `org_id` with `memberships[]` so a
+    # user can be in multiple orgs at once. Backward-compat: an old JWT without
+    # memberships still works — `org_ids` then returns ().
+    memberships: tuple[Membership, ...] = ()
+    # WHY(backward-compat): legacy JWTs still ship a single `org_id` claim.
+    # We preserve it on TokenInfo so existing callsites that read .org_id keep
+    # working until they migrate to .org_ids.
+    org_id: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -42,6 +61,19 @@ class TokenInfo:
     @property
     def uses_custom_provider(self) -> bool:
         return self.llm_provider != "platform"
+
+    @property
+    def org_ids(self) -> tuple[str, ...]:
+        """All organization-workspace ids the caller is a member of.
+
+        Derived from the V2 `memberships[]` claim. For legacy JWTs that only
+        carry a single `org_id`, falls back to that value as a 1-tuple so
+        callers don't need a second branch. Returns () when neither is set.
+        """
+        ids = tuple(m.id for m in self.memberships if m.type == "organization")
+        if ids:
+            return ids
+        return (self.org_id,) if self.org_id else ()
 
 
 @lru_cache(maxsize=1)
@@ -134,6 +166,25 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     iat_raw = payload.get("iat")
     org_id_raw = payload.get("org_id")
 
+    # V2 memberships claim — issued by app.linn.games JwtIssuer alongside
+    # workspace_id. Missing/malformed → empty tuple (legacy-JWT path).
+    memberships_raw = payload.get("memberships")
+    memberships: tuple[Membership, ...] = ()
+    if isinstance(memberships_raw, list):
+        parsed: list[Membership] = []
+        for m in memberships_raw:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("id")
+            if not mid:
+                continue
+            parsed.append(Membership(
+                id=str(mid),
+                type=str(m.get("type") or "personal"),
+                role=str(m.get("role") or "viewer"),
+            ))
+        memberships = tuple(parsed)
+
     return TokenInfo(
         workspace_id=workspace_id,
         scopes=scopes,
@@ -143,6 +194,7 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
         llm_requires_key=bool(raw_requires_key),
         sub=sub_str,
         iat=int(iat_raw) if isinstance(iat_raw, (int, float)) else None,
+        memberships=memberships,
         org_id=str(org_id_raw) if org_id_raw else None,
     )
 

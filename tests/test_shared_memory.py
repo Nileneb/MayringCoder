@@ -131,10 +131,14 @@ def test_private_chunk_workspace_isolated():
 def test_admin_can_change_visibility():
     from fastapi.testclient import TestClient
     from src.api.server import app
-    from src.api.auth import get_workspace
+    from src.api.auth import get_token_info, get_workspace
     import src.api.dependencies as _deps
 
+    # V2: PATCH /sources/{id}/visibility now checks ownership via TokenInfo.
+    # Admin scope ('*') bypasses the owner-check.
+    admin_info = TokenInfo(workspace_id="system", sub="0", scopes=("*",))
     app.dependency_overrides[get_workspace] = lambda: "test-ws"
+    app.dependency_overrides[get_token_info] = lambda: admin_info
     db = _db()
     src = Source(source_id="change-src", source_type="note", repo="", path="x")
     upsert_source(db, src, workspace_id="test-ws", visibility="private")
@@ -144,6 +148,7 @@ def test_admin_can_change_visibility():
     resp = client.patch(
         "/sources/change-src/visibility",
         json={"visibility": "public", "org_id": None},
+        headers={"Authorization": "Bearer test"},
     )
     assert resp.status_code == 200
     assert resp.json()["visibility"] == "public"

@@ -6,8 +6,9 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from src.api.auth import get_workspace
+from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_chroma as _get_chroma, get_conn as _get_conn
+from src.api.jwt_auth import TokenInfo
 
 router = APIRouter(prefix="/memory", tags=["sync"])
 logger = logging.getLogger(__name__)
@@ -58,25 +59,50 @@ def get_changes(
     since: str = Query(..., description="ISO 8601 cursor — only chunks created after this"),
     limit: int = Query(500, le=2000),
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> MemorySyncResponse:
+    """Stream chunks created after `since`, scoped by V2 visibility rules.
+
+    WHY(L6, v2-workspaces): the previous query dropped 'org' and 'user'
+    visibility silently — Laravel + Hook clients re-syncing missed every
+    chunk shared cross-workspace via membership or same-user. The filter
+    must mirror retrieval._scope_filter: public + own private + own user
+    + chunks of orgs the caller is a member of.
+    """
     db = _get_conn()
     _ensure_visibility_column(db)
 
+    org_ids = tuple(info.org_ids) if info.org_ids else ()
+    org_clause = ""
+    org_params: list = []
+    if org_ids:
+        placeholders = ",".join("?" * len(org_ids))
+        # Safe against SQLi: `placeholders` is only `?,?,...` — pure
+        # parameter placeholder string, never user data. The actual values
+        # bind via `params` (db.execute(sql, tuple(params))). Sourcery's
+        # generic f-string-with-SQL pattern flags this as false positive.
+        org_clause = f" OR (s.visibility = 'org' AND s.org_id IN ({placeholders}))"
+        org_params = list(org_ids)
+
+    sql = f"""
+        SELECT c.chunk_id, c.source_id, c.text, c.workspace_id,
+               c.created_at, c.is_active, c.text_hash, c.dedup_key
+        FROM chunks c
+        JOIN sources s ON c.source_id = s.source_id
+        WHERE c.created_at > ?
+          AND (
+              s.visibility = 'public'
+              OR (s.visibility = 'private' AND c.workspace_id = ?)
+              OR (s.visibility = 'user' AND s.user_id = ?)
+              {org_clause}
+          )
+        ORDER BY c.created_at ASC
+        LIMIT ?
+    """
+    params = [since, workspace_id, info.sub, *org_params, limit]
+
     try:
-        rows = db.execute(
-            """
-            SELECT c.chunk_id, c.source_id, c.text, c.workspace_id,
-                   c.created_at, c.is_active, c.text_hash, c.dedup_key
-            FROM chunks c
-            JOIN sources s ON c.source_id = s.source_id
-            WHERE c.created_at > ?
-              AND (s.visibility = 'public'
-                   OR (s.visibility = 'private' AND c.workspace_id = ?))
-            ORDER BY c.created_at ASC
-            LIMIT ?
-            """,
-            (since, workspace_id, limit),
-        ).fetchall()
+        rows = db.execute(sql, tuple(params)).fetchall()
     except sqlite3.Error as e:
         # Don't 500 — that hits the client's UserPromptSubmit hook on every
         # keystroke. Surface the real DB error to the response so the client
