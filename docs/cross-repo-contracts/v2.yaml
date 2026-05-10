@@ -1,0 +1,80 @@
+# Cross-Repo Contract V2 — MayringCoder ↔ app.linn.games
+#
+# IDENTISCH zu copy in /home/nileneb/Desktop/WebDev/app.linn.games/docs/cross-repo-contracts/v2.yaml
+# Hash-Sync via CI in beiden Repos. Bei Drift: CI-fail.
+#
+# Schema-Änderungen brauchen koordinierte PRs in BEIDEN Repos.
+
+version: 2
+
+jwt:
+  algorithm: RS256
+  issuer: https://app.linn.games
+  audience: mayringcoder
+  ttl_seconds: 3600
+  claims:
+    sub:
+      type: string
+      required: true
+      description: "user.id as string"
+    email:
+      type: string
+      required: true
+    workspace_id:
+      type: uuid
+      required: true
+      description: "active selected workspace"
+    memberships:
+      type: array
+      required: true
+      items:
+        id: { type: uuid }
+        type: { enum: [personal, organization] }
+        role: { enum: [owner, editor, viewer] }
+    scope:
+      type: array
+      required: true
+      items:
+        enum: [mcp:memory, admin]
+    version:
+      type: integer
+      required: true
+      value: 2
+
+mcp_paper_search:
+  endpoint: http://mcp-paper-search:8089/mcp
+  protocol: streamable-http
+  tools:
+    - name: search_papers
+      arguments:
+        query: { type: string, required: true }
+        sources: { type: string, description: "comma-separated source-ids" }
+        max_results_per_source: { type: integer, default: 5 }
+        year: { type: string, description: "optional year filter (Semantic Scholar)" }
+
+volumes:
+  papers_data:
+    name: linn-papers-data
+    mount_path: /data/papers
+    filename_convention: "{record_id}.pdf"
+    writers:
+      - applinngames-queue-worker
+      - applinngames-mcp-paper-search
+    readers:
+      - mayring-mayring-api
+      - mayring-mayring-mcp
+
+containers:
+  required_dns_names:
+    - mayring-api
+    - mcp-paper-search
+  required_networks:
+    - linn-shared
+
+memory_visibility:
+  values: [private, user, org, public]
+  semantics:
+    private: "only caller where workspace_id == active_ws"
+    user: "only caller where sub == source.user_id"
+    org: "only caller where membership in org_id of source"
+    public: "any authenticated JWT-holder"

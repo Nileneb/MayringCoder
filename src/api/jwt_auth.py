@@ -132,6 +132,13 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     #
     # Fallback auf 'user-N' nur wenn weder workspace_id-Claim noch
     # email gesetzt sind — z.B. legacy Tokens oder Battlefield-JWTs.
+    # WHY(v2-stufe4-contract): JWT-Vertrag V2 erfordert version-claim.
+    # V1-tokens (kein version-Field) werden vorerst akzeptiert für
+    # backward-compat. V2-tokens (version=2) sind preferred.
+    contract_version = payload.get("version")
+    if contract_version is not None and contract_version != 2:
+        return None  # unbekannte JWT-version → reject
+
     sub_raw = payload.get("sub")
     if sub_raw is None or not str(sub_raw).strip():
         return None
