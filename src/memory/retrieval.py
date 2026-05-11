@@ -363,6 +363,7 @@ def _rerank(
     predicted_topics: set[str] | None = None,
     category_hint: list[str] | None = None,
     igio_intent: str | None = None,
+    task_id: str | None = None,
 ) -> list[RetrievalRecord]:
     """Combine scores and return top_k RetrievalRecords sorted by score_final DESC.
 
@@ -387,6 +388,22 @@ def _rerank(
     rr_version, rr_model = get_active_reranker(
         query_hint=reranker_query_hint, explicit_override=reranker_override,
     )
+
+    # WHY(2026-05-11, task-categorization): wenn der prompt zu einer
+    # bekannten task_category gehört, lookup chunks die bei dieser
+    # task schon positive feedback hatten → boost im rerank.
+    # Verstärkt Mayring-konformes retrieval ("was hat MIR bei DIESER
+    # frage geholfen") ggü reinem tech-label-clustering.
+    task_boost_map: dict[str, float] = {}
+    if task_id and candidates:
+        try:
+            from src.memory.task_derivation import get_task_boost_for_chunks
+            task_boost_map = get_task_boost_for_chunks(
+                conn, task_id, [c.chunk_id for c in candidates],
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("task-boost lookup failed: %s", e)
 
     # Stretch vector scores so the best Chroma hit in *this* query gets the
     # full vector weight. Cosine distances from nomic-embed-text typically
@@ -527,6 +544,15 @@ def _rerank(
             score_final = score_v2(stage, rr_model)
         else:
             score_final = score_v1
+
+        # Task-Boost: chunks die bei semantisch ähnlicher task schon
+        # positive feedback hatten kriegen einen kleinen aber spürbaren
+        # bonus. Max +0.20 bei relevance_score=5.0 (clipped); 0.04 pro
+        # feedback-event. Bewusst klein gehalten — der task-signal soll
+        # andere stages nicht dominieren, aber tie-breaker sein.
+        task_boost = task_boost_map.get(chunk.chunk_id, 0.0)
+        if task_boost > 0:
+            score_final = min(1.0, score_final + task_boost * 0.04)
 
         reasons: list[str] = []
         # Reasons fire on the *normalised* vector score so a query with weak
@@ -889,6 +915,7 @@ def search(
         predicted_topics=predicted_topics,
         category_hint=opts.get("category_hint"),
         igio_intent=igio_intent,
+        task_id=opts.get("task_id"),
     )
 
     # Enrich with cross-source refs (same text found in other sources).
