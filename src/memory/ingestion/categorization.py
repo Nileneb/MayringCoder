@@ -1,9 +1,12 @@
 """Mayring-based chunk categorization — codebook resolution + LLM labelling."""
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.memory.schema import Chunk
@@ -53,39 +56,52 @@ _MODE_TO_TEMPLATE: dict[str, str] = {
     "hybrid":    "mayring_hybrid",
 }
 
-# Ingest defaults per source_type — no more scattered opts in callers.
-#
-# `codebook` picks the ANCHOR set the hybrid prompt offers the model:
-#   - "auto"  → code-side anchors (universal.yaml: api/auth/data_access/...)
-#               for repo_file / note — files in a codebase.
-#   - "social"→ qualitative-research anchors (social.yaml: argumentation/
-#               methodik/ergebnis/...) for prose: papers, conversations,
-#               github issues, session knowledge.
-# WHY(2026-05-12): `agent_result` was MISSING here. app.linn.games sends
-# paper full-text via /ingest with source_type="agent_result" (see
-# MayringSearchClient::ingestAndCategorize), so it fell through to
-# _INGEST_DEFAULT_FALLBACK (codebook="auto") → code anchors → healthcare
-# papers got tagged `api, data_access, domain, auth`. agent_result is
-# always research-context content here → "social", same as "paper".
+# Ingest defaults per source_type. `codebook` is ALWAYS "auto" — the
+# source_type → codebook mapping lives in ONE place (_AUTO in
+# _resolve_codebook), keyed by the *logic* of what the content is, not by
+# whoever happened to write the caller. Per-source-type entries here only
+# vary `categorize` / `mode` / `multiview` (e.g. images aren't categorized,
+# papers use multiview). If a source_type is missing here it falls through
+# to _INGEST_DEFAULT_FALLBACK (also codebook="auto") → _resolve_codebook
+# then FAILS LOUDLY rather than guessing.
 _INGEST_DEFAULTS: dict[str, dict] = {
-    # code / files-in-a-repo → code anchors
-    "repo_file":            {"categorize": True,  "codebook": "auto",   "mode": "hybrid", "multiview": False},
-    "note":                 {"categorize": True,  "codebook": "auto",   "mode": "hybrid", "multiview": False},
-    # prose / research content → social (qualitative-research) anchors
-    "paper":                {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
-    "agent_result":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
-    "github_issue":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
-    "conversation_summary": {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
-    "session_knowledge":    {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
-    "session_note":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
-    # non-text
-    "image":                {"categorize": False, "codebook": "auto",   "mode": "hybrid", "multiview": False},
+    "repo_file":            {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": False},
+    "note":                 {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": False},
+    "paper":                {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": True},
+    "agent_result":         {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": True},
+    "github_issue":         {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": True},
+    "conversation_summary": {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": False},
+    "session_knowledge":    {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": False},
+    "session_note":         {"categorize": True,  "codebook": "auto", "mode": "hybrid", "multiview": False},
+    "image":                {"categorize": False, "codebook": "auto", "mode": "hybrid", "multiview": False},
 }
-# Unknown source_type → assume prose (the safer default): a wrong "social"
-# anchor on a code chunk is far less damaging than a wrong "auth/api" anchor
-# on a research paper.
 _INGEST_DEFAULT_FALLBACK: dict = {
-    "categorize": True, "codebook": "social", "mode": "hybrid", "multiview": False,
+    "categorize": True, "codebook": "auto", "mode": "hybrid", "multiview": False,
+}
+
+# source_type → codebook name. The mapping IS the logic:
+#   - "code"   anchors (universal.yaml: api/auth/data_access/...) — content
+#              that lives in / is about a codebase: repo files, notes, and
+#              github issues (those are technical bug reports / feature
+#              requests, NOT social-science prose — an "auth middleware bug"
+#              issue should get `auth`, not `argumentation`).
+#   - "social" anchors (social.yaml: argumentation/methodik/ergebnis/...) —
+#              research / qualitative prose: papers, agent_result (= paper
+#              full-text routed in from app.linn.games), conversations,
+#              session knowledge.
+# A source_type with NO entry here is a config bug → _resolve_codebook logs
+# an error and tags the chunk with a "FAIL_..." category so it's visible in
+# the UI, never silently shoehorned into whatever happens to be nearby.
+_SOURCE_TYPE_TO_CODEBOOK: dict[str, str] = {
+    "repo_file": "code",
+    "note": "code",
+    "github_issue": "code",
+    "conversation": "social",
+    "conversation_summary": "social",
+    "session_knowledge": "social",
+    "session_note": "social",
+    "paper": "social",
+    "agent_result": "social",
 }
 
 
@@ -93,23 +109,25 @@ def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     """Return category names for the given codebook/source_type.
 
     Resolution order:
-      1. "auto" → maps source_type to "code" or "social"
+      1. "auto" → _SOURCE_TYPE_TO_CODEBOOK[source_type]; unmapped → FAIL-loud
       2. codebooks/<name>.yaml (code, social, or any custom)
       3. codebooks/profiles/<name>.yaml (generic, python, laravel, ...)
       4. Fallback → original Mayring categories
     """
     codebook = str(codebook).strip().lower()
     if codebook == "auto":
-        # source_type → codebook name. Only repo_file/note are code; anything
-        # text-like (papers, conversations, agent results, issues) is "social".
-        # Unknown → "social" (prose) — see _INGEST_DEFAULT_FALLBACK rationale.
-        _AUTO = {
-            "repo_file": "code", "note": "code",
-            "conversation": "social", "conversation_summary": "social",
-            "session_knowledge": "social", "session_note": "social",
-            "github_issue": "social", "paper": "social", "agent_result": "social",
-        }
-        codebook = _AUTO.get(source_type, "social")
+        mapped = _SOURCE_TYPE_TO_CODEBOOK.get(source_type)
+        if mapped is None:
+            # FAIL-loud: an unmapped source_type means somebody added a new
+            # ingest path without updating _SOURCE_TYPE_TO_CODEBOOK. Don't
+            # guess — log it and label the chunk so the gap is unmissable.
+            logger.error(
+                "codebook resolution: UNMAPPED source_type=%r — add it to "
+                "_SOURCE_TYPE_TO_CODEBOOK. Chunk gets FAIL marker, not real labels.",
+                source_type,
+            )
+            return [f"FAIL_unmapped_source_type:{source_type or 'EMPTY'}"]
+        codebook = mapped
 
     if codebook == "original":
         return list(_ORIGINAL_MAYRING_CATEGORIES)

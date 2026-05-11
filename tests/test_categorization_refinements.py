@@ -143,10 +143,9 @@ class TestPathOverride:
 
 
 class TestSourceTypeCodebookRouting:
-    """WHY(2026-05-12): app.linn.games sends paper full-text via /ingest with
-    source_type='agent_result' — that key was missing from _INGEST_DEFAULTS so
-    it fell through to codebook='auto' → code anchors → healthcare papers got
-    tagged `api, data_access, domain, auth`. Lock the routing."""
+    """WHY(2026-05-12): codebook is ALWAYS "auto" in the ingest path; the
+    source_type → codebook mapping lives in _SOURCE_TYPE_TO_CODEBOOK. Lock
+    the routing logic + the FAIL-loud behaviour for unmapped types."""
 
     def test_agent_result_uses_social_anchors_not_code(self):
         from src.memory.ingestion.categorization import _resolve_codebook
@@ -161,20 +160,36 @@ class TestSourceTypeCodebookRouting:
         cats = _resolve_codebook("auto", "paper")
         assert "auth" not in cats and "api" not in cats
 
+    def test_github_issue_uses_code_anchors_not_social(self):
+        """GitHub issues are technical bug reports — code anchors, not prose."""
+        from src.memory.ingestion.categorization import _resolve_codebook
+
+        cats = _resolve_codebook("auto", "github_issue")
+        assert "api" in cats and "data_access" in cats
+        assert "argumentation" not in cats
+
     def test_repo_file_still_uses_code_anchors(self):
         from src.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "repo_file")
         assert "api" in cats and "data_access" in cats
 
-    def test_unknown_source_type_defaults_to_prose_not_code(self):
+    def test_unmapped_source_type_fails_loudly(self):
+        """No silent fallback — unmapped source_type → a FAIL_ marker label."""
         from src.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "some_future_type")
-        assert "auth" not in cats and "api" not in cats
+        assert cats == ["FAIL_unmapped_source_type:some_future_type"]
 
-    def test_agent_result_in_ingest_defaults(self):
-        from src.memory.ingestion.categorization import _INGEST_DEFAULTS
+    def test_empty_source_type_fails_loudly(self):
+        from src.memory.ingestion.categorization import _resolve_codebook
 
-        assert _INGEST_DEFAULTS["agent_result"]["codebook"] == "social"
-        assert _INGEST_DEFAULTS["agent_result"]["mode"] == "hybrid"
+        cats = _resolve_codebook("auto", "")
+        assert cats == ["FAIL_unmapped_source_type:EMPTY"]
+
+    def test_ingest_defaults_codebook_is_always_auto(self):
+        from src.memory.ingestion.categorization import _INGEST_DEFAULTS, _INGEST_DEFAULT_FALLBACK
+
+        for st, settings in _INGEST_DEFAULTS.items():
+            assert settings["codebook"] == "auto", f"{st} must be auto"
+        assert _INGEST_DEFAULT_FALLBACK["codebook"] == "auto"
