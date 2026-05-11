@@ -211,6 +211,20 @@ _STATS_CACHE: dict[str, Any] = {"fresh": None, "stale": None, "expires_at": 0.0}
 _STATS_CACHE_TTL = 30.0
 
 
+def bust_stats_cache() -> None:
+    """Invalidate the /stats/summary fresh-slot so the next call recomputes.
+
+    WHY(2026-05-11, smoke-fix): the 30s TTL-cache broke the post-deploy
+    smoke (`feedback_count_delta`, `stop_hook_e2e`) — those checks post
+    feedback then immediately re-read /stats/summary expecting the count
+    to have grown, but the cache served the stale count. Callers that
+    mutate counts (feedback insert, ingest) must call this. The 'stale'
+    slot is kept (it's only the disaster-fallback if a live query crashes).
+    """
+    _STATS_CACHE["fresh"] = None
+    _STATS_CACHE["expires_at"] = 0.0
+
+
 def _stats_summary_uncached() -> dict:
     """The actual sqlite-heavy work. Wrapped by stats_summary() with cache."""
     from src.api.job_queue import _JOBS

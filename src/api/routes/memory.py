@@ -614,6 +614,7 @@ async def memory_feedback(
         # positive-signal für die Memory-Effizienz-quote).
         if int(request.signal) >= 4:
             _mark_referenced([ch.chunk_id for ch in chunks])
+        _bust_stats()
         return {
             "workspace_id": workspace_id,
             "source_id": cid,
@@ -624,7 +625,17 @@ async def memory_feedback(
     add_feedback(_get_conn(), cid, request.signal, request.metadata or {})
     if int(request.signal) >= 4:
         _mark_referenced([cid])
+    _bust_stats()
     return {"workspace_id": workspace_id, "chunk_id": cid, "recorded": True}
+
+
+def _bust_stats() -> None:
+    """Lazy-import bust_stats_cache to avoid an import cycle (server↔routes)."""
+    try:
+        from src.api.server import bust_stats_cache
+        bust_stats_cache()
+    except Exception:
+        pass  # cache-invalidation is best-effort; a stale stats page isn't fatal
 
 
 @router.post("/search")

@@ -457,6 +457,13 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 )
             add_feedback(conn, chunk_id, signal, enriched)
             invalidate_query_cache()
+            # WHY(2026-05-11): /stats/summary cached die feedback-count 30s
+            # → smoke `feedback_count_delta` würde 0 sehen. Cache busten.
+            try:
+                from src.api.server import bust_stats_cache
+                bust_stats_cache()
+            except Exception:
+                pass
             return {"chunk_id": chunk_id, "recorded": True}
         except Exception as exc:
             return {"error": str(exc)}
