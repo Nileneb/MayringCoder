@@ -65,9 +65,18 @@ MIN_ROWS = 50
 MIN_POSITIVES = 10
 
 
-def _load(path: Path) -> tuple[list[list[float]], list[int], list[str]]:
+def _load(
+    path: Path,
+) -> tuple[list[list[float]], list[int], list[float], list[str]]:
+    """Return (X, y, sample_weight, chunk_ids).
+
+    sample_weight per row (#209): rating 5★ = 1.0, 4★ = 0.5, 2★ = 0.5,
+    1★ = 1.0 (negativ). Rows ohne explicit rating bekommen 1.0.
+    Multi-rating chunks bekommen n-bonus (1 + 0.1*(n-1), clipped).
+    """
     X: list[list[float]] = []
     y: list[int] = []
+    w: list[float] = []
     cids: list[str] = []
     with path.open(encoding="utf-8") as f:
         for line in f:
@@ -75,8 +84,9 @@ def _load(path: Path) -> tuple[list[list[float]], list[int], list[str]]:
             feats = row.get("features") or {}
             X.append([float(feats.get(k, 0.0)) for k in FEATURES])
             y.append(int(row.get("label", 0)))
+            w.append(float(row.get("sample_weight", 1.0)))
             cids.append(row.get("chunk_id", ""))
-    return X, y, cids
+    return X, y, w, cids
 
 
 def _ndcg_at_k(labels: list[int], k: int) -> float:
@@ -97,7 +107,7 @@ def train(in_path: Path, out_path: Path) -> int:
     except ImportError:
         print("Fehler: sklearn nicht installiert (pip install scikit-learn)")
         return 2
-    X, y, _cids = _load(in_path)
+    X, y, w, _cids = _load(in_path)
     if len(X) < MIN_ROWS:
         print(f"zu wenig Daten: {len(X)} rows < {MIN_ROWS} (warte auf mehr Feedback)")
         return 1
@@ -105,8 +115,12 @@ def train(in_path: Path, out_path: Path) -> int:
     if pos < MIN_POSITIVES:
         print(f"zu wenig Positives: {pos} < {MIN_POSITIVES}")
         return 1
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42,
-                                          stratify=y if pos < len(y) else None)
+    # WHY(#209): split inkl. sample_weight, sodass die ratings auch in
+    # train/test korrekt mitgeführt werden.
+    Xtr, Xte, ytr, yte, wtr, _wte = train_test_split(
+        X, y, w, test_size=0.2, random_state=42,
+        stratify=y if pos < len(y) else None,
+    )
     # L2 (Ridge) mit C=0.1 = stark regularisiert. Multikollinearität
     # zwischen v↔s (corr=+0.51), v↔r (+0.43), s↔r (+0.66) führt unter
     # default-C zu willkürlichen Vorzeichen-Flips zwischen den
@@ -116,7 +130,11 @@ def train(in_path: Path, out_path: Path) -> int:
     # ihren echten Effekt-Anteil. AUC nahezu identisch zu unregulierter
     # version; Weights sind interpretierbarer + multi-tenant-stabiler.
     clf = LogisticRegression(max_iter=500, class_weight="balanced", C=0.1)
-    clf.fit(Xtr, ytr)
+    # WHY(#209): sample_weight führt rating-skala 1..5 als training-signal
+    # ein. 5★-feedback bekommt doppelt so viel pull wie 4★. Zusammen mit
+    # class_weight='balanced' (klassen-imbalance) ergibt sich effektives
+    # gewicht = class_weight * sample_weight.
+    clf.fit(Xtr, ytr, sample_weight=wtr)
     proba = clf.predict_proba(Xte)[:, 1]
     auc = float(roc_auc_score(yte, proba)) if len(set(yte)) > 1 else 0.0
     sorted_pairs = sorted(zip(proba, yte), key=lambda p: p[0], reverse=True)

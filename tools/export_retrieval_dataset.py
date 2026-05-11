@@ -77,27 +77,57 @@ def _igio_axis_map(conn: sqlite3.Connection) -> dict[str, str]:
     return out
 
 
-def _label_map(conn: sqlite3.Connection, days: int) -> dict[str, int]:
-    """{chunk_id: 1 if positive feedback dominates else 0/-1}."""
+def _label_map(
+    conn: sqlite3.Connection, days: int
+) -> dict[str, tuple[int, float]]:
+    """{chunk_id: (label, sample_weight)} from rating 1..5 feedback.
+
+    WHY(#209, rating-weighted): vor diesem fix wurde rating 1..5 binär
+    kollabiert — "5★ primary source" und "1★ irrelevant" wurden gleich
+    behandelt (beide → pos), und neutrale 3★ leakten als pos-signal rein.
+    Resultat: model lernt nichts aus der Skala.
+
+    Neuer mapping:
+      rating 5  → label 1, weight 1.0  (starkes positiv)
+      rating 4  → label 1, weight 0.5
+      rating 3  → omit (neutral)
+      rating 2  → label 0, weight 0.5
+      rating 1  → label 0, weight 1.0  (starkes negativ)
+
+    Bei mehreren ratings: avg(rating) entscheidet, weight wird mit
+    n-bonus (1 + 0.1*(n-1)) skaliert sodass mehr feedback = höheres
+    confidence. Legacy-signals werden auf rating-äquivalente gemappt:
+    positive → 4, negative → 2 (default weight 0.5 weil low confidence).
+    """
     rows = conn.execute(
         "SELECT chunk_id, signal FROM chunk_feedback "
         "WHERE created_at > datetime('now', ?)",
         (f"-{days} days",),
     ).fetchall()
-    counts: dict[str, dict[str, int]] = {}
+
+    chunk_ratings: dict[str, list[float]] = {}
     for cid, sig in rows:
-        bucket = counts.setdefault(cid, {"pos": 0, "neg": 0})
-        if sig in ("positive", "1", "2", "3", "4", "5"):
-            bucket["pos"] += 1
+        if sig in ("1", "2", "3", "4", "5"):
+            chunk_ratings.setdefault(cid, []).append(float(sig))
+        elif sig == "positive":
+            chunk_ratings.setdefault(cid, []).append(4.0)
         elif sig == "negative":
-            bucket["neg"] += 1
-    out: dict[str, int] = {}
-    for cid, c in counts.items():
-        if c["pos"] > c["neg"]:
-            out[cid] = 1
-        elif c["neg"] > c["pos"]:
-            out[cid] = -1
-        # else unknown → omit
+            chunk_ratings.setdefault(cid, []).append(2.0)
+
+    out: dict[str, tuple[int, float]] = {}
+    for cid, ratings in chunk_ratings.items():
+        avg = sum(ratings) / len(ratings)
+        n_bonus = 1 + 0.1 * (len(ratings) - 1)
+
+        if avg >= 4.5:
+            out[cid] = (1, 1.0 * n_bonus)
+        elif avg >= 3.5:
+            out[cid] = (1, 0.5 * n_bonus)
+        elif avg <= 1.5:
+            out[cid] = (0, 1.0 * n_bonus)
+        elif avg <= 2.5:
+            out[cid] = (0, 0.5 * n_bonus)
+        # avg in (2.5, 3.5) → omit (neutral, no training signal)
     return out
 
 
@@ -156,6 +186,13 @@ def export(
     conn.row_factory = sqlite3.Row
     try:
         igio_map = _igio_axis_map(conn)
+        # WHY(#209, rating-weighted): chunks die EXPLIZITES rating-feedback
+        # haben bekommen einen sample_weight basierend auf der rating-skala
+        # (5★ = strong positive, 1★ = strong negative). Chunks ohne explicit
+        # rating bleiben bei weight=1.0 (default).
+        # Das gibt dem trainer mehr signal aus der 5-stufen-skala ohne sie
+        # ins label zu mappen (das bleibt was_referenced, kein leakage).
+        rating_weights = _label_map(conn, days)
         # Label aus dem PER-EVENT-Signal `was_referenced` statt aus dem
         # GLOBALEN chunk_feedback-Aggregat. Das alte _label_map(conn,days)
         # gab pro chunk_id ein binary "irgendwo schonmal positives
@@ -195,13 +232,28 @@ def export(
                     feats = _normalize_features(stage.get(cid), cid, igio_map)
                     if feats is None:
                         continue
+                    # WHY(#209): rating-weight (1..5★) als sample_weight.
+                    # explicit rating → weight 0.5..1.1; ohne rating → 1.0.
+                    # Plus: bei Konflikt zwischen was_referenced=0 und
+                    # avg_rating>=4 (chunk wurde NICHT referenziert in der
+                    # antwort, aber user hat ihn später als 5★ gerated):
+                    # rating überstimmt label, weil der user die ground
+                    # truth ist (was_referenced ist nur ein proxy).
+                    rating_info = rating_weights.get(cid)
+                    final_label = ev_label
+                    final_weight = 1.0
+                    if rating_info is not None:
+                        rating_label, rating_weight = rating_info
+                        final_label = rating_label
+                        final_weight = rating_weight
                     f.write(json.dumps({
-                        "query":        row["query"],
-                        "chunk_id":     cid,
-                        "features":     feats,
-                        "label":        ev_label,
-                        "captured_at":  row["captured_at"],
-                        "workspace_id": row["workspace_id"] or "",
+                        "query":         row["query"],
+                        "chunk_id":      cid,
+                        "features":      feats,
+                        "label":         final_label,
+                        "sample_weight": final_weight,
+                        "captured_at":   row["captured_at"],
+                        "workspace_id":  row["workspace_id"] or "",
                     }) + "\n")
                     written += 1
         return written
