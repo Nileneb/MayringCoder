@@ -74,10 +74,15 @@ def _save_state(state: dict) -> None:
 
 
 def _check_ci(repo: str, state: dict) -> list[str]:
-    """Return warning lines if CI has new failures since last check."""
+    """Return warning lines if CI has new failures since last check.
+
+    WHY(2026-05-11): limit 10→30. Bei aktiven repos (deploy + smoke +
+    build + linter + ingest pro merge) fielen failed runs aus dem
+    limit-10-window bevor der hook sie sah → unbemerkte fails.
+    """
     runs = _gh([
         "run", "list", "--repo", repo,
-        "--limit", "10",
+        "--limit", "30",
         "--json", "databaseId,name,conclusion,status,event",
     ])
     if not runs:
