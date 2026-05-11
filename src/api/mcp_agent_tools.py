@@ -460,34 +460,42 @@ def register_agent_tools(mcp: FastMCP) -> None:
     def pi_categorize(
         text: str,
         codebook: list[str] | None = None,
-        mode: str = "inductive",
+        mode: str = "hybrid",
         max_labels: int = 5,
         workspace_id: str | None = None,
         timeout: float = 60.0,
     ) -> dict:
         """Mayring-categorize a piece of text via local Pi-Agent.
 
-        Replaces inline Claude-calls for batch categorization of chunks.
-        Returns 1-5 category labels with confidence scores in JSON.
+        WHY(2026-05-11): nutzt die KANONISCHEN prompts/mayring_{deduktiv,
+        induktiv,hybrid}.md templates — gleiche source-of-truth wie die
+        inline mayring_categorize()-ingest-pipeline. Kein divergierender
+        inline-prompt mehr. {{categories}} wird mit `codebook` gefüllt
+        (deductive/hybrid) — typischer Caller: die task-based
+        categorization gibt hier die subkategorien des tasks rein.
+        Induktiv braucht kein codebook (kreative leistung via prompt).
 
         Args:
             text: The text to categorize (chunk content, max ~4000 chars).
-            codebook: Allowed category labels. If None, uses universal default
-                      from config/codebooks/universal_v1.yaml.
-            mode: 'inductive' (free-form labels) | 'deductive' (from codebook only)
-                  | 'hybrid' (codebook + new labels marked [neu]).
+            codebook: Allowed category labels (deductive/hybrid). Für
+                      task-based categorization: die subkategorien des tasks.
+                      None + deductive/hybrid → fallback auf universal_v1.yaml.
+            mode: 'inductive' | 'deductive' | 'hybrid' (default).
             max_labels: Cap on returned labels (default 5).
             workspace_id: Tenant scope. Optional.
             timeout: Pi-Agent call timeout in seconds.
 
         Returns:
-            {labels: [{label, confidence}], mode, model} oder {error}.
+            {labels: [str], mode, model} oder {error}.
         """
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         if not text or len(text.strip()) < 10:
             return {"error": "text too short (<10 chars)", "workspace_id": ws}
 
-        if codebook is None:
+        mode = mode if mode in ("inductive", "deductive", "hybrid") else "hybrid"
+
+        # Codebook only needed for deductive/hybrid. Fall back to universal.
+        if mode != "inductive" and not codebook:
             try:
                 import yaml
                 from pathlib import Path
@@ -498,46 +506,43 @@ def register_agent_tools(mcp: FastMCP) -> None:
             except Exception:
                 codebook = None
 
-        cb_clause = (
-            f"Allowed labels: {', '.join(codebook)}.\n" if codebook else
-            "Choose 1-5 freely-formed labels (lowercase, underscore).\n"
-        )
-        sys_prompt = (
-            "You are a Mayring-style inductive categorizer.\n"
-            f"Mode: {mode}.\n"
-            f"{cb_clause}"
-            f"Return AT MOST {max_labels} labels.\n"
-            "Output STRICT JSON only: "
-            '{"labels":[{"label":"<lowercase>","confidence":<0..1>}]}\n'
-            "No prose, no explanation, no markdown."
-        )
+        # Load the CANONICAL mayring template — single source of truth.
+        try:
+            from src.memory.ingestion.categorization import _load_mayring_template
+            template = _load_mayring_template(mode)
+        except Exception:
+            template = ("Categorize this text chunk using these categories if "
+                        "applicable: {{categories}}. Respond with ONLY a "
+                        "comma-separated list of labels.")
+        cats_str = ", ".join(codebook) if codebook else "(none — derive inductively)"
+        prompt = template.replace("{{categories}}", cats_str) + "\n\nText:\n" + text[:4000]
 
         import httpx
-        import json as _json
         try:
             resp = httpx.post(
                 f"{_OLLAMA_URL}/api/generate",
                 json={
                     "model": _model("text"),
-                    "prompt": sys_prompt + "\n\nText:\n" + text[:4000],
-                    "format": "json",
+                    "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 300},
+                    "options": {"temperature": 0.1, "num_predict": 200},
                 },
                 timeout=timeout,
             )
             resp.raise_for_status()
             raw = resp.json().get("response", "").strip()
-            data = _json.loads(raw)
-            labels = data.get("labels", [])[:max_labels]
+            # mayring templates return a comma-separated list, not JSON.
+            labels = [
+                lbl.strip().lower()
+                for lbl in raw.split(",")
+                if lbl.strip() and len(lbl.strip()) <= 50
+            ][:max_labels]
             return {
                 "labels": labels,
                 "mode": mode,
                 "model": _model("text"),
                 "workspace_id": ws,
             }
-        except _json.JSONDecodeError as exc:
-            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
         except Exception as exc:
             return {"error": str(exc), "workspace_id": ws}
 
