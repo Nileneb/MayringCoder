@@ -157,6 +157,88 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def derive_task_fast(
+    prompt: str,
+    conn: DBAdapter,
+    ollama_url: str,
+    workspace_id: str = "default",
+    *,
+    sim_threshold: float = _TASK_SIM_THRESHOLD,
+) -> Optional[dict]:
+    """Hot-path-safe task lookup: embed + similarity-check only, NO mistral.
+
+    WHY(2026-05-11): derive_task() macht im cascade-fall-through einen
+    mistral-call (bis 30s timeout) — das in /memory/search inline zu
+    haben hat jeden such-call 5-30s langsamer gemacht (+ die hook-9s-
+    budget-timeouts ausgelöst). Diese fast-variante macht NUR den
+    embedding-sim-check (~50-150ms): wenn eine existierende task matched,
+    return sie (+ occurrence_count++); sonst None — KEINE neue task-row.
+    Neue tasks werden async via derive_task_background() erstellt.
+
+    Returns {"task_id", "title", "reused": True} bei match, sonst None.
+    """
+    prompt = (prompt or "").strip()
+    if len(prompt) < 5:
+        return None
+
+    prompt_emb = _embed_text(prompt, ollama_url)
+    if prompt_emb is None:
+        return None
+
+    existing = _load_task_embeddings(conn, workspace_id)
+    best_task_id: Optional[str] = None
+    best_title: Optional[str] = None
+    best_sim = 0.0
+    for task_id, title, vec in existing:
+        sim = _cosine(prompt_emb, vec)
+        if sim > best_sim:
+            best_sim = sim
+            best_task_id = task_id
+            best_title = title
+
+    if best_task_id is not None and best_sim >= sim_threshold:
+        conn.execute(
+            """UPDATE task_categories
+               SET occurrence_count = occurrence_count + 1,
+                   last_used_at = ?
+               WHERE task_id = ?""",
+            (_now_iso(), best_task_id),
+        )
+        return {"task_id": best_task_id, "title": best_title, "reused": True}
+    return None
+
+
+def derive_task_background(
+    prompt: str,
+    db_path,
+    ollama_url: str,
+    workspace_id: str = "default",
+) -> None:
+    """Fire-and-forget: create a new task_category for a prompt in a daemon thread.
+
+    WHY(2026-05-11): /memory/search calls derive_task_fast (cheap) for the
+    boost. If no existing task matched, this kicks off the mistral-creation
+    in the background so the search response isn't delayed — the NEXT query
+    on the same topic will find the new task. Opens its own DB connection
+    (caller's conn may be on another thread).
+    """
+    import threading
+
+    def _work() -> None:
+        try:
+            from src.memory.store import init_memory_db
+            conn = init_memory_db(db_path)
+            try:
+                derive_task(prompt, conn, ollama_url, workspace_id)
+            finally:
+                conn.close()
+        except Exception as e:
+            _log.warning("derive_task_background failed: %s", e)
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+
+
 def derive_task(
     prompt: str,
     conn: DBAdapter,
@@ -166,7 +248,12 @@ def derive_task(
     model: Optional[str] = None,
     sim_threshold: float = _TASK_SIM_THRESHOLD,
 ) -> Optional[dict]:
-    """Derive (or reuse) a task_category for a user prompt.
+    """Derive (or reuse) a task_category for a user prompt — FULL cascade.
+
+    NOT for the hot path (it may make a 30s mistral call) — use
+    derive_task_fast() for /memory/search, derive_task_background() to
+    create new tasks async, and this directly only from explicit/batch
+    callers (pi_task, a periodic job).
 
     Cascade:
       1. Embed prompt

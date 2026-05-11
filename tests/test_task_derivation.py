@@ -242,3 +242,51 @@ def test_add_feedback_no_link_without_task_id_metadata(conn):
     # No task_chunk_links should have been created
     rows = conn.execute("SELECT 1 FROM task_chunk_links").fetchall()
     assert rows == []
+
+
+# ── derive_task_fast (hot-path, no mistral) ──────────────────────
+
+def test_derive_task_fast_returns_existing_match(conn):
+    """derive_task_fast: existing task with high sim → return it, no mistral."""
+    emb = [0.42] * 768
+    conn.execute(
+        """INSERT INTO task_categories (task_id, title, embedding_id, first_seen_at, last_used_at, workspace_id)
+           VALUES ('task_known', 'Known Task', ?, ?, ?, 'default')""",
+        (json.dumps(emb), "2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
+    )
+    from src.memory.task_derivation import derive_task_fast
+    with patch("src.memory.task_derivation._embed_text", return_value=emb):
+        # _call_mistral must NEVER be called in the fast path
+        with patch("src.memory.task_derivation._call_mistral_for_task") as mock_mistral:
+            result = derive_task_fast("any prompt", conn, "http://ollama:11434", "default")
+    assert result is not None
+    assert result["task_id"] == "task_known"
+    assert result["reused"] is True
+    mock_mistral.assert_not_called()
+
+
+def test_derive_task_fast_returns_none_when_no_match(conn):
+    """derive_task_fast: no existing task → None (does NOT create one)."""
+    from src.memory.task_derivation import derive_task_fast
+    with patch("src.memory.task_derivation._embed_text", return_value=[0.9] * 768):
+        with patch("src.memory.task_derivation._call_mistral_for_task") as mock_mistral:
+            result = derive_task_fast("brand new topic", conn, "http://ollama:11434", "default")
+    assert result is None
+    mock_mistral.assert_not_called()
+    # No new row created
+    count = conn.execute("SELECT COUNT(*) FROM task_categories").fetchone()[0]
+    assert count == 0
+
+
+def test_derive_task_fast_increments_occurrence_on_match(conn):
+    emb = [0.33] * 768
+    conn.execute(
+        """INSERT INTO task_categories (task_id, title, embedding_id, occurrence_count, first_seen_at, last_used_at, workspace_id)
+           VALUES ('task_c', 'T', ?, 5, ?, ?, 'default')""",
+        (json.dumps(emb), "2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
+    )
+    from src.memory.task_derivation import derive_task_fast
+    with patch("src.memory.task_derivation._embed_text", return_value=emb):
+        derive_task_fast("prompt text", conn, "http://ollama:11434", "default")
+    n = conn.execute("SELECT occurrence_count FROM task_categories WHERE task_id='task_c'").fetchone()[0]
+    assert n == 6
