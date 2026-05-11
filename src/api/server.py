@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -199,13 +200,19 @@ def health() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-@app.get("/stats/summary")
-def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
-    # Auth required — this endpoint leaks chunk/feedback counts and the
-    # most-recent ingest source_ids. A tampered or absent JWT used to
-    # return 200 because no Depends() was wired in. Smoke catches it now
-    # via check_jwt_invalid_signature_rejected; fix is the dependency.
-    _ = workspace_id  # (response is global; the auth check is the point)
+# WHY(2026-05-11): /stats/summary macht 9 sqlite-queries inkl. mehrerer
+# COUNT-WHERE-datetime-scans über millionen-rows tabellen — Dashboard auf
+# app.linn.games timeoutet wiederholt (cURL error 28: 5002ms). Fix: in-
+# process TTL-cache (30s) + stale-fallback wenn DB-query crasht. Damit
+# zeigt das dashboard im worst-case last-known-good statt 504 — was die
+# user-experience signifikant verbessert. Single-replica = process-local
+# cache OK.
+_STATS_CACHE: dict[str, Any] = {"fresh": None, "stale": None, "expires_at": 0.0}
+_STATS_CACHE_TTL = 30.0
+
+
+def _stats_summary_uncached() -> dict:
+    """The actual sqlite-heavy work. Wrapped by stats_summary() with cache."""
     from src.api.job_queue import _JOBS
     conn = _get_conn()
     active = conn.execute("SELECT COUNT(*) FROM chunks WHERE is_active=1").fetchone()[0]
@@ -280,6 +287,51 @@ def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
         "recent_jobs": recent_jobs,
         "llm_calls":   {"last_24h": llm_24h, "recent": llm_recent},
     }
+
+
+@app.get("/stats/summary")
+def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
+    """Cached + stale-fallback wrapper around _stats_summary_uncached.
+
+    Flow:
+      1. Cache hit & fresh (<30s) → return cached immediately. ~1ms.
+      2. Cache miss or expired → run uncached query. On success: refresh
+         both 'fresh' and 'stale' slots, return result.
+      3. Uncached query crashes/timeouts → return stale cache (any age)
+         with `_cache_status='stale'` marker; only fail with 503 if there
+         is NO cache at all (first-ever call + DB down).
+    """
+    import time as _t
+    _ = workspace_id  # auth-only; response is global
+
+    now = _t.time()
+
+    # Fast path — cache hit
+    if _STATS_CACHE["fresh"] is not None and now < _STATS_CACHE["expires_at"]:
+        return {**_STATS_CACHE["fresh"], "_cache_status": "hit"}
+
+    # Slow path — run the heavy query
+    try:
+        result = _stats_summary_uncached()
+        _STATS_CACHE["fresh"] = result
+        _STATS_CACHE["stale"] = result
+        _STATS_CACHE["expires_at"] = now + _STATS_CACHE_TTL
+        return {**result, "_cache_status": "fresh"}
+    except Exception as exc:
+        # DB-crash or timeout — fall back to stale cache if we have one.
+        if _STATS_CACHE["stale"] is not None:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "stats/summary: serving stale cache after live-query fail: %s", exc,
+            )
+            return {
+                **_STATS_CACHE["stale"],
+                "_cache_status": "stale",
+                "_stale_reason": str(exc)[:200],
+            }
+        # No cache at all — first call ever AND DB broken.
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=f"stats/summary unavailable: {exc}")
 
 
 def main() -> None:
