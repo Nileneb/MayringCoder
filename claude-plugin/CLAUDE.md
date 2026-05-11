@@ -78,16 +78,31 @@ mcp__plugin_mayring-coder_memory-agents__pi_task(
 )
 ```
 
-### pi_task vs Subagent vs Self
+### Welches Tool für welche Aufgabe — Entscheidungstabelle
 
-| Use-Case | Tool |
-|---|---|
-| Konkrete Implementierung mit Memory-Kontext | `pi_task` (lokales Ollama) |
-| Find / locate / patch this bug | `pi_task` |
-| Test-Loop iterieren | `pi_task` |
-| Code-Review / Multi-File-Refactor | Subagent (mit Pre-Fetch!) |
-| Architektur-/Strategieentscheidung | Self (main session) |
-| Sensitive Secrets | Self (kein subprocess) |
+| Use-Case | Tool | Warum |
+|---|---|---|
+| Konkrete Implementierung mit Memory-Kontext | `pi_task` (free-form) | lokales Ollama, ~$0, three.linn.games GPU |
+| Find / locate / patch this bug | `pi_task` | scoped retrieval via repo_slug |
+| Test-Loop iterieren | `pi_task` | |
+| **Chunk(s) Mayring-kategorisieren** | `pi_categorize` | enges schema: text in, `{labels:[{label,confidence}]}` out. Codebook-constrained |
+| **Chunk-Relevanz zu einer Query bewerten** | `pi_judge_relevance` | ersetzt LLM-judge im stop_hook/rerank — 0..1 score pro chunk |
+| **Text für Memory-Ingest reduzieren** | `pi_summarize_for_memory` | 3-step Mayring (paraphrase→generalize→reduce) + suggested_source_id |
+| Architektur-Trajektorie einer Datei | `diff_history` | git log --follow -p → trajectory/obsolete/active |
+| Code-Review / Multi-File-Refactor | Subagent (`mayring-coder:pi-subagent` ODER general-purpose, mit Pre-Fetch!) | mehr kontext-budget |
+| Architektur-/Strategieentscheidung | Self (main session) | judgment call |
+| Sensitive Secrets | Self (kein subprocess) | |
+
+**Faustregel:** Wenn die Aufgabe in eines der spezialisierten Tools passt
+(`pi_categorize` / `pi_judge_relevance` / `pi_summarize_for_memory`), nimm
+das — die fokussierten Prompts + JSON-mode geben strukturierte Outputs,
+die du direkt weiterverarbeiten kannst, ohne den Pi-Agent komplett zu
+re-instruct. Nur wenn nichts passt → `pi_task` (free-form). Nur wenn
+`pi_task` fail't ODER frontier-reasoning nötig → Claude-Subagent.
+
+Asymmetric job-distribution (CLAUDE.md-Präferenz): 90% der categorize/
+judge/summarize-calls können lokal laufen statt in Claude — pure
+token-/latency-ersparnis bei gleichem memory-zugriff.
 
 ### Pi-Job-Klassen (#183 T1-T4)
 
