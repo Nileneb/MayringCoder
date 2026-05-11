@@ -447,3 +447,252 @@ def register_agent_tools(mcp: FastMCP) -> None:
             )
         except DiffHistoryError as exc:
             return {"error": str(exc), "file": file}
+
+    # ─── Specialized Pi-Sub-Tools (#211) ─────────────────────────────
+    # WHY(2026-05-11): pi_task ist generischer free-form-dispatch. Diese
+    # spezialisierten tools haben enge schemas + focused system-prompts,
+    # sodass claude-code sie für spezifische sub-tasks dispatchen kann
+    # ohne den Pi-Agent jedes Mal komplett zu re-instruct. Asymmetric
+    # job-distribution: 90% der categorize/judge/summarize-calls
+    # können hier laufen statt in Claude.
+
+    @mcp.tool()
+    def pi_categorize(
+        text: str,
+        codebook: list[str] | None = None,
+        mode: str = "inductive",
+        max_labels: int = 5,
+        workspace_id: str | None = None,
+        timeout: float = 60.0,
+    ) -> dict:
+        """Mayring-categorize a piece of text via local Pi-Agent.
+
+        Replaces inline Claude-calls for batch categorization of chunks.
+        Returns 1-5 category labels with confidence scores in JSON.
+
+        Args:
+            text: The text to categorize (chunk content, max ~4000 chars).
+            codebook: Allowed category labels. If None, uses universal default
+                      from config/codebooks/universal_v1.yaml.
+            mode: 'inductive' (free-form labels) | 'deductive' (from codebook only)
+                  | 'hybrid' (codebook + new labels marked [neu]).
+            max_labels: Cap on returned labels (default 5).
+            workspace_id: Tenant scope. Optional.
+            timeout: Pi-Agent call timeout in seconds.
+
+        Returns:
+            {labels: [{label, confidence}], mode, model} oder {error}.
+        """
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        if not text or len(text.strip()) < 10:
+            return {"error": "text too short (<10 chars)", "workspace_id": ws}
+
+        if codebook is None:
+            try:
+                import yaml
+                from pathlib import Path
+                cb_path = Path("config/codebooks/universal_v1.yaml")
+                if cb_path.exists():
+                    cb_data = yaml.safe_load(cb_path.read_text())
+                    codebook = list((cb_data or {}).get("categories", {}).keys())
+            except Exception:
+                codebook = None
+
+        cb_clause = (
+            f"Allowed labels: {', '.join(codebook)}.\n" if codebook else
+            "Choose 1-5 freely-formed labels (lowercase, underscore).\n"
+        )
+        sys_prompt = (
+            "You are a Mayring-style inductive categorizer.\n"
+            f"Mode: {mode}.\n"
+            f"{cb_clause}"
+            f"Return AT MOST {max_labels} labels.\n"
+            "Output STRICT JSON only: "
+            '{"labels":[{"label":"<lowercase>","confidence":<0..1>}]}\n'
+            "No prose, no explanation, no markdown."
+        )
+
+        import httpx
+        import json as _json
+        try:
+            resp = httpx.post(
+                f"{_OLLAMA_URL}/api/generate",
+                json={
+                    "model": _model("text"),
+                    "prompt": sys_prompt + "\n\nText:\n" + text[:4000],
+                    "format": "json",
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 300},
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("response", "").strip()
+            data = _json.loads(raw)
+            labels = data.get("labels", [])[:max_labels]
+            return {
+                "labels": labels,
+                "mode": mode,
+                "model": _model("text"),
+                "workspace_id": ws,
+            }
+        except _json.JSONDecodeError as exc:
+            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
+
+    @mcp.tool()
+    def pi_judge_relevance(
+        query: str,
+        chunks: list[dict],
+        workspace_id: str | None = None,
+        timeout: float = 90.0,
+    ) -> dict:
+        """Score chunk relevance to a query (0..1) via local Pi-Agent.
+
+        Replacement for the LLM-judge call in stop_hook + retrieval rerank.
+        Returns score per chunk so the caller can re-rank / filter.
+
+        Args:
+            query: The user query / task description.
+            chunks: [{chunk_id, text}, ...]. Max 20 chunks per call.
+            workspace_id: Tenant scope.
+            timeout: Pi-Agent call timeout.
+
+        Returns:
+            {scores: {chunk_id: 0..1}, model} oder {error}.
+        """
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        if not query or not chunks:
+            return {"error": "query and chunks required", "workspace_id": ws}
+
+        chunks = chunks[:20]
+        items = []
+        for c in chunks:
+            cid = c.get("chunk_id") or ""
+            text = (c.get("text") or "")[:600]
+            if cid and text:
+                items.append({"id": cid, "text": text})
+
+        if not items:
+            return {"scores": {}, "workspace_id": ws}
+
+        import json as _json
+        sys_prompt = (
+            "You are a relevance judge. For each chunk, decide how relevant it is "
+            "to the query on a 0..1 scale:\n"
+            "  0.0 = not relevant at all\n"
+            "  0.3 = tangential\n"
+            "  0.6 = relevant context\n"
+            "  0.9 = primary source\n"
+            "  1.0 = directly answers the query\n\n"
+            'Output STRICT JSON only: {"scores":{"<chunk_id>":<0..1>,...}}\n'
+            "No prose, no explanation. ALL chunks MUST appear in the output."
+        )
+        chunks_text = "\n\n".join(
+            f"[{c['id']}]\n{c['text']}" for c in items
+        )
+        prompt = sys_prompt + f"\n\nQuery: {query}\n\nChunks:\n{chunks_text}"
+
+        import httpx
+        try:
+            resp = httpx.post(
+                f"{_OLLAMA_URL}/api/generate",
+                json={
+                    "model": _model("text"),
+                    "prompt": prompt,
+                    "format": "json",
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 600},
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("response", "").strip()
+            data = _json.loads(raw)
+            scores = {
+                str(k): max(0.0, min(1.0, float(v)))
+                for k, v in (data.get("scores") or {}).items()
+            }
+            return {"scores": scores, "model": _model("text"), "workspace_id": ws}
+        except _json.JSONDecodeError as exc:
+            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
+
+    @mcp.tool()
+    def pi_summarize_for_memory(
+        content: str,
+        style: str = "paraphrase_generalize_reduce",
+        workspace_id: str | None = None,
+        timeout: float = 60.0,
+    ) -> dict:
+        """Mayring-style summarization for memory-ingestion.
+
+        Three reductions in one call:
+          1. Paraphrase — core statement without filler
+          2. Generalize — meta-category (architecture / debug / config / ...)
+          3. Reduce — one-sentence essence
+
+        Suitable as the pre-ingest step for `mcp__claude_ai_Memory__ingest`.
+
+        Args:
+            content: Raw text to summarize (transcript, file content, etc).
+            style: Reserved for future variants. Currently always uses the
+                   3-step Mayring pipeline.
+            workspace_id: Tenant scope.
+            timeout: Pi-Agent call timeout.
+
+        Returns:
+            {paraphrase, generalize, reduce, suggested_source_id, model} oder
+            {error}.
+        """
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        if not content or len(content.strip()) < 30:
+            return {"error": "content too short (<30 chars)", "workspace_id": ws}
+
+        sys_prompt = (
+            "You are a Mayring-style summarizer. Reduce the input to three forms:\n"
+            "1. paraphrase — core statement without filler (≤2 sentences)\n"
+            "2. generalize — pick ONE meta-category from: "
+            "[architecture, debug, config, decision, session-memory, context]\n"
+            "3. reduce — one-sentence essence (≤120 chars)\n\n"
+            "Also propose suggested_source_id: <generalize>:<yyyy-mm-dd>-<short-slug>\n\n"
+            "Output STRICT JSON only:\n"
+            '{"paraphrase":"...","generalize":"...","reduce":"...","suggested_source_id":"..."}\n'
+            "No prose, no markdown."
+        )
+
+        import httpx
+        import json as _json
+        from datetime import datetime as _dt
+        date_str = _dt.utcnow().strftime("%Y-%m-%d")
+        prompt = sys_prompt + f"\n\nDate (for source_id): {date_str}\n\nContent:\n{content[:6000]}"
+
+        try:
+            resp = httpx.post(
+                f"{_OLLAMA_URL}/api/generate",
+                json={
+                    "model": _model("text"),
+                    "prompt": prompt,
+                    "format": "json",
+                    "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 400},
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("response", "").strip()
+            data = _json.loads(raw)
+            return {
+                "paraphrase": data.get("paraphrase", ""),
+                "generalize": data.get("generalize", ""),
+                "reduce": data.get("reduce", ""),
+                "suggested_source_id": data.get("suggested_source_id", ""),
+                "model": _model("text"),
+                "workspace_id": ws,
+            }
+        except _json.JSONDecodeError as exc:
+            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
