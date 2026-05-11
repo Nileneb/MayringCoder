@@ -125,21 +125,28 @@ async def memory_search(
                 c.lower().strip() for c in request.category_hint if c and c.strip()
             ]
 
-        # WHY(2026-05-11, task-categorization): Mayring-konformer
-        # task-derive aus dem query. Cascade: erst embedding-similarity
-        # zu existierenden tasks, sonst mistral-call. Resultat wird zum
-        # boost im _rerank für chunks die bei semantisch ähnlichen tasks
-        # schon positiv bewertet wurden. Ist die saubere Ablösung der
-        # alten tech-label-cluster ([neu]configuration etc).
+        # WHY(2026-05-11, task-categorization + perf-fix): nur der schnelle
+        # embedding-sim-check inline (~50-150ms) — KEIN mistral im hot path
+        # (das machte /memory/search 5-30s langsamer, hat die hook-9s-
+        # timeouts ausgelöst). Wenn eine existierende task matched → boost.
+        # Wenn nicht → background-thread erstellt die neue task (mistral),
+        # ohne die such-response zu verzögern.
         try:
-            from src.memory.task_derivation import derive_task
-            task = derive_task(
+            from src.memory.task_derivation import (
+                derive_task_fast, derive_task_background,
+            )
+            from src.memory.store import MEMORY_DB_PATH
+            task = derive_task_fast(
                 request.query, _get_conn(), _OLLAMA_URL, workspace_id,
             )
             if task:
                 opts["task_id"] = task["task_id"]
+            else:
+                # No existing task matched — create one async (fire-and-forget).
+                derive_task_background(
+                    request.query, MEMORY_DB_PATH, _OLLAMA_URL, workspace_id,
+                )
         except Exception as exc:
-            # task-derive ist optional — fail soft (Logger im modul warnt).
             import logging
             logging.getLogger(__name__).warning("task-derive skipped: %s", exc)
 
