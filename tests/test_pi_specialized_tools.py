@@ -37,24 +37,51 @@ def tools():
 
 
 def _mock_ollama_response(payload: dict):
-    """Build a httpx.post mock returning {"response": json.dumps(payload)}."""
+    """Build a httpx.post mock returning {"response": json.dumps(payload)}.
+
+    Used by pi_judge_relevance + pi_summarize_for_memory (both JSON-mode).
+    pi_categorize uses _mock_ollama_text() because the canonical mayring
+    prompts return a comma-separated list, not JSON.
+    """
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.return_value = {"response": json.dumps(payload)}
     return resp
 
 
-# ── pi_categorize ────────────────────────────────────────────────
+def _mock_ollama_text(text: str):
+    """httpx.post mock returning a raw text {"response": "..."} — for pi_categorize."""
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"response": text}
+    return resp
+
+
+# ── pi_categorize (canonical mayring prompts, comma-separated output) ─────
 
 def test_pi_categorize_returns_labels(tools):
     fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_response(
-        {"labels": [{"label": "auth", "confidence": 0.9}, {"label": "middleware", "confidence": 0.6}]}
-    )), patch("src.api.mcp_agent_tools._model", return_value="mistral:7b-instruct"):
-        result = fn(text="def validate_jwt(token): ...", codebook=["auth", "middleware", "data_access"])
-    assert "labels" in result
-    assert result["labels"][0]["label"] == "auth"
-    assert result["mode"] == "inductive"
+    with patch("httpx.post", return_value=_mock_ollama_text("auth, middleware")), \
+         patch("src.api.mcp_agent_tools._model", return_value="mistral:7b-instruct"):
+        result = fn(text="def validate_jwt(token): ...", codebook=["auth", "middleware", "data_access"], mode="deductive")
+    assert result["labels"] == ["auth", "middleware"]
+    assert result["mode"] == "deductive"
+
+
+def test_pi_categorize_defaults_to_hybrid_mode(tools):
+    fn = tools["pi_categorize"]
+    with patch("httpx.post", return_value=_mock_ollama_text("api, error_handling")), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some longer text content here")
+    assert result["mode"] == "hybrid"
+
+
+def test_pi_categorize_invalid_mode_falls_back_to_hybrid(tools):
+    fn = tools["pi_categorize"]
+    with patch("httpx.post", return_value=_mock_ollama_text("x, y")), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some text content", mode="nonsense")
+    assert result["mode"] == "hybrid"
 
 
 def test_pi_categorize_rejects_short_text(tools):
@@ -66,23 +93,28 @@ def test_pi_categorize_rejects_short_text(tools):
 
 def test_pi_categorize_caps_max_labels(tools):
     fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_response(
-        {"labels": [{"label": f"l{i}", "confidence": 0.5} for i in range(10)]}
-    )), patch("src.api.mcp_agent_tools._model", return_value="m"):
+    with patch("httpx.post", return_value=_mock_ollama_text("l0, l1, l2, l3, l4, l5, l6")), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
         result = fn(text="some longer text content here", max_labels=3)
     assert len(result["labels"]) == 3
+    assert result["labels"] == ["l0", "l1", "l2"]
 
 
-def test_pi_categorize_handles_json_parse_fail(tools):
+def test_pi_categorize_lowercases_and_strips_labels(tools):
     fn = tools["pi_categorize"]
-    bad_resp = MagicMock()
-    bad_resp.raise_for_status = MagicMock()
-    bad_resp.json.return_value = {"response": "not valid json {{{"}
-    with patch("httpx.post", return_value=bad_resp), \
+    with patch("httpx.post", return_value=_mock_ollama_text("  Auth ,  Data-Access  ")), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some longer text content here")
+    assert result["labels"] == ["auth", "data-access"]
+
+
+def test_pi_categorize_handles_ollama_error(tools):
+    fn = tools["pi_categorize"]
+    with patch("httpx.post", side_effect=Exception("connection refused")), \
          patch("src.api.mcp_agent_tools._model", return_value="m"):
         result = fn(text="some text content")
     assert "error" in result
-    assert "JSON parse fail" in result["error"]
+    assert "connection refused" in result["error"]
 
 
 # ── pi_judge_relevance ───────────────────────────────────────────
