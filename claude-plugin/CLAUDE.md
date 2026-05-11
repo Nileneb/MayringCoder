@@ -85,7 +85,8 @@ mcp__plugin_mayring-coder_memory-agents__pi_task(
 | Konkrete Implementierung mit Memory-Kontext | `pi_task` (free-form) | lokales Ollama, ~$0, three.linn.games GPU |
 | Find / locate / patch this bug | `pi_task` | scoped retrieval via repo_slug |
 | Test-Loop iterieren | `pi_task` | |
-| **Chunk(s) Mayring-kategorisieren** | `pi_categorize` | enges schema: text in, `{labels:[{label,confidence}]}` out. Codebook-constrained |
+| **Chunk(s) Mayring-kategorisieren (labels)** | `pi_categorize(text, task, codebook?, mode)` | gibt `{labels:[str]}` für den ganzen chunk. `task` = das Thema worauf untersucht wird (Mayring Selektionskriterium); `mode` = inductive/deductive/hybrid. Nutzt die kanonischen `prompts/mayring_{mode}.md` |
+| **Mayring-kategorisieren MIT Textbeleg pro Kategorie** | `pi_mark_categories(text, task, codebook?)` | "Textmarker" — markiert konkrete Abschnitte + ordnet jedem eine Kategorie zu MIT paraphrase-begründung. `{markings:[{span:[start,end], excerpt, category, reasoning}]}`. Nutze das wenn die Kategorie nachvollziehbar am Text hängen soll (statt nur "chunk hat label x") |
 | **Chunk-Relevanz zu einer Query bewerten** | `pi_judge_relevance` | ersetzt LLM-judge im stop_hook/rerank — 0..1 score pro chunk |
 | **Text für Memory-Ingest reduzieren** | `pi_summarize_for_memory` | 3-step Mayring (paraphrase→generalize→reduce) + suggested_source_id |
 | Architektur-Trajektorie einer Datei | `diff_history` | git log --follow -p → trajectory/obsolete/active |

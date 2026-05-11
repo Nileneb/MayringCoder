@@ -459,6 +459,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def pi_categorize(
         text: str,
+        task: str = "",
         codebook: list[str] | None = None,
         mode: str = "hybrid",
         max_labels: int = 5,
@@ -467,19 +468,16 @@ def register_agent_tools(mcp: FastMCP) -> None:
     ) -> dict:
         """Mayring-categorize a piece of text via local Pi-Agent.
 
-        WHY(2026-05-11): nutzt die KANONISCHEN prompts/mayring_{deduktiv,
-        induktiv,hybrid}.md templates — gleiche source-of-truth wie die
-        inline mayring_categorize()-ingest-pipeline. Kein divergierender
-        inline-prompt mehr. {{categories}} wird mit `codebook` gefüllt
-        (deductive/hybrid) — typischer Caller: die task-based
-        categorization gibt hier die subkategorien des tasks rein.
-        Induktiv braucht kein codebook (kreative leistung via prompt).
+        Nutzt die kanonischen prompts/mayring_{deduktiv,induktiv,hybrid}.md
+        templates — gleiche source-of-truth wie die inline-ingest-pipeline.
+        {{task}} = das Thema worauf untersucht wird (Mayring Selektions-
+        kriterium); {{categories}} = anchor-codebook (deductive/hybrid).
 
         Args:
             text: The text to categorize (chunk content, max ~4000 chars).
-            codebook: Allowed category labels (deductive/hybrid). Für
-                      task-based categorization: die subkategorien des tasks.
-                      None + deductive/hybrid → fallback auf universal_v1.yaml.
+            task: Topic(s) to look for. Empty → derive from text.
+            codebook: anchor categories (deductive/hybrid). None + deductive/
+                      hybrid → fallback auf universal_v1.yaml.
             mode: 'inductive' | 'deductive' | 'hybrid' (default).
             max_labels: Cap on returned labels (default 5).
             workspace_id: Tenant scope. Optional.
@@ -511,11 +509,17 @@ def register_agent_tools(mcp: FastMCP) -> None:
             from src.memory.ingestion.categorization import _load_mayring_template
             template = _load_mayring_template(mode)
         except Exception:
-            template = ("Categorize this text chunk using these categories if "
-                        "applicable: {{categories}}. Respond with ONLY a "
-                        "comma-separated list of labels.")
+            template = ("Categorize this text chunk for topic {{task}} using "
+                        "these categories if applicable: {{categories}}. "
+                        "Respond with ONLY a comma-separated list of labels.")
         cats_str = ", ".join(codebook) if codebook else "(none — derive inductively)"
-        prompt = template.replace("{{categories}}", cats_str) + "\n\nText:\n" + text[:4000]
+        task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
+        prompt = (
+            template
+            .replace("{{categories}}", cats_str)
+            .replace("{{task}}", task_str)
+            + "\n\nText:\n" + text[:4000]
+        )
 
         import httpx
         try:
@@ -543,6 +547,107 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 "model": _model("text"),
                 "workspace_id": ws,
             }
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
+
+    @mcp.tool()
+    def pi_mark_categories(
+        text: str,
+        task: str = "",
+        codebook: list[str] | None = None,
+        workspace_id: str | None = None,
+        timeout: float = 90.0,
+    ) -> dict:
+        """Textmarker — Mayring-categorize a chunk with SPAN-LEVEL evidence.
+
+        Anders als pi_categorize (gibt nur labels für den ganzen chunk):
+        dieses tool markiert konkrete Textabschnitte und ordnet jedem
+        Abschnitt eine Kategorie zu, MIT der paraphrase-begründung. So ist
+        jede Kategorie LOGISCH am Text nachvollziehbar — der "Beweis" für
+        die Kategorie ist der markierte Abschnitt. Output kann ins Wiki als
+        category-evidence persistiert werden (folge-PR).
+
+        Args:
+            text: The chunk text (max ~4000 chars).
+            task: Topic(s) to look for — Mayring Selektionskriterium.
+                  Empty → derive from text.
+            codebook: optional anchor categories (hybrid mode); None → induktiv.
+            workspace_id: tenant scope.
+            timeout: Pi-Agent call timeout.
+
+        Returns:
+            {markings: [{span: [start, end], excerpt, category, reasoning}],
+             model} oder {error}. span = char offsets into `text`.
+        """
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        if not text or len(text.strip()) < 10:
+            return {"error": "text too short (<10 chars)", "workspace_id": ws}
+
+        task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
+        anchors = ", ".join(codebook) if codebook else "(keine — bilde induktiv)"
+
+        sys_prompt = (
+            "Du bist ein qualitativer Inhaltsanalytiker (Mayring). Aus dem "
+            f"Thema bekommst du, worauf du den Text untersuchen sollst.\n"
+            f"Thema: {task_str}\n"
+            f"Anker-Kategorien (nutze wenn passend, sonst induktiv neu bilden): {anchors}\n\n"
+            "Markiere konkrete Textabschnitte, paraphrasiere jeden bezogen "
+            "aufs Thema, generalisiere, reduziere zu einer Kategorie. Jede "
+            "Kategorie MUSS sich logisch am markierten Abschnitt nachvollziehen "
+            "lassen — keine Kategorie ohne Beleg. Ein Abschnitt kann mehrere "
+            "Kategorien haben; Kategorien können sich überlappen. Wenn der Text "
+            "nichts zum Thema beiträgt: leeres markings-array.\n\n"
+            "Output STRICT JSON: "
+            '{"markings":[{"excerpt":"<wortwörtliches textstück>",'
+            '"category":"<lowercase-label>","reasoning":"<paraphrase: was sagt '
+            'der abschnitt bzgl. des themas, warum diese kategorie>"}]}\n'
+            "Kein prosa, kein markdown. excerpt MUSS wortwörtlich im Text "
+            "vorkommen (wir berechnen die char-offsets selbst)."
+        )
+
+        import httpx
+        import json as _json
+        try:
+            resp = httpx.post(
+                f"{_OLLAMA_URL}/api/generate",
+                json={
+                    "model": _model("text"),
+                    "prompt": sys_prompt + "\n\nText:\n" + text[:4000],
+                    "format": "json",
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 800},
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("response", "").strip()
+            data = _json.loads(raw)
+            markings_in = data.get("markings", []) or []
+            markings_out = []
+            for m in markings_in[:20]:
+                if not isinstance(m, dict):
+                    continue
+                excerpt = str(m.get("excerpt", "")).strip()
+                category = str(m.get("category", "")).strip().lower()
+                reasoning = str(m.get("reasoning", "")).strip()
+                if not excerpt or not category:
+                    continue
+                # Resolve char-offsets ourselves — don't trust LLM-reported spans.
+                idx = text.find(excerpt)
+                span = [idx, idx + len(excerpt)] if idx >= 0 else None
+                markings_out.append({
+                    "span": span,  # None = excerpt not found verbatim (LLM paraphrased it)
+                    "excerpt": excerpt[:300],
+                    "category": category[:50],
+                    "reasoning": reasoning[:400],
+                })
+            return {
+                "markings": markings_out,
+                "model": _model("text"),
+                "workspace_id": ws,
+            }
+        except _json.JSONDecodeError as exc:
+            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
         except Exception as exc:
             return {"error": str(exc), "workspace_id": ws}
 
