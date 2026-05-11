@@ -40,6 +40,17 @@ _WATCH_WORKFLOWS = {
     "Nileneb/MayringCoder": None,
     "Nileneb/app.linn.games": None,
 }
+# WHY(2026-05-11): known-noise workflows. "Automatic Dependency Submission"
+# ist GitHub's auto-dependency-graph-job (kein file im repo) — läuft auf
+# jeden push inkl. ephemeral feature-branches, aber wir squash-merge +
+# delete-branch sofort → die job kann die branch nicht mehr checkouten →
+# "couldn't find remote ref" → fail. Harmlos (dependency-graph für master
+# funktioniert), aber rauscht im hook. Hier rausfiltern — der hook soll
+# nur ECHTE CI-fails (tests, deploy, smoke, build) melden.
+_IGNORE_WORKFLOW_SUBSTRINGS = (
+    "automatic dependency submission",
+    "dependency submission",
+)
 
 
 def _gh(args: list[str], timeout: float = 8.0) -> dict | list | None:
@@ -93,6 +104,14 @@ def _check_ci(repo: str, state: dict) -> list[str]:
     for r in runs:
         if r.get("conclusion") == "failure" and r.get("status") == "completed":
             run_id = str(r.get("databaseId"))
+            name_lc = str(r.get("name", "")).lower()
+            # Skip known-noise workflows (branch-delete-race on auto-submission).
+            if any(sub in name_lc for sub in _IGNORE_WORKFLOW_SUBSTRINGS):
+                # Record it as seen so it doesn't keep getting re-evaluated,
+                # but don't surface a warning.
+                if run_id not in seen_failed:
+                    new_failed.append(run_id)
+                continue
             if run_id not in seen_failed:
                 warnings.append(
                     f"- **{repo} CI**: `{r.get('name')}` FAILED "
