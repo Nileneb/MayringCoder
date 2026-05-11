@@ -460,3 +460,56 @@ def register_memory_tools(mcp: FastMCP) -> None:
             return {"chunk_id": chunk_id, "recorded": True}
         except Exception as exc:
             return {"error": str(exc)}
+
+    @mcp.tool()
+    def live_logs(
+        service: str,
+        since: str = "5m",
+        grep: str | None = None,
+        limit: int = 200,
+    ) -> dict:
+        """Tail docker-container logs without SSH — Phase B of Issue #213.
+
+        Replaces manual ``ssh u-server docker logs ...`` calls for deploy-
+        debug / smoke-fail / cloud-routing investigations.
+
+        Args:
+            service: api | pi | mcp | webui | nginx
+            since:   1m | 5m | 15m | 30m | 1h | 6h | 24h (whitelist)
+            grep:    case-insensitive substring filter (optional)
+            limit:   max lines returned (1..500)
+
+        Returns:
+            {service, container, since, grep, total, truncated, lines:
+             [{container, raw, level}]}
+
+        Auth: admin scope required. Secret-redaction applied
+        (JWT/Bearer/hex/password/conn-strs maskiert).
+
+        Rate: 5 calls/min/admin.
+        """
+        from fastapi import HTTPException as _HTTPException
+        from src.api.routes.admin_logs import admin_logs as _impl
+        from src.api.jwt_auth import TokenInfo as _TokenInfo
+
+        # The MCP session already validated the JWT — we synthesize a
+        # TokenInfo with admin scope inferred from the same auth context
+        # that registered this tool. Without a per-session token-info
+        # here, fall through to the same _is_admin check by re-reading
+        # the session header.
+        try:
+            from src.api.mcp_auth import _current_token_info
+            info = _current_token_info()
+            if info is None:
+                return {"error": "no token info — MCP session not authenticated"}
+        except Exception:
+            return {"error": "no token info available — call via authenticated MCP session"}
+
+        try:
+            return _impl(
+                service=service, since=since, grep=grep, limit=limit, info=info,
+            )
+        except _HTTPException as e:
+            return {"error": str(e.detail), "status": e.status_code}
+        except Exception as exc:
+            return {"error": str(exc)}

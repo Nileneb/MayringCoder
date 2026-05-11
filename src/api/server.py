@@ -79,6 +79,8 @@ app.include_router(_reranker_admin.router)
 app.include_router(_pi_stats.router)
 from src.api.routes import reconcile_admin as _reconcile_admin
 app.include_router(_reconcile_admin.router)
+from src.api.routes import admin_logs as _admin_logs
+app.include_router(_admin_logs.router)
 
 
 @app.on_event("startup")
