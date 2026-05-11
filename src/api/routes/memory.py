@@ -310,7 +310,8 @@ async def memory_put(
             source_dict["org_id"] = request.org_id
 
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
-                             _OLLAMA_URL, _model("text"), {"categorize": request.categorize},
+                             _OLLAMA_URL, _model("text"),
+                             {"categorize": request.categorize, "task": request.task},
                              workspace_id)
         if source_dict.get("source_type") == "paper":
             _threading.Thread(
