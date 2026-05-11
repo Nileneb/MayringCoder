@@ -196,3 +196,80 @@ def test_pi_summarize_handles_ollama_error(tools):
         result = fn(content="a" * 50)
     assert "error" in result
     assert "connection refused" in result["error"]
+
+
+# ── pi_mark_categories (textmarker — span-level evidence) ────────
+
+def test_pi_mark_categories_returns_span_markings(tools):
+    fn = tools["pi_mark_categories"]
+    text = "The study used a randomized controlled design. Participants were nurses in ICU settings."
+    with patch("httpx.post", return_value=_mock_ollama_response({
+        "markings": [
+            {"excerpt": "randomized controlled design", "category": "study-design", "reasoning": "names the trial design"},
+            {"excerpt": "nurses in ICU settings", "category": "population", "reasoning": "describes the sample"},
+        ],
+    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text=text, task="welches studiendesign + welche population?")
+    assert len(result["markings"]) == 2
+    m0 = result["markings"][0]
+    assert m0["category"] == "study-design"
+    assert m0["span"] == [text.find("randomized controlled design"),
+                          text.find("randomized controlled design") + len("randomized controlled design")]
+    assert "trial design" in m0["reasoning"]
+
+
+def test_pi_mark_categories_span_none_when_excerpt_not_verbatim(tools):
+    """If the LLM paraphrased the excerpt instead of quoting verbatim, span=None."""
+    fn = tools["pi_mark_categories"]
+    with patch("httpx.post", return_value=_mock_ollama_response({
+        "markings": [{"excerpt": "this text does not appear", "category": "x", "reasoning": "r"}],
+    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some actual chunk content here", task="t")
+    assert result["markings"][0]["span"] is None
+
+
+def test_pi_mark_categories_drops_markings_without_category(tools):
+    fn = tools["pi_mark_categories"]
+    with patch("httpx.post", return_value=_mock_ollama_response({
+        "markings": [
+            {"excerpt": "valid", "category": "good-cat", "reasoning": "r"},
+            {"excerpt": "no category", "category": "", "reasoning": "r"},
+            {"excerpt": "", "category": "no-excerpt", "reasoning": "r"},
+        ],
+    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="valid no category content", task="t")
+    assert len(result["markings"]) == 1
+    assert result["markings"][0]["category"] == "good-cat"
+
+
+def test_pi_mark_categories_empty_markings_when_off_topic(tools):
+    fn = tools["pi_mark_categories"]
+    with patch("httpx.post", return_value=_mock_ollama_response({"markings": []})), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="unrelated content here entirely", task="something else")
+    assert result["markings"] == []
+
+
+def test_pi_mark_categories_rejects_short_text(tools):
+    fn = tools["pi_mark_categories"]
+    result = fn(text="hi", task="t")
+    assert "error" in result
+
+
+def test_pi_mark_categories_handles_json_parse_fail(tools):
+    fn = tools["pi_mark_categories"]
+    bad = MagicMock()
+    bad.raise_for_status = MagicMock()
+    bad.json.return_value = {"response": "not json {{{"}
+    with patch("httpx.post", return_value=bad), patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some chunk content", task="t")
+    assert "error" in result and "JSON parse fail" in result["error"]
+
+
+def test_pi_categorize_accepts_task_arg(tools):
+    """pi_categorize now takes a `task` — it should not error and the call goes through."""
+    fn = tools["pi_categorize"]
+    with patch("httpx.post", return_value=_mock_ollama_text("study-design, population")), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some chunk content here about a trial", task="welches studiendesign?", mode="inductive")
+    assert result["labels"] == ["study-design", "population"]

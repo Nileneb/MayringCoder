@@ -194,6 +194,7 @@ def mayring_categorize(
     conn: Any = None,
     router: "ModelRouter | None" = None,
     workspace_id: str = "default",
+    task: str = "",
 ) -> "list[Chunk]":
     """Assign Mayring category labels to each chunk via LLM.
 
@@ -204,6 +205,11 @@ def mayring_categorize(
         source_type: used for auto-detection of codebook
         conn: optional SQLite connection for error logging
         router: optional ModelRouter for task-based model selection
+        task: the task/topic the categorization anchors to (Mayring
+              Selektionskriterium). Empty → prompt derives the topic from
+              the chunk itself. Domain-neutral string; callers just pass
+              whatever they're working on (a question, a research topic,
+              a code-task) — no special-casing here.
     """
     if router is not None and not model and router.is_available("text"):
         model = router.resolve("text")
@@ -219,7 +225,12 @@ def mayring_categorize(
     categories = _resolve_codebook(codebook, source_type)
     valid_set = {c.lower() for c in categories if c}
     template = _load_mayring_template(mode)
-    system_prompt = template.replace("{{categories}}", ", ".join(categories))
+    task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
+    system_prompt = (
+        template
+        .replace("{{categories}}", ", ".join(categories))
+        .replace("{{task}}", task_str)
+    )
 
     for chunk in chunks:
         try:
