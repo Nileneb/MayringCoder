@@ -144,6 +144,11 @@ def ingest(
     do_force:      bool = bool(effective.get("force", False))
     mode:          str  = effective.get("mode", "hybrid")
     codebook_choice: str = effective.get("codebook", "auto")
+    # WHY(2026-05-11): Mayring Selektionskriterium — das Thema worauf
+    # kategorisiert wird. Callers (app.linn.games paper-ingest: die
+    # forschungsfrage; memory-hook: der derived task) geben das mit.
+    # Empty → die prompts leiten das Thema aus dem chunk selbst ab.
+    categorize_task: str = str(effective.get("task", "") or "")
 
     from src.analysis.context import _embed_texts
 
@@ -197,6 +202,7 @@ def ingest(
                 conn=conn,
                 router=router,
                 workspace_id=workspace_id,
+                task=categorize_task,
             )
 
         new_chunk_ids: list[str] = []

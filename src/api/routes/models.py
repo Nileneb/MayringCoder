@@ -90,6 +90,11 @@ class MemoryPutRequest(BaseModel):
     path: str = ""
     content: str
     categorize: bool = False
+    # WHY(2026-05-11): Mayring Selektionskriterium — das Thema worauf
+    # kategorisiert wird (z.B. die forschungsfrage bei paper-ingest aus
+    # app.linn.games). Empty → die prompts leiten das Thema aus dem
+    # chunk selbst ab.
+    task: str = ""
     # V2 visibility — optional; defaults to 'private' downstream.
     # 'org' requires membership in org_id (or first org_id if not given).
     visibility: str | None = None
