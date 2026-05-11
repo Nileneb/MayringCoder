@@ -129,8 +129,15 @@ def main() -> None:
             # still nothing — keep the marker so a future run / model can retry
             still_empty += 1
         done += 1
+        # WHY(2026-05-12, db-lock): commit after EVERY chunk, not every 25.
+        # The old batch-of-25 kept a single write transaction open across ~25
+        # mistral calls (~2 min) → any concurrent process running
+        # _init_schema DDL hit `database is locked` past the 10s busy_timeout
+        # and crashed (workspace:system pipeline errors in JobHistory). The
+        # mistral call dominates; one extra COMMIT per chunk is free, and the
+        # write lock is now held for milliseconds instead of minutes.
+        conn.commit()
         if done % 25 == 0:
-            conn.commit()
             print(f"  ... {done}/{len(rows)} ({relabeled} relabeled, {still_empty} still empty)")
 
     conn.commit()
