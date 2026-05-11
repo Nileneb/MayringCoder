@@ -128,3 +128,15 @@ def test_recovery_after_crash_updates_cache():
         result = stats_summary(workspace_id="default")
     assert result["_cache_status"] == "fresh"
     assert result["chunks"]["active"] == 999  # cache updated to new numbers
+
+
+def test_bust_stats_cache_clears_fresh_keeps_stale():
+    from src.api.server import bust_stats_cache, _STATS_CACHE
+    _STATS_CACHE["fresh"] = {"x": 1}
+    _STATS_CACHE["stale"] = {"x": 1}
+    _STATS_CACHE["expires_at"] = 9e9  # far future
+    bust_stats_cache()
+    assert _STATS_CACHE["fresh"] is None
+    assert _STATS_CACHE["expires_at"] == 0.0
+    # stale slot preserved (disaster-fallback)
+    assert _STATS_CACHE["stale"] == {"x": 1}

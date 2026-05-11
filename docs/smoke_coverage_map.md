@@ -143,4 +143,12 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 |---|---|---|
 | 182 | IGIO-Backfill hält SQLite-Lock zu lang | Pytest `tests/test_igio_backfill.py` chunked-commit + smoke `db_wal_journal_active` (Lock-acquire-Probe unter 1s) |
 | 183 | Pi-Agent: Job-Verteilung & In-Process-Queue stabilisieren | API: `pi_tasks_schema` + `/pi-jobs/stats` (job_class p50/p95) + Pytest `tests/test_pi_queue.py` (3-lane priority routing, with_lanes(), classify_pi_job) |
-| 192 | Ollama-API-Skalierung: parallel-jobs + Pi-Worker-Pool | host: OLLAMA_NUM_PARALLEL=4 + MAX_LOADED_MODELS=3 (systemd override) · code: PiQueue 3-lane (commit d0b2e5f) · resilience: cloud-fallback (commit da3ba6c) — falls lokal überlastet, OLLAMA_CLOUD_API_KEY triggert ollama.com bei letztem Retry |
+| 192 | Ollama-API-Skalierung: parallel-jobs + Pi-Worker-Pool | host: OLLAMA_NUM_PARALLEL=4 + MAX_LOADED_MODELS=3 (systemd override) · code: PiQueue 3-lane defaults 4/4/2 (PR #219) · resilience: cloud-fallback OLLAMA_CLOUD_API_KEY |
+
+## Recently Closed (today, 2026-05-11)
+
+| # | Description | Coverage |
+|---|---|---|
+| 209 | Reranker-Training: rating-basiert statt binary | `tools/export_retrieval_dataset.py::_label_map` rating 1..5 → (label, sample_weight); `tools/train_reranker.py` `clf.fit(sample_weight=…)`; Pytest `tests/test_export_retrieval_dataset.py` (6 rating-weighted tests) — PR #216 |
+| 211 | Pi-Agent als first-class tool-replacement | `claude-plugin/agents/` (subagent-def, später dropped) + 3 spezialisierte MCP-tools `pi_categorize`/`pi_judge_relevance`/`pi_summarize_for_memory` (`src/api/mcp_agent_tools.py`) + CLAUDE.md decision-table; Pytest `tests/test_pi_specialized_tools.py` (11 tests) — PR #218/#223 |
+| 213 | Log-Endpoints ohne SSH (Phase A+B) | API: `GET /admin/logs?service=...&since=...&grep=...` (admin-scope, rate-limit 5/min, secret-redaction) + MCP-tool `live_logs`; Pytest `tests/test_admin_logs.py` (20 tests) — PR #218. Phase C+D (Laravel-proxy + UI) → app.linn.games separat |
