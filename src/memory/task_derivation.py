@@ -1,0 +1,281 @@
+"""Task-derivation: Userprompt → Forschungsfrage (Mayring-konform).
+
+Mayring-Inhaltsanalyse arbeitet konstitutiv kategorien-geleitet aus einer
+Forschungsfrage. Die alten tech-labels (api, ui, data_access, +
+[neu]…-Inflation) erfüllten das nicht — sie clusterten nach Code-Domäne,
+nicht nach "was hilft mir bei diesem Vorhaben".
+
+Diese Modul leitet aus einem User-Prompt einen **Task-Title** ab
+(5-12 Wörter, einer pro Prompt). Cascade:
+  1. Embedding-similarity-check gegen existierende task_categories
+  2. Wenn top-match sim > 0.85 → reuse (occurrence_count++)
+  3. Sonst → mistral:7b-instruct call mit strikten JSON-prompt,
+     persistiere neue task_categories row mit embedding.
+
+Cascade verhindert task-vocabulary-explosion + nutzt three.linn.games-GPU
+statt Cloud-Calls (siehe globale CLAUDE.md-Präferenz).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+import time
+import uuid
+from typing import Optional
+
+from src.memory.db_adapter import DBAdapter
+
+_log = logging.getLogger(__name__)
+
+# WHY(2026-05-11): 0.85 ist empirisch — gleicher prompt-thema clustert
+# >0.85 mit nomic-embed-text. Niedriger = task-fragmentation; höher =
+# duplikate. Anpassbar via env wenn nötig.
+_TASK_SIM_THRESHOLD = 0.85
+
+_TASK_DERIVATION_PROMPT = """Du extrahierst aus einem User-Prompt EINE Forschungsfrage/Task im Stil der Mayring-Inhaltsanalyse.
+
+Eine Task ist:
+- 5-12 Wörter
+- Konkrete Aufgabe oder Frage des Users
+- Sprachlich neutral (kein "ich will", "können wir", "bitte")
+- Wenn möglich Deutsch (User-Sprache aus dem Prompt)
+
+Antworte AUSSCHLIESSLICH mit JSON: {"task": "<task-title>"}
+Keine Erklärung, keine Codeblöcke, kein Markdown.
+
+Beispiele:
+Prompt: "wie kann ich JWT-tokens validieren mit Sanctum?"
+Antwort: {"task": "JWT-Token-Validierung mit Sanctum implementieren"}
+
+Prompt: "der deploy ist schon wieder kaputt, was läuft falsch?"
+Antwort: {"task": "Deploy-Fehler diagnostizieren und beheben"}
+
+Prompt: "show me where we handle paper PDF download"
+Antwort: {"task": "Paper-PDF-Download-Logik lokalisieren"}
+
+User-Prompt: """
+
+
+def _embed_text(text: str, ollama_url: str) -> Optional[list[float]]:
+    """Embed via nomic-embed-text. Returns None on failure (caller must handle)."""
+    try:
+        import requests
+        resp = requests.post(
+            ollama_url.rstrip("/") + "/api/embed",
+            json={"model": "nomic-embed-text", "input": text},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            _log.warning("task-derive embed HTTP %s", resp.status_code)
+            return None
+        data = resp.json()
+        embeddings = data.get("embeddings") or [data.get("embedding")]
+        if embeddings and embeddings[0]:
+            return list(embeddings[0])
+        return None
+    except Exception as e:
+        _log.warning("task-derive embed failed: %s", e)
+        return None
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _load_task_embeddings(
+    conn: DBAdapter, workspace_id: str
+) -> list[tuple[str, str, list[float]]]:
+    """Return [(task_id, title, embedding)] for non-empty embeddings in this workspace."""
+    rows = conn.execute(
+        """SELECT task_id, title, embedding_id FROM task_categories
+           WHERE workspace_id = ? AND embedding_id != ''""",
+        (workspace_id,),
+    ).fetchall()
+
+    # embedding_id holds a JSON-encoded vector (we keep it inline rather than
+    # in Chroma to avoid a roundtrip per derive — task corpus is small
+    # (<10k expected) and dimensions are 768).
+    result = []
+    for row in rows:
+        try:
+            vec = json.loads(row[2])
+            if isinstance(vec, list) and vec:
+                result.append((row[0], row[1], vec))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return result
+
+
+def _call_mistral_for_task(prompt: str, ollama_url: str, model: str) -> Optional[str]:
+    """Returns task-title from mistral JSON-mode, or None on parse-fail."""
+    try:
+        import requests
+        resp = requests.post(
+            ollama_url.rstrip("/") + "/api/generate",
+            json={
+                "model": model,
+                "prompt": _TASK_DERIVATION_PROMPT + prompt.strip()[:1500],
+                "format": "json",
+                "stream": False,
+                "options": {"temperature": 0.2, "num_predict": 100},
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            _log.warning("task-derive mistral HTTP %s", resp.status_code)
+            return None
+
+        raw = resp.json().get("response", "").strip()
+        # WHY: format=json should yield pure JSON, but mistral occasionally
+        # wraps in markdown — strip fences defensively.
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+
+        data = json.loads(raw)
+        task = data.get("task")
+        if isinstance(task, str) and 5 <= len(task) <= 200:
+            return task.strip()
+        return None
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        _log.warning("task-derive mistral parse fail: %s", e)
+        return None
+    except Exception as e:
+        _log.warning("task-derive mistral call fail: %s", e)
+        return None
+
+
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def derive_task(
+    prompt: str,
+    conn: DBAdapter,
+    ollama_url: str,
+    workspace_id: str = "default",
+    *,
+    model: Optional[str] = None,
+    sim_threshold: float = _TASK_SIM_THRESHOLD,
+) -> Optional[dict]:
+    """Derive (or reuse) a task_category for a user prompt.
+
+    Cascade:
+      1. Embed prompt
+      2. Compare to all existing task embeddings in this workspace
+      3. If best > sim_threshold: increment occurrence_count, return existing
+      4. Else: mistral-call → new task_categories row
+
+    Returns {"task_id": ..., "title": ..., "reused": bool} or None on failure.
+    """
+    prompt = (prompt or "").strip()
+    if len(prompt) < 5:
+        return None
+
+    prompt_emb = _embed_text(prompt, ollama_url)
+    if prompt_emb is None:
+        return None
+
+    existing = _load_task_embeddings(conn, workspace_id)
+
+    best_task_id: Optional[str] = None
+    best_title: Optional[str] = None
+    best_sim = 0.0
+    for task_id, title, vec in existing:
+        sim = _cosine(prompt_emb, vec)
+        if sim > best_sim:
+            best_sim = sim
+            best_task_id = task_id
+            best_title = title
+
+    if best_task_id is not None and best_sim >= sim_threshold:
+        conn.execute(
+            """UPDATE task_categories
+               SET occurrence_count = occurrence_count + 1,
+                   last_used_at = ?
+               WHERE task_id = ?""",
+            (_now_iso(), best_task_id),
+        )
+        return {"task_id": best_task_id, "title": best_title, "reused": True}
+
+    # Cascade-fall-through → mistral
+    if model is None:
+        try:
+            from src.model_router import ModelRouter
+            router = ModelRouter(ollama_url=ollama_url)
+            model = router.resolve("text")
+        except Exception:
+            model = "mistral:7b-instruct"
+
+    task_title = _call_mistral_for_task(prompt, ollama_url, model)
+    if not task_title:
+        return None
+
+    # Embed the canonical title (not the prompt) so future similarity
+    # checks compare task-to-task, not prompt-to-prompt.
+    title_emb = _embed_text(task_title, ollama_url)
+    if title_emb is None:
+        return None
+
+    task_id = "task_" + hashlib.sha256(task_title.encode()).hexdigest()[:16]
+    now = _now_iso()
+    conn.execute(
+        """INSERT OR IGNORE INTO task_categories
+           (task_id, title, embedding_id, occurrence_count, first_seen_at, last_used_at, workspace_id)
+           VALUES (?, ?, ?, 1, ?, ?, ?)""",
+        (task_id, task_title, json.dumps(title_emb), now, now, workspace_id),
+    )
+
+    return {"task_id": task_id, "title": task_title, "reused": False}
+
+
+def link_chunk_to_task(
+    conn: DBAdapter,
+    task_id: str,
+    chunk_id: str,
+    relevance_score: float = 1.0,
+) -> None:
+    """Insert or boost a task_chunk_links row. Idempotent: re-call increments score."""
+    existing = conn.execute(
+        "SELECT relevance_score FROM task_chunk_links WHERE task_id = ? AND chunk_id = ?",
+        (task_id, chunk_id),
+    ).fetchone()
+
+    if existing is not None:
+        new_score = min(5.0, float(existing[0]) + relevance_score)
+        conn.execute(
+            "UPDATE task_chunk_links SET relevance_score = ? WHERE task_id = ? AND chunk_id = ?",
+            (new_score, task_id, chunk_id),
+        )
+    else:
+        conn.execute(
+            """INSERT INTO task_chunk_links (task_id, chunk_id, relevance_score, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (task_id, chunk_id, relevance_score, _now_iso()),
+        )
+
+
+def get_task_boost_for_chunks(
+    conn: DBAdapter,
+    task_id: str,
+    chunk_ids: list[str],
+) -> dict[str, float]:
+    """Return {chunk_id → relevance_score} for chunks linked to the given task."""
+    if not task_id or not chunk_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(chunk_ids))
+    rows = conn.execute(
+        f"""SELECT chunk_id, relevance_score FROM task_chunk_links
+            WHERE task_id = ? AND chunk_id IN ({placeholders})""",
+        [task_id] + chunk_ids,
+    ).fetchall()
+    return {row[0]: float(row[1]) for row in rows}

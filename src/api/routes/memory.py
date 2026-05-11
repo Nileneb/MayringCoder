@@ -124,8 +124,31 @@ async def memory_search(
             opts["category_hint"] = [
                 c.lower().strip() for c in request.category_hint if c and c.strip()
             ]
+
+        # WHY(2026-05-11, task-categorization): Mayring-konformer
+        # task-derive aus dem query. Cascade: erst embedding-similarity
+        # zu existierenden tasks, sonst mistral-call. Resultat wird zum
+        # boost im _rerank für chunks die bei semantisch ähnlichen tasks
+        # schon positiv bewertet wurden. Ist die saubere Ablösung der
+        # alten tech-label-cluster ([neu]configuration etc).
+        try:
+            from src.memory.task_derivation import derive_task
+            task = derive_task(
+                request.query, _get_conn(), _OLLAMA_URL, workspace_id,
+            )
+            if task:
+                opts["task_id"] = task["task_id"]
+        except Exception as exc:
+            # task-derive ist optional — fail soft (Logger im modul warnt).
+            import logging
+            logging.getLogger(__name__).warning("task-derive skipped: %s", exc)
+
         result = _run_search(request.query, _get_conn(), _get_chroma(), _OLLAMA_URL,
                              opts, request.char_budget)
+        # Task-id im response damit feedback-calls sie zurück-senden können
+        # (sonst geht der task-chunk-link verloren).
+        if "task_id" in opts:
+            result["task_id"] = opts["task_id"]
         return {"workspace_id": workspace_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

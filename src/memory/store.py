@@ -444,6 +444,44 @@ def _init_schema(conn: DBAdapter) -> None:
         -- Aliases ermöglichen Migration ohne Datenverlust: alte Aufrufe
         -- mit workspace_id="default" oder "nileneb-mayringcoder" werden
         -- über diese Tabelle auf den kanonischen Workspace abgebildet.
+        -- WHY(2026-05-11, task-categorization): Mayring-konforme
+        -- forschungsfragen-basierte Kategorisierung. Vor diesem schema
+        -- haben chunks tech-labels (api, ui, data_access) bekommen die
+        -- weder retrieval-relevant noch self-organisierend waren — LLM
+        -- erfand täglich neue [neu]label, kein cluster-effekt.
+        -- task_categories: 1 row per durch derive_task() identifizierte
+        -- forschungsfrage. Aus user-prompts emergierend, semantisch
+        -- geclustert via embedding-similarity (>0.85 = same task).
+        CREATE TABLE IF NOT EXISTS task_categories (
+            task_id           TEXT PRIMARY KEY,
+            title             TEXT NOT NULL,
+            embedding_id      TEXT NOT NULL DEFAULT '',
+            parent_task_id    TEXT REFERENCES task_categories(task_id) ON DELETE SET NULL,
+            occurrence_count  INTEGER NOT NULL DEFAULT 1,
+            first_seen_at     TEXT NOT NULL,
+            last_used_at      TEXT NOT NULL,
+            workspace_id      TEXT NOT NULL DEFAULT 'default'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_task_categories_workspace
+            ON task_categories(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_task_categories_last_used
+            ON task_categories(last_used_at);
+
+        -- task_chunk_links: gibt einem chunk ein relevance-score für eine
+        -- task (geboostet wenn der chunk bei einem ähnlichen task schon
+        -- positive feedback bekam). Pro task & chunk genau eine row.
+        CREATE TABLE IF NOT EXISTS task_chunk_links (
+            task_id           TEXT NOT NULL REFERENCES task_categories(task_id) ON DELETE CASCADE,
+            chunk_id          TEXT NOT NULL REFERENCES chunks(chunk_id) ON DELETE CASCADE,
+            relevance_score   REAL NOT NULL DEFAULT 1.0,
+            created_at        TEXT NOT NULL,
+            PRIMARY KEY (task_id, chunk_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_task_chunk_links_chunk
+            ON task_chunk_links(chunk_id);
+
         CREATE TABLE IF NOT EXISTS workspace_aliases (
             alias            TEXT PRIMARY KEY,
             workspace_id     TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -674,6 +712,23 @@ def add_feedback(
         """,
         (chunk_id, signal, json.dumps(metadata or {}), _now_iso()),
     )
+
+    # WHY(2026-05-11, task-categorization): bei rating>=4 die chunk-zu-task
+    # link verstärken, sodass das beim nächsten ähnlichen prompt geboostet
+    # wird. metadata muss task_id enthalten (vom memory_inject hook gesetzt).
+    rating = int(signal)
+    task_id = (metadata or {}).get("task_id") if metadata else None
+    if rating >= 4 and isinstance(task_id, str) and task_id:
+        try:
+            from src.memory.task_derivation import link_chunk_to_task
+            # Score: rating 4 = +0.5, rating 5 = +1.0. Verstärkt sich bei
+            # wiederholtem positiv-feedback (clipped bei 5.0 im link).
+            score = (rating - 3) * 0.5
+            link_chunk_to_task(conn, task_id, chunk_id, relevance_score=score)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("task-chunk-link failed: %s", e)
+
     _maybe_commit(conn)
 
 
