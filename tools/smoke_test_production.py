@@ -411,10 +411,23 @@ def check_micro_batch_indexes(api: str, token: str) -> CheckResult:
     )
     indexed = bool((body or {}).get("indexed"))
     sid = (body or {}).get("source_id", "")
+
+    # WHY(2026-05-11): cleanup — vorher hat jeder smoke-run eine
+    # conversation:system:smoke-{ts}-source hinterlassen → workspace=system
+    # füllte sich mit test-müll (211 chunks in 6h). Nach der index-prüfung
+    # invalidieren wir die source wieder. Best-effort: ein fehlgeschlagener
+    # cleanup macht den check nicht rot (der eigentliche test ist indexed=True).
+    if sid:
+        try:
+            _http("POST", f"{api}/memory/invalidate", token,
+                  body={"source_id": sid}, timeout=10.0)
+        except Exception:
+            pass
+
     return CheckResult(
         "micro_batch_indexes",
         code == 200 and indexed,
-        f"http={code} time={dt:.2f}s indexed={indexed} source_id={sid}",
+        f"http={code} time={dt:.2f}s indexed={indexed} source_id={sid} (cleaned up)",
     )
 
 
