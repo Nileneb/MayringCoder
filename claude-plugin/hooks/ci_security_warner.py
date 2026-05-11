@@ -17,10 +17,14 @@ prompt dieselben open-alerts).
 
 Output: NUR wenn etwas problematisch — sonst silent skip.
 
+Watched per repo: CI runs (failure), code-scanning alerts (CodeQL),
+Dependabot alerts (vulnerable deps).
+
 Output-format (gets injected as prompt-prefix):
     ## ⚠️ CI/Security-Watch
     - **MayringCoder CI**: Post-deploy smoke FAILED (workflow_run 25640...)
-    - **app.linn.games CodeQL**: 2 NEUE alerts (severity=warning)
+    - **app.linn.games Security**: 2 NEUE code-scanning alert(s): #4(warning)
+    - **app.linn.games Dependabot**: 1 NEUE alert(s): #61 urllib3(medium) → https://...
 """
 from __future__ import annotations
 
@@ -142,7 +146,40 @@ def _check_security(repo: str, state: dict) -> list[str]:
                   for n in new_alerts}
     sev_str = ", ".join(f"#{n}({s})" for n, s in severities.items())
     return [
-        f"- **{repo} Security**: {len(new_alerts)} NEUE alert(s): {sev_str}"
+        f"- **{repo} Security**: {len(new_alerts)} NEUE code-scanning alert(s): {sev_str}"
+    ]
+
+
+def _check_dependabot(repo: str, state: dict) -> list[str]:
+    """Warn if open Dependabot alerts went UP since last check.
+
+    WHY(2026-05-12): _check_security only covered code-scanning (CodeQL).
+    Dependabot alerts (vulnerable deps) live at a separate endpoint and
+    were never surfaced — 2 high-severity urllib3/etc CVEs on
+    app.linn.games sat unnoticed until the user pasted the URL by hand.
+    Same "new since last check" diff against state to avoid re-spam.
+    """
+    alerts = _gh([
+        "api", f"repos/{repo}/dependabot/alerts?state=open&per_page=100",
+        "--jq", "[.[] | {n:.number, pkg:.dependency.package.name, "
+                "sev:.security_advisory.severity, ghsa:.security_advisory.ghsa_id}]",
+    ])
+    if alerts is None:
+        return []
+    cur_numbers = sorted(a.get("n") for a in alerts if a.get("n") is not None)
+    prev = state.setdefault("dependabot_counts", {}).get(repo, [])
+    new_alerts = [n for n in cur_numbers if n not in prev]
+    state["dependabot_counts"][repo] = cur_numbers
+    if not new_alerts:
+        return []
+    by_n = {a["n"]: a for a in alerts}
+    parts = []
+    for n in new_alerts:
+        a = by_n.get(n, {})
+        parts.append(f"#{n} {a.get('pkg', '?')}({a.get('sev', '?')})")
+    return [
+        f"- **{repo} Dependabot**: {len(new_alerts)} NEUE alert(s): {', '.join(parts)} "
+        f"→ https://github.com/{repo}/security/dependabot"
     ]
 
 
@@ -153,6 +190,7 @@ def main() -> int:
     for repo in _REPOS:
         warnings.extend(_check_ci(repo, state))
         warnings.extend(_check_security(repo, state))
+        warnings.extend(_check_dependabot(repo, state))
 
     _save_state(state)
 
