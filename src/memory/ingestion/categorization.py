@@ -53,19 +53,39 @@ _MODE_TO_TEMPLATE: dict[str, str] = {
     "hybrid":    "mayring_hybrid",
 }
 
-# Ingest defaults per source_type — no more scattered opts in callers
+# Ingest defaults per source_type — no more scattered opts in callers.
+#
+# `codebook` picks the ANCHOR set the hybrid prompt offers the model:
+#   - "auto"  → code-side anchors (universal.yaml: api/auth/data_access/...)
+#               for repo_file / note — files in a codebase.
+#   - "social"→ qualitative-research anchors (social.yaml: argumentation/
+#               methodik/ergebnis/...) for prose: papers, conversations,
+#               github issues, session knowledge.
+# WHY(2026-05-12): `agent_result` was MISSING here. app.linn.games sends
+# paper full-text via /ingest with source_type="agent_result" (see
+# MayringSearchClient::ingestAndCategorize), so it fell through to
+# _INGEST_DEFAULT_FALLBACK (codebook="auto") → code anchors → healthcare
+# papers got tagged `api, data_access, domain, auth`. agent_result is
+# always research-context content here → "social", same as "paper".
 _INGEST_DEFAULTS: dict[str, dict] = {
+    # code / files-in-a-repo → code anchors
     "repo_file":            {"categorize": True,  "codebook": "auto",   "mode": "hybrid", "multiview": False},
+    "note":                 {"categorize": True,  "codebook": "auto",   "mode": "hybrid", "multiview": False},
+    # prose / research content → social (qualitative-research) anchors
+    "paper":                {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
+    "agent_result":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
     "github_issue":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
     "conversation_summary": {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
-    "note":                 {"categorize": True,  "codebook": "auto",   "mode": "hybrid", "multiview": False},
     "session_knowledge":    {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
     "session_note":         {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": False},
+    # non-text
     "image":                {"categorize": False, "codebook": "auto",   "mode": "hybrid", "multiview": False},
-    "paper":                {"categorize": True,  "codebook": "social", "mode": "hybrid", "multiview": True},
 }
+# Unknown source_type → assume prose (the safer default): a wrong "social"
+# anchor on a code chunk is far less damaging than a wrong "auth/api" anchor
+# on a research paper.
 _INGEST_DEFAULT_FALLBACK: dict = {
-    "categorize": True, "codebook": "auto", "mode": "hybrid", "multiview": False,
+    "categorize": True, "codebook": "social", "mode": "hybrid", "multiview": False,
 }
 
 
@@ -80,13 +100,16 @@ def _resolve_codebook(codebook: str, source_type: str) -> list[str]:
     """
     codebook = str(codebook).strip().lower()
     if codebook == "auto":
+        # source_type → codebook name. Only repo_file/note are code; anything
+        # text-like (papers, conversations, agent results, issues) is "social".
+        # Unknown → "social" (prose) — see _INGEST_DEFAULT_FALLBACK rationale.
         _AUTO = {
             "repo_file": "code", "note": "code",
             "conversation": "social", "conversation_summary": "social",
             "session_knowledge": "social", "session_note": "social",
-            "github_issue": "social",
+            "github_issue": "social", "paper": "social", "agent_result": "social",
         }
-        codebook = _AUTO.get(source_type, "code")
+        codebook = _AUTO.get(source_type, "social")
 
     if codebook == "original":
         return list(_ORIGINAL_MAYRING_CATEGORIES)

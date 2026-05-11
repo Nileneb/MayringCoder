@@ -140,3 +140,41 @@ class TestPathOverride:
             )
         labels = out[0].category_labels
         assert labels.count("tests") == 1
+
+
+class TestSourceTypeCodebookRouting:
+    """WHY(2026-05-12): app.linn.games sends paper full-text via /ingest with
+    source_type='agent_result' — that key was missing from _INGEST_DEFAULTS so
+    it fell through to codebook='auto' → code anchors → healthcare papers got
+    tagged `api, data_access, domain, auth`. Lock the routing."""
+
+    def test_agent_result_uses_social_anchors_not_code(self):
+        from src.memory.ingestion.categorization import _resolve_codebook
+
+        cats = _resolve_codebook("auto", "agent_result")
+        assert "argumentation" in cats or "methodik" in cats
+        assert "auth" not in cats and "api" not in cats and "data_access" not in cats
+
+    def test_paper_uses_social_anchors(self):
+        from src.memory.ingestion.categorization import _resolve_codebook
+
+        cats = _resolve_codebook("auto", "paper")
+        assert "auth" not in cats and "api" not in cats
+
+    def test_repo_file_still_uses_code_anchors(self):
+        from src.memory.ingestion.categorization import _resolve_codebook
+
+        cats = _resolve_codebook("auto", "repo_file")
+        assert "api" in cats and "data_access" in cats
+
+    def test_unknown_source_type_defaults_to_prose_not_code(self):
+        from src.memory.ingestion.categorization import _resolve_codebook
+
+        cats = _resolve_codebook("auto", "some_future_type")
+        assert "auth" not in cats and "api" not in cats
+
+    def test_agent_result_in_ingest_defaults(self):
+        from src.memory.ingestion.categorization import _INGEST_DEFAULTS
+
+        assert _INGEST_DEFAULTS["agent_result"]["codebook"] == "social"
+        assert _INGEST_DEFAULTS["agent_result"]["mode"] == "hybrid"
