@@ -338,14 +338,23 @@ def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
             _logging.getLogger(__name__).warning(
                 "stats/summary: serving stale cache after live-query fail: %s", exc,
             )
+            # WHY(2026-05-11, codeql py/stack-trace-exposure): no raw exc
+            # text in the body — only the exception *class* (safe, helps the
+            # dashboard show "why stale" without leaking internals). Full
+            # detail is in the warning log above.
             return {
                 **_STATS_CACHE["stale"],
                 "_cache_status": "stale",
-                "_stale_reason": str(exc)[:200],
+                "_stale_reason": type(exc).__name__,
             }
         # No cache at all — first call ever AND DB broken.
+        # WHY(2026-05-11, codeql py/stack-trace-exposure): don't leak the
+        # exception text in the HTTP body — log it server-side, return a
+        # generic message. The detailed error is in the warning log above.
+        import logging as _logging
+        _logging.getLogger(__name__).error("stats/summary unavailable (no cache, DB error): %s", exc)
         from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail=f"stats/summary unavailable: {exc}")
+        raise HTTPException(status_code=503, detail="stats/summary temporarily unavailable")
 
 
 def main() -> None:

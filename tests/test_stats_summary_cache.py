@@ -76,7 +76,7 @@ def test_db_crash_returns_stale_cache():
     with patch("src.api.server._stats_summary_uncached", side_effect=RuntimeError("DB timeout")):
         result = stats_summary(workspace_id="default")
     assert result["_cache_status"] == "stale"
-    assert "DB timeout" in result["_stale_reason"]
+    assert result["_stale_reason"] == "RuntimeError"
     assert result["chunks"]["active"] == 100  # cached data preserved
 
 
@@ -87,7 +87,7 @@ def test_db_crash_without_cache_returns_503():
         with pytest.raises(HTTPException) as exc_info:
             stats_summary(workspace_id="default")
     assert exc_info.value.status_code == 503
-    assert "DB locked" in exc_info.value.detail
+    assert exc_info.value.detail == "stats/summary temporarily unavailable"
 
 
 def test_consecutive_crashes_keep_serving_stale_forever():
