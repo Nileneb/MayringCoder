@@ -36,3 +36,23 @@ categories:
   - security
   - scheduling
   - temp_dummy
+  # Promoted 2026-05-11 from frequent [neu]X labels — diese sind
+  # organisch als nützliche kategorien entstanden, gehören als anker
+  # (kein [neu]-prefix mehr).
+  - observability
+  - monitoring
+  - analytics
+  - reporting
+  - search
+  - parsing
+  - filtering
+  - storage
+  - cli
+  - provider
+  # Domänen-inhalt (für non-code chunks: papers, konversationen)
+  - healthcare
+  - research
+  - machine_learning
+  - analysis
+  - evaluation
+  - processing

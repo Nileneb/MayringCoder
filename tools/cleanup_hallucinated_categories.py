@@ -53,18 +53,58 @@ def strip_neu_labels(label_csv: str, strict: bool) -> tuple[str, int]:
 
     Returns (cleaned_csv, removed_count).
     """
+    return _process_labels(label_csv, strict=strict, promote_known=None)
+
+
+def _process_labels(
+    label_csv: str, *, strict: bool, promote_known: set[str] | None,
+) -> tuple[str, int]:
+    """Process a comma-separated label string.
+
+    For each `[neu]X` label:
+      - if `promote_known` is given and `X.lower()` is in it → rewrite to `X`
+        (drop the prefix — the category is now a real anchor). Counts as 0 removed.
+      - else if `strict` OR not a plausible label → drop it. Counts as removed.
+      - else → keep `[neu]X` as-is.
+
+    Returns (cleaned_csv, removed_count). Promotions are NOT counted as removed
+    (they're rewrites, not deletions), but they DO change the string.
+    """
     labels = [l.strip() for l in label_csv.split(",") if l.strip()]
-    kept = []
+    kept: list[str] = []
     removed = 0
+    seen_lower: set[str] = set()
     for lbl in labels:
         low = lbl.lower()
         if low.startswith("[neu]"):
-            inner = lbl[len("[neu]"):]
+            inner = lbl[len("[neu]"):].strip()
+            inner_low = inner.lower()
+            if promote_known is not None and inner_low in promote_known:
+                # Promote: [neu]X → X (dedup against an existing plain X)
+                if inner_low not in seen_lower:
+                    kept.append(inner_low)
+                    seen_lower.add(inner_low)
+                continue
             if strict or not is_valid_neu_label(inner):
                 removed += 1
                 continue
+        else:
+            if low in seen_lower:
+                continue
+            seen_lower.add(low)
         kept.append(lbl)
     return ",".join(kept), removed
+
+
+def _load_universal_categories() -> set[str]:
+    """Return the lowercased category set from codebooks/profiles/universal.yaml."""
+    try:
+        import yaml
+        path = Path(__file__).parent.parent / "codebooks" / "profiles" / "universal.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return {str(c).lower().strip() for c in (data or {}).get("categories", [])}
+    except Exception:
+        return set()
 
 
 def main() -> None:
@@ -72,9 +112,16 @@ def main() -> None:
     parser.add_argument("--workspace-id", default=None, help="Limit to one workspace")
     parser.add_argument("--dry-run", action="store_true", help="Preview only, no DB writes")
     parser.add_argument("--strict", action="store_true", help="Remove ALL [neu]X labels regardless of validity")
+    parser.add_argument("--promote-known", action="store_true",
+                        help="Rewrite [neu]X → X when X is now in codebooks/profiles/universal.yaml "
+                             "(promoted categories). Combine with --strict to also drop the rest.")
     args = parser.parse_args()
 
     conn = init_memory_db()
+    promote_set = _load_universal_categories() if args.promote_known else None
+    if args.promote_known:
+        print(f"Promote-known: {len(promote_set or [])} codebook categories — "
+              f"[neu]X → X for those, {'strip rest' if args.strict else 'keep valid [neu]X'}")
 
     sql = "SELECT chunk_id, category_labels, workspace_id FROM chunks WHERE category_labels LIKE '%[neu]%' AND is_active = 1"
     params: list = []
@@ -87,25 +134,33 @@ def main() -> None:
     total_chunks = len(rows)
     affected = 0
     total_removed = 0
+    total_promoted = 0
     pending_recategorize = 0
 
     print(f"Scanning {total_chunks} chunks with [neu] labels"
           f"{f' in workspace {args.workspace_id}' if args.workspace_id else ''}"
-          f" (strict={args.strict}, dry_run={args.dry_run})\n")
+          f" (strict={args.strict}, promote_known={args.promote_known}, dry_run={args.dry_run})\n")
 
     for chunk_id, label_csv, ws in rows:
-        cleaned, removed = strip_neu_labels(label_csv or "", args.strict)
-        if removed == 0:
-            continue
+        original = label_csv or ""
+        cleaned, removed = _process_labels(original, strict=args.strict, promote_known=promote_set)
+        if cleaned == original:
+            continue  # no change (e.g. only valid [neu]X kept, no strict, no promote)
         affected += 1
         total_removed += removed
+        # promoted = [neu]X labels that became X (delta between original [neu]-count
+        # and removed); rough estimate for the summary.
+        orig_neu = sum(1 for l in original.split(",") if l.strip().lower().startswith("[neu]"))
+        new_neu = sum(1 for l in cleaned.split(",") if l.strip().lower().startswith("[neu]"))
+        promoted_here = max(0, orig_neu - new_neu - removed)
+        total_promoted += promoted_here
         recategorize = not cleaned.strip()
         if recategorize:
             pending_recategorize += 1
 
         print(f"  {chunk_id[:12]} ws={ws or '-':<24} "
-              f"removed={removed} pending={recategorize} "
-              f"before={(label_csv or '')[:60]!r} after={cleaned[:60]!r}")
+              f"removed={removed} promoted={promoted_here} pending={recategorize} "
+              f"before={original[:60]!r} after={cleaned[:60]!r}")
 
         if args.dry_run:
             continue
@@ -127,7 +182,8 @@ def main() -> None:
 
     print()
     print(f"Summary: scanned={total_chunks} affected={affected} "
-          f"labels_removed={total_removed} marked_for_recategorize={pending_recategorize}")
+          f"labels_removed={total_removed} labels_promoted={total_promoted} "
+          f"marked_for_recategorize={pending_recategorize}")
     if args.dry_run:
         print("(dry-run — no DB writes)")
 
