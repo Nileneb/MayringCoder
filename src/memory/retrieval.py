@@ -468,6 +468,25 @@ def _rerank(
         if igio_intent_axis and (chunk.igio_axis or "").lower() == igio_intent_axis:
             si = 1.0
 
+        # WHY(2026-05-11 user-feedback): "Reasons sollten HOCH gewertet
+        # werden, wenn sie in der suche auftauchen — hier sind ZUSAMMEN-
+        # HÄNGE beschrieben". Konvergenz-bonus: wenn ≥2 unabhängige
+        # signale gleichzeitig feuern (vector + symbolic, oder
+        # symbolic + recency + affinity etc.), ist die confidence höher
+        # als die summe der einzelnen scores suggeriert.
+        signal_count = (
+            (1 if sv_eff > 0.5 else 0)
+            + (1 if ss > 0.3 else 0)
+            + (1 if sr > 0.8 else 0)
+            + (1 if sa > 0 else 0)
+            + (1 if sl > 0.7 else 0)
+        )
+        convergence_bonus = 0.0
+        if signal_count >= 3:
+            convergence_bonus = 0.12   # 3+ signale = sehr stark
+        elif signal_count >= 2:
+            convergence_bonus = 0.06   # 2 signale = klarer zusammenhang
+
         score_v1 = (
             _WEIGHTS["vector"] * sv_eff
             + _WEIGHTS["symbolic"] * ss
@@ -478,6 +497,7 @@ def _rerank(
             + _PRED_BOOST * sp
             + _CAT_HINT_BOOST * sc
             + _IGIO_INTENT_BOOST * si
+            + convergence_bonus
         )
 
         # Asymmetric negative penalty: a chunk users repeatedly mark as
