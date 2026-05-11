@@ -273,3 +273,60 @@ def test_pi_categorize_accepts_task_arg(tools):
          patch("src.api.mcp_agent_tools._model", return_value="m"):
         result = fn(text="some chunk content here about a trial", task="welches studiendesign?", mode="inductive")
     assert result["labels"] == ["study-design", "population"]
+
+
+def test_pi_mark_categories_persists_to_wiki(tools, tmp_path, monkeypatch):
+    """persist=True + source_id → markings land in wiki_category_evidence."""
+    # Point MEMORY_DB_PATH to a tmp dir so wiki_v2.db is created there.
+    import src.memory.store as _store
+    monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
+
+    fn = tools["pi_mark_categories"]
+    text = "def validate_jwt(token): return decode(token)"
+    with patch("httpx.post", return_value=_mock_ollama_response({
+        "markings": [{"excerpt": "def validate_jwt", "category": "auth", "reasoning": "validates a jwt"}],
+    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text=text, task="wie wird auth gemacht?", source_id="src:foo.py",
+                    chunk_id="chk_1", persist=True)
+    assert result["persisted"] == 1
+
+    # Read it back via get_category_evidence
+    from src.wiki_v2.store import init_wiki_db, get_category_evidence
+    wdb = init_wiki_db(tmp_path / "wiki_v2.db")
+    try:
+        ev = get_category_evidence(wdb, result["workspace_id"], category="auth")
+        assert len(ev) == 1
+        assert ev[0]["source_id"] == "src:foo.py"
+        assert ev[0]["task"] == "wie wird auth gemacht?"
+    finally:
+        wdb.close()
+
+
+def test_pi_mark_categories_no_persist_when_persist_false(tools, tmp_path, monkeypatch):
+    import src.memory.store as _store
+    monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
+    fn = tools["pi_mark_categories"]
+    with patch("httpx.post", return_value=_mock_ollama_response({
+        "markings": [{"excerpt": "abc", "category": "x", "reasoning": "r"}],
+    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="abc content here", task="t", source_id="src:y", persist=False)
+    assert result["persisted"] == 0
+
+
+def test_pi_category_evidence_reads_persisted(tools, tmp_path, monkeypatch):
+    import src.memory.store as _store
+    monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
+    from src.wiki_v2.store import init_wiki_db, persist_category_evidence
+    wdb = init_wiki_db(tmp_path / "wiki_v2.db")
+    persist_category_evidence(wdb, "bene", "src:z", [
+        {"span": [0, 3], "excerpt": "abc", "category": "demo-cat", "reasoning": "r"},
+    ], task="demo task")
+    wdb.close()
+
+    fn = tools["pi_category_evidence"]
+    with patch("src.api.mcp_agent_tools._enforce_tenant", return_value="bene"), \
+         patch("src.api.mcp_agent_tools._effective_workspace_id", return_value="bene"):
+        result = fn(category="demo-cat")
+    assert result["count"] == 1
+    assert result["evidence"][0]["category"] == "demo-cat"
+    assert result["evidence"][0]["task"] == "demo task"

@@ -555,6 +555,9 @@ def register_agent_tools(mcp: FastMCP) -> None:
         text: str,
         task: str = "",
         codebook: list[str] | None = None,
+        source_id: str | None = None,
+        chunk_id: str = "",
+        persist: bool = False,
         workspace_id: str | None = None,
         timeout: float = 90.0,
     ) -> dict:
@@ -564,20 +567,26 @@ def register_agent_tools(mcp: FastMCP) -> None:
         dieses tool markiert konkrete Textabschnitte und ordnet jedem
         Abschnitt eine Kategorie zu, MIT der paraphrase-begründung. So ist
         jede Kategorie LOGISCH am Text nachvollziehbar — der "Beweis" für
-        die Kategorie ist der markierte Abschnitt. Output kann ins Wiki als
-        category-evidence persistiert werden (folge-PR).
+        die Kategorie ist der markierte Abschnitt.
+
+        Wenn `persist=True` und `source_id` gesetzt: die markings landen in
+        wiki_category_evidence (vorhandene evidence für source_id wird
+        zuerst gelöscht — clean re-mark). Abrufbar via pi_category_evidence.
 
         Args:
             text: The chunk text (max ~4000 chars).
             task: Topic(s) to look for — Mayring Selektionskriterium.
                   Empty → derive from text.
             codebook: optional anchor categories (hybrid mode); None → induktiv.
+            source_id: which source/chunk this came from (für persist).
+            chunk_id: optional chunk-id (für persist).
+            persist: True + source_id → schreibt markings ins wiki.
             workspace_id: tenant scope.
             timeout: Pi-Agent call timeout.
 
         Returns:
             {markings: [{span: [start, end], excerpt, category, reasoning}],
-             model} oder {error}. span = char offsets into `text`.
+             model, persisted: int} oder {error}. span = char offsets into `text`.
         """
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         if not text or len(text.strip()) < 10:
@@ -641,13 +650,70 @@ def register_agent_tools(mcp: FastMCP) -> None:
                     "category": category[:50],
                     "reasoning": reasoning[:400],
                 })
+            persisted = 0
+            if persist and source_id and markings_out:
+                try:
+                    from src.wiki_v2.store import init_wiki_db, persist_category_evidence, delete_category_evidence
+                    from src.memory.store import MEMORY_DB_PATH
+                    wdb = init_wiki_db(MEMORY_DB_PATH.parent / "wiki_v2.db")
+                    try:
+                        delete_category_evidence(wdb, ws, source_id)
+                        persisted = persist_category_evidence(
+                            wdb, ws, source_id, markings_out,
+                            task=task_str if task_str != "(kein Task angegeben)" else "",
+                            chunk_id=chunk_id,
+                        )
+                    finally:
+                        wdb.close()
+                except Exception as exc:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning("category-evidence persist failed: %s", exc)
+
             return {
                 "markings": markings_out,
                 "model": _model("text"),
+                "persisted": persisted,
                 "workspace_id": ws,
             }
         except _json.JSONDecodeError as exc:
             return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
+        except Exception as exc:
+            return {"error": str(exc), "workspace_id": ws}
+
+    @mcp.tool()
+    def pi_category_evidence(
+        category: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Read Mayring category-evidence (from pi_mark_categories persist).
+
+        Beantwortet "zeig mir alle Belege für Kategorie X" oder "welche
+        Kategorien wurden in Source Y gefunden, mit welchem Beleg".
+
+        Args:
+            category: filter by category label (lowercase). None = all.
+            source_id: filter by source. None = all.
+            limit: max rows.
+            workspace_id: tenant scope.
+
+        Returns:
+            {evidence: [{source_id, chunk_id, category, span, excerpt,
+             reasoning, task, created_at}], count} oder {error}.
+        """
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        try:
+            from src.wiki_v2.store import init_wiki_db, get_category_evidence
+            from src.memory.store import MEMORY_DB_PATH
+            wdb = init_wiki_db(MEMORY_DB_PATH.parent / "wiki_v2.db")
+            try:
+                rows = get_category_evidence(
+                    wdb, ws, category=category, source_id=source_id, limit=limit,
+                )
+            finally:
+                wdb.close()
+            return {"evidence": rows, "count": len(rows), "workspace_id": ws}
         except Exception as exc:
             return {"error": str(exc), "workspace_id": ws}
 
