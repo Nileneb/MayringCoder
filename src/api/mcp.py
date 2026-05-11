@@ -46,7 +46,6 @@ load_dotenv(_ROOT / ".env")
 from src.api.mcp_auth import JWTAuthMiddleware, _AUTH_ENABLED, _OAUTH_BASE_URL
 from src.api.mcp_memory_tools import register_memory_tools
 from src.api.mcp_oauth import PathNormMiddleware, build_starlette_routes
-from src.api.mcp_pi_tools import register_pi_queue_tools
 from src.api.mcp_second_opinion import register_second_opinion_tools
 
 # Backward-compat aliases for tests that import with underscore prefix
@@ -64,10 +63,16 @@ mcp = FastMCP(
 )
 
 register_memory_tools(mcp)
-register_pi_queue_tools(mcp)
 register_second_opinion_tools(mcp)
-# Other agent tools (pi_task synchronous, duel, etc.) live in local_mcp.py
-# — see Issue #107. The cloud queue tools above are the multi-device hand-off.
+# WHY(2026-05-11): pi_task_*_cloud (register_pi_queue_tools) ENTFERNT —
+# das war ein toter pull-model-pfad (kein pi_worker.py-prozess lief je,
+# submitted cloud-jobs blieben ewig liegen). Jobverwaltung sitzt in der
+# in-process PiQueue (src/agents/pi_queue.py), Pi-task-calls gehen über
+# mcp__plugin_..._pi_task. Die pi_jobs scope/capability/claimed-spalten
+# bleiben (gaming-layer + parallelisierungs-reserve), nur die dummen
+# MCP-tools sind raus.
+# Andere agent-tools (pi_task synchronous, duel, etc.) liegen in
+# local_mcp.py — siehe Issue #107.
 
 
 def main() -> None:
