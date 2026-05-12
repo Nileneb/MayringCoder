@@ -281,23 +281,28 @@ async def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),
     days: int = 7,
     k: int = 5,
-    threshold_pct: float = 25.0,
+    threshold_pct: float = 15.0,
     apply: bool = False,
 ) -> dict:
     """Inspect the A/B uplift and (optionally) flip the runtime default.
 
-    Computes NDCG@K per version from the same source as
-    /stats/retrieval-ab. If one version beats the other by >=
-    ``threshold_pct`` percent on NDCG@K AND has at least 30 queries
-    of evidence, it becomes the new default IF apply=True.
+    WHY(#180, 2026-05-12): the decision metric is now **precision@K**, not
+    NDCG@K. NDCG@K saturates near the ceiling (~0.85+) here, so a relative
+    threshold on it is almost unreachable (a 25% bump would need NDCG > 1.0)
+    — that's why a clearly-better v2 (+16% precision, +9.6% NDCG vs v1) kept
+    sitting in 'auto' instead of being rolled out. Precision@K is also the
+    metric that actually matters for "did we inject the right chunks" and it
+    has real headroom. If one version beats the other by ≥ ``threshold_pct``
+    % on precision@K AND has ≥30 queries of evidence, it becomes the new
+    default IF apply=True.
 
     apply=False → returns the recommendation only, doesn't mutate.
     Designed for the auto-rollout workflow to call once per day.
 
     Decision rules:
       * Insufficient data (queries < 30 in either bucket) → keep 'auto'
-      * v2.ndcg ≥ v1.ndcg * (1 + threshold/100) → switch to 'v2'
-      * v1.ndcg ≥ v2.ndcg * (1 + threshold/100) → switch to 'v1'
+      * v2.precision ≥ v1.precision * (1 + threshold/100) → switch to 'v2'
+      * v1.precision ≥ v2.precision * (1 + threshold/100) → switch to 'v1'
       * else → keep 'auto' (uncertain, let A/B keep running)
     """
     if not _is_admin(info):
@@ -310,7 +315,9 @@ async def reranker_rollout_decision(
     v2 = by_version.get("v2") or {}
     n_v1 = int(v1.get("queries") or 0)
     n_v2 = int(v2.get("queries") or 0)
-    ndcg_v1 = float(v1.get("ndcg_at_k") or 0.0)
+    p_v1 = float(v1.get("precision_at_k") or 0.0)
+    p_v2 = float(v2.get("precision_at_k") or 0.0)
+    ndcg_v1 = float(v1.get("ndcg_at_k") or 0.0)  # kept in response for context, not the decision
     ndcg_v2 = float(v2.get("ndcg_at_k") or 0.0)
     current = _read_runtime_default()
     decision = "keep"
@@ -325,30 +332,30 @@ async def reranker_rollout_decision(
             f"insufficient data (v1.queries={n_v1}, v2.queries={n_v2}, "
             f"min={min_queries}); staying 'auto' until both sides have evidence"
         )
-    elif ndcg_v1 == 0 and ndcg_v2 == 0:
+    elif p_v1 == 0 and p_v2 == 0:
         decision = "keep"
         target = "auto"
-        reason = "both ndcg=0 — no labelled queries yet, staying 'auto'"
-    elif ndcg_v2 >= ndcg_v1 * factor and ndcg_v2 > 0:
+        reason = "both precision=0 — no labelled queries yet, staying 'auto'"
+    elif p_v2 >= p_v1 * factor and p_v2 > 0:
         decision = "switch"
         target = "v2"
         reason = (
-            f"v2 NDCG {ndcg_v2:.3f} ≥ v1 NDCG {ndcg_v1:.3f} × "
+            f"v2 precision {p_v2:.3f} ≥ v1 precision {p_v1:.3f} × "
             f"{factor:.2f} → v2 wins by ≥{threshold_pct}%"
         )
-    elif ndcg_v1 >= ndcg_v2 * factor and ndcg_v1 > 0:
+    elif p_v1 >= p_v2 * factor and p_v1 > 0:
         decision = "switch"
         target = "v1"
         reason = (
-            f"v1 NDCG {ndcg_v1:.3f} ≥ v2 NDCG {ndcg_v2:.3f} × "
+            f"v1 precision {p_v1:.3f} ≥ v2 precision {p_v2:.3f} × "
             f"{factor:.2f} → v1 wins by ≥{threshold_pct}%"
         )
     else:
         decision = "keep"
         target = "auto"
         reason = (
-            f"neither beats the other by ≥{threshold_pct}% "
-            f"(v1={ndcg_v1:.3f}, v2={ndcg_v2:.3f}); 'auto' continues A/B"
+            f"neither beats the other by ≥{threshold_pct}% on precision "
+            f"(v1={p_v1:.3f}, v2={p_v2:.3f}); 'auto' continues A/B"
         )
     applied = False
     if apply and target != current:
@@ -364,9 +371,10 @@ async def reranker_rollout_decision(
         "applied": applied,
         "reason": reason,
         "metrics": {
-            "v1": {"queries": n_v1, "ndcg_at_k": ndcg_v1},
-            "v2": {"queries": n_v2, "ndcg_at_k": ndcg_v2},
+            "v1": {"queries": n_v1, "precision_at_k": p_v1, "ndcg_at_k": ndcg_v1},
+            "v2": {"queries": n_v2, "precision_at_k": p_v2, "ndcg_at_k": ndcg_v2},
         },
+        "decision_metric": "precision_at_k",
         "threshold_pct": threshold_pct,
         "min_queries": min_queries,
         "window_days": days,

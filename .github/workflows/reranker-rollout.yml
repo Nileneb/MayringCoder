@@ -6,7 +6,7 @@ name: Reranker auto-rollout (memory v2.0)
 #   2. This workflow runs at 08:00 — by which time the new weights are
 #      cached. It calls /stats/admin/reranker-rollout-decision with
 #      apply=true. The endpoint compares v1 vs v2 over the last 7 days
-#      of A/B traffic; if one version's NDCG@5 beats the other by ≥25%
+#      of A/B traffic; if one version's NDCG@5 beats the other by ≥15%
 #      AND both have ≥30 queries of evidence, it flips the default.
 #      Else it leaves the default at 'auto' (50/50) so the A/B keeps
 #      running until evidence accumulates.
@@ -15,8 +15,8 @@ name: Reranker auto-rollout (memory v2.0)
 # every workspace runs an A/B from day one. The cron then converges
 # to whichever version actually performs.
 #
-# Threshold: 25% — chosen so noise doesn't trigger flips. With 30+
-# queries per side and 25% NDCG delta, the chance of a Type-I
+# Threshold: 15% (on precision@K, not NDCG — NDCG saturates near the ceiling) — chosen so noise doesn't trigger flips. With 30+
+# queries per side and 15% precision delta, the chance of a Type-I
 # (false-flip) error is below 5%.
 
 on:
@@ -28,7 +28,7 @@ on:
       threshold_pct:
         description: "NDCG uplift % needed to flip default"
         required: false
-        default: "25"
+        default: "15"
       apply:
         description: "Actually flip the default (false = dry run)"
         required: false
@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Run rollout decision
         env:
-          THRESHOLD: ${{ github.event.inputs.threshold_pct || '25' }}
+          THRESHOLD: ${{ github.event.inputs.threshold_pct || '15' }}
           APPLY: ${{ github.event.inputs.apply || 'true' }}
         run: |
           set -uo pipefail
