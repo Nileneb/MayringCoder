@@ -10,9 +10,22 @@ Example:     memory:repo:auth:owner-name-src-user_service.py:9f3a1b2c
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+
+# WHY(#252): scope_key is ALWAYS type-prefixed. Allowed types — extend
+# deliberately, never accept a bare/untyped value (that's how `repo` got
+# overloaded). `project:` = a Recherche project's papers; `repo:` = a code
+# repo; `campaign:` reserved (gaming layer maps 1:1 to project for now, so
+# unused — listed so the validator doesn't need touching later).
+SCOPE_KEY_RE = re.compile(r"^(repo|project|campaign):.+$")
+
+
+def is_valid_scope_key(value: str | None) -> bool:
+    """True iff value is None (workspace-global) or a typed `<type>:<id>` key."""
+    return value is None or bool(value and SCOPE_KEY_RE.match(value))
 
 
 def canonicalize_url(url: str) -> str:
@@ -69,6 +82,12 @@ class Source:
                                   # UUID. Same value across all workspaces of
                                   # the same human user; required when
                                   # visibility="user".
+    # WHY(#252): typed logical sub-bucket WITHIN a workspace — e.g.
+    # "project:<uuid>" for a Recherche project's papers, "repo:<url>" for a
+    # code repo. NULL = workspace-global. Required for source_type in
+    # (paper, agent_result) — enforced at the /ingest boundary. Never store
+    # an untyped value here; see SCOPE_KEY_RE.
+    scope_key: str | None = None
 
     @staticmethod
     def make_id(repo: str, path: str) -> str:
@@ -93,6 +112,7 @@ class Source:
             "visibility": self.visibility,
             "org_id": self.org_id,
             "user_id": self.user_id,
+            "scope_key": self.scope_key,
         }
 
     @classmethod
@@ -100,6 +120,7 @@ class Source:
         data = {k: d.get(k, "") for k in cls.__dataclass_fields__}
         data["org_id"] = d.get("org_id")  # None when absent or NULL
         data["user_id"] = d.get("user_id")
+        data["scope_key"] = d.get("scope_key")  # None when absent or NULL
         return cls(**data)
 
 

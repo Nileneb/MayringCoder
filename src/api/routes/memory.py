@@ -110,6 +110,10 @@ async def memory_search(
             opts["repo"] = request.repo
         if request.source_type:
             opts["source_type"] = request.source_type
+        if request.scope:
+            # #252: restrict to one logical sub-bucket (e.g. "project:<id>") —
+            # a Recherche search stays inside that project's papers.
+            opts["scope_key"] = request.scope.strip()
         if request.task_context:
             opts["task_context"] = request.task_context
         if request.llm_prefilter is not None:
@@ -272,12 +276,32 @@ async def memory_put(
     (else 403); if they didn't, default to their first org-membership.
     """
     try:
+        # #252: scope_key — typed sub-bucket within the workspace. REQUIRED
+        # for paper/agent_result (so a Recherche search can stay inside one
+        # project), optional otherwise. FAIL-loud — no silent default.
+        from src.memory.schema import is_valid_scope_key
+        scope = (request.scope or "").strip() or None
+        if scope is not None and not is_valid_scope_key(scope):
+            raise HTTPException(
+                status_code=422,
+                detail=f"scope must be type-prefixed (e.g. 'project:<id>', 'repo:<url>') — got {scope!r}",
+            )
+        if request.source_type in ("paper", "agent_result") and scope is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"scope is required for source_type={request.source_type!r} "
+                       "(e.g. 'project:<projekt_id>') — refusing to ingest unscoped "
+                       "research content into a workspace-global bucket",
+            )
+
         source_dict: dict[str, Any] = {
             "source_id": request.source_id,
             "source_type": request.source_type,
             "repo": request.repo,
             "path": request.path,
         }
+        if scope is not None:
+            source_dict["scope_key"] = scope
         if request.visibility:
             source_dict["visibility"] = request.visibility
         if request.visibility == "org":
