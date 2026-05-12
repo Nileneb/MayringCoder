@@ -193,3 +193,55 @@ class TestSourceTypeCodebookRouting:
         for st, settings in _INGEST_DEFAULTS.items():
             assert settings["codebook"] == "auto", f"{st} must be auto"
         assert _INGEST_DEFAULT_FALLBACK["codebook"] == "auto"
+
+
+class TestWorkspaceAnchorLabels:
+    """#244 TODO2: hybrid mode augments anchors with categories already used
+    in the workspace, so labels get reused across texts instead of re-minted."""
+
+    def _db(self, tmp_path):
+        from src.memory.store import init_memory_db
+        c = init_memory_db(tmp_path / "m.db")
+        now = "2026-05-12T00:00:00+00:00"
+        c.execute("INSERT INTO sources (source_id, source_type, captured_at, workspace_id) VALUES (?,?,?,?)",
+                  ("paper:p1", "agent_result", now, "bene"))
+        rows = [
+            ("c1", "argumentation,patientenautonomie,methodik"),
+            ("c2", "patientenautonomie,[neu]shared-decision-making"),
+            ("c3", "patientenautonomie,ergebnis"),
+            ("c4", "[neu]shared-decision-making,argumentation"),
+            ("c5", "x,y"),                       # too short → filtered
+            ("c6", "aaaaaaaaaa"),                # gibberish (repetition) → filtered
+        ]
+        for cid, lbl in rows:
+            c.execute("INSERT INTO chunks (chunk_id,source_id,text,category_labels,category_source,is_active,workspace_id,created_at) "
+                      "VALUES (?,?,?,?,?,1,?,?)", (cid, "paper:p1", "t", lbl, "hybrid", "bene", now))
+        c.commit()
+        return c
+
+    def test_ranks_by_frequency_folds_neu_excludes_static(self, tmp_path):
+        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        c = self._db(tmp_path)
+        anchors = _workspace_anchor_labels(c, "bene", exclude={"argumentation", "methodik", "ergebnis"}, limit=10)
+        assert anchors == ["patientenautonomie", "shared-decision-making"]
+        c.close()
+
+    def test_empty_for_unknown_workspace(self, tmp_path):
+        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        c = self._db(tmp_path)
+        assert _workspace_anchor_labels(c, "nonexistent", exclude=set()) == []
+        c.close()
+
+    def test_limit_caps_output(self, tmp_path):
+        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        c = self._db(tmp_path)
+        assert len(_workspace_anchor_labels(c, "bene", exclude=set(), limit=1)) == 1
+        c.close()
+
+    def test_bad_conn_returns_empty(self):
+        from src.memory.ingestion.categorization import _workspace_anchor_labels
+
+        class _Boom:
+            def execute(self, *a, **k):
+                raise RuntimeError("db gone")
+        assert _workspace_anchor_labels(_Boom(), "bene", exclude=set()) == []

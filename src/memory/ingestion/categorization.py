@@ -225,6 +225,42 @@ def _load_mayring_template(mode: str) -> str:
         )
 
 
+def _workspace_anchor_labels(conn: Any, workspace_id: str, *, exclude: set[str],
+                             limit: int = 40) -> list[str]:
+    """Top-`limit` category labels already used in this workspace, by frequency.
+
+    Used to augment the hybrid prompt's anchor set so existing categories get
+    reused across texts instead of re-invented. `[neu]X` labels are folded to
+    `X` (a frequently-minted `[neu]` label IS a real category — promote it to
+    an anchor). Excludes anything already in `exclude` (the static codebook),
+    plus implausible / overlong tokens. Returns [] on any DB error — this is
+    an enhancement, never a hard dependency.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT category_labels FROM chunks "
+            "WHERE workspace_id = ? AND is_active = 1 "
+            "AND category_labels IS NOT NULL AND category_labels != ''",
+            (workspace_id,),
+        ).fetchall()
+    except Exception:
+        return []
+    counts: dict[str, int] = {}
+    for (csv,) in rows:
+        for part in str(csv).split(","):
+            tok = part.strip().lower()
+            if tok.startswith("[neu]"):
+                tok = tok[len("[neu]"):].strip()
+            if not tok or tok in exclude:
+                continue
+            # reuse the same plausibility gate as for [neu] labels
+            if not _is_plausible_neu_label(tok):
+                continue
+            counts[tok] = counts.get(tok, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [tok for tok, _ in ranked[:max(0, limit)]]
+
+
 def mayring_categorize(
     chunks: "list[Chunk]",
     ollama_url: str,
@@ -264,6 +300,15 @@ def mayring_categorize(
         return chunks
 
     categories = _resolve_codebook(codebook, source_type)
+    static_set = {c.lower() for c in categories if c}
+    # #244 TODO2: in hybrid mode, also offer the categories that already exist
+    # in this workspace as anchors — so a second paper about "Patientenautonomie"
+    # reuses that label instead of minting `[neu]patientenautonomie`. Without
+    # this, every text invents its own variant and cross-text matching breaks.
+    if mode == "hybrid" and conn is not None:
+        extra = _workspace_anchor_labels(conn, workspace_id, exclude=static_set)
+        if extra:
+            categories = categories + extra
     valid_set = {c.lower() for c in categories if c}
     template = _load_mayring_template(mode)
     task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
