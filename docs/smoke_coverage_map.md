@@ -153,3 +153,9 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 | 210 | Codebook-editor + style-auswahl | HINFÄLLIG durch task-based categorization (#215): kategorien beziehen sich auf den task/forschungsfrage — deduktiv = subkategorien des tasks, induktiv = kreative leistung via `prompts/mayring_induktiv.md`. `pi_categorize` nutzt die kanonischen `prompts/mayring_{deduktiv,induktiv,hybrid}.md` (PR #229). Kein UI-editor mehr nötig. |
 | 211 | Pi-Agent als first-class tool-replacement | `claude-plugin/agents/` (subagent-def, später dropped) + 3 spezialisierte MCP-tools `pi_categorize`/`pi_judge_relevance`/`pi_summarize_for_memory` (`src/api/mcp_agent_tools.py`) + CLAUDE.md decision-table; Pytest `tests/test_pi_specialized_tools.py` (14 tests) — PR #218/#223/#229 |
 | 213 | Log-Endpoints ohne SSH (Phase A+B+C) | MayringCoder: `GET /admin/logs?service=...&since=...&grep=...` (admin-scope, rate-limit 5/min, secret-redaction) + MCP-tool `live_logs`; Pytest `tests/test_admin_logs.py` (20 tests) — PR #218. app.linn.games: `GET /api/mayring/logs` proxy — PR #345. Phase D (UI-tab) → app.linn.games separat |
+
+## Recently Closed (today, 2026-05-12)
+
+| # | Description | Coverage |
+|---|---|---|
+| 247 | `_init_schema` runs DDL on every CLI invocation → lock contention | `src/memory/store.py`: `PRAGMA user_version`-gate am Anfang von `_init_schema` — `>= CURRENT_SCHEMA_VERSION` (=1) → return ohne DDL/locks; sonst CREATE…IF NOT EXISTS + idempotente `_migrate_*` + `PRAGMA user_version = 1`. FastAPI-startup-migration bleibt (wird no-op nach erstem boot). — PR #248 (Copilot) |
