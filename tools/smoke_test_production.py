@@ -228,6 +228,55 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
 
 
 # ---------------------------------------------------------------------------
+# Pre-flight: wait the post-deploy restart window out (#250)
+# ---------------------------------------------------------------------------
+
+def _quick_health(api: str, token: str, timeout: float = 5.0) -> bool:
+    """Single one-shot GET /health — no retries. True iff 200 + status:ok."""
+    req = urllib.request.Request(
+        f"{api}/health",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            body = json.loads(resp.read().decode())
+            return (body or {}).get("status") == "ok"
+    except Exception:
+        return False
+
+
+def wait_for_api_ready(api: str, token: str, max_wait: float = 60.0) -> bool:
+    """Poll /health until the API is up, or max_wait elapses.
+
+    WHY(#250): the post-deploy smoke runs via workflow_run right after the
+    deploy — it can catch the API mid-restart. _http already retries 5xx a
+    few times, but a cold-start window can exceed that, so the FIRST check
+    (api_health) FAILS and the workflow auto-opens a false-positive
+    "smoke FAIL" issue (#242, #245). Waiting the restart window out HERE
+    means every subsequent check runs against a warm API.
+
+    A genuine >max_wait outage is NOT swallowed: we return False, print a
+    loud warning, and run the checks anyway — api_health then fails as it
+    should and the alert is real.
+    """
+    deadline = time.time() + max_wait
+    n = 0
+    while time.time() < deadline:
+        n += 1
+        if _quick_health(api, token):
+            if n > 1:
+                print(f"# API ready after {n} probe(s)")
+            return True
+        time.sleep(3.0)
+    print(f"# WARNING: API not ready after {max_wait:.0f}s — running checks anyway "
+          "(api_health will FAIL if it's a real outage, which is correct).")
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Individual checks — every one returns CheckResult
 # ---------------------------------------------------------------------------
 
@@ -2017,6 +2066,8 @@ def main() -> int:
                    help="check id to skip (repeatable)")
     p.add_argument("--alert-on-fail", action="store_true",
                    help="open a GitHub issue when any check fails (uses gh CLI)")
+    p.add_argument("--ready-timeout", type=float, default=60.0,
+                   help="max seconds to wait for /health before running checks (#250)")
     args = p.parse_args()
 
     token = _load_token()
@@ -2025,6 +2076,9 @@ def main() -> int:
 
     print(f"# Smoke tests against {api}")
     print(f"# JWT loaded: {len(token)} chars")
+    # Wait the post-deploy restart window out before running anything (#250) —
+    # so a cold-start doesn't red-flag api_health and open a false-positive issue.
+    wait_for_api_ready(api, token, max_wait=args.ready_timeout)
     print()
 
     results: list[CheckResult] = []
