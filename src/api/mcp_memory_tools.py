@@ -462,8 +462,13 @@ def register_memory_tools(mcp: FastMCP) -> None:
             try:
                 from src.api.server import bust_stats_cache
                 bust_stats_cache()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Non-fatal (stats serve a stale count for ≤30s) but NOT
+                # silent-swallowed — #255 / project rule "no silent errors".
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "mcp_memory_tools.feedback: stats-cache bust failed: %s", exc
+                )
             return {"chunk_id": chunk_id, "recorded": True}
         except Exception as exc:
             return {"error": str(exc)}
