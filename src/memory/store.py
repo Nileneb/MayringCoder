@@ -77,6 +77,9 @@ def kv_invalidate_by_ids(chunk_ids: list[str]) -> None:
 # DB init
 # ---------------------------------------------------------------------------
 
+CURRENT_SCHEMA_VERSION = 1
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -261,6 +264,19 @@ def _migrate_visibility_check(conn: DBAdapter) -> None:
 
 
 def _init_schema(conn: DBAdapter) -> None:
+    """Ensure all tables and indexes exist, with schema versioning to skip DDL when current.
+    
+    Uses PRAGMA user_version to track schema version and avoid lock contention on
+    repeated CLI invocations.
+    """
+    # Read current schema version from PRAGMA user_version (default 0 for new DBs)
+    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    
+    # If schema is already at current version, skip all DDL and migrations (no-op)
+    if current_version >= CURRENT_SCHEMA_VERSION:
+        return
+    
+    # Schema is behind (or uninitialized) — run full DDL + migrations
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sources (
             source_id       TEXT PRIMARY KEY,
@@ -515,6 +531,9 @@ def _init_schema(conn: DBAdapter) -> None:
            ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at""",
         (_now, _now),
     )
+
+    # Update schema version in PRAGMA user_version to mark migration as complete
+    conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
     conn.commit()
 
