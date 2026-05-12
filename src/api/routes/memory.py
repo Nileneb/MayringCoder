@@ -25,6 +25,7 @@ from src.api.routes.models import (
     MemorySearchRequest,
     PatchVisibilityRequest,
     PiTaskRequest,
+    ShareSourceRequest,
 )
 
 router = APIRouter(tags=["memory"])
@@ -734,3 +735,54 @@ async def patch_source_visibility(
     )
     conn.commit()
     return {"source_id": source_id, "visibility": request.visibility, "org_id": request.org_id}
+
+
+@router.post("/sources/{source_id}/share")
+async def share_source(
+    source_id: str,
+    request: ShareSourceRequest | None = None,
+    workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Share a source — make it visible beyond its owning workspace.
+
+    The "share" action of #195 Iter 4: no body (or `{}`) → visibility='public';
+    `{"org_id": "<id>"}` → visibility='org' for that org (caller must be a
+    member). Same owner-check as PATCH /sources/{id}/visibility (L8) — only the
+    owner (same workspace OR same JWT sub) or an admin may share a source.
+    """
+    req = request or ShareSourceRequest()
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT workspace_id, user_id FROM sources WHERE source_id = ?",
+        (source_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="source not found")
+    src_ws = row["workspace_id"] if hasattr(row, "keys") else row[0]
+    src_user = row["user_id"] if hasattr(row, "keys") else row[1]
+
+    is_admin = "*" in info.scopes or "admin" in info.scopes
+    is_owner = (
+        src_ws == workspace_id
+        or (src_user is not None and info.sub is not None and src_user == info.sub)
+    )
+    if not (is_admin or is_owner):
+        raise HTTPException(status_code=403, detail="not authorized to share this source")
+
+    if req.org_id:
+        if req.org_id not in set(info.org_ids):
+            raise HTTPException(
+                status_code=403,
+                detail=f"cannot share to org_id={req.org_id!r} — caller is not a member",
+            )
+        new_vis, new_org = "org", req.org_id
+    else:
+        new_vis, new_org = "public", None
+
+    conn.execute(
+        "UPDATE sources SET visibility = ?, org_id = ? WHERE source_id = ?",
+        (new_vis, new_org, source_id),
+    )
+    conn.commit()
+    return {"source_id": source_id, "visibility": new_vis, "org_id": new_org, "shared": True}

@@ -1107,6 +1107,34 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     )
 
 
+def check_share_endpoint(api: str, token: str) -> CheckResult:
+    """#195 Iter 4 — POST /sources/{id}/share makes a source public.
+
+    Ingest a private note → POST /share → response must report
+    visibility='public', shared=true. (The owner-check / 403-for-foreign
+    path is covered by patch_source_visibility's L8 logic — same code.)
+    """
+    suffix = int(time.time())
+    sid = f"smoke:share:{suffix}"
+    code1, body1, _ = _http(
+        "POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-share",
+              "path": "share-marker", "content": f"SHARE marker {suffix}", "categorize": False},
+        timeout=15.0,
+    )
+    if code1 != 200:
+        return CheckResult("share_endpoint", False, f"ingest failed http={code1}: {body1}")
+    code2, body2, _ = _http(
+        "POST", f"{api}/sources/{urllib.parse.quote(sid, safe='')}/share", token, body={},
+    )
+    ok = (code2 == 200 and isinstance(body2, dict)
+          and body2.get("visibility") == "public" and body2.get("shared") is True)
+    return CheckResult(
+        "share_endpoint", ok,
+        f"http={code2}  body={body2}  (POST /sources/{{id}}/share must return visibility=public, shared=true)",
+    )
+
+
 def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
     """End-to-end: write a real inject-state file, drive _auto_feedback,
     verify DB-side feedback rows actually got written.
@@ -1817,6 +1845,7 @@ ALL_CHECKS = [
     ("jobs_progress_observability",   check_jobs_progress_observability),
     ("ingest_state_field",            check_ingest_state_field),
     ("visibility_isolation",          check_visibility_isolation),
+    ("share_endpoint",                check_share_endpoint),
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),

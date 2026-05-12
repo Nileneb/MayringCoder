@@ -232,3 +232,9 @@ class WikiConflictResolveRequest(BaseModel):
 class PatchVisibilityRequest(BaseModel):
     visibility: str
     org_id: str | None = None
+
+
+class ShareSourceRequest(BaseModel):
+    """Body for POST /sources/{id}/share (#195 Iter 4). All optional:
+    no body / {} → share publicly; {"org_id": "<id>"} → share to that org."""
+    org_id: str | None = None

@@ -158,3 +158,78 @@ def test_admin_can_change_visibility():
 
     app.dependency_overrides.clear()
     _deps._conn = None
+
+
+# ---------------------------------------------------------------------------
+# #195 Iter 4 — POST /sources/{id}/share
+# ---------------------------------------------------------------------------
+
+def test_share_source_makes_public():
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.api.auth import get_token_info, get_workspace
+    from src.api.jwt_auth import TokenInfo
+    import src.api.dependencies as _deps
+
+    owner_info = TokenInfo(workspace_id="ws-share", sub="7", scopes=())
+    app.dependency_overrides[get_workspace] = lambda: "ws-share"
+    app.dependency_overrides[get_token_info] = lambda: owner_info
+    db = _db()
+    upsert_source(db, Source(source_id="share-me", source_type="note", repo="", path="x"),
+                  workspace_id="ws-share", visibility="private")
+    _deps._conn = db
+    try:
+        client = TestClient(app)
+        r = client.post("/sources/share-me/share", json={}, headers={"Authorization": "Bearer t"})
+        assert r.status_code == 200, r.text
+        assert r.json()["visibility"] == "public"
+        assert r.json()["shared"] is True
+        row = db.execute("SELECT visibility FROM sources WHERE source_id='share-me'").fetchone()
+        assert row["visibility"] == "public"
+    finally:
+        app.dependency_overrides.clear()
+        _deps._conn = None
+
+
+def test_share_source_non_owner_forbidden():
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.api.auth import get_token_info, get_workspace
+    from src.api.jwt_auth import TokenInfo
+    import src.api.dependencies as _deps
+
+    intruder = TokenInfo(workspace_id="ws-other", sub="999", scopes=())
+    app.dependency_overrides[get_workspace] = lambda: "ws-other"
+    app.dependency_overrides[get_token_info] = lambda: intruder
+    db = _db()
+    upsert_source(db, Source(source_id="not-yours", source_type="note", repo="", path="x"),
+                  workspace_id="ws-owner", visibility="private")
+    _deps._conn = db
+    try:
+        client = TestClient(app)
+        r = client.post("/sources/not-yours/share", json={}, headers={"Authorization": "Bearer t"})
+        assert r.status_code == 403, r.text
+        row = db.execute("SELECT visibility FROM sources WHERE source_id='not-yours'").fetchone()
+        assert row["visibility"] == "private"  # unchanged
+    finally:
+        app.dependency_overrides.clear()
+        _deps._conn = None
+
+
+def test_share_source_unknown_404():
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.api.auth import get_token_info, get_workspace
+    from src.api.jwt_auth import TokenInfo
+    import src.api.dependencies as _deps
+
+    app.dependency_overrides[get_workspace] = lambda: "ws"
+    app.dependency_overrides[get_token_info] = lambda: TokenInfo(workspace_id="ws", sub="1", scopes=())
+    _deps._conn = _db()
+    try:
+        client = TestClient(app)
+        r = client.post("/sources/does-not-exist/share", json={}, headers={"Authorization": "Bearer t"})
+        assert r.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+        _deps._conn = None
