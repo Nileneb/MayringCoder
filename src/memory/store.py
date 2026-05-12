@@ -77,7 +77,9 @@ def kv_invalidate_by_ids(chunk_ids: list[str]) -> None:
 # DB init
 # ---------------------------------------------------------------------------
 
-CURRENT_SCHEMA_VERSION = 1
+# Bump when _init_schema gains new DDL/migrations so existing DBs re-run it.
+#   v2 (#252): sources.scope_key column + index.
+CURRENT_SCHEMA_VERSION = 2
 
 
 def _now_iso() -> str:
@@ -132,6 +134,10 @@ def _migrate_schema(conn: DBAdapter) -> None:
             # so all sessions of the same user can see each other's memory
             # without falling back to 'public'.
             ("user_id", "TEXT DEFAULT NULL"),
+            # scope_key (#252): typed logical sub-bucket within a workspace —
+            # "project:<uuid>" / "repo:<url>" / NULL=workspace-global. Existing
+            # rows get NULL (they were workspace-global before this concept).
+            ("scope_key", "TEXT DEFAULT NULL"),
         ],
         "chunks": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
@@ -240,7 +246,8 @@ def _migrate_visibility_check(conn: DBAdapter) -> None:
                 workspace_id    TEXT NOT NULL DEFAULT 'default',
                 visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public', 'user')),
                 org_id          TEXT DEFAULT NULL,
-                user_id         TEXT DEFAULT NULL
+                user_id         TEXT DEFAULT NULL,
+                scope_key       TEXT DEFAULT NULL
             );
         """)
         legacy_cols = conn.get_columns("sources_legacy_visibility")
@@ -289,7 +296,8 @@ def _init_schema(conn: DBAdapter) -> None:
             captured_at     TEXT NOT NULL,
             visibility      TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'org', 'public', 'user')),
             org_id          TEXT DEFAULT NULL,
-            user_id         TEXT DEFAULT NULL
+            user_id         TEXT DEFAULT NULL,
+            scope_key       TEXT DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS chunks (
@@ -517,6 +525,9 @@ def _init_schema(conn: DBAdapter) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sources_workspace_id ON sources(workspace_id)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sources_scope_key ON sources(scope_key)"
+    )
 
     # System-Workspace seedet sich beim DB-init. Verwendet von Service-
     # Tokens (src/api/auth.py:37), post-deploy-ingest, conversation_watcher,
@@ -545,23 +556,24 @@ def _init_schema(conn: DBAdapter) -> None:
 def upsert_source(
     conn: DBAdapter, source: Source, workspace_id: str = "default",
     visibility: str | None = None, org_id: str | None = None,
-    user_id: str | None = None,
+    user_id: str | None = None, scope_key: str | None = None,
 ) -> None:
     """Insert/update a source row.
 
-    visibility/org_id/user_id default to the values on the Source dataclass
-    when not explicitly passed; this lets callers attach them at Source
-    construction time and have them flow all the way to the DB.
+    visibility/org_id/user_id/scope_key default to the values on the Source
+    dataclass when not explicitly passed; this lets callers attach them at
+    Source construction time and have them flow all the way to the DB.
     """
     eff_visibility = visibility if visibility is not None else source.visibility
     eff_org_id = org_id if org_id is not None else source.org_id
     eff_user_id = user_id if user_id is not None else source.user_id
+    eff_scope_key = scope_key if scope_key is not None else source.scope_key
     conn.execute(
         """
         INSERT INTO sources
             (source_id, source_type, repo, path, branch, "commit", content_hash,
-             captured_at, workspace_id, visibility, org_id, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             captured_at, workspace_id, visibility, org_id, user_id, scope_key)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET
             source_type  = excluded.source_type,
             repo         = excluded.repo,
@@ -573,12 +585,13 @@ def upsert_source(
             workspace_id = excluded.workspace_id,
             visibility   = excluded.visibility,
             org_id       = excluded.org_id,
-            user_id      = excluded.user_id
+            user_id      = excluded.user_id,
+            scope_key    = excluded.scope_key
         """,
         (
             source.source_id, source.source_type, source.repo, source.path,
             source.branch, source.commit, source.content_hash, source.captured_at,
-            workspace_id, eff_visibility, eff_org_id, eff_user_id,
+            workspace_id, eff_visibility, eff_org_id, eff_user_id, eff_scope_key,
         ),
     )
     _maybe_commit(conn)

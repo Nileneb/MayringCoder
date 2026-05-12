@@ -160,6 +160,7 @@ def run_ingest(
         visibility=source_dict.get("visibility") or "private",
         org_id=source_dict.get("org_id"),
         user_id=source_dict.get("user_id"),
+        scope_key=source_dict.get("scope_key"),  # #252
     )
     return ingest(
         source=src,

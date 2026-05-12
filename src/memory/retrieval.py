@@ -72,6 +72,7 @@ def _scope_filter(
     org_id: str | None = None,
     org_ids: tuple[str, ...] | list[str] | None = None,
     user_id: str | None = None,
+    scope_key: str | None = None,
 ) -> list[str]:
     """Return chunk_ids of active chunks matching hard scope filters.
 
@@ -125,6 +126,12 @@ def _scope_filter(
     if source_type:
         query += " AND s.source_type = ?"
         params.append(source_type)
+    if scope_key:
+        # #252: restrict to one logical sub-bucket of the workspace (e.g.
+        # "project:<id>") — a Recherche search only sees that project's
+        # papers, never another project's chunks in the same workspace.
+        query += " AND s.scope_key = ?"
+        params.append(scope_key)
 
     rows = conn.execute(query, params).fetchall()
 
@@ -672,6 +679,7 @@ def search(
     else:
         org_ids = None
     user_id: str | None = opts.get("user_id")
+    scope_key: str | None = opts.get("scope_key")  # #252: e.g. "project:<id>"
 
     # Query-Cache check — hit: clone records, repopulate text on demand.
     # Bug history: cache used to store only (chunk_id, score_final), so
@@ -699,7 +707,7 @@ def search(
     candidate_ids = _scope_filter(
         conn, repo=repo, categories=categories, source_type=source_type,
         workspace_id=workspace_id, org_id=org_id, org_ids=org_ids,
-        user_id=user_id,
+        user_id=user_id, scope_key=scope_key,
     )
     if not candidate_ids:
         # Tell callers WHY the result is empty: scope filter excluded

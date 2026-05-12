@@ -74,6 +74,11 @@ class MemorySearchRequest(BaseModel):
     # variable RERANKER_VERSION decides; default is v1 so behaviour
     # never changes silently.
     reranker_version: str | None = None
+    # WHY(#252): restrict the search to one logical sub-bucket of the
+    # workspace — e.g. "project:<uuid>" so a Recherche search only sees that
+    # project's papers, never another project's (same workspace). Always
+    # type-prefixed; None = search the whole workspace.
+    scope: str | None = None
     # WHY(2026-05-10 multi-cat prompt-decomp): wenn der hook prompt-
     # kategorien via mistral:7b-instruct extrahiert hat, kann er sie als
     # hint mitsenden. Chunks deren category_labels mit diesen kategorien
@@ -99,6 +104,12 @@ class MemoryPutRequest(BaseModel):
     # 'org' requires membership in org_id (or first org_id if not given).
     visibility: str | None = None
     org_id: str | None = None
+    # WHY(#252): typed logical sub-bucket within the workspace — e.g.
+    # "project:<uuid>" for a Recherche project's papers. REQUIRED when
+    # source_type in (paper, agent_result) — memory_put returns 422 without
+    # it (no silent default). Optional/None for other source_types
+    # (= workspace-global). Always type-prefixed: "<type>:<id>".
+    scope: str | None = None
 
 
 class LogEvent(BaseModel):
