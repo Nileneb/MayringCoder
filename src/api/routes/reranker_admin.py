@@ -281,7 +281,7 @@ async def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),
     days: int = 7,
     k: int = 5,
-    threshold_pct: float = 15.0,
+    threshold_pct: float = 2.0,
     apply: bool = False,
 ) -> dict:
     """Inspect the A/B uplift and (optionally) flip the runtime default.
