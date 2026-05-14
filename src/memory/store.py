@@ -715,6 +715,49 @@ def deactivate_chunks_by_source(
     return conn.changes()
 
 
+def update_chunk_category_labels(
+    conn: Any,
+    chunk_ids: list[str],
+    mapping: "dict[str, str]",
+) -> int:
+    """Apply S7 old→canonical label mapping to stored chunks.
+
+    WHY: S7 operates on committed chunks after the ingest transaction. A targeted
+    UPDATE is correct here — insert_chunk() would do a full upsert including
+    text/hash fields which must not be touched for a label-only patch.
+
+    Strips [neu] prefix before lookup so "[neu]auth-check" resolves via "auth-check".
+    Sets category_source='s7-reduced' for auditability.
+    Returns count of actually-modified rows.
+    """
+    if not chunk_ids or not mapping:
+        return 0
+    placeholders = ",".join("?" * len(chunk_ids))
+    rows = conn.execute(
+        f"SELECT chunk_id, category_labels FROM chunks "
+        f"WHERE chunk_id IN ({placeholders}) AND is_active = 1",
+        chunk_ids,
+    ).fetchall()
+    updated = 0
+    for chunk_id, label_csv in rows:
+        old_labels = [lbl.strip() for lbl in (label_csv or "").split(",") if lbl.strip()]
+        new_labels = []
+        for lbl in old_labels:
+            key = lbl.lower().removeprefix("[neu]")
+            new_labels.append(mapping.get(key, key))
+        new_labels = list(dict.fromkeys(new_labels))
+        new_csv = ",".join(new_labels)
+        if new_csv != label_csv:
+            conn.execute(
+                "UPDATE chunks SET category_labels = ?, category_source = 's7-reduced' "
+                "WHERE chunk_id = ?",
+                (new_csv, chunk_id),
+            )
+            updated += 1
+    _maybe_commit(conn)
+    return updated
+
+
 # ---------------------------------------------------------------------------
 # Feedback
 # ---------------------------------------------------------------------------

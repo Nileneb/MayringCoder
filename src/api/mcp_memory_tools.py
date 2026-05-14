@@ -410,6 +410,76 @@ def register_memory_tools(mcp: FastMCP) -> None:
             return {"error": str(exc)}
 
     @mcp.tool()
+    def reduce_categories(
+        workspace_id: str | None = None,
+        source_id: str | None = None,
+        threshold: int = 15,
+        dry_run: bool = True,
+    ) -> dict:
+        """Mayring S7 — Workspace-weite induktive Reduktion.
+
+        Konsolidiert semantisch äquivalente Labels über alle Chunks des Workspace
+        (oder einer einzelnen Source). Der automatische S3-Injektion-Schritt in
+        ingest() verhindert Label-Explosion proaktiv; dieses Tool macht den
+        Backfill-Pass für bestehende Workspaces oder Edge Cases.
+
+        dry_run=True (Default): zeigt das Mapping, schreibt nichts in die DB.
+        """
+        try:
+            import os
+            from src.memory.ingestion.categorization import reduce_categories as _reduce
+            ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+            conn = _get_conn()
+
+            if source_id:
+                rows = conn.execute(
+                    "SELECT chunk_id FROM chunks WHERE source_id = ? "
+                    "AND workspace_id = ? AND is_active = 1",
+                    (source_id, ws),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT chunk_id FROM chunks WHERE workspace_id = ? AND is_active = 1",
+                    (ws,),
+                ).fetchall()
+            chunk_ids = [r[0] for r in rows]
+
+            ollama_url = os.getenv("OLLAMA_URL", "http://three.linn.games:11434")
+            model = os.getenv("MAYRING_MODEL", "qwen2.5-coder:7b")
+
+            if dry_run:
+                conn.execute("SAVEPOINT s7_dry")
+                try:
+                    result = _reduce(
+                        chunk_ids=chunk_ids, conn=conn, chroma_collection=None,
+                        ollama_url=ollama_url, model=model,
+                        workspace_id=ws, threshold=threshold,
+                    )
+                finally:
+                    conn.execute("ROLLBACK TO SAVEPOINT s7_dry")
+                    conn.execute("RELEASE SAVEPOINT s7_dry")
+                result["dry_run"] = True
+                return result
+
+            chroma = _get_chroma()
+            result = _reduce(
+                chunk_ids=chunk_ids, conn=conn, chroma_collection=chroma,
+                ollama_url=ollama_url, model=model,
+                workspace_id=ws, threshold=threshold,
+            )
+            result["dry_run"] = False
+            if not result.get("skipped"):
+                log_ingestion_event(conn, ws, "s7_reduction_mcp", {
+                    "unique_before": result.get("unique_before", 0),
+                    "unique_after":  result.get("unique_after", 0),
+                    "chunks_updated": result.get("chunks_updated", 0),
+                    "source_id": source_id,
+                })
+            return result
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    @mcp.tool()
     def feedback(
         chunk_id: str,
         signal: str,

@@ -261,6 +261,56 @@ def _workspace_anchor_labels(conn: Any, workspace_id: str, *, exclude: set[str],
     return [tok for tok, _ in ranked[:max(0, limit)]]
 
 
+def _task_relevant_categories(
+    task: str,
+    conn: Any,
+    chroma_collection: Any,
+    ollama_url: str,
+    model: str,
+    workspace_id: str,
+    n_results: int = 20,
+) -> list[str]:
+    """Fetch existing category labels semantically relevant to `task` via ChromaDB.
+
+    WHY: _workspace_anchor_labels() is frequency-based and topic-blind. A chunk
+    about "Patientenautonomie" must see labels from OTHER chunks on that topic,
+    not the globally most-used workspace labels. This embeds the task and queries
+    ChromaDB so the LLM reuses established labels instead of inventing variants.
+
+    Returns empty list on any failure — caller falls back to frequency anchors.
+    """
+    if not task or not chroma_collection or not ollama_url or not model:
+        return []
+    try:
+        from src.analysis.context_rag import _embed_texts
+        emb = _embed_texts([task[:500]], ollama_url)
+        if not emb or not emb[0]:
+            return []
+        where = {"workspace_id": {"$eq": workspace_id}} if workspace_id else None
+        results = chroma_collection.query(
+            query_embeddings=[emb[0]],
+            n_results=n_results,
+            where=where,
+            include=["metadatas"],
+        )
+    except Exception as exc:
+        logger.warning("S3 task-category fetch failed: %s", exc)
+        return []
+
+    seen: set[str] = set()
+    labels: list[str] = []
+    for meta_list in (results.get("metadatas") or []):
+        for meta in (meta_list or []):
+            for tok in (meta.get("category_labels") or "").split(","):
+                tok = tok.strip().lower()
+                if tok.startswith("[neu]"):
+                    tok = tok[len("[neu]"):]
+                if tok and tok not in seen and _is_plausible_neu_label(tok):
+                    seen.add(tok)
+                    labels.append(tok)
+    return labels
+
+
 def mayring_categorize(
     chunks: "list[Chunk]",
     ollama_url: str,
@@ -272,6 +322,7 @@ def mayring_categorize(
     router: "ModelRouter | None" = None,
     workspace_id: str = "default",
     task: str = "",
+    chroma_collection: Any = None,
 ) -> "list[Chunk]":
     """Assign Mayring category labels to each chunk via LLM.
 
@@ -309,6 +360,23 @@ def mayring_categorize(
         extra = _workspace_anchor_labels(conn, workspace_id, exclude=static_set)
         if extra:
             categories = categories + extra
+
+    # Task-aware semantic injection: embed task → ChromaDB → topic-specific labels
+    # WHY(#task-hybrid): frequency anchors are topic-blind. A 128-section paper
+    # produces 126 labels because "auth-check"/"auth-validation"/"authentication-check"
+    # are never seen as equivalent. Injecting past labels for THIS topic lets the LLM
+    # reuse them. Forces hybrid so [neu] is still possible for genuine novelty.
+    _task_lbls = _task_relevant_categories(
+        task, conn, chroma_collection, ollama_url, model, workspace_id
+    )
+    if _task_lbls:
+        _existing_lower = {c.lower() for c in categories}
+        for _lbl in _task_lbls:
+            if _lbl not in _existing_lower:
+                categories.append(_lbl)
+                _existing_lower.add(_lbl)
+        mode = "hybrid"
+
     valid_set = {c.lower() for c in categories if c}
     template = _load_mayring_template(mode)
     task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
@@ -395,3 +463,162 @@ def mayring_categorize(
                     pass
 
     return chunks
+
+
+_S7_CHROMA_LOCK = __import__("threading").Lock()
+# WHY: _CHROMA_WRITE_LOCK lives in core.py — importing it here creates a circular
+# dependency. A separate lock is safe: ChromaDB serializes internally; this just
+# prevents concurrent S7 upserts from this module.
+
+
+def reduce_categories(
+    chunk_ids: list[str],
+    conn: Any,
+    chroma_collection: Any,
+    ollama_url: str,
+    model: str,
+    workspace_id: str = "default",
+    router: "ModelRouter | None" = None,
+    threshold: int = 15,
+) -> dict:
+    """Mayring S7 — Generalisierung + Bündelung (on-demand MCP tool only).
+
+    WHY(S7): With task-aware S3 injection most label explosion is prevented.
+    S7 remains as a cleanup tool for existing workspaces or edge cases where S3
+    still produces near-duplicates (e.g. first ingest when no prior labels exist).
+    NOT called automatically from ingest() — only via MCP reduce_categories tool.
+
+    Collects unique labels from chunk_ids, calls LLM once with consolidation prompt,
+    applies old→canonical mapping to SQLite + ChromaDB.
+    Returns {mapping, chunks_updated, unique_before, unique_after, skipped}.
+    """
+    import json as _json
+    import re as _re
+    import time as _time
+
+    if router is not None and not model and router.is_available("text"):
+        model = router.resolve("text")
+
+    if not model or not ollama_url:
+        return {"skipped": True, "reason": "no model/url", "mapping": {},
+                "chunks_updated": 0, "unique_before": 0, "unique_after": 0}
+    if not chunk_ids:
+        return {"skipped": True, "reason": "no chunk_ids", "mapping": {},
+                "chunks_updated": 0, "unique_before": 0, "unique_after": 0}
+
+    rows = conn.execute(
+        f"SELECT category_labels FROM chunks "
+        f"WHERE chunk_id IN ({','.join('?' * len(chunk_ids))}) AND is_active = 1",
+        chunk_ids,
+    ).fetchall()
+
+    label_counter: dict[str, int] = {}
+    for (csv,) in rows:
+        for tok in (csv or "").split(","):
+            tok = tok.strip().lower()
+            if tok.startswith("[neu]"):
+                tok = tok[len("[neu]"):]
+            if tok and _is_plausible_neu_label(tok):
+                label_counter[tok] = label_counter.get(tok, 0) + 1
+
+    unique_labels = list(label_counter.keys())
+    unique_before = len(unique_labels)
+
+    if unique_before <= threshold:
+        return {"skipped": True,
+                "reason": f"unique_labels={unique_before} <= threshold={threshold}",
+                "mapping": {}, "chunks_updated": 0,
+                "unique_before": unique_before, "unique_after": unique_before}
+
+    try:
+        from src.analysis.analyzer import _ollama_generate
+    except ImportError:
+        return {"skipped": True, "reason": "analyzer not available", "mapping": {},
+                "chunks_updated": 0, "unique_before": unique_before, "unique_after": unique_before}
+
+    template_path = _PROMPTS_DIR / "mayring_s7_reduktion.md"
+    try:
+        template = template_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("S7 prompt missing: %s — skipping S7", template_path)
+        return {"skipped": True, "reason": "prompt file missing", "mapping": {},
+                "chunks_updated": 0, "unique_before": unique_before, "unique_after": unique_before}
+
+    labels_json = _json.dumps(unique_labels, ensure_ascii=False)
+    system_prompt = template.replace("{{labels}}", labels_json)
+
+    _t0 = _time.monotonic()
+    response = _ollama_generate(
+        prompt=f"Labels:\n{labels_json}",
+        ollama_url=ollama_url,
+        model=model,
+        label="mayring:s7",
+        system_prompt=system_prompt,
+    )
+    _elapsed_ms = int((_time.monotonic() - _t0) * 1000)
+
+    try:
+        from src.memory.store import log_llm_call
+        log_llm_call(conn=conn, call_type="s7_reduction", model=model,
+                     prompt=labels_json[:500], response=response[:800],
+                     duration_ms=_elapsed_ms, workspace_id=workspace_id)
+    except Exception as log_exc:
+        logger.warning("S7 log_llm_call failed: %s", log_exc)
+
+    mapping: dict[str, str] = {}
+    json_match = _re.search(r"\{[^{}]+\}", response, _re.DOTALL)
+    if json_match:
+        try:
+            raw = _json.loads(json_match.group(0))
+            for k, v in raw.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    kc, vc = k.strip().lower(), v.strip().lower()
+                    if _is_plausible_neu_label(kc) and _is_plausible_neu_label(vc):
+                        mapping[kc] = vc
+        except (_json.JSONDecodeError, ValueError) as exc:
+            logger.warning("S7 JSON parse failed: %s — raw: %s", exc, response[:200])
+
+    if not mapping:
+        logger.warning("S7: empty mapping (model=%s, unique=%d) — skipping apply",
+                       model, unique_before)
+        return {"skipped": True, "reason": "empty mapping", "mapping": {},
+                "chunks_updated": 0, "unique_before": unique_before, "unique_after": unique_before}
+
+    from src.memory.store import update_chunk_category_labels
+    chunks_updated = update_chunk_category_labels(conn, chunk_ids, mapping)
+
+    chroma_updated = 0
+    if chroma_collection is not None and chunks_updated > 0:
+        updated_rows = conn.execute(
+            f"SELECT chunk_id, category_labels, chunk_level, source_id, "
+            f"category_source, category_confidence FROM chunks "
+            f"WHERE chunk_id IN ({','.join('?' * len(chunk_ids))}) "
+            f"AND category_source = 's7-reduced' AND is_active = 1",
+            chunk_ids,
+        ).fetchall()
+        for cid, new_csv, chunk_level, source_id, cat_src, cat_conf in updated_rows:
+            try:
+                with _S7_CHROMA_LOCK:
+                    chroma_collection.upsert(
+                        ids=[cid],
+                        metadatas=[{
+                            "workspace_id": workspace_id,
+                            "source_id": source_id or "",
+                            "chunk_level": chunk_level or "",
+                            "category_labels": new_csv or "",
+                            "category_source": cat_src or "s7-reduced",
+                            "category_confidence": cat_conf or 0.0,
+                            "is_active": 1,
+                        }],
+                    )
+                chroma_updated += 1
+            except Exception as chroma_exc:
+                logger.warning("S7 chroma upsert failed %s: %s", cid[:12], chroma_exc)
+
+    unique_after = len({v for v in mapping.values()})
+    logger.info("S7: workspace=%s %d→%d labels, %d/%d chunks updated, chroma=%d",
+                workspace_id, unique_before, unique_after,
+                chunks_updated, len(chunk_ids), chroma_updated)
+
+    return {"skipped": False, "mapping": mapping, "chunks_updated": chunks_updated,
+            "unique_before": unique_before, "unique_after": unique_after}

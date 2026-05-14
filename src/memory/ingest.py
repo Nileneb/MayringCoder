@@ -29,7 +29,9 @@ from src.memory.ingestion.categorization import (  # noqa: F401
     _load_mayring_template,
     _path_fallback_category,
     _resolve_codebook,
+    _task_relevant_categories,
     mayring_categorize,
+    reduce_categories,
 )
 from src.memory.ingestion.conversation import ingest_conversation_summary  # noqa: F401
 from src.memory.ingestion.core import (  # noqa: F401
@@ -66,7 +68,9 @@ __all__ = [
     "ingest_image",
     "issues_to_sources",
     "mayring_categorize",
+    "reduce_categories",
     "resolve_dedup",
     "run_image_ingest",
     "structural_chunk",
+    "_task_relevant_categories",
 ]

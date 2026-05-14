@@ -203,6 +203,7 @@ def ingest(
                 router=router,
                 workspace_id=workspace_id,
                 task=categorize_task,
+                chroma_collection=chroma_collection,
             )
 
         new_chunk_ids: list[str] = []
