@@ -86,6 +86,10 @@ class MemorySearchRequest(BaseModel):
     # "auth + caching + deployment" rankt dann chunks mit auth/caching/
     # deployment labels höher als nur durch vector-similarity möglich.
     category_hint: list[str] | None = None
+    # WHY(igio-search-2026-05-15): erlaubt hook + session_start die Suche
+    # auf einen IGIO-Axis zu fokussieren ohne alle Chunks zu laden.
+    # "goal" → zeigt was der User anstrebt; "issue" → offene Probleme etc.
+    igio_intent: str | None = None
 
 
 class MemoryPutRequest(BaseModel):
@@ -181,6 +185,11 @@ class ConversationMicroBatchRequest(BaseModel):
     session_id: str
     workspace_slug: str = "default"
     presumarized: str | None = None
+    # WHY(igio-pipeline-2026-05-15): stop_hook extrahiert IGIO-Axis aus dem
+    # User-Prompt via fast-hints (kein LLM-Aufruf nötig). Das erlaubt dem
+    # Server, den resultierenden Chunk direkt zu taggen statt auf den
+    # IGIO-Cron (async, Stunden später) zu warten.
+    igio_hint: str | None = None  # "goal" | "issue" | "intervention" | "outcome"
 
 
 class WikiGenerateRequest(BaseModel):

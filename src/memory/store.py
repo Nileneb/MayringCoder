@@ -758,6 +758,40 @@ def update_chunk_category_labels(
     return updated
 
 
+def update_chunk_igio_axis(
+    conn: Any,
+    chunk_id: str,
+    axis: str,
+    confidence: float = 0.85,
+) -> bool:
+    """Tag a single chunk with an IGIO axis without touching other fields.
+
+    WHY(igio-pipeline-2026-05-15): stop_hook sends a fast-hint axis from the
+    user prompt (regex, no LLM). Writing it here skips the async IGIO cron
+    and makes the axis immediately visible in /memory/goals and retrieval
+    scoring. Only overwrites when the existing axis is empty so the LLM-cron
+    verdict (higher confidence) is never clobbered.
+    """
+    import datetime as _dt
+    row = conn.execute(
+        "SELECT igio_axis FROM chunks WHERE chunk_id = ? AND is_active = 1",
+        (chunk_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    existing = (row[0] or "").strip()
+    if existing:  # already classified by LLM-cron → don't overwrite
+        return False
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE chunks SET igio_axis = ?, igio_confidence = ?, igio_classified_at = ? "
+        "WHERE chunk_id = ?",
+        (axis, confidence, now, chunk_id),
+    )
+    _maybe_commit(conn)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Feedback
 # ---------------------------------------------------------------------------

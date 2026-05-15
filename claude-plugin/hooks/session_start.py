@@ -214,6 +214,21 @@ def _latest_plan_context() -> str:
         return ""
 
 
+def _fetch_goals(api: str, token: str, top_k: int = 5) -> list[dict]:
+    """GET /memory/goals — returns goal-axis chunks for the workspace."""
+    req = urllib.request.Request(
+        f"{api}/memory/goals?top_k={top_k}",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read())
+        return data.get("goals", [])
+    except Exception:
+        return []
+
+
 def _inject_memory(payload: dict) -> None:
     token = _load_token()
     if not token:
@@ -245,18 +260,32 @@ def _inject_memory(payload: dict) -> None:
             "Content-Type": "application/json",
         },
     )
+    context = ""
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
             result = json.loads(resp.read())
         context = result.get("prompt_context", "").strip()
-        if context:
-            print(
-                f"## Automatisch injizierter Memory-Kontext\n\n{context}\n\n"
-                "⚠️  PFLICHT: Gib am Ende jedes Tasks Feedback via "
-                "`mcp__claude_ai_Memory__feedback` für jeden genutzten Chunk."
-            )
     except Exception:
         pass
+
+    goals = _fetch_goals(api, token)
+    goals_block = ""
+    if goals:
+        lines = []
+        for g in goals[:5]:
+            text = (g.get("text") or "").strip()
+            if text:
+                lines.append(f"- {text[:200]}")
+        if lines:
+            goals_block = "## Laufende Workspace-Ziele\n\n" + "\n".join(lines) + "\n\n"
+
+    if context or goals_block:
+        print(
+            f"{goals_block}"
+            f"## Automatisch injizierter Memory-Kontext\n\n{context}\n\n"
+            "⚠️  PFLICHT: Gib am Ende jedes Tasks Feedback via "
+            "`mcp__claude_ai_Memory__feedback` für jeden genutzten Chunk."
+        )
 
 
 def _sync_plugin_files_from_repo(plugin_root: str, repo_root: str) -> None:

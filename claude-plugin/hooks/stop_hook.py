@@ -158,12 +158,40 @@ def _flatten_content(content) -> str:
     return str(content)
 
 
-def _post_micro_batch(turns: list[dict], session_id: str, workspace_slug: str, token: str) -> int:
-    payload = json.dumps({
+_IGIO_FAST_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"\b(ziel|goal|goals|objective|objectives|wir\s+wollen|we\s+want|anstreben|vorhaben|soll\s+sein)\b", re.I), "goal"),
+    (re.compile(r"\b(bug|fehler|problem|issue|broken|regression|traceback|error|exception|kaputt|falsch)\b", re.I), "issue"),
+    (re.compile(r"\b(implementier|refactor|bauen|build|fix|deploy|migrate|schreib|erstell|ändere|update)\b", re.I), "intervention"),
+    (re.compile(r"\b(ergebnis|result|outcome|test\s+grün|tests?\s+pass|fertig|done|abgeschlossen|deployed)\b", re.I), "outcome"),
+)
+_IGIO_PRIORITY = ("issue", "goal", "intervention", "outcome")
+
+
+def _igio_fast_hint(text: str) -> str | None:
+    """Regex-only IGIO axis detection — no LLM, <1ms. Returns axis or None."""
+    if not text:
+        return None
+    scores: dict[str, int] = {}
+    for pattern, axis in _IGIO_FAST_PATTERNS:
+        scores[axis] = scores.get(axis, 0) + len(pattern.findall(text))
+    if not any(scores.values()):
+        return None
+    best_score = max(scores.values())
+    for axis in _IGIO_PRIORITY:
+        if scores.get(axis, 0) == best_score:
+            return axis
+    return None
+
+
+def _post_micro_batch(turns: list[dict], session_id: str, workspace_slug: str, token: str, igio_hint: str | None = None) -> int:
+    body_dict: dict = {
         "turns": turns,
         "session_id": session_id,
         "workspace_slug": workspace_slug,
-    }).encode()
+    }
+    if igio_hint:
+        body_dict["igio_hint"] = igio_hint
+    payload = json.dumps(body_dict).encode()
     req = urllib.request.Request(
         f"{_API_URL}/conversation/micro-batch",
         data=payload,
@@ -536,7 +564,9 @@ def _capture_turns(payload: dict, token: str) -> list[dict]:
     turns = extract_last_turn_pair(transcript_path)
     if len(turns) < 2:
         return turns
-    _post_micro_batch(turns, session_id, _workspace_slug(), token)
+    user_text = turns[0].get("content", "")
+    igio_hint = _igio_fast_hint(user_text)
+    _post_micro_batch(turns, session_id, _workspace_slug(), token, igio_hint=igio_hint)
     return turns
 
 

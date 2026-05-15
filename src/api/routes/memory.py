@@ -129,6 +129,8 @@ async def memory_search(
             opts["category_hint"] = [
                 c.lower().strip() for c in request.category_hint if c and c.strip()
             ]
+        if request.igio_intent:
+            opts["igio_intent"] = request.igio_intent.lower().strip()
 
         # WHY(2026-05-11, task-categorization + perf-fix): nur der schnelle
         # embedding-sim-check inline (~50-150ms) — KEIN mistral im hot path
@@ -422,6 +424,21 @@ async def conversation_micro_batch(
             {"categorize": True, "codebook": "social", "mode": "hybrid"},
             workspace_id,
         )
+
+        # WHY(igio-pipeline-2026-05-15): stop_hook sendet igio_hint wenn es
+        # per fast-hints (kein LLM) eine Axis aus dem User-Prompt erkannt hat.
+        # Wir taggen die neu erstellten Chunks sofort — überspringt den
+        # async IGIO-Cron der sonst Stunden später läuft.
+        _VALID_IGIO = ("goal", "issue", "intervention", "outcome")
+        if request.igio_hint and request.igio_hint.lower() in _VALID_IGIO:
+            try:
+                from src.memory.store import update_chunk_igio_axis, get_chunks_by_source
+                conn_for_igio = _get_conn()
+                for chunk in get_chunks_by_source(conn_for_igio, source_id, active_only=True):
+                    update_chunk_igio_axis(conn_for_igio, chunk.chunk_id, request.igio_hint.lower())
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("igio_hint tagging failed: %s", exc)
 
         # Predictive Memory v2 (Issue #55): bei jeder neuen
         # conversation_summary inkrementell die Markov-Transitions
@@ -786,3 +803,42 @@ async def share_source(
     )
     conn.commit()
     return {"source_id": source_id, "visibility": new_vis, "org_id": new_org, "shared": True}
+
+
+@router.get("/memory/goals")
+async def memory_goals(
+    top_k: int = 8,
+    workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Return goal-axis chunks for the workspace.
+
+    WHY(igio-pipeline-2026-05-15): session_start hook calls this to inject
+    known workspace goals into the session context. Also used by the /goal
+    plugin skill to show what goals have been derived from past sessions.
+    Returns chunks with igio_axis='goal', ranked by recency + feedback score.
+    """
+    try:
+        opts: dict[str, Any] = {
+            "top_k": top_k,
+            "workspace_id": workspace_id,
+            "user_id": info.sub,
+            "org_ids": info.org_ids,
+            "igio_intent": "goal",
+            "llm_prefilter": False,
+        }
+        result = _run_search(
+            "goal objective aim target we want to achieve",
+            _get_conn(), _get_chroma(), _OLLAMA_URL,
+            opts, char_budget=3000,
+        )
+        chunks = result.get("chunks", [])
+        goal_chunks = [c for c in chunks if (c.get("igio_axis") or "").lower() == "goal"]
+        return {
+            "workspace_id": workspace_id,
+            "goals": goal_chunks,
+            "total": len(goal_chunks),
+            "prompt_context": result.get("prompt_context", ""),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
