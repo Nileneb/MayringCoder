@@ -290,3 +290,18 @@ def test_derive_task_fast_increments_occurrence_on_match(conn):
         derive_task_fast("prompt text", conn, "http://ollama:11434", "default")
     n = conn.execute("SELECT occurrence_count FROM task_categories WHERE task_id='task_c'").fetchone()[0]
     assert n == 6
+
+
+def test_migration_renames_task_categories_to_research_questions(tmp_path):
+    from src.memory.db_adapter import DBAdapter
+    from src.memory.store import _migrate_schema
+    db = DBAdapter.create(tmp_path / "legacy.db")
+    db.execute("CREATE TABLE task_categories (task_id TEXT PRIMARY KEY, title TEXT, workspace_id TEXT)")
+    db.execute("CREATE TABLE task_chunk_links (task_id TEXT, chunk_id TEXT, relevance_score REAL, created_at TEXT, PRIMARY KEY(task_id, chunk_id))")
+    db.commit()
+    _migrate_schema(db)
+    names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "research_questions" in names
+    assert "research_question_chunk_links" in names
+    assert "task_categories" not in names
+    assert "research_question_id" in db.get_columns("research_question_chunk_links")

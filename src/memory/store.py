@@ -202,13 +202,34 @@ def _migrate_schema(conn: DBAdapter) -> None:
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
         ],
     }
+    existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     for table, columns in migrations.items():
+        if table not in existing_tables:
+            continue
         existing = conn.get_columns(table)
         for col_name, col_def in columns:
             if col_name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
 
+    _migrate_rename_research_questions(conn)
     _migrate_visibility_check(conn)
+
+
+def _migrate_rename_research_questions(conn: DBAdapter) -> None:
+    """Rename the legacy task_categories layer to research_questions.
+
+    WHY(task-tracker): 'task' was overloaded — a new first-class `tasks`
+    tracker now owns that word, so the derived-research-question storage is
+    renamed to disambiguate. Idempotent: only fires when the old tables exist.
+    """
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "task_categories" in tables and "research_questions" not in tables:
+        conn.execute("ALTER TABLE task_categories RENAME TO research_questions")
+        conn.execute("ALTER TABLE research_questions RENAME COLUMN task_id TO research_question_id")
+    if "task_chunk_links" in tables and "research_question_chunk_links" not in tables:
+        conn.execute("ALTER TABLE task_chunk_links RENAME TO research_question_chunk_links")
+        conn.execute("ALTER TABLE research_question_chunk_links RENAME COLUMN task_id TO research_question_id")
+    conn.commit()
 
 
 def _migrate_visibility_check(conn: DBAdapter) -> None:
