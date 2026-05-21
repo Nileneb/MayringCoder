@@ -18,6 +18,24 @@ from src.api.routes import dashboard
 from src.memory.store import init_memory_db
 
 
+@pytest.fixture(autouse=True)
+def _isolate_job_queue():
+    """jobs_history reads the process-global job_queue._JOBS and returns only
+    the most-recent `limit` jobs. Other test modules (test_job_progress,
+    test_duel, test_v2_ops_endpoints) leave jobs there with current
+    timestamps; without isolation they crowd out this file's older seeded
+    jobs and the assertions flake depending on collection order. Snapshot →
+    clear → restore makes these tests deterministic in any order."""
+    from src.api import job_queue
+    saved = dict(job_queue._JOBS)
+    job_queue._JOBS.clear()
+    try:
+        yield
+    finally:
+        job_queue._JOBS.clear()
+        job_queue._JOBS.update(saved)
+
+
 @pytest.fixture
 def seeded_db(tmp_path, monkeypatch) -> sqlite3.Connection:
     """Memory DB pre-loaded with one row per dashboard-relevant table."""

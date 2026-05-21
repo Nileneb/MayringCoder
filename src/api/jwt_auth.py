@@ -53,6 +53,12 @@ class TokenInfo:
     # We preserve it on TokenInfo so existing callsites that read .org_id keep
     # working until they migrate to .org_ids.
     org_id: str | None = None
+    # The app.linn.games *active* workspace (the `workspace_id` claim, incl.
+    # the #195 switch). Distinct from `workspace_id` above, which stays the
+    # per-user email-slug home bucket. active_workspace_kind is derived from
+    # the matching memberships[] entry ('personal' | 'organization').
+    active_workspace_id: str | None = None
+    active_workspace_kind: str = "personal"
 
     @property
     def is_admin(self) -> bool:
@@ -123,15 +129,14 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     except jwt.InvalidTokenError:
         return None
 
-    # workspace_id wird seit 2026-05-09 aus dem email-Claim als Slug
-    # abgeleitet ('bene@linn.games' → 'bene') statt als 'user-N' aus
-    # sub gebaut. Vorteil: lesbare Logs + Multi-Tenant-vorbereitet.
-    # Determinismus bleibt: gleiche Email → gleicher Slug, auch wenn
-    # 3 Apps parallel JWT-Tokens minten (User-Identity bleibt
-    # serverseitig in app.linn.games entschieden via email).
-    #
-    # Fallback auf 'user-N' nur wenn weder workspace_id-Claim noch
-    # email gesetzt sind — z.B. legacy Tokens oder Battlefield-JWTs.
+    # workspace_id (home bucket) wird seit 2026-05-09 aus dem email-Claim als
+    # Slug abgeleitet ('bene@linn.games' → 'bene'). Das ist der per-user
+    # Tenant-Key für SQLite-Isolation und bleibt absichtlich stabil (kein
+    # Re-Key). Der `workspace_id`-Claim von app.linn.games (die *aktive*
+    # Workspace-UUID, inkl. #195-Switch) ist eine ANDERE Achse — er wird
+    # weiter unten als active_workspace_id konsumiert und steuert via
+    # mcp_auth.resolve_write_visibility, ob ein Write in einen geteilten
+    # Org-Bucket (visibility='org') geht.
     # WHY(v2-stufe4-contract): JWT-Vertrag V2 erfordert version-claim.
     # V1-tokens (kein version-Field) werden vorerst akzeptiert für
     # backward-compat. V2-tokens (version=2) sind preferred.
@@ -192,9 +197,24 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
             ))
         memberships = tuple(parsed)
 
+    # The active app.linn.games workspace (its UUID), kept separate from the
+    # email-slug home bucket above. kind from the matching membership entry —
+    # decides whether a write lands in a shared org bucket (mcp_auth.
+    # resolve_write_visibility). Absent claim → no active workspace.
+    active_ws_raw = payload.get("workspace_id")
+    active_workspace_id = str(active_ws_raw).strip() if active_ws_raw else None
+    active_workspace_kind = "personal"
+    if active_workspace_id:
+        for m in memberships:
+            if m.id == active_workspace_id:
+                active_workspace_kind = m.type
+                break
+
     return TokenInfo(
         workspace_id=workspace_id,
         scopes=scopes,
+        active_workspace_id=active_workspace_id,
+        active_workspace_kind=active_workspace_kind,
         llm_provider=llm_provider,
         llm_model=str(llm_model) if isinstance(llm_model, str) and llm_model else None,
         llm_endpoint=str(llm_endpoint) if isinstance(llm_endpoint, str) and llm_endpoint else None,

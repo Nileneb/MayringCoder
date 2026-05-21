@@ -12,9 +12,11 @@ from src.api.mcp_auth import (
     _enforce_tenant,
     _effective_workspace_id,
     _effective_user_id,
-    _effective_org_id,
     _effective_org_ids,
+    _effective_active_workspace_id,
+    _effective_active_workspace_kind,
     _current_raw_jwt,
+    resolve_write_visibility,
 )
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.memory_service import run_search as _run_search, run_ingest as _run_ingest
@@ -282,20 +284,27 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 model = os.getenv("MAYRING_MODEL", "qwen2.5-coder:7b")
                 sid = source_id or f"text:{ws}:{hashlib.sha256(source[:64].encode()).hexdigest()[:12]}"
                 _stype = source_type if source_type not in ("auto", "text") else "knowledge"
-                # Default text/note ingest from MCP is per-user content (session
-                # summaries, insights, etc.). Stamp it with visibility="user"
-                # + user_id so the same human sees it across workspaces
-                # (claude.ai web vs claude-cli) without falling back to "public".
-                _uid = _effective_user_id()
+                # Visibility follows the caller's ACTIVE app.linn.games
+                # workspace: an org → 'org' (the whole team sees it), else the
+                # per-user 'user' bucket (same human across claude.ai web vs
+                # claude-cli) or 'private'. resolve_write_visibility re-checks
+                # org membership so an active='org' claim can't write into a
+                # foreign bucket.
+                _vis, _org, _uid = resolve_write_visibility(
+                    active_workspace_id=_effective_active_workspace_id(),
+                    active_workspace_kind=_effective_active_workspace_kind(),
+                    org_ids=_effective_org_ids(),
+                    user_id=_effective_user_id(),
+                )
                 source_dict = {
                     "source_id": sid,
                     "source_type": _stype,
                     "repo": ws,
                     "path": sid,
                     "content_hash": "sha256:" + hashlib.sha256(source.encode()).hexdigest()[:16],
-                    "visibility": "user" if _uid else "private",
+                    "visibility": _vis,
                     "user_id": _uid,
-                    "org_id": _effective_org_id(),
+                    "org_id": _org,
                 }
                 result = _run_ingest(
                     source_dict, source, _get_conn(), _get_chroma(),

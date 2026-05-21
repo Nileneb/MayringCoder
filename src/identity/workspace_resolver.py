@@ -223,6 +223,35 @@ def ensure_system_workspace(conn: DBAdapter) -> str:
     return "system"
 
 
+def ensure_team_workspace(
+    conn: DBAdapter,
+    org_id: str,
+    *,
+    display_name: str | None = None,
+) -> str:
+    """Upsert kind=team workspace for an app.linn.games organization.
+
+    org_id is the org-workspace UUID from the JWT memberships[]. Owned and
+    managed by app.linn.games (owner_user_id stays NULL here) — this row only
+    makes the org a first-class local FK target + dashboard label. Membership/
+    roles are NOT mirrored; they live in the JWT.
+    """
+    if not org_id:
+        raise IdentityRequiredError("ensure_team_workspace braucht eine org_id.")
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO workspaces (id, kind, owner_user_id, display_name,
+                                   created_at, updated_at)
+           VALUES (?, 'team', NULL, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+               display_name = COALESCE(excluded.display_name, workspaces.display_name),
+               updated_at = excluded.updated_at""",
+        (org_id, display_name or org_id, now, now),
+    )
+    conn.commit()
+    return org_id
+
+
 def ensure_user_workspace(
     conn: DBAdapter,
     user_id: int,

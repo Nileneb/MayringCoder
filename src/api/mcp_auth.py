@@ -94,6 +94,46 @@ def _effective_org_ids() -> tuple[str, ...]:
     return info.org_ids if info is not None else ()
 
 
+def _effective_active_workspace_id() -> str | None:
+    """The app.linn.games *active* workspace (its UUID), or None."""
+    info = _TOKEN_CTX.get(None)
+    return info.active_workspace_id if info is not None else None
+
+
+def _effective_active_workspace_kind() -> str:
+    """'personal' | 'organization' for the active workspace."""
+    info = _TOKEN_CTX.get(None)
+    return info.active_workspace_kind if info is not None else "personal"
+
+
+def resolve_write_visibility(
+    *,
+    active_workspace_id: str | None,
+    active_workspace_kind: str,
+    org_ids: tuple[str, ...] | list[str] | None,
+    user_id: str | None,
+) -> tuple[str, str | None, str | None]:
+    """Decide (visibility, org_id, user_id) for a memory write.
+
+    Pure — no context — so the rule is unit-testable. Drives the MCP
+    remember/ingest path: when the caller's active app.linn.games workspace is
+    an organization they belong to, the write is stamped visibility='org' so
+    the whole team sees it (read-side already handled by retrieval._scope_filter).
+    Otherwise it stays per-user ('user', cross-app same human) or 'private'.
+    Membership is re-checked here so an active='org' claim the caller isn't a
+    member of can never silently write into a foreign org bucket.
+    """
+    if (
+        active_workspace_kind == "organization"
+        and active_workspace_id
+        and active_workspace_id in (org_ids or ())
+    ):
+        return "org", active_workspace_id, user_id
+    if user_id:
+        return "user", None, user_id
+    return "private", None, None
+
+
 class JWTAuthMiddleware:
     """RS256 JWT auth for MCP HTTP transport.
 
