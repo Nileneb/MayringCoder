@@ -142,7 +142,9 @@ def test_threshold_skip(tmp_path):
     ])
     result = reduce_categories(ids, conn, None, "http://x", "m", threshold=10)
     assert result["skipped"] is True
-    assert "unique_labels=5" in result["reason"]
+    # reduce_categories counts DISTINCT labels: {auth, api, tests, config} = 4
+    # (auth appears twice). The threshold compares against the distinct count.
+    assert "unique_labels=4" in result["reason"]
 
 
 def test_mapping_applied_to_sqlite(tmp_path):
@@ -170,7 +172,11 @@ def test_mapping_applied_to_sqlite(tmp_path):
 
 def test_malformed_llm_json_skips(tmp_path):
     """LLM returns garbage → skipped with reason, no crash."""
-    conn, ids = _make_db_with_chunks(tmp_path, [["auth-check"]] * 20)
+    # Need >threshold distinct labels so we get PAST the threshold-skip and
+    # actually reach the LLM call whose malformed output we're testing.
+    labels = [["auth-check"], ["auth-validation"], ["auth-middleware"], ["data-access"]]
+    labels += [["auth-check"]] * 16
+    conn, ids = _make_db_with_chunks(tmp_path, labels)
     with patch("src.analysis.analyzer._ollama_generate",
                return_value="I cannot help with that"):
         result = reduce_categories(ids, conn, None, "http://x", "m", threshold=3)
