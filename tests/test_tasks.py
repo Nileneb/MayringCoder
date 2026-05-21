@@ -9,6 +9,35 @@ def _db():
     db = DBAdapter.memory(); _init_schema(db); return db
 
 
+def _client_with(ws="ws1", sub="42"):
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.api.auth import get_workspace, get_token_info
+    from src.api.jwt_auth import TokenInfo
+    import src.api.dependencies as _deps
+    db = _db()
+    app.dependency_overrides[get_workspace] = lambda: ws
+    app.dependency_overrides[get_token_info] = lambda: TokenInfo(workspace_id=ws, sub=sub, scopes=("mcp:memory",))
+    _deps._conn = db
+    return TestClient(app), db
+
+
+def test_post_and_get_tasks_endpoint():
+    client, db = _client_with()
+    try:
+        r = client.post("/tasks", json={"title": "API task", "priority": "high"}, headers={"Authorization": "Bearer t"})
+        assert r.status_code == 200, r.text
+        tid = r.json()["task_id"]
+        assert r.json()["created_by"] == "42"
+        lst = client.get("/tasks?status=open", headers={"Authorization": "Bearer t"})
+        assert lst.status_code == 200
+        assert any(x["task_id"] == tid for x in lst.json()["tasks"])
+    finally:
+        from src.api.server import app
+        import src.api.dependencies as _deps
+        app.dependency_overrides.clear(); _deps._conn = None
+
+
 def test_create_task_persists_and_returns_row():
     db = _db()
     row = t.create_task(db, workspace_id="ws1", title="Fix auth", description="JWT bug",

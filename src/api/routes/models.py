@@ -247,3 +247,24 @@ class ShareSourceRequest(BaseModel):
     """Body for POST /sources/{id}/share (#195 Iter 4). All optional:
     no body / {} → share publicly; {"org_id": "<id>"} → share to that org."""
     org_id: str | None = None
+
+
+class TaskCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+    priority: str = "medium"
+    due_date: str | None = None
+    tags: str = ""
+    linked_chunk_id: str | None = None
+    scope_key: str | None = None
+
+
+class TaskUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    due_date: str | None = None
+    tags: str | None = None
+    linked_chunk_id: str | None = None
+    scope_key: str | None = None
