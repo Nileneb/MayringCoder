@@ -79,7 +79,8 @@ def kv_invalidate_by_ids(chunk_ids: list[str]) -> None:
 
 # Bump when _init_schema gains new DDL/migrations so existing DBs re-run it.
 #   v2 (#252): sources.scope_key column + index.
-CURRENT_SCHEMA_VERSION = 2
+#   v3 (task-tracker): tasks table + workspace/status/due indexes.
+CURRENT_SCHEMA_VERSION = 3
 
 
 def _now_iso() -> str:
@@ -534,6 +535,25 @@ def _init_schema(conn: DBAdapter) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_workspace_aliases_target
             ON workspace_aliases(workspace_id);
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            task_id        TEXT PRIMARY KEY,
+            workspace_id   TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            description    TEXT NOT NULL DEFAULT '',
+            status         TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','in_progress','done')),
+            priority       TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low','medium','high')),
+            due_date       TEXT,
+            tags           TEXT NOT NULL DEFAULT '',
+            created_by     TEXT,
+            linked_chunk_id TEXT REFERENCES chunks(chunk_id) ON DELETE SET NULL,
+            scope_key      TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            completed_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_workspace_status ON tasks(workspace_id, status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_workspace_due ON tasks(workspace_id, due_date);
     """)
 
     # Migration: add missing columns to existing DBs
