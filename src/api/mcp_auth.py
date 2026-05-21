@@ -106,6 +106,12 @@ def _effective_active_workspace_kind() -> str:
     return info.active_workspace_kind if info is not None else "personal"
 
 
+def _effective_active_workspace_name() -> str | None:
+    """Display name of the active workspace (from JWT memberships), or None."""
+    info = _TOKEN_CTX.get(None)
+    return info.membership_name(info.active_workspace_id) if info is not None else None
+
+
 def resolve_write_visibility(
     *,
     active_workspace_id: str | None,

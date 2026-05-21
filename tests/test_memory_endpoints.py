@@ -13,7 +13,15 @@ def _fake_ws():
     return "test-ws"
 
 
-app.dependency_overrides[get_workspace] = _fake_ws
+@pytest.fixture(autouse=True)
+def _override_workspace():
+    """Re-apply per test instead of once at import: another module's
+    app.dependency_overrides.clear() (run before this file) would otherwise
+    wipe the override, the real get_workspace would demand a JWT, and these
+    token-free tests would 401. Order-independent now."""
+    app.dependency_overrides[get_workspace] = _fake_ws
+    yield
+    app.dependency_overrides.pop(get_workspace, None)
 
 
 @pytest.fixture(autouse=True)

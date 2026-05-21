@@ -26,11 +26,13 @@ class Membership(NamedTuple):
     """Single workspace-membership entry from the JWT `memberships[]` claim.
 
     Issued by app.linn.games JwtIssuer. type is 'personal' or 'organization';
-    role is 'owner' | 'editor' | 'viewer'. See docs/v2-workspaces-spec.md.
+    role is 'owner' | 'editor' | 'viewer'. name is the workspace's display
+    name (optional — legacy JWTs omit it). See docs/v2-workspaces-spec.md.
     """
     id: str
     type: str
     role: str
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,19 @@ class TokenInfo:
     @property
     def uses_custom_provider(self) -> bool:
         return self.llm_provider != "platform"
+
+    def membership_name(self, ws_id: str | None) -> str | None:
+        """Display name of the membership matching ws_id, or None.
+
+        Used to label a locally-registered team workspace (ensure_team_workspace)
+        with the app.linn.games workspace name instead of the bare UUID.
+        """
+        if not ws_id:
+            return None
+        for m in self.memberships:
+            if m.id == ws_id:
+                return m.name
+        return None
 
     @property
     def org_ids(self) -> tuple[str, ...]:
@@ -190,10 +205,12 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
             mid = m.get("id")
             if not mid:
                 continue
+            mname = m.get("name")
             parsed.append(Membership(
                 id=str(mid),
                 type=str(m.get("type") or "personal"),
                 role=str(m.get("role") or "viewer"),
+                name=str(mname) if mname else None,
             ))
         memberships = tuple(parsed)
 

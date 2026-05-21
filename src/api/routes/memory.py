@@ -336,6 +336,16 @@ async def memory_put(
             # caller wants to stamp the source for later promotion).
             source_dict["org_id"] = request.org_id
 
+        # Register the org as a first-class local kind='team' workspace so the
+        # org_id is a real FK target + carries a readable name (from the JWT
+        # membership) in the dashboard, not just a bare UUID.
+        if source_dict.get("visibility") == "org" and source_dict.get("org_id"):
+            from src.identity.workspace_resolver import ensure_team_workspace
+            ensure_team_workspace(
+                _get_conn(), source_dict["org_id"],
+                display_name=info.membership_name(source_dict["org_id"]),
+            )
+
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
                              _OLLAMA_URL, _model("text"),
                              {"categorize": request.categorize, "task": request.task},

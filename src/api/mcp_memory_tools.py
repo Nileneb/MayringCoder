@@ -15,6 +15,7 @@ from src.api.mcp_auth import (
     _effective_org_ids,
     _effective_active_workspace_id,
     _effective_active_workspace_kind,
+    _effective_active_workspace_name,
     _current_raw_jwt,
     resolve_write_visibility,
 )
@@ -296,6 +297,12 @@ def register_memory_tools(mcp: FastMCP) -> None:
                     org_ids=_effective_org_ids(),
                     user_id=_effective_user_id(),
                 )
+                if _vis == "org" and _org:
+                    from src.identity.workspace_resolver import ensure_team_workspace
+                    ensure_team_workspace(
+                        _get_conn(), _org,
+                        display_name=_effective_active_workspace_name(),
+                    )
                 source_dict = {
                     "source_id": sid,
                     "source_type": _stype,

@@ -225,3 +225,92 @@ def test_ensure_team_workspace_idempotent(tmp_path):
         "SELECT COUNT(*) FROM workspaces WHERE id='org-acme'"
     ).fetchone()[0]
     assert cnt == 1
+
+
+# ---------------------------------------------------------------------------
+# #195-follow-up: workspace name flows JWT -> ensure_team_workspace.display_name
+# ---------------------------------------------------------------------------
+
+def test_membership_carries_name():
+    m = Membership(id="org-acme", type="organization", role="editor", name="ACME Inc")
+    assert m.name == "ACME Inc"
+    # Backward-compat: name is optional.
+    assert Membership(id="o", type="organization", role="viewer").name is None
+
+
+def test_validate_jwt_parses_membership_name(monkeypatch, tmp_path, keypair):
+    priv, pub = keypair
+    payload = _base_payload()
+    payload["workspace_id"] = "org-acme-uuid"
+    payload["memberships"] = [
+        {"id": "ws-personal", "type": "personal", "role": "owner", "name": "Bene"},
+        {"id": "org-acme-uuid", "type": "organization", "role": "editor", "name": "ACME Inc"},
+    ]
+    info = validate_jwt_token(_mint(payload, priv, pub, monkeypatch, tmp_path))
+    assert info is not None
+    assert info.memberships[1].name == "ACME Inc"
+    # Active workspace name is reachable for ensure_team_workspace.
+    assert info.membership_name("org-acme-uuid") == "ACME Inc"
+    assert info.membership_name("ws-personal") == "Bene"
+    assert info.membership_name("unknown") is None
+
+
+def test_effective_active_workspace_name():
+    import src.api.mcp_auth as _ma
+    info = TokenInfo(
+        workspace_id="bene",
+        scopes=("mcp:memory",),
+        active_workspace_id="org-acme",
+        active_workspace_kind="organization",
+        memberships=(Membership(id="org-acme", type="organization", role="editor", name="ACME Inc"),),
+    )
+    token = _ma._TOKEN_CTX.set(info)
+    try:
+        assert _ma._effective_active_workspace_name() == "ACME Inc"
+    finally:
+        _ma._TOKEN_CTX.reset(token)
+
+
+def test_org_put_registers_team_workspace_with_name(monkeypatch):
+    """REST /memory/put with visibility='org' registers the org as a local
+    kind='team' workspace, labelled with the name from the JWT membership."""
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+    from src.api.auth import get_token_info, get_workspace
+    import src.api.dependencies as _deps
+    import src.api.routes.memory as _mod
+    from src.memory.db_adapter import DBAdapter
+    from src.memory.store import _init_schema
+
+    db = DBAdapter.memory()
+    _init_schema(db)
+    ti = TokenInfo(
+        workspace_id="bene",
+        sub="42",
+        scopes=("mcp:memory",),
+        memberships=(
+            Membership(id="bene", type="personal", role="owner"),
+            Membership(id="org-acme", type="organization", role="editor", name="ACME Inc"),
+        ),
+    )
+    app.dependency_overrides[get_token_info] = lambda: ti
+    app.dependency_overrides[get_workspace] = lambda: "bene"
+    _deps._conn = db
+    monkeypatch.setattr(_mod, "_run_ingest",
+                        lambda *a, **k: {"source_id": "s", "chunk_ids": []})
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/memory/put",
+            json={"source_id": "s-org-1", "content": "hi", "visibility": "org"},
+            headers={"Authorization": "Bearer test"},
+        )
+        assert resp.status_code == 200, resp.text
+        row = db.execute(
+            "SELECT kind, display_name FROM workspaces WHERE id='org-acme'"
+        ).fetchone()
+        assert row is not None, "org workspace was not registered locally"
+        assert tuple(row) == ("team", "ACME Inc")
+    finally:
+        app.dependency_overrides.clear()
+        _deps._conn = None
