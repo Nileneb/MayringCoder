@@ -404,8 +404,8 @@ def _rerank(
     task_boost_map: dict[str, float] = {}
     if task_id and candidates:
         try:
-            from src.memory.task_derivation import get_task_boost_for_chunks
-            task_boost_map = get_task_boost_for_chunks(
+            from src.memory.task_derivation import get_research_question_boost
+            task_boost_map = get_research_question_boost(
                 conn, task_id, [c.chunk_id for c in candidates],
             )
         except Exception as e:

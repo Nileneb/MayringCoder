@@ -140,17 +140,17 @@ async def memory_search(
         # ohne die such-response zu verzögern.
         try:
             from src.memory.task_derivation import (
-                derive_task_fast, derive_task_background,
+                derive_research_question_fast, derive_research_question_background,
             )
             from src.memory.store import MEMORY_DB_PATH
-            task = derive_task_fast(
+            task = derive_research_question_fast(
                 request.query, _get_conn(), _OLLAMA_URL, workspace_id,
             )
             if task:
-                opts["task_id"] = task["task_id"]
+                opts["task_id"] = task["research_question_id"]
             else:
-                # No existing task matched — create one async (fire-and-forget).
-                derive_task_background(
+                # No existing research_question matched — create one async (fire-and-forget).
+                derive_research_question_background(
                     request.query, MEMORY_DB_PATH, _OLLAMA_URL, workspace_id,
                 )
         except Exception as exc:

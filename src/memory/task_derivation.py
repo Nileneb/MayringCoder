@@ -1,18 +1,18 @@
-"""Task-derivation: Userprompt → Forschungsfrage (Mayring-konform).
+"""Research-question derivation: Userprompt → Forschungsfrage (Mayring-konform).
 
 Mayring-Inhaltsanalyse arbeitet konstitutiv kategorien-geleitet aus einer
 Forschungsfrage. Die alten tech-labels (api, ui, data_access, +
 [neu]…-Inflation) erfüllten das nicht — sie clusterten nach Code-Domäne,
 nicht nach "was hilft mir bei diesem Vorhaben".
 
-Diese Modul leitet aus einem User-Prompt einen **Task-Title** ab
-(5-12 Wörter, einer pro Prompt). Cascade:
-  1. Embedding-similarity-check gegen existierende task_categories
+Dieses Modul leitet aus einem User-Prompt eine **Forschungsfrage** ab
+(5-12 Wörter, eine pro Prompt). Cascade:
+  1. Embedding-similarity-check gegen existierende research_questions
   2. Wenn top-match sim > 0.85 → reuse (occurrence_count++)
   3. Sonst → mistral:7b-instruct call mit strikten JSON-prompt,
-     persistiere neue task_categories row mit embedding.
+     persistiere neue research_questions row mit embedding.
 
-Cascade verhindert task-vocabulary-explosion + nutzt three.linn.games-GPU
+Cascade verhindert vocabulary-explosion + nutzt three.linn.games-GPU
 statt Cloud-Calls (siehe globale CLAUDE.md-Präferenz).
 """
 
@@ -92,18 +92,18 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _load_task_embeddings(
+def _load_research_question_embeddings(
     conn: DBAdapter, workspace_id: str
 ) -> list[tuple[str, str, list[float]]]:
-    """Return [(task_id, title, embedding)] for non-empty embeddings in this workspace."""
+    """Return [(research_question_id, title, embedding)] for non-empty embeddings in this workspace."""
     rows = conn.execute(
-        """SELECT task_id, title, embedding_id FROM task_categories
+        """SELECT research_question_id, title, embedding_id FROM research_questions
            WHERE workspace_id = ? AND embedding_id != ''""",
         (workspace_id,),
     ).fetchall()
 
     # embedding_id holds a JSON-encoded vector (we keep it inline rather than
-    # in Chroma to avoid a roundtrip per derive — task corpus is small
+    # in Chroma to avoid a roundtrip per derive — research_questions corpus is small
     # (<10k expected) and dimensions are 768).
     result = []
     for row in rows:
@@ -157,7 +157,7 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def derive_task_fast(
+def derive_research_question_fast(
     prompt: str,
     conn: DBAdapter,
     ollama_url: str,
@@ -165,17 +165,17 @@ def derive_task_fast(
     *,
     sim_threshold: float = _TASK_SIM_THRESHOLD,
 ) -> Optional[dict]:
-    """Hot-path-safe task lookup: embed + similarity-check only, NO mistral.
+    """Hot-path-safe research_question lookup: embed + similarity-check only, NO mistral.
 
-    WHY(2026-05-11): derive_task() macht im cascade-fall-through einen
+    WHY(2026-05-11): derive_research_question() macht im cascade-fall-through einen
     mistral-call (bis 30s timeout) — das in /memory/search inline zu
     haben hat jeden such-call 5-30s langsamer gemacht (+ die hook-9s-
     budget-timeouts ausgelöst). Diese fast-variante macht NUR den
-    embedding-sim-check (~50-150ms): wenn eine existierende task matched,
-    return sie (+ occurrence_count++); sonst None — KEINE neue task-row.
-    Neue tasks werden async via derive_task_background() erstellt.
+    embedding-sim-check (~50-150ms): wenn eine existierende research_question matched,
+    return sie (+ occurrence_count++); sonst None — KEINE neue row.
+    Neue research_questions werden async via derive_research_question_background() erstellt.
 
-    Returns {"task_id", "title", "reused": True} bei match, sonst None.
+    Returns {"research_question_id", "title", "reused": True} bei match, sonst None.
     """
     prompt = (prompt or "").strip()
     if len(prompt) < 5:
@@ -185,41 +185,45 @@ def derive_task_fast(
     if prompt_emb is None:
         return None
 
-    existing = _load_task_embeddings(conn, workspace_id)
-    best_task_id: Optional[str] = None
+    existing = _load_research_question_embeddings(conn, workspace_id)
+    best_rq_id: Optional[str] = None
     best_title: Optional[str] = None
     best_sim = 0.0
-    for task_id, title, vec in existing:
+    for rq_id, title, vec in existing:
         sim = _cosine(prompt_emb, vec)
         if sim > best_sim:
             best_sim = sim
-            best_task_id = task_id
+            best_rq_id = rq_id
             best_title = title
 
-    if best_task_id is not None and best_sim >= sim_threshold:
+    if best_rq_id is not None and best_sim >= sim_threshold:
         conn.execute(
-            """UPDATE task_categories
+            """UPDATE research_questions
                SET occurrence_count = occurrence_count + 1,
                    last_used_at = ?
-               WHERE task_id = ?""",
-            (_now_iso(), best_task_id),
+               WHERE research_question_id = ?""",
+            (_now_iso(), best_rq_id),
         )
-        return {"task_id": best_task_id, "title": best_title, "reused": True}
+        return {"research_question_id": best_rq_id, "title": best_title, "reused": True}
     return None
 
 
-def derive_task_background(
+# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
+derive_task_fast = derive_research_question_fast
+
+
+def derive_research_question_background(
     prompt: str,
     db_path,
     ollama_url: str,
     workspace_id: str = "default",
 ) -> None:
-    """Fire-and-forget: create a new task_category for a prompt in a daemon thread.
+    """Fire-and-forget: create a new research_question for a prompt in a daemon thread.
 
-    WHY(2026-05-11): /memory/search calls derive_task_fast (cheap) for the
-    boost. If no existing task matched, this kicks off the mistral-creation
+    WHY(2026-05-11): /memory/search calls derive_research_question_fast (cheap) for the
+    boost. If no existing research_question matched, this kicks off the mistral-creation
     in the background so the search response isn't delayed — the NEXT query
-    on the same topic will find the new task. Opens its own DB connection
+    on the same topic will find the new research_question. Opens its own DB connection
     (caller's conn may be on another thread).
     """
     import threading
@@ -229,17 +233,21 @@ def derive_task_background(
             from src.memory.store import init_memory_db
             conn = init_memory_db(db_path)
             try:
-                derive_task(prompt, conn, ollama_url, workspace_id)
+                derive_research_question(prompt, conn, ollama_url, workspace_id)
             finally:
                 conn.close()
         except Exception as e:
-            _log.warning("derive_task_background failed: %s", e)
+            _log.warning("derive_research_question_background failed: %s", e)
 
     t = threading.Thread(target=_work, daemon=True)
     t.start()
 
 
-def derive_task(
+# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
+derive_task_background = derive_research_question_background
+
+
+def derive_research_question(
     prompt: str,
     conn: DBAdapter,
     ollama_url: str,
@@ -248,20 +256,20 @@ def derive_task(
     model: Optional[str] = None,
     sim_threshold: float = _TASK_SIM_THRESHOLD,
 ) -> Optional[dict]:
-    """Derive (or reuse) a task_category for a user prompt — FULL cascade.
+    """Derive (or reuse) a research_question for a user prompt — FULL cascade.
 
     NOT for the hot path (it may make a 30s mistral call) — use
-    derive_task_fast() for /memory/search, derive_task_background() to
-    create new tasks async, and this directly only from explicit/batch
+    derive_research_question_fast() for /memory/search, derive_research_question_background() to
+    create new research_questions async, and this directly only from explicit/batch
     callers (pi_task, a periodic job).
 
     Cascade:
       1. Embed prompt
-      2. Compare to all existing task embeddings in this workspace
+      2. Compare to all existing research_question embeddings in this workspace
       3. If best > sim_threshold: increment occurrence_count, return existing
-      4. Else: mistral-call → new task_categories row
+      4. Else: mistral-call → new research_questions row
 
-    Returns {"task_id": ..., "title": ..., "reused": bool} or None on failure.
+    Returns {"research_question_id": ..., "title": ..., "reused": bool} or None on failure.
     """
     prompt = (prompt or "").strip()
     if len(prompt) < 5:
@@ -271,27 +279,27 @@ def derive_task(
     if prompt_emb is None:
         return None
 
-    existing = _load_task_embeddings(conn, workspace_id)
+    existing = _load_research_question_embeddings(conn, workspace_id)
 
-    best_task_id: Optional[str] = None
+    best_rq_id: Optional[str] = None
     best_title: Optional[str] = None
     best_sim = 0.0
-    for task_id, title, vec in existing:
+    for rq_id, title, vec in existing:
         sim = _cosine(prompt_emb, vec)
         if sim > best_sim:
             best_sim = sim
-            best_task_id = task_id
+            best_rq_id = rq_id
             best_title = title
 
-    if best_task_id is not None and best_sim >= sim_threshold:
+    if best_rq_id is not None and best_sim >= sim_threshold:
         conn.execute(
-            """UPDATE task_categories
+            """UPDATE research_questions
                SET occurrence_count = occurrence_count + 1,
                    last_used_at = ?
-               WHERE task_id = ?""",
-            (_now_iso(), best_task_id),
+               WHERE research_question_id = ?""",
+            (_now_iso(), best_rq_id),
         )
-        return {"task_id": best_task_id, "title": best_title, "reused": True}
+        return {"research_question_id": best_rq_id, "title": best_title, "reused": True}
 
     # Cascade-fall-through → mistral
     if model is None:
@@ -307,62 +315,74 @@ def derive_task(
         return None
 
     # Embed the canonical title (not the prompt) so future similarity
-    # checks compare task-to-task, not prompt-to-prompt.
+    # checks compare research_question-to-research_question, not prompt-to-prompt.
     title_emb = _embed_text(task_title, ollama_url)
     if title_emb is None:
         return None
 
-    task_id = "task_" + hashlib.sha256(task_title.encode()).hexdigest()[:16]
+    rq_id = "task_" + hashlib.sha256(task_title.encode()).hexdigest()[:16]
     now = _now_iso()
     conn.execute(
-        """INSERT OR IGNORE INTO task_categories
-           (task_id, title, embedding_id, occurrence_count, first_seen_at, last_used_at, workspace_id)
+        """INSERT OR IGNORE INTO research_questions
+           (research_question_id, title, embedding_id, occurrence_count, first_seen_at, last_used_at, workspace_id)
            VALUES (?, ?, ?, 1, ?, ?, ?)""",
-        (task_id, task_title, json.dumps(title_emb), now, now, workspace_id),
+        (rq_id, task_title, json.dumps(title_emb), now, now, workspace_id),
     )
 
-    return {"task_id": task_id, "title": task_title, "reused": False}
+    return {"research_question_id": rq_id, "title": task_title, "reused": False}
 
 
-def link_chunk_to_task(
+# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
+derive_task = derive_research_question
+
+
+def link_chunk_to_research_question(
     conn: DBAdapter,
-    task_id: str,
+    research_question_id: str,
     chunk_id: str,
     relevance_score: float = 1.0,
 ) -> None:
-    """Insert or boost a task_chunk_links row. Idempotent: re-call increments score."""
+    """Insert or boost a research_question_chunk_links row. Idempotent: re-call increments score."""
     existing = conn.execute(
-        "SELECT relevance_score FROM task_chunk_links WHERE task_id = ? AND chunk_id = ?",
-        (task_id, chunk_id),
+        "SELECT relevance_score FROM research_question_chunk_links WHERE research_question_id = ? AND chunk_id = ?",
+        (research_question_id, chunk_id),
     ).fetchone()
 
     if existing is not None:
         new_score = min(5.0, float(existing[0]) + relevance_score)
         conn.execute(
-            "UPDATE task_chunk_links SET relevance_score = ? WHERE task_id = ? AND chunk_id = ?",
-            (new_score, task_id, chunk_id),
+            "UPDATE research_question_chunk_links SET relevance_score = ? WHERE research_question_id = ? AND chunk_id = ?",
+            (new_score, research_question_id, chunk_id),
         )
     else:
         conn.execute(
-            """INSERT INTO task_chunk_links (task_id, chunk_id, relevance_score, created_at)
+            """INSERT INTO research_question_chunk_links (research_question_id, chunk_id, relevance_score, created_at)
                VALUES (?, ?, ?, ?)""",
-            (task_id, chunk_id, relevance_score, _now_iso()),
+            (research_question_id, chunk_id, relevance_score, _now_iso()),
         )
 
 
-def get_task_boost_for_chunks(
+# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
+link_chunk_to_task = link_chunk_to_research_question
+
+
+def get_research_question_boost(
     conn: DBAdapter,
-    task_id: str,
+    research_question_id: str,
     chunk_ids: list[str],
 ) -> dict[str, float]:
-    """Return {chunk_id → relevance_score} for chunks linked to the given task."""
-    if not task_id or not chunk_ids:
+    """Return {chunk_id → relevance_score} for chunks linked to the given research_question."""
+    if not research_question_id or not chunk_ids:
         return {}
 
     placeholders = ",".join("?" * len(chunk_ids))
     rows = conn.execute(
-        f"""SELECT chunk_id, relevance_score FROM task_chunk_links
-            WHERE task_id = ? AND chunk_id IN ({placeholders})""",
-        [task_id] + chunk_ids,
+        f"""SELECT chunk_id, relevance_score FROM research_question_chunk_links
+            WHERE research_question_id = ? AND chunk_id IN ({placeholders})""",
+        [research_question_id] + chunk_ids,
     ).fetchall()
     return {row[0]: float(row[1]) for row in rows}
+
+
+# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
+get_task_boost_for_chunks = get_research_question_boost
