@@ -81,3 +81,20 @@ def test_update_and_delete_are_workspace_scoped():
     assert t.get_task(db, "ws1", task["task_id"])["title"] == "x"
     assert t.delete_task(db, "ws1", task["task_id"]) is True
     assert t.get_task(db, "ws1", task["task_id"]) is None
+
+
+def test_patch_complete_delete_endpoints_and_cross_ws_404():
+    client, db = _client_with(ws="ws1")
+    try:
+        tid = client.post("/tasks", json={"title": "x"}, headers={"Authorization": "Bearer t"}).json()["task_id"]
+        pc = client.post(f"/tasks/{tid}/complete", headers={"Authorization": "Bearer t"})
+        assert pc.status_code == 200 and pc.json()["status"] == "done"
+        pa = client.patch(f"/tasks/{tid}", json={"priority": "low"}, headers={"Authorization": "Bearer t"})
+        assert pa.status_code == 200 and pa.json()["priority"] == "low"
+        miss = client.patch("/tasks/tsk_nope", json={"title": "y"}, headers={"Authorization": "Bearer t"})
+        assert miss.status_code == 404
+        assert client.delete(f"/tasks/{tid}", headers={"Authorization": "Bearer t"}).status_code == 200
+    finally:
+        from src.api.server import app
+        import src.api.dependencies as _deps
+        app.dependency_overrides.clear(); _deps._conn = None
