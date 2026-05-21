@@ -208,10 +208,6 @@ def derive_research_question_fast(
     return None
 
 
-# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
-derive_task_fast = derive_research_question_fast
-
-
 def derive_research_question_background(
     prompt: str,
     db_path,
@@ -241,10 +237,6 @@ def derive_research_question_background(
 
     t = threading.Thread(target=_work, daemon=True)
     t.start()
-
-
-# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
-derive_task_background = derive_research_question_background
 
 
 def derive_research_question(
@@ -332,10 +324,6 @@ def derive_research_question(
     return {"research_question_id": rq_id, "title": task_title, "reused": False}
 
 
-# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
-derive_task = derive_research_question
-
-
 def link_chunk_to_research_question(
     conn: DBAdapter,
     research_question_id: str,
@@ -362,10 +350,6 @@ def link_chunk_to_research_question(
         )
 
 
-# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
-link_chunk_to_task = link_chunk_to_research_question
-
-
 def get_research_question_boost(
     conn: DBAdapter,
     research_question_id: str,
@@ -384,5 +368,3 @@ def get_research_question_boost(
     return {row[0]: float(row[1]) for row in rows}
 
 
-# WHY(task-tracker): backward-compat alias — callers migrated in TASK 0.2
-get_task_boost_for_chunks = get_research_question_boost

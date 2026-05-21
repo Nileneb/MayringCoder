@@ -10,9 +10,9 @@ import pytest
 
 from src.memory.store import init_memory_db
 from src.memory.task_derivation import (
-    derive_research_question as derive_task,
-    get_research_question_boost as get_task_boost_for_chunks,
-    link_chunk_to_research_question as link_chunk_to_task,
+    derive_research_question,
+    get_research_question_boost,
+    link_chunk_to_research_question,
 )
 
 
@@ -42,7 +42,7 @@ def test_link_chunk_to_task_new_row(conn):
         ("2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
 
-    link_chunk_to_task(conn, "task_x", "chk_test_001", relevance_score=1.0)
+    link_chunk_to_research_question(conn, "task_x", "chk_test_001", relevance_score=1.0)
     row = conn.execute(
         "SELECT relevance_score FROM research_question_chunk_links WHERE research_question_id='task_x'"
     ).fetchone()
@@ -58,9 +58,9 @@ def test_link_chunk_to_task_is_idempotent_and_increments(conn):
         ("2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
 
-    link_chunk_to_task(conn, "task_x", "chk_test_001", relevance_score=0.5)
-    link_chunk_to_task(conn, "task_x", "chk_test_001", relevance_score=1.0)
-    link_chunk_to_task(conn, "task_x", "chk_test_001", relevance_score=2.0)
+    link_chunk_to_research_question(conn, "task_x", "chk_test_001", relevance_score=0.5)
+    link_chunk_to_research_question(conn, "task_x", "chk_test_001", relevance_score=1.0)
+    link_chunk_to_research_question(conn, "task_x", "chk_test_001", relevance_score=2.0)
 
     row = conn.execute(
         "SELECT relevance_score FROM research_question_chunk_links WHERE research_question_id='task_x' AND chunk_id='chk_test_001'"
@@ -77,7 +77,7 @@ def test_link_chunk_relevance_clipped_at_5(conn):
         ("2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
     for _ in range(20):
-        link_chunk_to_task(conn, "task_x", "chk_test_001", relevance_score=1.0)
+        link_chunk_to_research_question(conn, "task_x", "chk_test_001", relevance_score=1.0)
 
     row = conn.execute(
         "SELECT relevance_score FROM research_question_chunk_links WHERE research_question_id='task_x'"
@@ -93,9 +93,9 @@ def test_get_task_boost_for_chunks_returns_only_matches(conn):
            VALUES ('task_x', 'Test', '[]', ?, ?, 'default')""",
         ("2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
-    link_chunk_to_task(conn, "task_x", "chk_match", relevance_score=2.5)
+    link_chunk_to_research_question(conn, "task_x", "chk_match", relevance_score=2.5)
 
-    boost = get_task_boost_for_chunks(conn, "task_x", ["chk_match", "chk_unmatched"])
+    boost = get_research_question_boost(conn, "task_x", ["chk_match", "chk_unmatched"])
     assert boost == {"chk_match": pytest.approx(2.5)}
 
 
@@ -113,7 +113,7 @@ def test_derive_task_reuses_existing_via_embedding_similarity(conn):
     )
 
     with patch("src.memory.task_derivation._embed_text", return_value=existing_emb):
-        result = derive_task("how do I validate JWT", conn, "http://ollama:11434", "default")
+        result = derive_research_question("how do I validate JWT", conn, "http://ollama:11434", "default")
 
     assert result is not None
     assert result["research_question_id"] == "task_existing"
@@ -135,7 +135,7 @@ def test_derive_task_creates_new_when_below_similarity_threshold(conn):
             "src.memory.task_derivation._call_mistral_for_task",
             return_value="Deploy-Fehler diagnostizieren und beheben",
         ):
-            result = derive_task(
+            result = derive_research_question(
                 "der deploy ist kaputt was tun?",
                 conn, "http://ollama:11434", "default",
             )
@@ -154,7 +154,7 @@ def test_derive_task_creates_new_when_below_similarity_threshold(conn):
 
 
 def test_derive_task_short_prompt_returns_none(conn):
-    result = derive_task("hi", conn, "http://ollama:11434", "default")
+    result = derive_research_question("hi", conn, "http://ollama:11434", "default")
     assert result is None
 
 
@@ -176,7 +176,7 @@ def test_derive_task_workspace_isolation(conn):
             "src.memory.task_derivation._call_mistral_for_task",
             return_value="Bob's distinct task",
         ):
-            result = derive_task(
+            result = derive_research_question(
                 "irgendein prompt",
                 conn, "http://ollama:11434", workspace_id="bob",
             )
@@ -254,11 +254,11 @@ def test_derive_task_fast_returns_existing_match(conn):
            VALUES ('task_known', 'Known Task', ?, ?, ?, 'default')""",
         (json.dumps(emb), "2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
-    from src.memory.task_derivation import derive_task_fast
+    from src.memory.task_derivation import derive_research_question_fast
     with patch("src.memory.task_derivation._embed_text", return_value=emb):
         # _call_mistral must NEVER be called in the fast path
         with patch("src.memory.task_derivation._call_mistral_for_task") as mock_mistral:
-            result = derive_task_fast("any prompt", conn, "http://ollama:11434", "default")
+            result = derive_research_question_fast("any prompt", conn, "http://ollama:11434", "default")
     assert result is not None
     assert result["research_question_id"] == "task_known"
     assert result["reused"] is True
@@ -267,10 +267,10 @@ def test_derive_task_fast_returns_existing_match(conn):
 
 def test_derive_task_fast_returns_none_when_no_match(conn):
     """derive_task_fast: no existing task → None (does NOT create one)."""
-    from src.memory.task_derivation import derive_task_fast
+    from src.memory.task_derivation import derive_research_question_fast
     with patch("src.memory.task_derivation._embed_text", return_value=[0.9] * 768):
         with patch("src.memory.task_derivation._call_mistral_for_task") as mock_mistral:
-            result = derive_task_fast("brand new topic", conn, "http://ollama:11434", "default")
+            result = derive_research_question_fast("brand new topic", conn, "http://ollama:11434", "default")
     assert result is None
     mock_mistral.assert_not_called()
     # No new row created
@@ -285,9 +285,9 @@ def test_derive_task_fast_increments_occurrence_on_match(conn):
            VALUES ('task_c', 'T', ?, 5, ?, ?, 'default')""",
         (json.dumps(emb), "2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
-    from src.memory.task_derivation import derive_task_fast
+    from src.memory.task_derivation import derive_research_question_fast
     with patch("src.memory.task_derivation._embed_text", return_value=emb):
-        derive_task_fast("prompt text", conn, "http://ollama:11434", "default")
+        derive_research_question_fast("prompt text", conn, "http://ollama:11434", "default")
     n = conn.execute("SELECT occurrence_count FROM research_questions WHERE research_question_id='task_c'").fetchone()[0]
     assert n == 6
 
