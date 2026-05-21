@@ -100,6 +100,42 @@ def test_patch_complete_delete_endpoints_and_cross_ws_404():
         app.dependency_overrides.clear(); _deps._conn = None
 
 
+def test_create_task_rejects_invalid_scope_key():
+    db = _db()
+    with pytest.raises(ValueError):
+        t.create_task(db, workspace_id="ws1", title="x", scope_key="not-typed")
+
+
+def test_post_task_invalid_scope_key_returns_422():
+    client, db = _client_with()
+    try:
+        r = client.post("/tasks", json={"title": "x", "scope_key": "not-typed"},
+                        headers={"Authorization": "Bearer t"})
+        assert r.status_code == 422, r.text
+    finally:
+        from src.api.server import app
+        import src.api.dependencies as _deps
+        app.dependency_overrides.clear(); _deps._conn = None
+
+
+def test_task_create_tool_invalid_priority_returns_error_dict(monkeypatch):
+    import src.api.mcp_task_tools as mt
+    import src.api.dependencies as _deps
+    _deps._conn = _db()
+    monkeypatch.setattr(mt, "_effective_workspace_id", lambda: "ws1")
+    monkeypatch.setattr(mt, "_enforce_tenant", lambda w: w or "ws1")
+    monkeypatch.setattr(mt, "_effective_user_id", lambda: None)
+    captured = {}
+    class FakeMCP:
+        def tool(self):
+            def deco(fn): captured[fn.__name__] = fn; return fn
+            return deco
+    mt.register_task_tools(FakeMCP())
+    res = captured["task_create"](title="x", priority="bogus")
+    assert "error" in res
+    _deps._conn = None
+
+
 def test_register_task_tools_create_and_list(monkeypatch):
     import src.api.mcp_task_tools as mt
     import src.api.dependencies as _deps

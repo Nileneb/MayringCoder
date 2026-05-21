@@ -305,3 +305,24 @@ def test_migration_renames_task_categories_to_research_questions(tmp_path):
     assert "research_question_chunk_links" in names
     assert "task_categories" not in names
     assert "research_question_id" in db.get_columns("research_question_chunk_links")
+
+
+def test_init_schema_renames_legacy_task_categories_with_data(tmp_path):
+    from src.memory.db_adapter import DBAdapter
+    from src.memory.store import _init_schema
+    db = DBAdapter.create(tmp_path / "legacy2.db")
+    db.execute("CREATE TABLE task_categories (task_id TEXT PRIMARY KEY, title TEXT, "
+               "embedding_id TEXT, parent_task_id TEXT, occurrence_count INTEGER, "
+               "first_seen_at TEXT, last_used_at TEXT, workspace_id TEXT)")
+    db.execute("INSERT INTO task_categories (task_id, title, first_seen_at, last_used_at, workspace_id) "
+               "VALUES ('t1','q','2026-01-01','2026-01-01','ws')")
+    db.execute("CREATE TABLE task_chunk_links (task_id TEXT, chunk_id TEXT, relevance_score REAL, "
+               "created_at TEXT, PRIMARY KEY(task_id, chunk_id))")
+    db.commit()
+    _init_schema(db)
+    names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "task_categories" not in names           # renamed, not orphaned
+    assert "research_questions" in names
+    # the real data survived the rename
+    row = db.execute("SELECT title FROM research_questions WHERE research_question_id='t1'").fetchone()
+    assert row[0] == "q"

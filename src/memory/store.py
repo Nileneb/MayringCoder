@@ -294,17 +294,25 @@ def _migrate_visibility_check(conn: DBAdapter) -> None:
 
 def _init_schema(conn: DBAdapter) -> None:
     """Ensure all tables and indexes exist, with schema versioning to skip DDL when current.
-    
+
     Uses PRAGMA user_version to track schema version and avoid lock contention on
     repeated CLI invocations.
     """
     # Read current schema version from PRAGMA user_version (default 0 for new DBs)
     current_version = conn.execute("PRAGMA user_version").fetchone()[0]
-    
+
     # If schema is already at current version, skip all DDL and migrations (no-op)
     if current_version >= CURRENT_SCHEMA_VERSION:
         return
-    
+
+    # WHY(task-tracker): rename must run BEFORE CREATE TABLE IF NOT EXISTS
+    # research_questions below. On a legacy DB that still has task_categories,
+    # the executescript would create an empty research_questions first, making
+    # the rename guard ("research_questions" not in tables) False — the real
+    # data would stay stranded in task_categories. Running it here first means
+    # the subsequent CREATE TABLE IF NOT EXISTS is a no-op on legacy DBs.
+    _migrate_rename_research_questions(conn)
+
     # Schema is behind (or uninitialized) — run full DDL + migrations
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sources (

@@ -312,7 +312,7 @@ def derive_research_question(
     if title_emb is None:
         return None
 
-    rq_id = "task_" + hashlib.sha256(task_title.encode()).hexdigest()[:16]
+    rq_id = "rq_" + hashlib.sha256(task_title.encode()).hexdigest()[:16]
     now = _now_iso()
     conn.execute(
         """INSERT OR IGNORE INTO research_questions
