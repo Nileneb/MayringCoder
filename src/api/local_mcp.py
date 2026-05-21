@@ -54,9 +54,12 @@ from src.agents import pi_worker  # noqa: E402
 _local_db = Path(os.environ["MAYRING_LOCAL_DB"])
 init_memory_db(_local_db).close()
 
+from src.api.mcp_task_tools import register_task_tools  # noqa: E402
+
 mcp = FastMCP("memory-agents")
 register_agent_tools(mcp)
 register_second_opinion_tools(mcp)
+register_task_tools(mcp)
 
 # Start the background worker loop. Idempotent — start() is a no-op if the
 # loop is already running. Disable via PI_ASYNC_DISABLED=1 (used in tests).

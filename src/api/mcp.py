@@ -64,6 +64,8 @@ mcp = FastMCP(
 
 register_memory_tools(mcp)
 register_second_opinion_tools(mcp)
+from src.api.mcp_task_tools import register_task_tools
+register_task_tools(mcp)
 # WHY(2026-05-11): pi_task_*_cloud (register_pi_queue_tools) ENTFERNT —
 # das war ein toter pull-model-pfad (kein pi_worker.py-prozess lief je,
 # submitted cloud-jobs blieben ewig liegen). Jobverwaltung sitzt in der

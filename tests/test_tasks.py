@@ -98,3 +98,24 @@ def test_patch_complete_delete_endpoints_and_cross_ws_404():
         from src.api.server import app
         import src.api.dependencies as _deps
         app.dependency_overrides.clear(); _deps._conn = None
+
+
+def test_register_task_tools_create_and_list(monkeypatch):
+    import src.api.mcp_task_tools as mt
+    import src.api.dependencies as _deps
+    db = _db()
+    _deps._conn = db
+    monkeypatch.setattr(mt, "_effective_workspace_id", lambda: "ws1")
+    monkeypatch.setattr(mt, "_enforce_tenant", lambda w: w or "ws1")
+    monkeypatch.setattr(mt, "_effective_user_id", lambda: None)  # agent path
+    captured = {}
+    class FakeMCP:
+        def tool(self):
+            def deco(fn): captured[fn.__name__] = fn; return fn
+            return deco
+    mt.register_task_tools(FakeMCP())
+    created = captured["task_create"](title="agent task")
+    assert created["created_by"] == "agent"
+    listed = captured["task_list"]()
+    assert any(x["task_id"] == created["task_id"] for x in listed["tasks"])
+    _deps._conn = None
