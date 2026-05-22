@@ -450,6 +450,27 @@ async def conversation_micro_batch(
                 import logging
                 logging.getLogger(__name__).warning("igio_hint tagging failed: %s", exc)
 
+        # Prompt → actionable todo (background, never blocks the response;
+        # not for system/smoke workspaces).
+        if workspace_id != "system":
+            user_turns = [t.get("content", "") for t in turns_dicts if t.get("role") == "user"]
+            last_user = (user_turns[-1] if user_turns else "").strip()
+            if last_user:
+                import threading
+                from src.memory.store import MEMORY_DB_PATH
+                def _derive_todo_bg(p=last_user, ws=workspace_id):
+                    try:
+                        from src.memory.store import init_memory_db
+                        from src.memory.todo_derivation import derive_todo
+                        c = init_memory_db(MEMORY_DB_PATH)
+                        try:
+                            derive_todo(p, c, _OLLAMA_URL, ws)
+                        finally:
+                            c.close()
+                    except Exception as exc:
+                        logging.getLogger(__name__).warning("derive_todo_bg failed: %s", exc)
+                threading.Thread(target=_derive_todo_bg, daemon=True).start()
+
         # Predictive Memory v2 (Issue #55): bei jeder neuen
         # conversation_summary inkrementell die Markov-Transitions
         # bumpen, statt auf Cron + 100-chunk-rebuild zu warten.

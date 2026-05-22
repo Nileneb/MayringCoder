@@ -101,3 +101,63 @@ def test_conversation_micro_batch_matching_slug_passes():
         result = asyncio.run(conversation_micro_batch(request, workspace_id="bene"))
 
     assert "bene" in result["source_id"]
+
+
+def test_micro_batch_with_user_turn_returns_200_and_no_error():
+    """Posting a micro-batch with a user turn succeeds (derive_todo runs in background thread)."""
+    from src.api.routes.memory import conversation_micro_batch
+    from src.api.routes.models import ConversationMicroBatchRequest, ConversationTurnModel
+    import asyncio
+
+    request = ConversationMicroBatchRequest(
+        turns=[ConversationTurnModel(role="user", content="please implement the login feature",
+                                     timestamp="2026-05-22T10:00:00Z")],
+        session_id="sess_derive_test",
+        presumarized="test summary for derive",
+    )
+
+    def _fake_run_ingest(*a, **kw):
+        return {"status": "ok", "chunk_ids": [], "indexed": True,
+                "deduped": 0, "filtered": 0, "superseded": 0}
+
+    with patch("src.api.routes.memory._run_ingest", side_effect=_fake_run_ingest), \
+         patch("src.api.routes.memory._get_conn", return_value=MagicMock()), \
+         patch("src.api.routes.memory._get_chroma", return_value=MagicMock()):
+        result = asyncio.run(conversation_micro_batch(request, workspace_id="bene"))
+
+    # The response must succeed — derive_todo runs in a daemon thread and does not block
+    assert "source_id" in result
+
+
+def test_micro_batch_skips_derive_for_system_workspace():
+    """System workspace MUST NOT trigger derive_todo (no noise from cron/service tokens)."""
+    from src.api.routes.memory import conversation_micro_batch
+    from src.api.routes.models import ConversationMicroBatchRequest, ConversationTurnModel
+    import asyncio
+    import threading
+
+    request = ConversationMicroBatchRequest(
+        turns=[ConversationTurnModel(role="user", content="please fix auth",
+                                     timestamp="2026-05-22T10:00:00Z")],
+        session_id="sess_system",
+        presumarized="system summary",
+    )
+
+    spawned = []
+
+    def _track_start(self, *a, **kw):
+        spawned.append(self)
+        # don't actually start — avoid real LLM calls
+        pass
+
+    def _fake_run_ingest(*a, **kw):
+        return {"status": "ok", "chunk_ids": [], "indexed": True,
+                "deduped": 0, "filtered": 0, "superseded": 0}
+
+    with patch("src.api.routes.memory._run_ingest", side_effect=_fake_run_ingest), \
+         patch("src.api.routes.memory._get_conn", return_value=MagicMock()), \
+         patch("src.api.routes.memory._get_chroma", return_value=MagicMock()), \
+         patch.object(threading.Thread, "start", _track_start):
+        asyncio.run(conversation_micro_batch(request, workspace_id="system"))
+
+    assert len(spawned) == 0, "derive_todo thread must NOT be spawned for system workspace"
