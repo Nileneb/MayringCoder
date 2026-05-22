@@ -24,9 +24,16 @@ async def create_task(req: TaskCreateRequest, workspace_id: str = Depends(get_wo
 
 @router.get("/tasks")
 async def list_tasks(status: str | None = None, tag: str | None = None,
-                     priority: str | None = None, workspace_id: str = Depends(get_workspace)) -> dict:
-    return {"workspace_id": workspace_id,
-            "tasks": _t.list_tasks(_get_conn(), workspace_id, status=status, tag=tag, priority=priority)}
+                     priority: str | None = None, include_existing: bool = True,
+                     workspace_id: str = Depends(get_workspace)) -> dict:
+    conn = _get_conn()
+    tasks = _t.list_tasks(conn, workspace_id, status=status, tag=tag, priority=priority)
+    # Surface the workspace's existing work (IGIO goals + research questions) as
+    # read-only rows so an established workspace isn't shown an empty tracker.
+    # Skipped when filtering by status/priority (those are real-task concepts).
+    if include_existing and not status and not priority:
+        tasks = tasks + _t.list_tracked_work(conn, workspace_id)
+    return {"workspace_id": workspace_id, "tasks": tasks}
 
 
 @router.patch("/tasks/{task_id}")

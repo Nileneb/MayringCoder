@@ -155,3 +155,55 @@ def test_register_task_tools_create_and_list(monkeypatch):
     listed = captured["task_list"]()
     assert any(x["task_id"] == created["task_id"] for x in listed["tasks"])
     _deps._conn = None
+
+
+# ---------------------------------------------------------------------------
+# Surface existing work (IGIO goals + research_questions) as read-only tasks
+# ---------------------------------------------------------------------------
+
+def _seed_existing(db, ws):
+    now = "2026-05-20T00:00:00+00:00"
+    db.execute("INSERT INTO research_questions (research_question_id, title, "
+               "first_seen_at, last_used_at, occurrence_count, workspace_id) "
+               "VALUES (?,'JWT-Validierung',?,?,3,?)", (f"rq1-{ws}", now, now, ws))
+    db.execute("INSERT OR IGNORE INTO sources (source_id, source_type, captured_at, workspace_id) "
+               "VALUES (?,'note',?,?)", (f"s1-{ws}", now, ws))
+    db.execute("INSERT INTO chunks (chunk_id, source_id, text, summary, igio_axis, "
+               "is_active, workspace_id, created_at) "
+               "VALUES (?,?,'long goal text','Ship the task tracker','goal',1,?,?)",
+               (f"gc1-{ws}", f"s1-{ws}", ws, now))
+    db.commit()
+
+
+def test_list_tracked_work_returns_goals_and_research_questions():
+    db = _db()
+    _seed_existing(db, "ws1")
+    _seed_existing(db, "ws2")  # isolation
+    rows = t.list_tracked_work(db, "ws1")
+    by_src = {r["source"]: r for r in rows}
+    assert by_src["research_question"]["title"] == "JWT-Validierung"
+    assert by_src["research_question"]["read_only"] is True
+    assert by_src["research_question"]["task_id"].startswith("rq:")
+    assert by_src["goal"]["title"] == "Ship the task tracker"
+    assert by_src["goal"]["status"] == "done"
+    assert by_src["goal"]["task_id"].startswith("goal:")
+    # workspace-scoped: only ws1's two rows
+    assert all(r["workspace_id"] == "ws1" for r in rows)
+    assert len(rows) == 2
+
+
+def test_get_tasks_endpoint_includes_existing_by_default():
+    client, db = _client_with(ws="ws1")
+    _seed_existing(db, "ws1")
+    try:
+        r = client.get("/tasks", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 200, r.text
+        sources = {x.get("source") for x in r.json()["tasks"]}
+        assert "goal" in sources and "research_question" in sources
+        # opting out returns only real tasks (none here)
+        r2 = client.get("/tasks?include_existing=false", headers={"Authorization": "Bearer t"})
+        assert r2.json()["tasks"] == []
+    finally:
+        from src.api.server import app
+        import src.api.dependencies as _deps
+        app.dependency_overrides.clear(); _deps._conn = None
