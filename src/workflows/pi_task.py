@@ -1,8 +1,8 @@
 """Pi-Agent-Freiform-Task Workflow."""
 from __future__ import annotations
 
-from src.config import repo_slug as _repo_slug
-from src.model_router import ModelRouter
+from mayring_core.config import repo_slug as _repo_slug
+from mayring_core.model_router import ModelRouter
 
 
 def run_pi_task(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:

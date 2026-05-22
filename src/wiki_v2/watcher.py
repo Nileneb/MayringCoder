@@ -11,7 +11,7 @@ _FILE_PATH_RE = _re.compile(
 def _set_recluster_flag(workspace_id: str) -> None:
     try:
         import os as _os_w
-        from src.config import WIKI_DIR
+        from mayring_core.config import WIKI_DIR
         from src.wiki_v2._path_utils import confined_path
         _safe = _os_w.path.basename(workspace_id.replace('/', '_').replace('\\', '_'))
         flag_path = confined_path(WIKI_DIR, _safe, "recluster_needed")
@@ -32,7 +32,7 @@ def on_post_finding(
     creates issue_mentions edges, sets recluster flag on >10% topology change.
     """
     try:
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.models import WikiEdge
 
@@ -76,7 +76,7 @@ def on_post_analyze(
     Designed to be called non-blockingly; all exceptions are swallowed.
     """
     try:
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.models import WikiNode
         from src.wiki_v2.edge_detector import EdgeDetector
@@ -111,7 +111,7 @@ def on_post_ingest(
 ) -> None:
     """Watcher hook after memory ingest. Adds node + concept_link edges to wiki graph."""
     try:
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.models import WikiNode
 

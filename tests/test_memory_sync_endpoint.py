@@ -33,8 +33,8 @@ def _override_workspace():
 
 @pytest.fixture(autouse=True)
 def _reset_conn(tmp_path, monkeypatch):
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
     adapter = DBAdapter.create(tmp_path / "test.db", check_same_thread=False)
     _init_schema(adapter)
     monkeypatch.setattr(_deps, "_conn", adapter)
@@ -50,8 +50,8 @@ def client():
 def _seed_chunk(conn, chunk_id: str, source_id: str, workspace_id: str,
                 visibility: str = "private", created_at: str | None = None,
                 is_active: int = 1) -> None:
-    from src.memory.store import upsert_source, insert_chunk
-    from src.memory.schema import Source, Chunk
+    from mayring_core.memory.store import upsert_source, insert_chunk
+    from mayring_core.memory.schema import Source, Chunk
     upsert_source(conn, Source(source_id=source_id, source_type="note", repo="r", path="p"),
                   workspace_id=workspace_id, visibility=visibility)
     conn.execute(

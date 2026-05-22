@@ -1,8 +1,8 @@
 from __future__ import annotations
 import pytest
-from src.memory.db_adapter import DBAdapter
-from src.memory.store import _init_schema
-from src.memory import tasks as t
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.store import _init_schema
+from mayring_core.memory import tasks as t
 
 
 def _db():

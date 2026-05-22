@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import re
-from src.ollama_client import generate as _ollama_gen
+from mayring_core.ollama_client import generate as _ollama_gen
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 

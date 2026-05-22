@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 
 
 def _task_for_source(conn, source_id: str, source_type: str) -> str:
@@ -171,9 +171,9 @@ def main() -> None:
         return
 
     # Group by source_type so we resolve the right codebook + mode per chunk.
-    from src.memory.ingestion.categorization import mayring_categorize
-    from src.memory.schema import Chunk
-    from src.model_router import ModelRouter
+    from mayring_core.memory.ingestion.categorization import mayring_categorize
+    from mayring_core.memory.schema import Chunk
+    from mayring_core.model_router import ModelRouter
 
     router = ModelRouter(ollama_url)
     model = router.resolve("text") or ""

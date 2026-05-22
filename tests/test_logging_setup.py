@@ -7,7 +7,7 @@ import threading
 import time
 from unittest.mock import patch
 
-from src.logging_setup import (
+from mayring_core.logging_setup import (
     JsonFormatter, MemoryIngestHandler, SEVERE_LEVELS,
 )
 
@@ -72,7 +72,7 @@ def test_memory_ingest_handler_buffers_low_level():
             def __exit__(self, *a): pass
         return R()
 
-    with patch("src.logging_setup.urllib.request.urlopen", fake_urlopen):
+    with patch("mayring_core.logging_setup.urllib.request.urlopen", fake_urlopen):
         h = MemoryIngestHandler(
             api_url="http://x", token="t", service="test",
             batch_size=100,  # hoch → kein flush bei < 100 events
@@ -100,7 +100,7 @@ def test_memory_ingest_handler_flushes_on_severity():
             def __exit__(self, *a): pass
         return R()
 
-    with patch("src.logging_setup.urllib.request.urlopen", fake_urlopen):
+    with patch("mayring_core.logging_setup.urllib.request.urlopen", fake_urlopen):
         h = MemoryIngestHandler(
             api_url="http://x", token="t", service="test", batch_size=100,
         )
@@ -132,7 +132,7 @@ def test_memory_ingest_handler_persists_on_endpoint_failure(tmp_path,
         posts.append(1)
         raise OSError("simulated network fail")
 
-    with patch("src.logging_setup.urllib.request.urlopen", failing_urlopen):
+    with patch("mayring_core.logging_setup.urllib.request.urlopen", failing_urlopen):
         h = MemoryIngestHandler(
             api_url="http://x", token="t", service="test", batch_size=100,
         )

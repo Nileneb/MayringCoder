@@ -95,7 +95,7 @@ async def training_data_counts(
     n_rows_last_train: int = 0
     last_metrics: dict | None = None
     try:
-        from src.memory.reranker_v2 import _load_model
+        from mayring_core.memory.reranker_v2 import _load_model
         m = _load_model()
         if isinstance(m, dict):
             last_trained_at = m.get("trained_at")
@@ -134,7 +134,7 @@ async def _run_train_subprocess(job_id: str, days: int) -> None:
     """Spawn export → train as a subprocess so the API stays responsive."""
     state = _TRAIN_JOBS[job_id]
     state.update(status="running", started_at=time.time())
-    from src.config import CACHE_DIR
+    from mayring_core.config import CACHE_DIR
     out_jsonl = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
     out_model = CACHE_DIR / "rerank_v2.json"
     env = {**os.environ, "PYTHONPATH": str(_ROOT)}
@@ -255,7 +255,7 @@ async def get_reranker_default(
     """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
-    from src.memory.reranker_v2 import _read_runtime_default
+    from mayring_core.memory.reranker_v2 import _read_runtime_default
     return {"default_version": _read_runtime_default()}
 
 
@@ -270,7 +270,7 @@ async def set_reranker_default(
         raise HTTPException(status_code=403, detail="admin scope required")
     if version not in ("v1", "v2", "auto"):
         raise HTTPException(status_code=400, detail="version must be v1/v2/auto")
-    from src.memory.reranker_v2 import write_runtime_default
+    from mayring_core.memory.reranker_v2 import write_runtime_default
     written = write_runtime_default(version)
     _log.info("reranker default set to %s by workspace=%s", written, info.workspace_id)
     return {"default_version": written}
@@ -308,7 +308,7 @@ async def reranker_rollout_decision(
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
     from src.api.routes.retrieval_metrics import retrieval_ab as _ab
-    from src.memory.reranker_v2 import _read_runtime_default, write_runtime_default
+    from mayring_core.memory.reranker_v2 import _read_runtime_default, write_runtime_default
     ab = await _ab(info=info, days=days, k=k)
     by_version = ab.get("by_version") or {}
     v1 = by_version.get("v1") or {}

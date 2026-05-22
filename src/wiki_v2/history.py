@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -71,7 +71,7 @@ class WikiHistory:
 
         # Also write to history/ dir
         try:
-            from src.config import WIKI_DIR
+            from mayring_core.config import WIKI_DIR
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             snap_path = confined_path(
                 WIKI_DIR,

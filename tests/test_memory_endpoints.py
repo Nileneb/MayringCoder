@@ -27,8 +27,8 @@ def _override_workspace():
 @pytest.fixture(autouse=True)
 def _reset_conn(tmp_path, monkeypatch):
     """Each test gets a fresh SQLite DB with check_same_thread=False for async TestClient."""
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
     db_path = tmp_path / "test.db"
     adapter = DBAdapter.create(db_path, check_same_thread=False)
     _init_schema(adapter)
@@ -45,8 +45,8 @@ def client():
 @pytest.fixture
 def seeded_chunk(_reset_conn):
     """Insert a source + chunk into the test DB and return the chunk_id."""
-    from src.memory.store import upsert_source, insert_chunk
-    from src.memory.schema import Source, Chunk
+    from mayring_core.memory.store import upsert_source, insert_chunk
+    from mayring_core.memory.schema import Source, Chunk
     conn = _reset_conn
     upsert_source(
         conn,

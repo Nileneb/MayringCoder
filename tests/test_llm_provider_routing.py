@@ -17,13 +17,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from src.api import jwt_auth
-from src.llm import key_callback
-from src.llm.endpoint import (
+from mayring_core.llm import key_callback
+from mayring_core.llm.endpoint import (
     LLMEndpoint,
     get_endpoint_for_request,
     invalidate_cache,
 )
-from src.llm.key_callback import LlmKeyUnavailableError
+from mayring_core.llm.key_callback import LlmKeyUnavailableError
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ def _mock_response(status: int, json_body: dict | None = None, text: str = ""):
 
 
 def test_fetch_user_key_caches_by_sub_and_iat(configured_env):
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         mock_post.return_value = _mock_response(200, {"api_key": "sk-123", "provider": "anthropic-byo"})
 
         key1 = key_callback.fetch_user_key("42", 1700000000, "jwt-string")
@@ -154,7 +154,7 @@ def test_fetch_user_key_caches_by_sub_and_iat(configured_env):
 
 
 def test_fetch_user_key_bypasses_cache_on_different_iat(configured_env):
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         mock_post.return_value = _mock_response(200, {"api_key": "sk-123"})
 
         key_callback.fetch_user_key("42", 1700000000, "jwt-1")
@@ -164,7 +164,7 @@ def test_fetch_user_key_bypasses_cache_on_different_iat(configured_env):
 
 
 def test_fetch_user_key_returns_none_on_404(configured_env):
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         mock_post.return_value = _mock_response(404, text="no key")
 
         assert key_callback.fetch_user_key("42", 1700000000, "jwt") is None
@@ -172,14 +172,14 @@ def test_fetch_user_key_returns_none_on_404(configured_env):
 
 def test_fetch_user_key_returns_none_when_service_token_missing(configured_env, monkeypatch):
     monkeypatch.setenv("MCP_SERVICE_TOKEN", "")
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         result = key_callback.fetch_user_key("42", 1700000000, "jwt")
         assert result is None
         mock_post.assert_not_called()
 
 
 def test_fetch_user_key_handles_network_errors(configured_env):
-    with patch("src.llm.key_callback.httpx.post", side_effect=Exception("connection refused")):
+    with patch("mayring_core.llm.key_callback.httpx.post", side_effect=Exception("connection refused")):
         assert key_callback.fetch_user_key("42", 1700000000, "jwt") is None
 
 
@@ -209,7 +209,7 @@ def test_openai_compatible_with_user_endpoint_skips_key_callback(configured_env)
     )
     info = jwt_auth.validate_jwt_token(token)
 
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         endpoint = get_endpoint_for_request(info, workspace_id="ws_test", user_jwt=token)
 
     assert endpoint.provider == "openai"
@@ -229,7 +229,7 @@ def test_anthropic_byo_calls_key_callback_and_builds_endpoint(configured_env):
     )
     info = jwt_auth.validate_jwt_token(token)
 
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         mock_post.return_value = _mock_response(200, {"api_key": "sk-ant-user"})
         endpoint = get_endpoint_for_request(info, workspace_id="ws_test", user_jwt=token)
 
@@ -249,7 +249,7 @@ def test_hardfails_when_key_required_but_callback_returns_404(configured_env):
     )
     info = jwt_auth.validate_jwt_token(token)
 
-    with patch("src.llm.key_callback.httpx.post") as mock_post:
+    with patch("mayring_core.llm.key_callback.httpx.post") as mock_post:
         mock_post.return_value = _mock_response(404)
         with pytest.raises(LlmKeyUnavailableError):
             get_endpoint_for_request(info, workspace_id="ws_test", user_jwt=token)

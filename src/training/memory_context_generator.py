@@ -16,7 +16,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 from src.training.base import get_training_conn, write_jsonl
 
 LEVEL_ORDER: dict[str, int] = {

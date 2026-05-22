@@ -11,14 +11,14 @@ from unittest.mock import patch
 
 import pytest
 
-from src.memory.schema import Source, is_valid_scope_key
-from src.memory.store import (
+from mayring_core.memory.schema import Source, is_valid_scope_key
+from mayring_core.memory.store import (
     CURRENT_SCHEMA_VERSION,
     init_memory_db,
     insert_chunk,
     upsert_source,
 )
-from src.memory.retrieval import _scope_filter
+from mayring_core.memory.retrieval import _scope_filter
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ def _seed_paper(conn, *, source_id, scope_key, chunk_id, text, ws="bene"):
     upsert_source(conn, Source(source_id=source_id, source_type="agent_result",
                                repo="", path="", scope_key=scope_key,
                                content_hash="h:" + chunk_id), workspace_id=ws)
-    from src.memory.schema import Chunk
+    from mayring_core.memory.schema import Chunk
     insert_chunk(conn, Chunk(chunk_id=chunk_id, source_id=source_id, text=text,
                              text_hash="th:" + chunk_id), workspace_id=ws)
 

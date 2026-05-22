@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 
-from src.memory.predictive import (
+from mayring_core.memory.predictive import (
     TopicTransition,
     _extract_topics_from_text,
     build_transition_matrix,
@@ -12,7 +12,7 @@ from src.memory.predictive import (
     update_transitions_incremental,
     predict_next_topics_for_query,
 )
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 
 
 def test_extract_topics_ordered_and_dedup():
@@ -58,7 +58,7 @@ def test_persist_transitions_upsert_updates_count(tmp_path):
 
 
 def test_build_transition_matrix_from_summaries(tmp_path, monkeypatch):
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     db = tmp_path / "t.db"
     conn = init_memory_db(db)
 
@@ -80,7 +80,7 @@ def test_build_transition_matrix_from_summaries(tmp_path, monkeypatch):
 
 
 def test_build_transition_matrix_empty_when_no_index(tmp_path, monkeypatch):
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index", lambda slug: {})
     assert build_transition_matrix(conn) == {}
@@ -90,7 +90,7 @@ def test_incremental_update_bumps_counts(tmp_path, monkeypatch):
     """Issue #55 follow-up: per-conversation incremental updates instead
     of batch rebuild. First call inserts (count=1), second on overlapping
     pairs increments via UPSERT."""
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index",
                         lambda slug: {"auth": ["Auth"], "billing": ["Billing"], "search": ["Search"]})
@@ -109,7 +109,7 @@ def test_incremental_update_bumps_counts(tmp_path, monkeypatch):
 
 def test_incremental_skips_when_no_index(tmp_path, monkeypatch):
     """No wiki_index.json yet (cold-start): hook must not crash + return 0."""
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index", lambda slug: {})
     assert update_transitions_incremental("some text", conn, "demo") == 0
@@ -117,7 +117,7 @@ def test_incremental_skips_when_no_index(tmp_path, monkeypatch):
 
 def test_incremental_skips_self_transitions(tmp_path, monkeypatch):
     """A → A is meaningless (text repeats same topic) — must not bump."""
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index",
                         lambda slug: {"auth": ["Auth"], "login": ["Auth"]})
@@ -130,7 +130,7 @@ def test_incremental_skips_self_transitions(tmp_path, monkeypatch):
 def test_predict_for_query_uses_persisted_matrix(tmp_path, monkeypatch):
     """The retrieval-side predictor must read from DB, not need the in-memory
     matrix passed by the caller."""
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index",
                         lambda slug: {"auth": ["Auth"], "billing": ["Billing"]})
@@ -144,7 +144,7 @@ def test_predict_for_query_uses_persisted_matrix(tmp_path, monkeypatch):
 
 
 def test_predict_for_query_empty_when_query_has_no_known_topics(tmp_path, monkeypatch):
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
     monkeypatch.setattr(pred_mod, "_load_keyword_index",
                         lambda slug: {"auth": ["Auth"]})
@@ -157,7 +157,7 @@ def test_slug_aliases_includes_short_form_and_lowercase():
     der Analysis-Run nutzt repo='nileneb-mayringcoder'. Ohne Alias-Match
     findet build_transition_matrix nur 1-2% der eigentlich verfügbaren
     summaries."""
-    from src.memory.predictive import _slug_aliases
+    from mayring_core.memory.predictive import _slug_aliases
     aliases = _slug_aliases("nileneb-mayringcoder")
     assert "nileneb-mayringcoder" in aliases
     assert "mayringcoder" in aliases  # short form
@@ -177,7 +177,7 @@ def test_load_keyword_index_rejects_path_traversal(tmp_path, monkeypatch):
     naive Code 'cache/../payload/EVIL_wiki_index.json' was AUF DAS
     EVIL FILE auflöst → liest Angreifer-payload. Sicherer Code muss
     ein leeres dict liefern."""
-    from src.memory import predictive as pred_mod
+    from mayring_core.memory import predictive as pred_mod
 
     # Setup: evil payload outside cache/
     payload_dir = tmp_path / "payload"
@@ -214,7 +214,7 @@ def test_load_keyword_index_rejects_path_traversal(tmp_path, monkeypatch):
 
 def test_load_keyword_index_accepts_valid_slug(tmp_path, monkeypatch):
     """Sanity: legitimate slugs keep working."""
-    from src.memory import predictive as pred_mod
+    from mayring_core.memory import predictive as pred_mod
 
     # Setup: real keyword-index file under tmp_path/cache/
     cache = tmp_path / "cache"
@@ -248,10 +248,10 @@ def test_search_boosts_chunks_matching_predicted_topics(tmp_path, monkeypatch):
       - query 'auth setup' → predicted next-topics include 'MCP'
       - chunk_match must rank above chunk_other in the result
     """
-    import src.memory.predictive as pred_mod
-    from src.memory.retrieval import search
-    from src.memory.schema import Chunk, Source
-    from src.memory.store import insert_chunk, upsert_source
+    import mayring_core.memory.predictive as pred_mod
+    from mayring_core.memory.retrieval import search
+    from mayring_core.memory.schema import Chunk, Source
+    from mayring_core.memory.store import insert_chunk, upsert_source
 
     conn = init_memory_db(tmp_path / "t.db")
 
@@ -326,7 +326,7 @@ def test_build_transition_matches_via_short_slug(tmp_path, monkeypatch):
     """Production-Bug 2026-05-09: 89 conversation_summary mit repo='mayringcoder',
     1 mit 'nileneb-mayringcoder'. Vor Slug-Aliasing: build_transition_matrix
     fand nur die 1, jetzt findet sie alle 90."""
-    import src.memory.predictive as pred_mod
+    import mayring_core.memory.predictive as pred_mod
     conn = init_memory_db(tmp_path / "t.db")
 
     # 1 source unter 'nileneb-mayringcoder', 1 unter 'mayringcoder' (legacy)

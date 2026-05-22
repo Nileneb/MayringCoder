@@ -60,9 +60,9 @@ def test_rerank_runtime_default_is_auto_when_file_absent(tmp_path, monkeypatch):
     Rollout-Cron auf v2 sobald Trainingsdaten reichen. cache-Datei selbst
     ist gitignored (runtime state).
     """
-    monkeypatch.setattr("src.config.CACHE_DIR", tmp_path, raising=False)
+    monkeypatch.setattr("mayring_core.config.CACHE_DIR", tmp_path, raising=False)
     monkeypatch.delenv("RERANKER_VERSION", raising=False)
-    from src.memory.reranker_v2 import _read_runtime_default
+    from mayring_core.memory.reranker_v2 import _read_runtime_default
     assert _read_runtime_default() == "auto"
 
 
@@ -71,7 +71,7 @@ def test_get_active_reranker_returns_v1_or_v2_not_default_pinned(monkeypatch):
     NICHT zu hard-gepinntem v1.
     """
     monkeypatch.delenv("RERANKER_VERSION", raising=False)
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     monkeypatch.setattr(
         reranker_v2, "_read_runtime_default", lambda: "auto",
     )

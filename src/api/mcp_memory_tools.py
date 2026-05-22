@@ -21,8 +21,8 @@ from src.api.mcp_auth import (
 )
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.memory_service import run_search as _run_search, run_ingest as _run_ingest
-from src.memory.retrieval import invalidate_query_cache
-from src.memory.store import (
+from mayring_core.memory.retrieval import invalidate_query_cache
+from mayring_core.memory.store import (
     add_feedback,
     deactivate_chunks_by_source,
     log_ingestion_event,
@@ -67,7 +67,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
             {results: list[RetrievalRecord], prompt_context: str}
         """
         try:
-            from src.memory.schema import canonicalize_url
+            from mayring_core.memory.schema import canonicalize_url
             ws = _enforce_tenant(workspace_id)
             opts = {
                 "repo": canonicalize_url(repo) if repo else repo,
@@ -248,7 +248,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         """
         import hashlib
         import httpx
-        from src.memory.schema import canonicalize_url
+        from mayring_core.memory.schema import canonicalize_url
 
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         _api = os.getenv("MAYRING_API_URL", "http://localhost:8090").rstrip("/")
@@ -298,7 +298,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                     user_id=_effective_user_id(),
                 )
                 if _vis == "org" and _org:
-                    from src.identity.workspace_resolver import ensure_team_workspace
+                    from mayring_core.identity.workspace_resolver import ensure_team_workspace
                     ensure_team_workspace(
                         _get_conn(), _org,
                         display_name=_effective_active_workspace_name(),
@@ -443,7 +443,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         """
         try:
             import os
-            from src.memory.ingestion.categorization import reduce_categories as _reduce
+            from mayring_core.memory.ingestion.categorization import reduce_categories as _reduce
             ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
             conn = _get_conn()
 

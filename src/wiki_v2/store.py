@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 
 from src.wiki_v2.models import WikiNode, WikiEdge, Cluster
 

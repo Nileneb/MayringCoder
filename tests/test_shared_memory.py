@@ -4,9 +4,9 @@ from __future__ import annotations
 import datetime
 import pytest
 
-from src.memory.db_adapter import DBAdapter
-from src.memory.store import _init_schema, upsert_source, insert_chunk
-from src.memory.schema import Source, Chunk
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.store import _init_schema, upsert_source, insert_chunk
+from mayring_core.memory.schema import Source, Chunk
 
 
 def _db() -> DBAdapter:
@@ -45,7 +45,7 @@ def test_upsert_source_persists_org_id():
 
 
 def test_migrate_schema_adds_visibility_to_existing_db(tmp_path):
-    from src.memory.store import _migrate_schema
+    from mayring_core.memory.store import _migrate_schema
     db = DBAdapter.create(tmp_path / "m.db")
     _init_schema(db)
     _migrate_schema(db)  # must not raise
@@ -91,7 +91,7 @@ def _insert_chunk(db: DBAdapter, source_id: str, workspace_id: str,
 
 
 def test_public_chunk_visible_to_any_workspace():
-    from src.memory.retrieval import _scope_filter
+    from mayring_core.memory.retrieval import _scope_filter
     db = _db()
     cid = _insert_chunk(db, "pub-src", "ws-owner", visibility="public")
     results = _scope_filter(db, workspace_id="ws-other", org_id=None)
@@ -99,7 +99,7 @@ def test_public_chunk_visible_to_any_workspace():
 
 
 def test_org_chunk_visible_when_org_matches():
-    from src.memory.retrieval import _scope_filter
+    from mayring_core.memory.retrieval import _scope_filter
     db = _db()
     cid = _insert_chunk(db, "org-src", "ws-owner", visibility="org", org_id="myorg")
     results = _scope_filter(db, workspace_id="ws-member", org_id="myorg")
@@ -107,7 +107,7 @@ def test_org_chunk_visible_when_org_matches():
 
 
 def test_org_chunk_hidden_when_org_differs():
-    from src.memory.retrieval import _scope_filter
+    from mayring_core.memory.retrieval import _scope_filter
     db = _db()
     cid = _insert_chunk(db, "org-src2", "ws-owner", visibility="org", org_id="myorg")
     results = _scope_filter(db, workspace_id="ws-other", org_id="otherorg")
@@ -115,7 +115,7 @@ def test_org_chunk_hidden_when_org_differs():
 
 
 def test_private_chunk_workspace_isolated():
-    from src.memory.retrieval import _scope_filter
+    from mayring_core.memory.retrieval import _scope_filter
     db = _db()
     cid = _insert_chunk(db, "priv-src", "ws-owner", visibility="private")
     results = _scope_filter(db, workspace_id="ws-other", org_id=None)

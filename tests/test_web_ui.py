@@ -2,7 +2,7 @@
 
 Mock strategy:
   - unittest.mock.patch on src.ollama_status.check_ollama
-  - unittest.mock.patch on src.memory.retrieval.search
+  - unittest.mock.patch on mayring_core.memory.retrieval.search
   - unittest.mock.patch on subprocess.run for subprocess-path tests
   - unittest.mock.patch on httpx.get for HTTP-fallback tests
 """
@@ -25,7 +25,7 @@ class TestCheckOllamaUnavailable:
 
     def test_both_paths_fail(self):
         """subprocess fails + httpx fails → (False, [])."""
-        from src.ollama_client import check_ollama
+        from mayring_core.ollama_client import check_ollama
 
         with (
             patch("subprocess.run", side_effect=FileNotFoundError("ollama not found")),
@@ -38,7 +38,7 @@ class TestCheckOllamaUnavailable:
 
     def test_no_exception_raised(self):
         """Must not propagate any exception."""
-        from src.ollama_client import check_ollama
+        from mayring_core.ollama_client import check_ollama
 
         with (
             patch("subprocess.run", side_effect=OSError("no such file")),
@@ -53,7 +53,7 @@ class TestCheckOllamaUnavailable:
     def test_timeout_in_subprocess(self):
         """subprocess timeout → httpx path → also fails → (False, [])."""
         import subprocess
-        from src.ollama_client import check_ollama
+        from mayring_core.ollama_client import check_ollama
 
         with (
             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ollama", 3)),
@@ -74,7 +74,7 @@ class TestCheckOllamaSubprocessFallback:
 
     def test_subprocess_fails_httpx_succeeds(self):
         """subprocess returncode != 0 → httpx returns model list."""
-        from src.ollama_client import check_ollama
+        from mayring_core.ollama_client import check_ollama
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -97,7 +97,7 @@ class TestCheckOllamaSubprocessFallback:
 
     def test_subprocess_fails_httpx_status_error(self):
         """subprocess fails + httpx returns 500 → (False, [])."""
-        from src.ollama_client import check_ollama
+        from mayring_core.ollama_client import check_ollama
 
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -113,7 +113,7 @@ class TestCheckOllamaSubprocessFallback:
 
     def test_subprocess_success_no_httpx_call(self):
         """If subprocess succeeds, httpx must not be called."""
-        from src.ollama_client import check_ollama
+        from mayring_core.ollama_client import check_ollama
 
         proc_mock = MagicMock()
         proc_mock.returncode = 0
@@ -218,7 +218,7 @@ class TestSearchFallbackSymbolic:
     def test_search_returns_list_without_embedding(self):
         """_do_search returns (status, rows) when ollama_available=False."""
         import src.api.web_ui as web_ui
-        from src.memory.schema import RetrievalRecord
+        from mayring_core.memory.schema import RetrievalRecord
 
         fake_record = RetrievalRecord(
             chunk_id="chk_aabbccdd112233",
@@ -418,7 +418,7 @@ class TestE2EAnalysisFlow:
         import src.api.web_ui as web_ui
         fake_conn = MagicMock(spec=sqlite3.Connection)
         ingest_result = {"source_id": "repo:test:e2e.py", "chunk_ids": ["chk_e2e001"], "indexed": True, "deduped": 0, "superseded": 0}
-        from src.memory.schema import RetrievalRecord
+        from mayring_core.memory.schema import RetrievalRecord
         search_result = RetrievalRecord(chunk_id="chk_e2e001", score_final=0.85, score_symbolic=0.6, source_id="repo:test:e2e.py", text="def authenticate(user): pass", category_labels=["auth"], reasons=["token_overlap", "embedding_similarity"])
 
         with (
@@ -467,7 +467,7 @@ class TestE2EConversationFlow:
         import src.api.web_ui as web_ui
         fake_conn = MagicMock(spec=sqlite3.Connection)
         conv_result = {"source_id": "conv:sess-e2e", "chunk_ids": ["chk_conv_001"], "indexed": True, "deduped": 0, "superseded": 0}
-        from src.memory.schema import RetrievalRecord
+        from mayring_core.memory.schema import RetrievalRecord
         search_hit = RetrievalRecord(chunk_id="chk_conv_001", score_final=0.72, source_id="conv:sess-e2e", text="Wir haben HTTP-Transport implementiert.", category_labels=["Zusammenfassung"], reasons=["token_overlap"])
 
         with (

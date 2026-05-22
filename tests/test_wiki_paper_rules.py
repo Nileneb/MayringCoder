@@ -1,7 +1,7 @@
 """Tests for wiki paper rules and cache helpers."""
-from src.memory.db_adapter import DBAdapter
-from src.memory.schema import Chunk
-from src.memory.store import _init_schema, get_paper_cache, set_paper_cache
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.schema import Chunk
+from mayring_core.memory.store import _init_schema, get_paper_cache, set_paper_cache
 
 
 def _db():

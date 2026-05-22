@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 
 _RECAT_PATH = Path(__file__).parent.parent / "tools" / "recategorize_pending.py"
 

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from src.api.routes import dashboard
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 
 
 @pytest.fixture(autouse=True)

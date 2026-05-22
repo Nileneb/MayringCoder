@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import os as _os_g
-from src.config import CACHE_DIR, WIKI_DIR
+from mayring_core.config import CACHE_DIR, WIKI_DIR
 from src.wiki_v2.models import WikiNode, WikiEdge, Cluster
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 from src.wiki_v2 import store as _store
 from src.wiki_v2._path_utils import confined_path
 

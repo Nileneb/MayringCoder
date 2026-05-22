@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from src.ollama_client import generate
+from mayring_core.ollama_client import generate
 
 
 class _FakeStream:
@@ -44,7 +44,7 @@ def test_generate_omits_think_by_default():
         captured["body"] = json
         return _FakeStream([b'{"response":"api","done":true}'])
 
-    with patch("src.ollama_client.httpx.stream", side_effect=fake_stream):
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
         generate("http://x", "qwen3", "prompt")
 
     assert "think" not in captured["body"]
@@ -57,7 +57,7 @@ def test_generate_forwards_explicit_think_true():
         captured["body"] = json
         return _FakeStream([b'{"response":"x","done":true}'])
 
-    with patch("src.ollama_client.httpx.stream", side_effect=fake_stream):
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
         generate("http://x", "qwen3", "prompt", think=True)
 
     assert captured["body"]["think"] is True
@@ -70,7 +70,7 @@ def test_generate_forwards_explicit_think_false():
         captured["body"] = json
         return _FakeStream([b'{"response":"x","done":true}'])
 
-    with patch("src.ollama_client.httpx.stream", side_effect=fake_stream):
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
         generate("http://x", "qwen3", "prompt", think=False)
 
     assert captured["body"]["think"] is False
@@ -83,7 +83,7 @@ def test_generate_sets_high_num_predict_default():
         captured["body"] = json
         return _FakeStream([b'{"response":"x","done":true}'])
 
-    with patch("src.ollama_client.httpx.stream", side_effect=fake_stream):
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
         generate("http://x", "qwen3", "prompt")
 
     assert captured["body"]["options"]["num_predict"] == 4096
@@ -96,7 +96,7 @@ def test_generate_num_predict_overridable():
         captured["body"] = json
         return _FakeStream([b'{"response":"x","done":true}'])
 
-    with patch("src.ollama_client.httpx.stream", side_effect=fake_stream):
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
         generate("http://x", "qwen3", "prompt", num_predict=64)
 
     assert captured["body"]["options"]["num_predict"] == 64
@@ -109,7 +109,7 @@ def test_generate_caller_options_merge_with_num_predict():
         captured["body"] = json
         return _FakeStream([b'{"response":"x","done":true}'])
 
-    with patch("src.ollama_client.httpx.stream", side_effect=fake_stream):
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
         generate("http://x", "qwen3", "prompt", options={"temperature": 0.1})
 
     opts = captured["body"]["options"]
@@ -127,7 +127,7 @@ def test_generate_non_stream_also_includes_options():
         resp.json = MagicMock(return_value={"response": "xx"})
         return resp
 
-    with patch("src.ollama_client.httpx.post", side_effect=fake_post):
+    with patch("mayring_core.ollama_client.httpx.post", side_effect=fake_post):
         out = generate("http://x", "qwen3", "prompt", stream=False)
 
     assert out == "xx"

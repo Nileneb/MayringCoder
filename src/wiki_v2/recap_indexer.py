@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 
 PLANS_DIR_DEFAULT = Path.home() / ".claude" / "plans"
 

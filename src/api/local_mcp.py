@@ -47,7 +47,7 @@ os.environ.setdefault("MAYRING_API_URL", "https://mcp.linn.games")
 
 from src.api.mcp_agent_tools import register_agent_tools  # noqa: E402
 from src.api.mcp_second_opinion import register_second_opinion_tools  # noqa: E402
-from src.memory.store import init_memory_db  # noqa: E402
+from mayring_core.memory.store import init_memory_db  # noqa: E402
 from src.agents import pi_worker  # noqa: E402
 
 # Ensure schema (incl. pi_jobs table) exists before the worker starts polling.

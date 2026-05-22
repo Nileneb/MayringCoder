@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from src.api.jwt_auth import TokenInfo
-from src.identity.workspace_resolver import resolve_workspace_from_token
+from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +82,10 @@ def test_assert_no_unworkspaced_table(tmp_path, monkeypatch):
     enthalten. Sonst CI-fail.
     """
     monkeypatch.setattr(
-        "src.config.CACHE_DIR", tmp_path,
+        "mayring_core.config.CACHE_DIR", tmp_path,
         raising=False,
     )
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     db = tmp_path / "memory.db"
     conn = init_memory_db(db)
 
@@ -109,7 +109,7 @@ def test_assert_no_unworkspaced_table(tmp_path, monkeypatch):
 def test_migration_idempotent_on_existing_db(tmp_path):
     """Zweiter init_memory_db-Call auf gleicher DB darf NICHT crashen
     weil Spalten schon existieren (DUPLICATE COLUMN)."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     db = tmp_path / "memory.db"
     init_memory_db(db).close()
     # Zweiter Aufruf — soll silent durchlaufen:
@@ -122,7 +122,7 @@ def test_workspace_id_default_value_for_new_rows(tmp_path):
     """Neue Rows in topic_transitions/chunk_feedback/wiki_paper_cache/
     ingestion_log bekommen workspace_id='default' wenn nicht explizit
     gesetzt — backward-compat für legacy Inserts."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     from datetime import datetime, timezone
     db = tmp_path / "memory.db"
     conn = init_memory_db(db)
@@ -143,7 +143,7 @@ def test_workspace_id_default_value_for_new_rows(tmp_path):
 
 def test_workspace_id_filter_works_on_topic_transitions(tmp_path):
     """workspace_id-WHERE-clause filtert wie erwartet."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     from datetime import datetime, timezone
     db = tmp_path / "memory.db"
     conn = init_memory_db(db)
@@ -165,7 +165,7 @@ def test_workspace_id_filter_works_on_topic_transitions(tmp_path):
 
 
 def test_workspace_id_filter_works_on_wiki_paper_cache(tmp_path):
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     from datetime import datetime, timezone
     db = tmp_path / "memory.db"
     conn = init_memory_db(db)
@@ -189,7 +189,7 @@ def test_workspace_id_filter_works_on_wiki_paper_cache(tmp_path):
 
 
 def test_workspace_id_filter_works_on_ingestion_log(tmp_path):
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     from datetime import datetime, timezone
     db = tmp_path / "memory.db"
     conn = init_memory_db(db)
@@ -214,7 +214,7 @@ def test_workspace_id_filter_works_on_ingestion_log(tmp_path):
 
 def test_workspace_id_filter_works_on_chunk_feedback(tmp_path):
     """chunk_feedback bekommt workspace_id-Spalte (Stufe 1.3)."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     from datetime import datetime, timezone
     db = tmp_path / "memory.db"
     conn = init_memory_db(db)

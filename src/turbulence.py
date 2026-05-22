@@ -17,7 +17,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
-from src.ollama_client import generate as _ollama_generate
+from mayring_core.ollama_client import generate as _ollama_generate
 
 # ---------------------------------------------------------------------------
 # Config
@@ -27,7 +27,7 @@ _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
 
 def _default_model() -> str:
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve("text") or "qwen2.5-coder:7b"
 
 THRESHOLD_SKIP = 0.20

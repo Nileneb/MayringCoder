@@ -7,7 +7,7 @@ is the JWT sub for humans, 'agent' when no human identity is present.
 from __future__ import annotations
 from src.api.mcp_auth import _enforce_tenant, _effective_workspace_id, _effective_user_id
 from src.api.dependencies import get_conn as _get_conn
-from src.memory import tasks as _t
+from mayring_core.memory import tasks as _t
 
 
 def register_task_tools(mcp) -> None:

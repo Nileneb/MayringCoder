@@ -62,12 +62,12 @@ def test_on_post_finding_ignores_self_reference(tmp_path):
 def test_recluster_flag_set_on_large_topology_change(tmp_path, monkeypatch):
     """recluster_needed flag is written when edge count grows >10%."""
     import src.wiki_v2.watcher as watcher_mod
-    from src.config import WIKI_DIR as real_wiki_dir
+    from mayring_core.config import WIKI_DIR as real_wiki_dir
 
     wiki_dir = tmp_path / "wiki"
-    monkeypatch.setattr("src.config.WIKI_DIR", wiki_dir, raising=False)
+    monkeypatch.setattr("mayring_core.config.WIKI_DIR", wiki_dir, raising=False)
 
-    import src.config as conf
+    import mayring_core.config as conf
     conf.WIKI_DIR = wiki_dir
 
     try:

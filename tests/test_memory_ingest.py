@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.memory.schema import Chunk, Source
-from src.memory.store import init_memory_db, upsert_source, find_by_text_hash
-from src.memory.ingest import (
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import init_memory_db, upsert_source, find_by_text_hash
+from mayring_core.memory.ingest import (
     _chunk_markdown,
     _chunk_python,
     _chunk_yaml_json,
@@ -131,7 +131,7 @@ class TestResolveDedup:
         assert returned is chunk
 
     def test_duplicate_found(self, tmp_path: Path) -> None:
-        from src.memory.store import insert_chunk
+        from mayring_core.memory.store import insert_chunk
         conn = init_memory_db(tmp_path / "m.db")
         source = _make_source()
         upsert_source(conn, source)
@@ -151,7 +151,7 @@ class TestIngest:
         return col
 
     # Fix: patch src.analysis.context._embed_texts (the actual import location used inside ingest())
-    # rather than src.memory.ingest._embed_texts which is not a module-level name.
+    # rather than mayring_core.memory.ingest._embed_texts which is not a module-level name.
     @patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4])
     def test_first_ingest_returns_chunks(self, mock_embed, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")
@@ -180,7 +180,7 @@ class TestIngest:
         must be deactivated; chunks that still exist at the same ordinal get
         rewritten via ON CONFLICT and stay active with new content."""
         from dataclasses import replace as _dc_replace
-        from src.memory.store import get_chunks_by_source
+        from mayring_core.memory.store import get_chunks_by_source
 
         conn = init_memory_db(tmp_path / "m.db")
         source_v1 = _make_source()
@@ -234,7 +234,7 @@ class TestIngest:
         source = _make_source()
 
         configure_memory_log.__module__  # ensure importable
-        import src.memory.ingestion.utils as miu
+        import mayring_core.memory.ingestion.utils as miu
         log_path = tmp_path / "test_memory_log.jsonl"
         miu._MEMORY_LOG_PATH = log_path
 
@@ -259,18 +259,18 @@ class TestMayringCategorize:
     """Tests für mayring_categorize() mit mode + codebook + source_type."""
 
     def _make_chunks(self, n: int = 2) -> list:
-        from src.memory.ingest import _make_file_chunk
+        from mayring_core.memory.ingest import _make_file_chunk
         return [_make_file_chunk(f"def func_{i}(): pass", f"repo:test:f{i}.py", i) for i in range(n)]
 
     def test_empty_model_returns_chunks_unchanged(self) -> None:
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.ingest import mayring_categorize
         chunks = self._make_chunks(1)
         result = mayring_categorize(chunks, "http://localhost:11434", model="")
         assert result == chunks
         assert result[0].category_labels == []
 
     def test_deductive_mode_system_prompt_contains_codebook_categories(self) -> None:
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.ingest import mayring_categorize
         chunks = self._make_chunks(1)
         captured: list[str] = []
 
@@ -289,7 +289,7 @@ class TestMayringCategorize:
         assert "[neu]" not in captured[0]
 
     def test_inductive_mode_prompt_has_no_category_placeholder(self) -> None:
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.ingest import mayring_categorize
         chunks = self._make_chunks(1)
         captured: list[str] = []
 
@@ -307,7 +307,7 @@ class TestMayringCategorize:
         assert chunks[0].category_labels == ["session-handling", "token-check"]
 
     def test_hybrid_mode_preserves_neu_prefix(self) -> None:
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.ingest import mayring_categorize
         chunks = self._make_chunks(1)
 
         def fake_generate(prompt, ollama_url, model, label, *, system_prompt=None):
@@ -323,23 +323,23 @@ class TestMayringCategorize:
         assert "api" in chunks[0].category_labels
 
     def test_auto_codebook_conversation_summary_uses_social(self) -> None:
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("auto", "conversation_summary")
         assert "argumentation" in cats
 
     def test_auto_codebook_repo_file_uses_code(self) -> None:
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("auto", "repo_file")
         assert "api" in cats
 
     def test_original_codebook_returns_mayring_basiskategorien(self) -> None:
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("original", "repo_file")
         assert "Zusammenfassung" in cats
         assert "Explikation" in cats
 
     def test_ollama_exception_leaves_chunk_unchanged(self) -> None:
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.ingest import mayring_categorize
         chunks = self._make_chunks(1)
 
         def boom(*args, **kwargs):
@@ -358,8 +358,8 @@ class TestIngestConversationSummary:
     """Tests für ingest_conversation_summary()."""
 
     def test_creates_conversation_summary_source_type(self, tmp_path) -> None:
-        from src.memory.ingest import ingest_conversation_summary
-        from src.memory.store import init_memory_db, get_source
+        from mayring_core.memory.ingest import ingest_conversation_summary
+        from mayring_core.memory.store import init_memory_db, get_source
 
         conn = init_memory_db(tmp_path / "mem.db")
         summary = "## Session Summary\n\nWir haben die MCP-Architektur implementiert.\n\n## Offene Punkte\n\nTests fehlen noch."
@@ -381,8 +381,8 @@ class TestIngestConversationSummary:
         assert source.source_type == "conversation_summary"
 
     def test_session_id_stored_in_branch(self, tmp_path) -> None:
-        from src.memory.ingest import ingest_conversation_summary
-        from src.memory.store import init_memory_db, get_source
+        from mayring_core.memory.ingest import ingest_conversation_summary
+        from mayring_core.memory.store import init_memory_db, get_source
 
         conn = init_memory_db(tmp_path / "mem2.db")
 
@@ -402,8 +402,8 @@ class TestIngestConversationSummary:
         assert source.commit == "my-run"
 
     def test_chunks_are_produced(self, tmp_path) -> None:
-        from src.memory.ingest import ingest_conversation_summary
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.ingest import ingest_conversation_summary
+        from mayring_core.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem3.db")
 
@@ -435,22 +435,22 @@ class TestResolveCodebookModular:
     """Profile-based codebook resolution."""
 
     def test_laravel_profile_returns_laravel_categories(self):
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("laravel", "repo_file")
         assert "api" in cats
         assert "laravel_livewire" in cats
 
     def test_auto_still_works(self):
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("auto", "repo_file")
         assert "api" in cats
 
     def test_social_still_works(self):
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("auto", "conversation_summary")
         assert "argumentation" in cats or len(cats) > 0
 
     def test_unknown_profile_falls_back(self):
-        from src.memory.ingest import _resolve_codebook
+        from mayring_core.memory.ingest import _resolve_codebook
         cats = _resolve_codebook("nonexistent_xyz", "repo_file")
         assert len(cats) > 0  # Should get some categories (fallback)

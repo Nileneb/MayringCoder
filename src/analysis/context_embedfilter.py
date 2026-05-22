@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from src.config import CACHE_DIR, EMBEDDING_MODEL, repo_slug as _repo_slug
+from mayring_core.config import CACHE_DIR, EMBEDDING_MODEL, repo_slug as _repo_slug
 from src.analysis.context_rag import _embed_texts
 
 

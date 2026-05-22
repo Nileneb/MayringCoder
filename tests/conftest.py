@@ -3,6 +3,13 @@
 import pytest
 from pathlib import Path
 
+# Register host-side providers (embed/generate/vision) into mayring_core so the
+# memory layer uses the real src.analysis/src.agents implementations and the
+# canonical patch("src.analysis...") test seams keep working (#267).
+from src.provider_setup import setup_providers
+
+setup_providers()
+
 
 @pytest.fixture(autouse=True)
 def _default_test_identity(monkeypatch, tmp_path_factory):

@@ -46,8 +46,13 @@ from src.api.routes import pi_stats as _pi_stats
 
 # JSON-Log-File für log-ingest-Cron. Wird vor FastAPI() konfiguriert,
 # damit die Startup-Logs (route-include, db-init) auch landen.
-from src.logging_setup import configure_json_logging
+from mayring_core.logging_setup import configure_json_logging
 configure_json_logging()
+
+# Wire embed/generate/vision into mayring_core so a standalone
+# `uvicorn src.api.server:app` registers them too, not only `python -m src.main` (#267).
+from src.provider_setup import setup_providers
+setup_providers()
 
 app = FastAPI(title="MayringCoder API", version="1.0.0")
 
@@ -107,7 +112,7 @@ def _run_pending_schema_migrations() -> None:
     import logging
     import os
     from pathlib import Path
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     logger = logging.getLogger(__name__)
     db_path = os.environ.get("MAYRING_LOCAL_DB", "")
     target = Path(db_path) if db_path else None
@@ -180,7 +185,7 @@ def _model_for_job_class(job_class: str) -> str:
     Modell wenn yaml einen classes-Block hat. 'standard'/unknown fallen
     auf den outer route — kein Breaking-Change weil yaml-Default keine
     classes hat."""
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return ModelRouter(os.getenv("OLLAMA_URL", "http://localhost:11434")).resolve(
         "text", job_class=job_class,
     )
@@ -189,7 +194,7 @@ def _model_for_job_class(job_class: str) -> str:
 def _timeout_for_job_class(job_class: str, fallback: float = 240.0) -> float:
     """T4: per-class timeout aus model_routes.yaml — 'mini' typically 30s
     statt 240s damit kleine Tasks nicht endlos auf langsame Modelle warten."""
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return float(
         ModelRouter(os.getenv("OLLAMA_URL", "http://localhost:11434")).timeout_for(
             "text", job_class=job_class,

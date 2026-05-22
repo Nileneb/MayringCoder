@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.model_router import ModelRouter, RouteConfig
+from mayring_core.model_router import ModelRouter, RouteConfig
 
 
 class TestModelRouterDefaults:
@@ -19,21 +19,21 @@ class TestModelRouterDefaults:
         router._cache_ttl = 30.0
         router._ollama_url = "http://localhost:11434"
         # Load defaults via __init__ without YAML
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router2 = ModelRouter("http://localhost:11434")
         for task in ModelRouter.TASKS:
             assert task in router2._routes
 
     def test_resolve_vision_returns_configured_model(self):
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         assert router.resolve("vision") == "qwen2.5vl:3b"
 
     def test_resolve_empty_model_returns_fallback_not_env(self, monkeypatch):
         monkeypatch.setenv("OLLAMA_MODEL", "my-env-model:latest")
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         router._routes["text"].model = ""
@@ -45,7 +45,7 @@ class TestModelRouterDefaults:
 
     def test_resolve_unknown_task_returns_empty_not_env(self, monkeypatch):
         monkeypatch.setenv("OLLAMA_MODEL", "fallback-model")
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         # Unknown task → empty string, NEVER env var
@@ -54,7 +54,7 @@ class TestModelRouterDefaults:
 
 class TestModelRouterAvailability:
     def _make_router(self) -> ModelRouter:
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             return ModelRouter("http://localhost:11434")
 
@@ -94,7 +94,7 @@ class TestModelRouterAvailability:
 
     def test_is_available_false_for_empty_model(self, monkeypatch):
         monkeypatch.setenv("OLLAMA_MODEL", "some-model-that-should-be-ignored")
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         router._routes["text"].model = ""
@@ -114,7 +114,7 @@ text:
         cfg_file = tmp_path / "routes.yaml"
         cfg_file.write_text(yaml_content)
 
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
 
@@ -123,7 +123,7 @@ text:
         assert router._routes["text"].timeout == 300
 
     def test_to_dict_contains_all_tasks(self):
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         d = router.to_dict()
@@ -133,7 +133,7 @@ text:
             assert "fallback" in d[task]
 
     def test_set_route_updates_model(self):
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         router.set_route("vision", "llava:7b", fallback="")
@@ -145,8 +145,8 @@ class TestJobClassRouting:
 
     def test_resolve_with_class_falls_back_to_default_when_class_missing(self):
         from unittest.mock import patch
-        from src.model_router import ModelRouter
-        with patch("src.model_router._CONFIG_PATH") as mock_path:
+        from mayring_core.model_router import ModelRouter
+        with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
         # No class-specific config → returns the outer route
@@ -154,7 +154,7 @@ class TestJobClassRouting:
         assert router.resolve("text", job_class="standard") == router.resolve("text")
 
     def test_resolve_with_class_uses_class_specific_model(self, tmp_path):
-        from src.model_router import ModelRouter
+        from mayring_core.model_router import ModelRouter
         cfg = tmp_path / "model_routes.yaml"
         cfg.write_text("""
 text:
@@ -178,7 +178,7 @@ text:
         assert router.resolve("text", job_class="bogus") == "mistral:7b-instruct"
 
     def test_timeout_for_class(self, tmp_path):
-        from src.model_router import ModelRouter
+        from mayring_core.model_router import ModelRouter
         cfg = tmp_path / "model_routes.yaml"
         cfg.write_text("""
 text:

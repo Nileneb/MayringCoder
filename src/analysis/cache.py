@@ -9,7 +9,7 @@ file_versions(id, snapshot_id FK, filename, hash, size)
 import sqlite3
 from datetime import datetime
 
-from src.config import CACHE_DIR, MAX_FILES_PER_RUN, RISK_CATEGORIES, repo_slug as _repo_slug
+from mayring_core.config import CACHE_DIR, MAX_FILES_PER_RUN, RISK_CATEGORIES, repo_slug as _repo_slug
 
 
 def _db_path(repo_url: str, workspace_id: str = "default") -> "Path":

@@ -42,7 +42,7 @@ def _effective_workspace_id(caller_default: str = "default") -> str:
     info = _TOKEN_CTX.get(None)
     if info is None:
         return caller_default or "default"
-    from src.identity.workspace_resolver import resolve_workspace_from_token
+    from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
     return resolve_workspace_from_token(info, override_header=None)
 
 

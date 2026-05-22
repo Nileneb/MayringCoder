@@ -9,7 +9,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from src.model_selector import fetch_ollama_models, resolve_model
+from mayring_core.model_selector import fetch_ollama_models, resolve_model
 
 
 def _mock_tags_response(model_names: list[str]):

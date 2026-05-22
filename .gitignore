@@ -24,6 +24,9 @@ benchmarks/swebench_results/
 benchmarks/version_upgrade_results/
 benchmarks/training_data/
 
+# Editable-install metadata (mayring-core, #267)
+*.egg-info/
+
 # Test artifacts
 wiki/ws-test*/
 wiki/ws-orph/

@@ -21,7 +21,7 @@ router = APIRouter(tags=["wiki"])
 @router.get("/wiki/slugs")
 async def wiki_slugs() -> dict:
     """List available wiki slugs (public — only exposes slug names, no content)."""
-    from src.config import CACHE_DIR
+    from mayring_core.config import CACHE_DIR
     slugs = sorted({
         p.name.replace("_wiki_clusters.json", "").replace("_wiki_index.json", "")
         for p in CACHE_DIR.glob("*_wiki_*.json")
@@ -39,7 +39,7 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
     """
     import json as _json
     import time as _time_g
-    from src.config import CACHE_DIR, WIKI_DIR
+    from mayring_core.config import CACHE_DIR, WIKI_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
 
     if not slug and not workspace_id:
@@ -150,7 +150,7 @@ async def wiki_rebuild(
         try:
             _JOBS[job_id]["status"] = "running"
             import json as _j
-            from src.config import CACHE_DIR
+            from mayring_core.config import CACHE_DIR
             from src.wiki_v2.graph import WikiGraph
             from src.wiki_v2.edge_detector import EdgeDetector
             from src.wiki_v2.clustering import ClusterEngine
@@ -158,7 +158,7 @@ async def wiki_rebuild(
             db = WikiGraph(_wid_safe, _slug_safe, CACHE_DIR / "wiki_v2.db")
             oc_path = _cp(CACHE_DIR, f"{_slug_safe}_overview_cache.json")
             oc = _j.loads(oc_path.read_text()) if oc_path.exists() else {}
-            from src.memory.db_adapter import DBAdapter
+            from mayring_core.memory.db_adapter import DBAdapter
             conn = DBAdapter.create(CACHE_DIR / "memory.db")
             detector = EdgeDetector()
             edges = detector.detect_from_overview(oc, conn, _wid_safe, _slug_safe)
@@ -199,7 +199,7 @@ async def wiki_edge_create(
     if not _safe_ws:
         raise HTTPException(status_code=400, detail="invalid workspace_id")
     try:
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.models import WikiEdge
         from src.wiki_v2 import store as _ws
@@ -231,7 +231,7 @@ async def wiki_conflicts(
     """Return edges where both existing and incoming are validated (manual conflict)."""
     try:
         import sqlite3 as _sq
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
         conn.row_factory = _sq.Row
         rows = conn.execute(
@@ -254,7 +254,7 @@ async def wiki_conflicts_resolve(
     """Resolve a manual-edge conflict: keep the most recently validated edge."""
     try:
         import sqlite3 as _sq
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
         conn.row_factory = _sq.Row
         rows = conn.execute(
@@ -289,7 +289,7 @@ async def wiki_history(
     """Return last `limit` graph snapshots for a workspace (newest first)."""
     try:
         import sqlite3 as _sq
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.history import WikiHistory
         conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
         conn.row_factory = _sq.Row
@@ -315,7 +315,7 @@ async def wiki_diff(
     """Return diff between two ISO-8601 dates for a workspace."""
     try:
         import sqlite3 as _sq
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.history import WikiHistory
         conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
         conn.row_factory = _sq.Row
@@ -365,7 +365,7 @@ async def wiki_team_activity(
     """Return team contribution counts per user for the last `days` days."""
     try:
         import sqlite3 as _sq
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.history import team_activity
         conn = _sq.connect(str(CACHE_DIR / "wiki_v2.db"))
         conn.row_factory = _sq.Row

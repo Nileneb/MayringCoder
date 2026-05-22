@@ -34,7 +34,7 @@ class MemorySyncResponse(BaseModel):
 def _ensure_visibility_column(db) -> None:
     """If the cloud DB was created before the visibility migration landed,
     `s.visibility` is NaN and the SELECT below fails with `no such column`.
-    The migration is in src.memory.store but only fires when init_memory_db
+    The migration is in mayring_core.memory.store but only fires when init_memory_db
     is called. Production was deployed before that migration was added, so
     the column may be missing on the live DB. Add it lazily here so a
     legacy DB still answers /memory/changes — idempotent: ALTER TABLE

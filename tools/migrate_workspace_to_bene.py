@@ -15,8 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.config import CACHE_DIR
-from src.memory.store import get_chroma_collection
+from mayring_core.config import CACHE_DIR
+from mayring_core.memory.store import get_chroma_collection
 
 TARGET_WS = "bene-workspace"
 DB_PATH = CACHE_DIR / "memory.db"

@@ -16,7 +16,7 @@ from src.api.mcp_auth import (
 
 
 def _model(task: str = "text") -> str:
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve(task) or "qwen2.5-coder:7b"
 from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chroma
 from src.api.memory_service import run_ingest as _run_ingest
@@ -506,7 +506,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
 
         # Load the CANONICAL mayring template — single source of truth.
         try:
-            from src.memory.ingestion.categorization import _load_mayring_template
+            from mayring_core.memory.ingestion.categorization import _load_mayring_template
             template = _load_mayring_template(mode)
         except Exception:
             template = ("Categorize this text chunk for topic {{task}} using "
@@ -654,7 +654,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             if persist and source_id and markings_out:
                 try:
                     from src.wiki_v2.store import init_wiki_db, persist_category_evidence, delete_category_evidence
-                    from src.memory.store import MEMORY_DB_PATH
+                    from mayring_core.memory.store import MEMORY_DB_PATH
                     wdb = init_wiki_db(MEMORY_DB_PATH.parent / "wiki_v2.db")
                     try:
                         delete_category_evidence(wdb, ws, source_id)
@@ -705,7 +705,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         try:
             from src.wiki_v2.store import init_wiki_db, get_category_evidence
-            from src.memory.store import MEMORY_DB_PATH
+            from mayring_core.memory.store import MEMORY_DB_PATH
             wdb = init_wiki_db(MEMORY_DB_PATH.parent / "wiki_v2.db")
             try:
                 rows = get_category_evidence(

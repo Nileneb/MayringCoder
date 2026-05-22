@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from src.api.auth import get_token_info
 from src.api.jwt_auth import TokenInfo
-from src.model_router import ModelRouter
+from mayring_core.model_router import ModelRouter
 
 router = APIRouter()
 _log = logging.getLogger(__name__)

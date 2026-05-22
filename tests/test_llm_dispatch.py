@@ -6,8 +6,8 @@ import json
 import httpx
 import pytest
 
-from src.llm import dispatch as dispatch_mod
-from src.llm.endpoint import LLMEndpoint
+from mayring_core.llm import dispatch as dispatch_mod
+from mayring_core.llm.endpoint import LLMEndpoint
 
 
 def test_ollama_dispatch_calls_ollama_client(monkeypatch):
@@ -19,7 +19,7 @@ def test_ollama_dispatch_calls_ollama_client(monkeypatch):
         called["prompt"] = prompt
         return "ollama-result"
 
-    import src.ollama_client as oc
+    import mayring_core.ollama_client as oc
     monkeypatch.setattr(oc, "generate", _fake_ollama)
 
     ep = LLMEndpoint(provider="ollama", base_url="http://x:11434", model="m")
@@ -32,7 +32,7 @@ def test_platform_also_routes_to_ollama(monkeypatch):
     def _fake_ollama(url, model, prompt, **kw):
         return "platform-ollama"
 
-    import src.ollama_client as oc
+    import mayring_core.ollama_client as oc
     monkeypatch.setattr(oc, "generate", _fake_ollama)
 
     ep = LLMEndpoint(provider="platform", base_url="http://x", model="m")

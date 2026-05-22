@@ -41,7 +41,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 
 DEFAULT_OUT = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
 

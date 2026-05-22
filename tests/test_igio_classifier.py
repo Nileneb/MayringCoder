@@ -347,7 +347,7 @@ def test_classify_chunk_source_type_none_uses_normal_path() -> None:
 
 
 def test_migration_adds_igio_columns_idempotently(tmp_path: Path) -> None:
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
 
     db = tmp_path / "memory.db"
     init_memory_db(db).close()
@@ -361,7 +361,7 @@ def test_migration_adds_igio_columns_idempotently(tmp_path: Path) -> None:
 
 def test_migration_preserves_existing_rows_hermetic(tmp_path: Path) -> None:
     """Hermetic: build a pre-IGIO chunks table, migrate, assert rows survive."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
 
     db = tmp_path / "memory.db"
     conn = sqlite3.connect(db)
@@ -418,7 +418,7 @@ def test_migration_preserves_existing_rows_hermetic(tmp_path: Path) -> None:
 
 def test_migration_preserves_existing_data_realdb(tmp_path: Path) -> None:
     """Optional integration check against the real cache/memory.db."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
 
     real_db = Path(__file__).resolve().parent.parent / "cache" / "memory.db"
     if not real_db.exists():

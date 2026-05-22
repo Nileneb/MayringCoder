@@ -11,7 +11,7 @@ import re
 import urllib.request
 from typing import Any
 
-from src.memory.schema import Chunk
+from mayring_core.memory.schema import Chunk
 from src.wiki_v2.models import WikiEdge
 
 _DOI_RE = re.compile(r"10\.\d{4,}/\S+")
@@ -111,7 +111,7 @@ def _llm_pair_edges(
     workspace_id: str, repo_slug: str,
     rule_name: str, instruction: str, edge_type: str, weight: float,
 ) -> list[WikiEdge]:
-    from src.memory.store import get_paper_cache, set_paper_cache
+    from mayring_core.memory.store import get_paper_cache, set_paper_cache
     by_source = _chunks_by_source(chunks)
     per_source: dict[str, set[str]] = {}
     for sid, sc in by_source.items():

@@ -18,12 +18,12 @@ _ROOT = Path(__file__).parent.parent.parent.parent
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 def _judge_default() -> str:
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve("text")
 
 
 def _run_judge(task: str, answer_a: str, answer_b: str, judge_model: str) -> dict:
-    from src import ollama_client as _oc
+    from mayring_core import ollama_client as _oc
     _prompt = (
         f"Aufgabe: {task}\n\n"
         f"Antwort A:\n{answer_a[:1500]}\n\n"

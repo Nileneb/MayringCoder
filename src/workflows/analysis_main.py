@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from src.analysis.aggregator import aggregate_findings
-from src.identity.cli import resolve_cli_workspace
+from mayring_core.identity.cli import resolve_cli_workspace
 from src.analysis.analyzer import analyze_files
 from src.analysis.cache import find_changed_files, init_db, mark_files_analyzed
 from src.analysis.categorizer import (
@@ -27,7 +27,7 @@ from src.analysis.fetcher import fetch_repo
 from src.analysis.history import generate_run_id, save_run
 from src.analysis.report import generate_report
 from src.analysis.splitter import split_into_files
-from src.config import (
+from mayring_core.config import (
     CACHE_DIR,
     CODEBOOK_PATH,
     DEFAULT_PROMPT,
@@ -36,7 +36,7 @@ from src.config import (
     PROMPTS_DIR,
     repo_slug as _repo_slug,
 )
-from src.model_router import ModelRouter
+from mayring_core.model_router import ModelRouter
 from src.workflows._common import is_test_file, load_turbulence_cache
 from src.workflows.analysis_overview import _run_overview
 
@@ -272,7 +272,7 @@ def run_analysis(
     _pi_repo_slug = _repo_slug(repo_url)
     if _use_pi:
         try:
-            from src.memory.store import init_memory_db as _init_mem_db
+            from mayring_core.memory.store import init_memory_db as _init_mem_db
             _mem_conn = _init_mem_db()
             _chunk_count = _mem_conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
             _mem_conn.close()
@@ -289,7 +289,7 @@ def run_analysis(
     _wiki_context_map: dict[str, str] = {}
     if not getattr(args, "no_wiki_inject", False):
         try:
-            from src.config import CACHE_DIR
+            from mayring_core.config import CACHE_DIR
             from src.wiki_v2.graph import WikiGraph
             from src.wiki_v2.injection import WikiContextInjector
             _wid = resolve_cli_workspace(args)

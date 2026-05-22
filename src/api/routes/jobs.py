@@ -32,7 +32,7 @@ router = APIRouter(tags=["jobs"])
 _ROOT = Path(__file__).parent.parent.parent.parent
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
-from src import config as _config
+from mayring_core import config as _config
 
 
 # WHY(#54, #55, multi-tenant): jeder subprocess der via _run_checker_job

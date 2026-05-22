@@ -7,14 +7,14 @@ import time
 from pathlib import Path
 
 from src.analysis.analyzer import overview_files
-from src.identity.cli import resolve_cli_workspace
+from mayring_core.identity.cli import resolve_cli_workspace
 from src.analysis.context import index_overview_to_vectordb, save_overview_context
 from src.analysis.context import load_overview_cache_raw
 from src.analysis.exporter import export_results
 from src.analysis.history import generate_run_id, save_run
 from src.analysis.report import generate_overview_report
-from src.config import EMBEDDING_MODEL, OVERVIEW_PROMPT
-from src.model_router import ModelRouter
+from mayring_core.config import EMBEDDING_MODEL, OVERVIEW_PROMPT
+from mayring_core.model_router import ModelRouter
 
 
 def _content_hash(text: str) -> str:

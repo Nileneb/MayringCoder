@@ -26,7 +26,7 @@ except ImportError as _e:
         "gradio is not installed. Run: pip install -r requirements-ui.txt"
     ) from _e
 
-from src.ollama_client import check_ollama
+from mayring_core.ollama_client import check_ollama
 from src.api.web_ui_helpers import (
     _MEMORY_READY,
     _IMPORT_ERROR,

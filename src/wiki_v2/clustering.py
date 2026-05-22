@@ -381,7 +381,7 @@ class ClusterEngine:
         )
 
         try:
-            from src.ollama_client import generate as _ollama_gen
+            from mayring_core.ollama_client import generate as _ollama_gen
             response_text = _ollama_gen(
                 ollama_url, model, prompt,
                 stream=False,

@@ -278,7 +278,7 @@ def test_pi_categorize_accepts_task_arg(tools):
 def test_pi_mark_categories_persists_to_wiki(tools, tmp_path, monkeypatch):
     """persist=True + source_id → markings land in wiki_category_evidence."""
     # Point MEMORY_DB_PATH to a tmp dir so wiki_v2.db is created there.
-    import src.memory.store as _store
+    import mayring_core.memory.store as _store
     monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
 
     fn = tools["pi_mark_categories"]
@@ -303,7 +303,7 @@ def test_pi_mark_categories_persists_to_wiki(tools, tmp_path, monkeypatch):
 
 
 def test_pi_mark_categories_no_persist_when_persist_false(tools, tmp_path, monkeypatch):
-    import src.memory.store as _store
+    import mayring_core.memory.store as _store
     monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
     fn = tools["pi_mark_categories"]
     with patch("httpx.post", return_value=_mock_ollama_response({
@@ -314,7 +314,7 @@ def test_pi_mark_categories_no_persist_when_persist_false(tools, tmp_path, monke
 
 
 def test_pi_category_evidence_reads_persisted(tools, tmp_path, monkeypatch):
-    import src.memory.store as _store
+    import mayring_core.memory.store as _store
     monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
     from src.wiki_v2.store import init_wiki_db, persist_category_evidence
     wdb = init_wiki_db(tmp_path / "wiki_v2.db")

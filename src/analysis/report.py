@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 
-from src.config import REPORTS_DIR, get_max_chars_per_file
+from mayring_core.config import REPORTS_DIR, get_max_chars_per_file
 
 _SEV_EMOJI = {"critical": "🔴", "warning": "🟡", "info": "🟢"}
 

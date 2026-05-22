@@ -41,8 +41,8 @@ def json_dumps(d):
 def test_falls_back_to_cloud_on_final_connect_error(monkeypatch):
     """Local connect-error am letzten retry → cloud-call mit auth-header."""
     monkeypatch.setenv("OLLAMA_CLOUD_API_KEY", "sk-cloud-test")
-    monkeypatch.setattr("src.ollama_client._CLOUD_API_KEY", "sk-cloud-test")
-    monkeypatch.setattr("src.ollama_client._CLOUD_URL", "https://cloud.fake")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_API_KEY", "sk-cloud-test")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_URL", "https://cloud.fake")
 
     cloud_resp = MagicMock()
     cloud_resp.status_code = 200
@@ -61,7 +61,7 @@ def test_falls_back_to_cloud_on_final_connect_error(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr("time.sleep", lambda *_: None)
 
-    from src.ollama_client import generate
+    from mayring_core.ollama_client import generate
     out = generate("http://local:11434", "mistral", "ping", stream=False, max_retries=2)
     assert out == "from cloud"
     assert "cloud.fake" in captured["url"]
@@ -70,8 +70,8 @@ def test_falls_back_to_cloud_on_final_connect_error(monkeypatch):
 
 def test_no_cloud_fallback_when_api_key_missing(monkeypatch):
     """Ohne OLLAMA_CLOUD_API_KEY → nur normale Retries, kein cloud-call."""
-    monkeypatch.setattr("src.ollama_client._CLOUD_API_KEY", "")
-    monkeypatch.setattr("src.ollama_client._CLOUD_URL", "https://cloud.fake")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_API_KEY", "")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_URL", "https://cloud.fake")
 
     call_log: list[str] = []
 
@@ -82,7 +82,7 @@ def test_no_cloud_fallback_when_api_key_missing(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr("time.sleep", lambda *_: None)
 
-    from src.ollama_client import generate
+    from mayring_core.ollama_client import generate
     with pytest.raises(httpx.ConnectError):
         generate("http://local:11434", "m", "x", stream=False, max_retries=2)
     # Nur local URLs in call_log, kein cloud
@@ -92,8 +92,8 @@ def test_no_cloud_fallback_when_api_key_missing(monkeypatch):
 
 def test_503_on_final_retry_falls_back_to_cloud(monkeypatch):
     """HTTP 503 (overload) am letzten retry → cloud-call."""
-    monkeypatch.setattr("src.ollama_client._CLOUD_API_KEY", "sk-test")
-    monkeypatch.setattr("src.ollama_client._CLOUD_URL", "https://cloud.fake")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_API_KEY", "sk-test")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_URL", "https://cloud.fake")
 
     overload_resp = MagicMock()
     overload_resp.status_code = 503
@@ -115,7 +115,7 @@ def test_503_on_final_retry_falls_back_to_cloud(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr("time.sleep", lambda *_: None)
 
-    from src.ollama_client import generate
+    from mayring_core.ollama_client import generate
     # max_retries=1 → 503 ist gleich der letzte retry → cloud-fallback
     out = generate("http://local:11434", "m", "x", stream=False, max_retries=1)
     assert out == "cloud-after-503"
@@ -127,9 +127,9 @@ def test_4xx_does_NOT_trigger_cloud_fallback(monkeypatch):
     WHY: ratio=0 damit der 20%-cloud-primary-pfad nicht versehentlich
     feuert und den 4xx-pfad camoufliert.
     """
-    monkeypatch.setattr("src.ollama_client._CLOUD_API_KEY", "sk-test")
-    monkeypatch.setattr("src.ollama_client._CLOUD_URL", "https://cloud.fake")
-    monkeypatch.setattr("src.ollama_client._CLOUD_PRIMARY_RATIO", 0.0)
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_API_KEY", "sk-test")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_URL", "https://cloud.fake")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_PRIMARY_RATIO", 0.0)
 
     bad_resp = MagicMock()
     bad_resp.status_code = 404
@@ -146,7 +146,7 @@ def test_4xx_does_NOT_trigger_cloud_fallback(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr("time.sleep", lambda *_: None)
 
-    from src.ollama_client import generate
+    from mayring_core.ollama_client import generate
     with pytest.raises(httpx.HTTPStatusError):
         generate("http://local:11434", "m", "x", stream=False, max_retries=1)
     # Cloud-URL darf NICHT aufgerufen werden bei 4xx
@@ -155,8 +155,8 @@ def test_4xx_does_NOT_trigger_cloud_fallback(monkeypatch):
 
 def test_cloud_fallback_skipped_when_url_equals_local(monkeypatch):
     """Defense: wenn _CLOUD_URL == local URL (Fehlkonfig), kein Selbst-Loop."""
-    monkeypatch.setattr("src.ollama_client._CLOUD_API_KEY", "sk-test")
-    monkeypatch.setattr("src.ollama_client._CLOUD_URL", "http://local:11434")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_API_KEY", "sk-test")
+    monkeypatch.setattr("mayring_core.ollama_client._CLOUD_URL", "http://local:11434")
 
     def fake_post(url, **_):
         raise httpx.ConnectError("down")
@@ -164,6 +164,6 @@ def test_cloud_fallback_skipped_when_url_equals_local(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr("time.sleep", lambda *_: None)
 
-    from src.ollama_client import generate
+    from mayring_core.ollama_client import generate
     with pytest.raises(httpx.ConnectError):
         generate("http://local:11434", "m", "x", stream=False, max_retries=1)

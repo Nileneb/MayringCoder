@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config import BASE_DIR, CACHE_DIR
+from mayring_core.config import BASE_DIR, CACHE_DIR
 
 TRAINING_DIR = BASE_DIR / "training_data"
 
@@ -136,7 +136,7 @@ def export(
 
 def _export_categories(output_path: Path) -> int:
     """Export (text, categories) pairs from memory DB for categorization training."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
 
     conn = init_memory_db()
     rows = conn.execute(

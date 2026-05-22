@@ -1,6 +1,6 @@
 import json
-from src.memory.db_adapter import DBAdapter
-from src.memory.store import _init_schema, add_feedback
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.store import _init_schema, add_feedback
 from src.wiki_v2.store import get_task_feedback_matrix
 
 

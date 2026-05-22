@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 import pytest
 
-from src.memory.db_adapter import DBAdapter
-from src.memory.store import _init_schema, upsert_source, insert_chunk
-from src.memory.schema import Source, Chunk
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.store import _init_schema, upsert_source, insert_chunk
+from mayring_core.memory.schema import Source, Chunk
 from src.api.jwt_auth import Membership, TokenInfo
 
 
@@ -198,7 +198,7 @@ class TestScopeFilterOrgIds:
     """V2: _scope_filter akzeptiert Liste von org_ids (statt single)."""
 
     def test_scope_filter_includes_all_org_memberships(self):
-        from src.memory.retrieval import _scope_filter
+        from mayring_core.memory.retrieval import _scope_filter
         db = _db()
         cid_a = _insert_chunk(db, "src-a", "ws-owner-a", visibility="org", org_id="org-acme")
         cid_b = _insert_chunk(db, "src-b", "ws-owner-b", visibility="org", org_id="org-lab")
@@ -212,7 +212,7 @@ class TestScopeFilterOrgIds:
         assert cid_other not in results
 
     def test_scope_filter_excludes_non_member_org(self):
-        from src.memory.retrieval import _scope_filter
+        from mayring_core.memory.retrieval import _scope_filter
         db = _db()
         cid = _insert_chunk(db, "src-x", "ws-other", visibility="org", org_id="org-acme")
         results = _scope_filter(
@@ -222,7 +222,7 @@ class TestScopeFilterOrgIds:
 
     def test_scope_filter_backward_compat_no_memberships(self):
         """Caller ohne org-memberships sieht nur public + own private."""
-        from src.memory.retrieval import _scope_filter
+        from mayring_core.memory.retrieval import _scope_filter
         db = _db()
         cid_pub = _insert_chunk(db, "pub", "ws-other", visibility="public")
         cid_priv = _insert_chunk(db, "own", "ws-bene", visibility="private")
@@ -236,7 +236,7 @@ class TestScopeFilterOrgIds:
 
     def test_scope_filter_legacy_org_id_single_still_works(self):
         """Backward-Compat: single org_id-Argument bleibt akzeptiert."""
-        from src.memory.retrieval import _scope_filter
+        from mayring_core.memory.retrieval import _scope_filter
         db = _db()
         cid = _insert_chunk(db, "s", "ws-other", visibility="org", org_id="org-acme")
         # Legacy callsite passes org_id (singular)

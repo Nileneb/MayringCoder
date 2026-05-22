@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
 from src.api.server import app
 from src.api import auth as auth_mod
 from src.api.jwt_auth import TokenInfo
-from src.memory.schema import Chunk, Source
-from src.memory.store import init_memory_db, upsert_source, insert_chunk
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import init_memory_db, upsert_source, insert_chunk
 
 
 @pytest.fixture

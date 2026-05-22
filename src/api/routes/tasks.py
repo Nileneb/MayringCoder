@@ -5,7 +5,7 @@ from src.api.auth import get_workspace, get_token_info
 from src.api.jwt_auth import TokenInfo
 from src.api.dependencies import get_conn as _get_conn
 from src.api.routes.models import TaskCreateRequest, TaskUpdateRequest
-from src.memory import tasks as _t
+from mayring_core.memory import tasks as _t
 
 router = APIRouter()
 

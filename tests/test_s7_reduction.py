@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.memory.ingestion.categorization import (
+from mayring_core.memory.ingestion.categorization import (
     _task_relevant_categories,
     reduce_categories,
 )
-from src.memory.store import init_memory_db, update_chunk_category_labels
+from mayring_core.memory.store import init_memory_db, update_chunk_category_labels
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ def test_task_injection_extracts_labels_from_chroma():
 
 def test_task_injection_forces_hybrid_mode(tmp_path):
     """When task_labels are injected, mode becomes 'hybrid' regardless of input."""
-    from src.memory.schema import Chunk
+    from mayring_core.memory.schema import Chunk
     conn, _ = _make_db_with_chunks(tmp_path, [["auth"]] * 3)
 
     chunk = Chunk(
@@ -115,7 +115,7 @@ def test_task_injection_forces_hybrid_mode(tmp_path):
         patch("src.analysis.context_rag._embed_texts", return_value=[[0.1, 0.2]]),
         patch("src.analysis.analyzer._ollama_generate", return_value="auth") as mock_gen,
     ):
-        from src.memory.ingestion.categorization import mayring_categorize
+        from mayring_core.memory.ingestion.categorization import mayring_categorize
         result_chunks = mayring_categorize(
             [chunk],
             ollama_url="http://x",

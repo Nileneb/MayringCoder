@@ -14,7 +14,7 @@ from typing import Callable
 
 import httpx
 
-from src.config import (
+from mayring_core.config import (
     MAX_FINDINGS_PER_FILE,
     OLLAMA_TIMEOUT,
     get_batch_delay,
@@ -188,7 +188,7 @@ def _ollama_generate(
     keep_alive: str | None = None,
 ) -> str:
     """Send a prompt to Ollama and collect the streamed response."""
-    from src.ollama_client import generate as _oc_generate
+    from mayring_core.ollama_client import generate as _oc_generate
     return _oc_generate(
         ollama_url, model, prompt,
         system=system_prompt,

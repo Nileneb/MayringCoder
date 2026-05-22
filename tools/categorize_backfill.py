@@ -81,8 +81,8 @@ def categorize_one(row: sqlite3.Row, *, ollama_url: str, model: str,
     """Single-chunk categorize. Returns list of label-strings (empty bei error)."""
     # Re-use mayring_categorize() durch ein Chunk-stand-in (vermeidet
     # imports auf Chunk dataclass mit allen feldern).
-    from src.memory.ingestion.categorization import mayring_categorize
-    from src.memory.schema import Chunk
+    from mayring_core.memory.ingestion.categorization import mayring_categorize
+    from mayring_core.memory.schema import Chunk
 
     chunk = Chunk(
         chunk_id=row["chunk_id"],
@@ -134,7 +134,7 @@ def main() -> int:
     )
     if not args.model:
         try:
-            from src.model_router import ModelRouter
+            from mayring_core.model_router import ModelRouter
             model = ModelRouter(ollama_url).resolve("text") or "mistral:7b-instruct"
         except Exception:
             model = "mistral:7b-instruct"
