@@ -306,19 +306,18 @@ def derive_research_question(
     if not task_title:
         return None
 
-    # Embed the canonical title (not the prompt) so future similarity
-    # checks compare research_question-to-research_question, not prompt-to-prompt.
-    title_emb = _embed_text(task_title, ollama_url)
-    if title_emb is None:
-        return None
-
+    # Store the originating PROMPT embedding (already computed above as prompt_emb)
+    # so the similarity match path — which always embeds the incoming prompt — is
+    # comparing prompt-vs-prompt consistently. Storing the title embedding here was
+    # the root cause of the dedup bug: prompt-embedding vs title-embedding is
+    # apples-vs-oranges → near-identical prompts scored below 0.85 → never clustered.
     rq_id = "rq_" + hashlib.sha256(task_title.encode()).hexdigest()[:16]
     now = _now_iso()
     conn.execute(
         """INSERT OR IGNORE INTO research_questions
            (research_question_id, title, embedding_id, occurrence_count, first_seen_at, last_used_at, workspace_id)
            VALUES (?, ?, ?, 1, ?, ?, ?)""",
-        (rq_id, task_title, json.dumps(title_emb), now, now, workspace_id),
+        (rq_id, task_title, json.dumps(prompt_emb), now, now, workspace_id),
     )
 
     return {"research_question_id": rq_id, "title": task_title, "reused": False}

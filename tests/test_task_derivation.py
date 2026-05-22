@@ -307,6 +307,55 @@ def test_migration_renames_task_categories_to_research_questions(tmp_path):
     assert "research_question_id" in db.get_columns("research_question_chunk_links")
 
 
+def test_derive_research_question_clusters_near_identical_prompts(conn):
+    """Near-identical prompts must cluster into ONE research_question row.
+
+    Reproduces the apples-vs-oranges bug: on the current (broken) code,
+    the create path calls _embed_text(task_title) and stores a TITLE embedding,
+    while the match path always uses _embed_text(prompt). With different vectors
+    the second prompt scores below 0.85 → creates a second row instead of
+    reusing. The fix stores the prompt embedding in the row so the match path
+    compares prompt-vs-prompt consistently.
+    """
+    import src.memory.task_derivation as td
+
+    p_emb = [1.0] * 384 + [0.0] * 384   # prompt embedding
+    t_emb = [0.0] * 384 + [1.0] * 384  # title embedding — orthogonal to p_emb (cosine=0.0)
+
+    # side_effect: first call is _embed_text(prompt) → p_emb,
+    #              second call is _embed_text(task_title) → t_emb
+    with patch.object(td, "_embed_text", side_effect=[p_emb, t_emb]), \
+         patch.object(td, "_call_mistral_for_task",
+                      return_value="Smoke-Test nach #226 bestätigen"):
+        first = td.derive_research_question(
+            "confirm smoke test passed after #226", conn, "http://x", "ws1"
+        )
+    assert first is not None and first["reused"] is False
+
+    # Second near-identical prompt: _embed_text(prompt2) → p_emb again.
+    # On buggy code the stored embedding is t_emb, so cosine(p_emb, t_emb) = 0.0 < 0.85
+    # → falls through to mistral path → creates a second row.
+    # After fix: stored embedding is p_emb, cosine(p_emb, p_emb) = 1.0 → reuse, no mistral.
+    with patch.object(td, "_embed_text", return_value=p_emb), \
+         patch.object(td, "_call_mistral_for_task",
+                      return_value="Smoke-Test nach #226 bestätigen") as m:
+        second = td.derive_research_question(
+            "please confirm the smoke test after #226 is green", conn, "http://x", "ws1"
+        )
+    assert second is not None and second["reused"] is True
+    m.assert_not_called()
+
+    cnt = conn.execute(
+        "SELECT COUNT(*) FROM research_questions WHERE workspace_id='ws1'"
+    ).fetchone()[0]
+    assert cnt == 1
+
+    occ = conn.execute(
+        "SELECT occurrence_count FROM research_questions WHERE workspace_id='ws1'"
+    ).fetchone()[0]
+    assert occ == 2
+
+
 def test_init_schema_renames_legacy_task_categories_with_data(tmp_path):
     from src.memory.db_adapter import DBAdapter
     from src.memory.store import _init_schema
