@@ -289,6 +289,60 @@ def test_valid_axes_constant() -> None:
     assert set(VALID_AXES) == {"issue", "goal", "intervention", "outcome"}
 
 
+# ----- source_type gating (no code/repo_file classification) ----------------
+
+
+def test_classify_chunk_skips_code_source_type_without_llm() -> None:
+    """repo_file chunks must be skipped immediately — LLM must never be called."""
+    with patch("src.wiki_v2.igio_classifier.generate") as gen:
+        v = classify_chunk(
+            "def foo():\n    return 1",
+            ["api"],
+            source_type="repo_file",
+            ollama_url="http://x",
+            model="m",
+        )
+    assert v.axis == ""
+    assert v.confidence == 0.0
+    assert "repo_file" in v.rationale
+    gen.assert_not_called()
+
+
+def test_classify_chunk_still_classifies_non_code_source_type() -> None:
+    """source_type='conversation_summary' must pass through the normal LLM path."""
+    with patch("src.wiki_v2.igio_classifier.generate") as gen:
+        gen.return_value = json.dumps(
+            {"axis": "goal", "confidence": 0.85, "rationale": "desired state named"}
+        )
+        v = classify_chunk(
+            "We aim to keep API latency under 200ms.",
+            ["performance"],
+            source_type="conversation_summary",
+            ollama_url="http://x",
+            model="m",
+        )
+    assert v.axis == "goal"
+    assert v.confidence == pytest.approx(0.85)
+    gen.assert_called_once()
+
+
+def test_classify_chunk_source_type_none_uses_normal_path() -> None:
+    """source_type=None (default, existing callers) must not change behaviour."""
+    with patch("src.wiki_v2.igio_classifier.generate") as gen:
+        gen.return_value = json.dumps(
+            {"axis": "goal", "confidence": 0.9, "rationale": "desired state"}
+        )
+        v = classify_chunk(
+            "We aim to reduce database query time by 40 percent.",
+            [],
+            source_type=None,
+            ollama_url="http://x",
+            model="m",
+        )
+    assert v.axis == "goal"
+    gen.assert_called_once()
+
+
 # ----- Schema migration is idempotent --------------------------------------
 
 

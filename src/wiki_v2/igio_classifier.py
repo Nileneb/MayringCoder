@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 VALID_AXES: tuple[str, ...] = ("issue", "goal", "intervention", "outcome")
 
+# WHY(#igio-precision): code files have no meaningful IGIO axis — their
+# Mayring category_labels cover them. Classifying them produced ~500 bogus
+# 'goal' labels in workspace 'bene' (LLM almost never returns axis="").
+# Extend this set if other source_types should be excluded.
+IGIO_SKIP_SOURCE_TYPES: frozenset[str] = frozenset({"repo_file"})
+
 
 @dataclass(frozen=True)
 class IgioVerdict:
@@ -196,6 +202,7 @@ def classify_chunk(
     text: str,
     category_labels: list[str] | None = None,
     *,
+    source_type: str | None = None,
     ollama_url: str,
     model: str,
     timeout: float = 30.0,
@@ -205,7 +212,14 @@ def classify_chunk(
     Returns a verdict with axis="" and confidence=0.0 when the LLM call fails
     or returns malformed output (the caller should leave the chunk unclassified
     rather than persist a bad label).
+
+    Pass ``source_type`` to gate classification: chunks whose source_type is in
+    ``IGIO_SKIP_SOURCE_TYPES`` are skipped without any LLM call (defense-in-depth
+    against the ~500 bogus 'goal' labels produced for repo_file chunks).
     """
+    if source_type in IGIO_SKIP_SOURCE_TYPES:
+        return IgioVerdict(axis="", confidence=0.0, rationale=f"skipped: source_type={source_type}")
+
     if not text.strip():
         return IgioVerdict(axis="", confidence=0.0, rationale="empty text")
 

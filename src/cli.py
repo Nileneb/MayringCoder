@@ -146,7 +146,7 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     """
     from src.config import CACHE_DIR
     from src.memory.store import init_memory_db
-    from src.wiki_v2.igio_classifier import classify_chunk, now_iso
+    from src.wiki_v2.igio_classifier import IGIO_SKIP_SOURCE_TYPES, classify_chunk, now_iso
 
     if not model:
         print("Fehler: --classify-igio braucht ein --model.")
@@ -157,25 +157,36 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     conn = init_memory_db(CACHE_DIR / "memory.db")
     workspace = resolve_cli_workspace(args, conn=conn, auto_create=False)
 
+    # Build NOT IN placeholders from IGIO_SKIP_SOURCE_TYPES so we never pull
+    # code/repo_file chunks into the classifier at all (primary gate).
+    skip_placeholders = ",".join("?" * len(IGIO_SKIP_SOURCE_TYPES))
+    skip_params = tuple(IGIO_SKIP_SOURCE_TYPES)
+
     # IGIO-Backfill ist Maintenance: 'system' (Service-Token) operiert
     # cross-tenant über ALLE chunks, jeder andere workspace nur eigene.
     # Vorher filterte die Query immer auf workspace_id=current → der
     # Cron triggerte mit ws=system, fand 0 chunks im system-bucket
     # (99% leben in 'bene'), persisted=0/0 jede Stunde.
+    # JOIN sources: (a) exclude IGIO_SKIP_SOURCE_TYPES so code never enters the
+    # classifier, (b) fetch source_type for defense-in-depth in classify_chunk.
     if workspace == "system":
         rows = conn.execute(
-            "SELECT chunk_id, text, category_labels FROM chunks "
-            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-            "ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            f"SELECT c.chunk_id, c.text, c.category_labels, s.source_type "
+            f"FROM chunks c JOIN sources s ON c.source_id = s.source_id "
+            f"WHERE c.igio_axis = '' AND c.is_active = 1 AND c.text != '' "
+            f"AND s.source_type NOT IN ({skip_placeholders}) "
+            f"ORDER BY c.created_at DESC LIMIT ?",
+            skip_params + (limit,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT chunk_id, text, category_labels FROM chunks "
-            "WHERE igio_axis = '' AND is_active = 1 AND text != '' "
-            "AND workspace_id = ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (workspace, limit),
+            f"SELECT c.chunk_id, c.text, c.category_labels, s.source_type "
+            f"FROM chunks c JOIN sources s ON c.source_id = s.source_id "
+            f"WHERE c.igio_axis = '' AND c.is_active = 1 AND c.text != '' "
+            f"AND c.workspace_id = ? "
+            f"AND s.source_type NOT IN ({skip_placeholders}) "
+            f"ORDER BY c.created_at DESC LIMIT ?",
+            (workspace,) + skip_params + (limit,),
         ).fetchall()
     if not rows:
         print(f"[igio] Nichts zu klassifizieren (workspace={workspace}).")
@@ -197,7 +208,9 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     for r in rows:
         cats = [c for c in (r["category_labels"] or "").split(",") if c]
         verdict = classify_chunk(
-            r["text"], cats, ollama_url=ollama_url, model=model,
+            r["text"], cats,
+            source_type=r["source_type"],
+            ollama_url=ollama_url, model=model,
         )
         counts[verdict.axis] = counts.get(verdict.axis, 0) + 1
         if verdict.axis and verdict.confidence >= threshold:
