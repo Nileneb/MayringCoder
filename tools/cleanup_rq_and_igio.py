@@ -48,8 +48,9 @@ def clear_igio_repo_file(db: sqlite3.Connection, apply: bool) -> None:
     if not apply:
         print("DRY-RUN — would clear all of the above (no write).")
         return
+    # igio_classified_at is TEXT NOT NULL DEFAULT '' — reset to '' (NOT NULL).
     cur = db.execute(
-        "UPDATE chunks SET igio_axis='', igio_confidence=0.0, igio_classified_at=NULL "
+        "UPDATE chunks SET igio_axis='', igio_confidence=0.0, igio_classified_at='' "
         "WHERE igio_axis!='' AND source_id IN "
         "(SELECT source_id FROM sources WHERE source_type='repo_file')"
     )
