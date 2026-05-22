@@ -141,6 +141,81 @@ def test_tasks_has_derive_embedding_column():
     assert "derive_embedding" in db.get_columns("tasks")
 
 
+# --- Task 4: list_workspace_goals + GET /tasks/goals ---
+
+import uuid as _uuid
+from datetime import datetime, timezone as _tz
+
+
+def _seed_goal_chunk(db, workspace_id: str, source_type: str, summary: str = "A goal") -> str:
+    """Insert a source+chunk with igio_axis='goal' for testing. Returns chunk_id."""
+    now = datetime.now(_tz.utc).isoformat()
+    source_id = "src_" + _uuid.uuid4().hex[:12]
+    chunk_id = "chk_" + _uuid.uuid4().hex[:12]
+    db.execute(
+        "INSERT INTO sources (source_id, source_type, repo, path, branch, \"commit\","
+        " content_hash, captured_at, workspace_id, visibility)"
+        " VALUES (?,?,?,?,?,?,?,?,?,'private')",
+        (source_id, source_type, "repo", "path", "main", "", "hash_" + chunk_id, now, workspace_id),
+    )
+    db.execute(
+        "INSERT INTO chunks (chunk_id, source_id, chunk_level, ordinal, start_offset, end_offset,"
+        " text, text_hash, summary, category_labels, category_version, embedding_model,"
+        " embedding_id, quality_score, dedup_key, category_source, category_confidence,"
+        " igio_axis, igio_confidence, igio_classified_at, created_at, is_active, workspace_id)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (chunk_id, source_id, "file", 0, 0, 0, summary, "h_" + chunk_id, summary,
+         "", "v1", "nomic-embed-text", "", 0.9, chunk_id, "test", 0.9,
+         "goal", 0.9, now, now, 1, workspace_id),
+    )
+    db.commit()
+    return chunk_id
+
+
+def test_list_workspace_goals_filters_source_types():
+    db = _db()
+    # Seed: conversation goal (should appear), paper goal (should NOT), ambient goal (should NOT)
+    _seed_goal_chunk(db, "ws1", "conversation_summary", "My dev goal")
+    _seed_goal_chunk(db, "ws1", "paper", "Paper goal unrelated")
+    _seed_goal_chunk(db, "ws1", "ambient_snapshot", "Ambient goal unrelated")
+
+    goals = t.list_workspace_goals(db, "ws1")
+    assert len(goals) == 1
+    assert goals[0]["source"] == "goal"
+    assert goals[0]["read_only"] is True
+    assert "My dev goal" in goals[0]["title"]
+
+
+def test_list_workspace_goals_is_workspace_scoped():
+    db = _db()
+    _seed_goal_chunk(db, "ws1", "conversation_summary", "ws1 goal")
+    _seed_goal_chunk(db, "ws2", "conversation_summary", "ws2 goal")
+
+    ws1_goals = t.list_workspace_goals(db, "ws1")
+    ws2_goals = t.list_workspace_goals(db, "ws2")
+    assert len(ws1_goals) == 1
+    assert len(ws2_goals) == 1
+    assert "ws1 goal" in ws1_goals[0]["title"]
+    assert "ws2 goal" in ws2_goals[0]["title"]
+
+
+def test_get_tasks_goals_endpoint():
+    client, db = _client_with(ws="ws1")
+    try:
+        _seed_goal_chunk(db, "ws1", "conversation_summary", "Endpoint goal")
+        r = client.get("/tasks/goals", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["workspace_id"] == "ws1"
+        assert isinstance(data["goals"], list)
+        assert len(data["goals"]) == 1
+        assert data["goals"][0]["read_only"] is True
+    finally:
+        from src.api.server import app
+        import src.api.dependencies as _deps
+        app.dependency_overrides.clear(); _deps._conn = None
+
+
 def test_register_task_tools_create_and_list(monkeypatch):
     import src.api.mcp_task_tools as mt
     import src.api.dependencies as _deps

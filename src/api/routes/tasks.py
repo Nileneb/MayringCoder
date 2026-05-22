@@ -30,6 +30,12 @@ async def list_tasks(status: str | None = None, tag: str | None = None,
             "tasks": _t.list_tasks(_get_conn(), workspace_id, status=status, tag=tag, priority=priority)}
 
 
+@router.get("/tasks/goals")
+async def list_workspace_goals(workspace_id: str = Depends(get_workspace)) -> dict:
+    return {"workspace_id": workspace_id,
+            "goals": _t.list_workspace_goals(_get_conn(), workspace_id)}
+
+
 @router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, req: TaskUpdateRequest, workspace_id: str = Depends(get_workspace)) -> dict:
     fields = {k: v for k, v in req.model_dump().items() if v is not None}
