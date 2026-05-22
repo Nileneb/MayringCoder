@@ -8,7 +8,7 @@ Install the plugin from the new repository:
 
 ```bash
 /plugin marketplace add Nileneb/mayring-claude-plugin
-/plugin install mayring-coder-plugin
+/plugin install mayring-claude-plugin
 ```
 
 Or clone directly for development:
