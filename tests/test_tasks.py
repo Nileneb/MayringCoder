@@ -136,6 +136,11 @@ def test_task_create_tool_invalid_priority_returns_error_dict(monkeypatch):
     _deps._conn = None
 
 
+def test_tasks_has_derive_embedding_column():
+    db = _db()
+    assert "derive_embedding" in db.get_columns("tasks")
+
+
 def test_register_task_tools_create_and_list(monkeypatch):
     import src.api.mcp_task_tools as mt
     import src.api.dependencies as _deps

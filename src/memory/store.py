@@ -80,7 +80,8 @@ def kv_invalidate_by_ids(chunk_ids: list[str]) -> None:
 # Bump when _init_schema gains new DDL/migrations so existing DBs re-run it.
 #   v2 (#252): sources.scope_key column + index.
 #   v3 (task-tracker): tasks table + workspace/status/due indexes.
-CURRENT_SCHEMA_VERSION = 3
+#   v4 (todo-dedup): tasks.derive_embedding column for prompt-vs-prompt dedup.
+CURRENT_SCHEMA_VERSION = 4
 
 
 def _now_iso() -> str:
@@ -201,6 +202,9 @@ def _migrate_schema(conn: DBAdapter) -> None:
         ],
         "ingestion_log": [
             ("workspace_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ],
+        "tasks": [
+            ("derive_embedding", "TEXT"),
         ],
     }
     existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
@@ -556,6 +560,7 @@ def _init_schema(conn: DBAdapter) -> None:
             created_by     TEXT,
             linked_chunk_id TEXT REFERENCES chunks(chunk_id) ON DELETE SET NULL,
             scope_key      TEXT,
+            derive_embedding TEXT,
             created_at     TEXT NOT NULL,
             updated_at     TEXT NOT NULL,
             completed_at   TEXT
