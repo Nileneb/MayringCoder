@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.memory.chunker import chunk_paper, extract_pdf_text
+from mayring_core.memory.chunker import chunk_paper, extract_pdf_text
 
 
 # ─── Chunker Tests ────────────────────────────────────────────────────────────
@@ -74,9 +74,9 @@ def test_run_ingest_paper_scans_directory():
         mock_chroma = MagicMock()
 
         with (
-            patch("src.memory.store.init_memory_db", return_value=mock_conn),
-            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
-            patch("src.memory.ingest.ingest", return_value={"chunks": 2, "state": "new"}) as mock_ingest,
+            patch("mayring_core.memory.store.init_memory_db", return_value=mock_conn),
+            patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
+            patch("mayring_core.memory.ingest.ingest", return_value={"chunks": 2, "state": "new"}) as mock_ingest,
         ):
             result = run_ingest_paper(
                 papers_dir=tmpdir,
@@ -111,9 +111,9 @@ def test_run_ingest_paper_skips_unchanged(tmp_path):
     mock_chroma = MagicMock()
 
     with (
-        patch("src.memory.store.init_memory_db", return_value=mock_conn),
-        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
-        patch("src.memory.ingest.ingest", return_value={"chunks": 0, "state": "unchanged"}),
+        patch("mayring_core.memory.store.init_memory_db", return_value=mock_conn),
+        patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=mock_chroma),
+        patch("mayring_core.memory.ingest.ingest", return_value={"chunks": 0, "state": "unchanged"}),
     ):
         result = run_ingest_paper(papers_dir=str(tmp_path), ollama_url="", model="", workspace_id="user-1")
 

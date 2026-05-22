@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 
 
 def is_valid_neu_label(inner: str) -> bool:

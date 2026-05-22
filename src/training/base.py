@@ -5,7 +5,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 
 
 def get_training_conn(db_path: Path | None = None) -> sqlite3.Connection:

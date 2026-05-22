@@ -8,6 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# mayring-core shared library (memory, llm routing, identity, ollama client).
+# Installed editable so `import mayring_core` resolves from /app/core; src/ and
+# tools/ import exclusively from it (#267).
+COPY core/ ./core/
+RUN pip install --no-cache-dir -e ./core
+
 COPY src/ ./src/
 COPY prompts/ ./prompts/
 COPY codebooks/ ./codebooks/

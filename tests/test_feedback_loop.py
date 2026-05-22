@@ -5,9 +5,9 @@ import datetime
 
 import pytest
 
-from src.memory.db_adapter import DBAdapter
-from src.memory.schema import Chunk, Source
-from src.memory.store import _init_schema, add_feedback, get_feedback_score, insert_chunk, upsert_source
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import _init_schema, add_feedback, get_feedback_score, insert_chunk, upsert_source
 
 
 def _db() -> DBAdapter:
@@ -69,7 +69,7 @@ def test_feedback_score_mixed():
 
 def test_positive_feedback_boosts_ranking():
     """Chunk with 5x positive feedback must outrank identical chunk with no feedback."""
-    from src.memory.retrieval import _rerank
+    from mayring_core.memory.retrieval import _rerank
 
     db = _db()
     chunk_fb = _make_chunk("chk-fb", "src-fb", "authentication flow context", db)
@@ -94,7 +94,7 @@ def test_positive_feedback_boosts_ranking():
 
 def test_negative_feedback_lowers_ranking():
     """Chunk with 5x negative feedback must rank below chunk with no feedback."""
-    from src.memory.retrieval import _rerank
+    from mayring_core.memory.retrieval import _rerank
 
     db = _db()
     chunk_neg = _make_chunk("chk-neg", "src-neg", "some context", db)

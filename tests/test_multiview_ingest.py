@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import json
 import pytest
 
-from src.memory.ingest import generate_multiview_chunks
+from mayring_core.memory.ingest import generate_multiview_chunks
 
 
 SAMPLE_ISSUE = """# Login schlägt fehl nach Token-Erneuerung
@@ -161,9 +161,9 @@ class TestIngestMultiviewIntegration:
 
     def test_ingest_multiview_true_calls_generate_multiview(self, tmp_path):
         from unittest.mock import patch, MagicMock
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db, upsert_source
-        from src.memory.schema import Source
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db, upsert_source
+        from mayring_core.memory.schema import Source
 
         conn = init_memory_db(tmp_path / "memory.db")
         source = Source(
@@ -177,8 +177,8 @@ class TestIngestMultiviewIntegration:
         mock_chunks = []  # generate_multiview_chunks returns empty → ingest returns 0 chunks
 
         with (
-            patch("src.memory.ingestion.core.generate_multiview_chunks", return_value=mock_chunks) as mock_gen,
-            patch("src.memory.ingestion.core.structural_chunk") as mock_struct,
+            patch("mayring_core.memory.ingestion.core.generate_multiview_chunks", return_value=mock_chunks) as mock_gen,
+            patch("mayring_core.memory.ingestion.core.structural_chunk") as mock_struct,
         ):
             ingest(source, SAMPLE_ISSUE, conn, None, "http://localhost:11434", "mistral",
                    opts={"multiview": True})
@@ -188,9 +188,9 @@ class TestIngestMultiviewIntegration:
 
     def test_ingest_multiview_false_uses_structural_chunk(self, tmp_path):
         from unittest.mock import patch
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db
-        from src.memory.schema import Source
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db
+        from mayring_core.memory.schema import Source
 
         conn = init_memory_db(tmp_path / "memory.db")
         source = Source(
@@ -202,8 +202,8 @@ class TestIngestMultiviewIntegration:
         )
 
         with (
-            patch("src.memory.ingestion.core.generate_multiview_chunks") as mock_gen,
-            patch("src.memory.ingestion.core.structural_chunk", return_value=[]) as mock_struct,
+            patch("mayring_core.memory.ingestion.core.generate_multiview_chunks") as mock_gen,
+            patch("mayring_core.memory.ingestion.core.structural_chunk", return_value=[]) as mock_struct,
         ):
             ingest(source, SAMPLE_ISSUE, conn, None, "http://localhost:11434", "mistral",
                    opts={"multiview": False})

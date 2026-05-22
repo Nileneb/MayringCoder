@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.identity import local_identity as li
-from src.identity.local_identity import (
+from mayring_core.identity import local_identity as li
+from mayring_core.identity.local_identity import (
     LocalIdentity,
     clear_identity,
     get_local_user_id,

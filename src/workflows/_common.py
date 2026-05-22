@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-from src.config import CACHE_DIR, repo_slug as _repo_slug
+from mayring_core.config import CACHE_DIR, repo_slug as _repo_slug
 
 
 _TEST_FILE_PATTERNS = [

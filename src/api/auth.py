@@ -59,5 +59,5 @@ async def get_workspace(
     jetzt sind alle FastAPI- und MCP-Pfade auf diesen einen call
     konsolidiert.
     """
-    from src.identity.workspace_resolver import resolve_workspace_from_token
+    from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
     return resolve_workspace_from_token(info, override_header=x_workspace_id)

@@ -48,7 +48,7 @@ def _bg_wiki_rebuild(workspace_id: str) -> None:
         _log.exception("Background wiki rebuild failed for workspace_id=%s", workspace_id)
 
 def _model(task: str = "text") -> str:
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve(task)
 
 
@@ -139,10 +139,10 @@ async def memory_search(
         # Wenn nicht → background-thread erstellt die neue task (mistral),
         # ohne die such-response zu verzögern.
         try:
-            from src.memory.task_derivation import (
+            from mayring_core.memory.task_derivation import (
                 derive_research_question_fast, derive_research_question_background,
             )
-            from src.memory.store import MEMORY_DB_PATH
+            from mayring_core.memory.store import MEMORY_DB_PATH
             task = derive_research_question_fast(
                 request.query, _get_conn(), _OLLAMA_URL, workspace_id,
             )
@@ -282,7 +282,7 @@ async def memory_put(
         # #252: scope_key — typed sub-bucket within the workspace. REQUIRED
         # for paper/agent_result (so a Recherche search can stay inside one
         # project), optional otherwise. FAIL-loud — no silent default.
-        from src.memory.schema import is_valid_scope_key
+        from mayring_core.memory.schema import is_valid_scope_key
         scope = (request.scope or "").strip() or None
         if scope is not None and not is_valid_scope_key(scope):
             raise HTTPException(
@@ -340,7 +340,7 @@ async def memory_put(
         # org_id is a real FK target + carries a readable name (from the JWT
         # membership) in the dashboard, not just a bare UUID.
         if source_dict.get("visibility") == "org" and source_dict.get("org_id"):
-            from src.identity.workspace_resolver import ensure_team_workspace
+            from mayring_core.identity.workspace_resolver import ensure_team_workspace
             ensure_team_workspace(
                 _get_conn(), source_dict["org_id"],
                 display_name=info.membership_name(source_dict["org_id"]),
@@ -442,7 +442,7 @@ async def conversation_micro_batch(
         _VALID_IGIO = ("goal", "issue", "intervention", "outcome")
         if request.igio_hint and request.igio_hint.lower() in _VALID_IGIO:
             try:
-                from src.memory.store import update_chunk_igio_axis, get_chunks_by_source
+                from mayring_core.memory.store import update_chunk_igio_axis, get_chunks_by_source
                 conn_for_igio = _get_conn()
                 for chunk in get_chunks_by_source(conn_for_igio, source_id, active_only=True):
                     update_chunk_igio_axis(conn_for_igio, chunk.chunk_id, request.igio_hint.lower())
@@ -457,11 +457,11 @@ async def conversation_micro_batch(
             last_user = (user_turns[-1] if user_turns else "").strip()
             if last_user:
                 import threading
-                from src.memory.store import MEMORY_DB_PATH
+                from mayring_core.memory.store import MEMORY_DB_PATH
                 def _derive_todo_bg(p=last_user, ws=workspace_id):
                     try:
-                        from src.memory.store import init_memory_db
-                        from src.memory.todo_derivation import derive_todo
+                        from mayring_core.memory.store import init_memory_db
+                        from mayring_core.memory.todo_derivation import derive_todo
                         c = init_memory_db(MEMORY_DB_PATH)
                         try:
                             derive_todo(p, c, _OLLAMA_URL, ws)
@@ -477,7 +477,7 @@ async def conversation_micro_batch(
         # Best-effort: ein Fehler hier darf den Ingest nicht failen.
         transitions_updated = 0
         try:
-            from src.memory.predictive import update_transitions_incremental
+            from mayring_core.memory.predictive import update_transitions_incremental
             # Slug ist server-derived (siehe oben) — Markov-Transitions
             # landen im richtigen Bucket, kein cross-tenant-poisoning mehr.
             transitions_updated = update_transitions_incremental(
@@ -505,7 +505,7 @@ async def memory_get_chunk(
     chunk_id: str,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    from src.memory.store import kv_get, get_chunk
+    from mayring_core.memory.store import kv_get, get_chunk
     cached = kv_get(chunk_id)
     if cached is not None:
         return {"workspace_id": workspace_id, "chunk": cached}
@@ -520,8 +520,8 @@ async def memory_invalidate(
     request: MemoryInvalidateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    from src.memory.store import deactivate_chunks_by_source, log_ingestion_event
-    from src.memory.retrieval import invalidate_query_cache
+    from mayring_core.memory.store import deactivate_chunks_by_source, log_ingestion_event
+    from mayring_core.memory.retrieval import invalidate_query_cache
     conn = _get_conn()
     count = deactivate_chunks_by_source(conn, request.source_id)
     log_ingestion_event(conn, request.source_id, "invalidated", {"count": count})
@@ -535,7 +535,7 @@ async def memory_list_by_source(
     active_only: bool = True,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    from src.memory.store import get_chunks_by_source
+    from mayring_core.memory.store import get_chunks_by_source
     chunks = get_chunks_by_source(_get_conn(), source_id, active_only=active_only)
     return {
         "workspace_id": workspace_id,
@@ -550,8 +550,8 @@ async def memory_explain(
     chunk_id: str,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
-    from src.memory.store import get_chunk, get_source
-    from src.memory.schema import make_memory_key, source_fingerprint
+    from mayring_core.memory.store import get_chunk, get_source
+    from mayring_core.memory.schema import make_memory_key, source_fingerprint
     chunk = get_chunk(_get_conn(), chunk_id)
     if chunk is None:
         raise HTTPException(status_code=404, detail="chunk not found")
@@ -583,8 +583,8 @@ async def memory_reindex(
 ) -> dict:
     try:
         from src.analysis.context import _embed_texts
-        from src.memory.store import get_chunks_by_source, get_chunk
-        from src.memory.retrieval import invalidate_query_cache
+        from mayring_core.memory.store import get_chunks_by_source, get_chunk
+        from mayring_core.memory.retrieval import invalidate_query_cache
 
         chroma = _get_chroma()
         conn = _get_conn()
@@ -646,7 +646,7 @@ async def memory_feedback(
             status_code=400,
             detail="signal must be a rating '1'..'5' — binary positive/negative no longer accepted"
         )
-    from src.memory.store import add_feedback, get_chunks_by_source
+    from mayring_core.memory.store import add_feedback, get_chunks_by_source
 
     def _mark_referenced(chunk_ids: list[str]) -> None:
         """Bridge to context_feedback_log: when feedback comes in, the

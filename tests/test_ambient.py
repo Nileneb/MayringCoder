@@ -2,9 +2,9 @@
 import pytest
 from pathlib import Path
 
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 
-from src.memory.ambient import (
+from mayring_core.memory.ambient import (
     _load_recent_conversations,
     _load_recent_issues,
     _load_wiki_top_connections,
@@ -18,7 +18,7 @@ from src.memory.ambient import (
 
 def _init_test_db() -> DBAdapter:
     """Create an in-memory test DB with full schema."""
-    from src.memory.store import _init_schema
+    from mayring_core.memory.store import _init_schema
     adapter = DBAdapter.memory()
     _init_schema(adapter)
     return adapter
@@ -197,7 +197,7 @@ def test_trigger_scan_no_hit_below_threshold(monkeypatch):
 
 def test_build_context_no_snapshot():
     """build_context returns empty string when no snapshot in DB."""
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     conn = _init_test_db()
     result = build_context("some task", conn, "", "myrepo")
     assert result == ""
@@ -227,7 +227,7 @@ def _insert_snapshot_for_repo(conn, repo: str, text: str = "Snapshot-Text", chun
 
 def test_build_context_snapshot_only(tmp_path, monkeypatch):
     """build_context returns snapshot section when no index/embs files exist."""
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
 
@@ -248,7 +248,7 @@ def _wiki_cache_slug(repo: str) -> str:
 def test_build_context_with_trigger_hit(tmp_path, monkeypatch):
     """build_context includes trigger context when keyword matches."""
     import json
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
 
@@ -318,14 +318,14 @@ def test_context_feedback_log_table_exists():
 
 
 def test_trigger_result_dataclass():
-    from src.memory.ambient import TriggerResult
+    from mayring_core.memory.ambient import TriggerResult
     r = TriggerResult(context="[Relevante Cluster: Foo]", trigger_ids=["keyword:foo"])
     assert r.context == "[Relevante Cluster: Foo]"
     assert r.trigger_ids == ["keyword:foo"]
 
 
 def test_context_feedback_dataclass():
-    from src.memory.ambient import ContextFeedback
+    from mayring_core.memory.ambient import ContextFeedback
     fb = ContextFeedback(
         trigger_ids=["keyword:foo"],
         context_text="some context",
@@ -341,7 +341,7 @@ def test_context_feedback_dataclass():
 # ── Task 2: TriggerResult + inactive trigger skip ────────────────────────────
 
 def test_trigger_scan_returns_trigger_result():
-    from src.memory.ambient import trigger_scan, TriggerResult
+    from mayring_core.memory.ambient import trigger_scan, TriggerResult
     idx = {"creditservice": ["CreditCluster"]}
     result = trigger_scan("What does CreditService do?", idx, {}, "")
     assert isinstance(result, TriggerResult)
@@ -350,7 +350,7 @@ def test_trigger_scan_returns_trigger_result():
 
 
 def test_trigger_scan_skips_inactive_trigger():
-    from src.memory.ambient import trigger_scan, TriggerResult
+    from mayring_core.memory.ambient import trigger_scan, TriggerResult
     conn = _init_test_db()
     # Mark keyword as inactive
     conn.execute(
@@ -366,7 +366,7 @@ def test_trigger_scan_skips_inactive_trigger():
 
 
 def test_is_trigger_active_unknown_trigger():
-    from src.memory.ambient import _is_trigger_active
+    from mayring_core.memory.ambient import _is_trigger_active
     conn = _init_test_db()
     assert _is_trigger_active("keyword:unknown", conn) is True
     conn.close()
@@ -374,7 +374,7 @@ def test_is_trigger_active_unknown_trigger():
 
 def test_build_context_collects_trigger_ids(tmp_path, monkeypatch):
     import json
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     safe = _wiki_cache_slug("myrepo")
@@ -393,7 +393,7 @@ def test_build_context_collects_trigger_ids(tmp_path, monkeypatch):
 
 def test_compute_feedback_no_ollama():
     """Empty ollama_url → was_referenced=False, relevance_score=0.0, still persisted to DB."""
-    from src.memory.ambient import compute_feedback
+    from mayring_core.memory.ambient import compute_feedback
     conn = _init_test_db()
     fb = compute_feedback("some context", "some response", ["keyword:foo"], False, conn, "")
     assert fb.was_referenced is False
@@ -405,7 +405,7 @@ def test_compute_feedback_no_ollama():
 
 def test_compute_feedback_persists_to_db():
     """After compute_feedback call, context_feedback_log has 1 row."""
-    from src.memory.ambient import compute_feedback
+    from mayring_core.memory.ambient import compute_feedback
     conn = _init_test_db()
     compute_feedback("ctx", "resp", ["k:foo"], True, conn, "")
     count = conn.execute("SELECT COUNT(*) FROM context_feedback_log").fetchone()[0]
@@ -415,7 +415,7 @@ def test_compute_feedback_persists_to_db():
 
 def test_update_trigger_stats_increments():
     """Two calls → fire_count=2."""
-    from src.memory.ambient import update_trigger_stats
+    from mayring_core.memory.ambient import update_trigger_stats
     conn = _init_test_db()
     update_trigger_stats(["keyword:foo"], True, conn)
     update_trigger_stats(["keyword:foo"], False, conn)
@@ -430,7 +430,7 @@ def test_update_trigger_stats_increments():
 
 def test_update_trigger_stats_deactivates_below_threshold():
     """50 fires, 4 refs (8%) → is_active=0."""
-    from src.memory.ambient import update_trigger_stats
+    from mayring_core.memory.ambient import update_trigger_stats
     conn = _init_test_db()
     for i in range(50):
         update_trigger_stats(["keyword:bar"], i < 4, conn)
@@ -444,7 +444,7 @@ def test_update_trigger_stats_deactivates_below_threshold():
 
 def test_update_trigger_stats_keeps_active_above_threshold():
     """50 fires, 10 refs (20%) → is_active=1."""
-    from src.memory.ambient import update_trigger_stats
+    from mayring_core.memory.ambient import update_trigger_stats
     conn = _init_test_db()
     for i in range(50):
         update_trigger_stats(["keyword:baz"], i < 10, conn)
@@ -460,7 +460,7 @@ def test_update_trigger_stats_keeps_active_above_threshold():
 
 def test_build_context_out_trigger_ids_empty_when_no_index(tmp_path, monkeypatch):
     """No index file → _out_trigger_ids stays empty."""
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     conn = _init_test_db()
@@ -473,7 +473,7 @@ def test_build_context_out_trigger_ids_empty_when_no_index(tmp_path, monkeypatch
 def test_build_context_out_trigger_ids_populated(tmp_path, monkeypatch):
     """Index with matching keyword → _out_trigger_ids is populated."""
     import json
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     safe = _wiki_cache_slug("myrepo")
@@ -492,7 +492,7 @@ def test_build_context_out_trigger_ids_populated(tmp_path, monkeypatch):
 
 def test_build_context_skips_retrieval_when_no_chroma(tmp_path, monkeypatch):
     """chroma_collection=None (default) → no crash, no Relevante Erinnerungen section."""
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     conn = _init_test_db()
@@ -506,13 +506,13 @@ def test_build_context_skips_retrieval_when_no_chroma(tmp_path, monkeypatch):
 def test_build_context_skips_empty_retrieval(tmp_path, monkeypatch):
     """search() returns empty list → Relevante Erinnerungen block not added."""
     from unittest.mock import patch, MagicMock
-    from src.memory.ambient import build_context
+    from mayring_core.memory.ambient import build_context
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     conn = _init_test_db()
     _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="snap2")
     fake_chroma = MagicMock()
-    with patch("src.memory.retrieval.search", return_value=[]):
+    with patch("mayring_core.memory.retrieval.search", return_value=[]):
         result = build_context("analyse this", conn, "", "myrepo", chroma_collection=fake_chroma)
     assert "## Relevante Erinnerungen" not in result
     conn.close()
@@ -521,8 +521,8 @@ def test_build_context_skips_empty_retrieval(tmp_path, monkeypatch):
 def test_build_context_includes_retrieval_section(tmp_path, monkeypatch):
     """search() returns results → ## Relevante Erinnerungen section present."""
     from unittest.mock import patch, MagicMock
-    from src.memory.ambient import build_context
-    from src.memory.schema import RetrievalRecord
+    from mayring_core.memory.ambient import build_context
+    from mayring_core.memory.schema import RetrievalRecord
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     conn = _init_test_db()
@@ -532,7 +532,7 @@ def test_build_context_includes_retrieval_section(tmp_path, monkeypatch):
         chunk_id="c1", source_id="src1", text="Memory chunk about payments",
         score_final=0.9, category_labels=["domain"],
     )
-    with patch("src.memory.retrieval.search", return_value=[fake_record]):
+    with patch("mayring_core.memory.retrieval.search", return_value=[fake_record]):
         result = build_context("analyse payments", conn, "", "myrepo", chroma_collection=fake_chroma)
     assert "## Relevante Erinnerungen" in result
     assert "payments" in result
@@ -542,16 +542,16 @@ def test_build_context_includes_retrieval_section(tmp_path, monkeypatch):
 def test_build_context_retrieval_respects_char_budget(tmp_path, monkeypatch):
     """compress_for_prompt is called with char_budget=2400."""
     from unittest.mock import patch, MagicMock
-    from src.memory.ambient import build_context
-    from src.memory.schema import RetrievalRecord
+    from mayring_core.memory.ambient import build_context
+    from mayring_core.memory.schema import RetrievalRecord
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cache").mkdir()
     conn = _init_test_db()
     _insert_snapshot_for_repo(conn, "myrepo", "Snapshot", chunk_id="snap4")
     fake_chroma = MagicMock()
     fake_record = RetrievalRecord(chunk_id="c1", source_id="s1", text="x", score_final=0.8)
-    with patch("src.memory.retrieval.search", return_value=[fake_record]), \
-         patch("src.memory.retrieval.compress_for_prompt", return_value="compressed") as mock_cfp:
+    with patch("mayring_core.memory.retrieval.search", return_value=[fake_record]), \
+         patch("mayring_core.memory.retrieval.compress_for_prompt", return_value="compressed") as mock_cfp:
         build_context("task", conn, "", "myrepo", chroma_collection=fake_chroma)
     mock_cfp.assert_called_once_with([fake_record], char_budget=2400)
     conn.close()

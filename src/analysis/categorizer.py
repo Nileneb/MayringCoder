@@ -11,7 +11,7 @@ Adds 'category' and 'category_reason' to each file dict in-place.
 import re
 from pathlib import Path
 
-from src.config import CODEBOOK_PATH, CODEBOOKS_DIR
+from mayring_core.config import CODEBOOK_PATH, CODEBOOKS_DIR
 
 try:
     import yaml as _yaml

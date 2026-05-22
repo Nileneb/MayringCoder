@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
-from src.ollama_client import generate
+from mayring_core.ollama_client import generate
 
 logger = logging.getLogger(__name__)
 

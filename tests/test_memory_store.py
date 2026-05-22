@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.schema import Chunk, Source
-from src.memory.store import (
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import (
     add_feedback,
     deactivate_chunks_by_source,
     find_by_text_hash,
@@ -299,7 +299,7 @@ class TestInitMemoryDbWikiAttach:
         """init_memory_db attached cache/wiki_v2.db wenn vorhanden, sodass
         Cross-DB-JOINs auf wikidb.wiki_edges direkt funktionieren."""
         from src.wiki_v2 import store as wstore
-        import src.config as _cfg
+        import mayring_core.config as _cfg
 
         cache = tmp_path / "cache"
         cache.mkdir()
@@ -318,7 +318,7 @@ class TestInitMemoryDbWikiAttach:
 
     def test_init_memory_db_skips_attach_when_no_wiki_db(self, tmp_path: Path) -> None:
         """Cold-start ohne wiki_v2.db: Flag = False, keine Crash."""
-        import src.config as _cfg
+        import mayring_core.config as _cfg
 
         cache = tmp_path / "cache"
         cache.mkdir()

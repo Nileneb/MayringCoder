@@ -19,7 +19,7 @@ def hist_graph(tmp_path):
 
 
 def test_create_snapshot_returns_id(hist_graph, monkeypatch, tmp_path):
-    import src.config as conf
+    import mayring_core.config as conf
     conf.WIKI_DIR = tmp_path / "wiki"
     hist = WikiHistory()
     sid = hist.create_snapshot(hist_graph, trigger="test")
@@ -28,7 +28,7 @@ def test_create_snapshot_returns_id(hist_graph, monkeypatch, tmp_path):
 
 
 def test_snapshot_persisted_in_db(hist_graph, monkeypatch, tmp_path):
-    import src.config as conf
+    import mayring_core.config as conf
     conf.WIKI_DIR = tmp_path / "wiki"
     hist = WikiHistory()
     hist.create_snapshot(hist_graph, trigger="rebuild")
@@ -40,7 +40,7 @@ def test_snapshot_persisted_in_db(hist_graph, monkeypatch, tmp_path):
 
 
 def test_timeline_newest_first(hist_graph, monkeypatch, tmp_path):
-    import src.config as conf
+    import mayring_core.config as conf
     conf.WIKI_DIR = tmp_path / "wiki"
     hist = WikiHistory()
     hist.create_snapshot(hist_graph, trigger="first")
@@ -50,7 +50,7 @@ def test_timeline_newest_first(hist_graph, monkeypatch, tmp_path):
 
 
 def test_timeline_respects_limit(hist_graph, monkeypatch, tmp_path):
-    import src.config as conf
+    import mayring_core.config as conf
     conf.WIKI_DIR = tmp_path / "wiki"
     hist = WikiHistory()
     for i in range(5):
@@ -60,7 +60,7 @@ def test_timeline_respects_limit(hist_graph, monkeypatch, tmp_path):
 
 
 def test_cleanup_removes_oldest(hist_graph, monkeypatch, tmp_path):
-    import src.config as conf
+    import mayring_core.config as conf
     conf.WIKI_DIR = tmp_path / "wiki"
     hist = WikiHistory()
     for i in range(5):

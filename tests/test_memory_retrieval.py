@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.schema import Chunk, RetrievalRecord, Source
-from src.memory.store import init_memory_db, upsert_source, insert_chunk, add_feedback
-from src.memory.retrieval import (
+from mayring_core.memory.schema import Chunk, RetrievalRecord, Source
+from mayring_core.memory.store import init_memory_db, upsert_source, insert_chunk, add_feedback
+from mayring_core.memory.retrieval import (
     _scope_filter,
     _symbolic_score,
     _tokenize,
@@ -204,7 +204,7 @@ class TestSessionCompacted:
     """Tests für session_compacted-Flag in search()."""
 
     def _make_conv_source(self, tmp_path):
-        from src.memory.store import init_memory_db, upsert_source, insert_chunk
+        from mayring_core.memory.store import init_memory_db, upsert_source, insert_chunk
         conn = init_memory_db(tmp_path / "mc.db")
         src = Source(
             source_id="repo:conversation:summary/sess-1",
@@ -233,7 +233,7 @@ class TestSessionCompacted:
         return conn, chunk
 
     def test_compacted_boosts_section_chunks_from_conversation(self, tmp_path) -> None:
-        from src.memory.retrieval import search
+        from mayring_core.memory.retrieval import search
 
         conn, chunk = self._make_conv_source(tmp_path)
 
@@ -259,7 +259,7 @@ class TestSessionCompacted:
         assert results_compacted[0].score_final > results_normal[0].score_final
 
     def test_compacted_false_no_score_boost(self, tmp_path) -> None:
-        from src.memory.retrieval import search
+        from mayring_core.memory.retrieval import search
 
         conn, chunk = self._make_conv_source(tmp_path)
 
@@ -279,8 +279,8 @@ class TestQueryCache:
     """Tests for the in-process query cache in memory_retrieval."""
 
     def _make_source_and_chunk(self, tmp_path):
-        from src.memory.store import init_memory_db, upsert_source, insert_chunk
-        from src.memory.schema import Source, Chunk
+        from mayring_core.memory.store import init_memory_db, upsert_source, insert_chunk
+        from mayring_core.memory.schema import Source, Chunk
         conn = init_memory_db(tmp_path / "memory.db")
         src = Source(
             source_id="src::query_cache_test",
@@ -306,20 +306,20 @@ class TestQueryCache:
     def test_cache_hit_skips_scope_filter(self, tmp_path) -> None:
         """Second identical search() call hits cache — _scope_filter not called again."""
         from unittest.mock import patch
-        from src.memory.retrieval import search, invalidate_query_cache
+        from mayring_core.memory.retrieval import search, invalidate_query_cache
 
         invalidate_query_cache()
         conn, chunk = self._make_source_and_chunk(tmp_path)
 
         call_count = 0
-        original_scope_filter = __import__("src.memory.retrieval", fromlist=["_scope_filter"])._scope_filter
+        original_scope_filter = __import__("mayring_core.memory.retrieval", fromlist=["_scope_filter"])._scope_filter
 
         def counting_scope_filter(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             return original_scope_filter(*args, **kwargs)
 
-        with patch("src.memory.retrieval._scope_filter", side_effect=counting_scope_filter):
+        with patch("mayring_core.memory.retrieval._scope_filter", side_effect=counting_scope_filter):
             r1 = search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
             r2 = search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
 
@@ -332,20 +332,20 @@ class TestQueryCache:
     def test_invalidate_clears_cache(self, tmp_path) -> None:
         """After invalidate_query_cache(), next search() runs fresh (calls _scope_filter)."""
         from unittest.mock import patch
-        from src.memory.retrieval import search, invalidate_query_cache
+        from mayring_core.memory.retrieval import search, invalidate_query_cache
 
         invalidate_query_cache()
         conn, chunk = self._make_source_and_chunk(tmp_path)
 
         call_count = 0
-        original = __import__("src.memory.retrieval", fromlist=["_scope_filter"])._scope_filter
+        original = __import__("mayring_core.memory.retrieval", fromlist=["_scope_filter"])._scope_filter
 
         def counting(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             return original(*args, **kwargs)
 
-        with patch("src.memory.retrieval._scope_filter", side_effect=counting):
+        with patch("mayring_core.memory.retrieval._scope_filter", side_effect=counting):
             search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
             invalidate_query_cache()
             search("hello", conn, None, "http://localhost:11434", opts={"top_k": 5})
@@ -355,7 +355,7 @@ class TestQueryCache:
 
     def test_different_opts_produce_different_cache_keys(self) -> None:
         """Different opts → different cache entries, no cross-contamination."""
-        from src.memory.retrieval import _cache_key
+        from mayring_core.memory.retrieval import _cache_key
 
         k1 = _cache_key("hello", {"top_k": 5}, False)
         k2 = _cache_key("hello", {"top_k": 10}, False)
@@ -371,7 +371,7 @@ class TestQueryCache:
         That's why the production smoke kept seeing v=0 for cache-hot RAG
         queries even after the workspace fix landed.
         """
-        from src.memory.retrieval import search, invalidate_query_cache
+        from mayring_core.memory.retrieval import search, invalidate_query_cache
 
         invalidate_query_cache()
         conn, chunk = self._make_source_and_chunk(tmp_path)
@@ -392,7 +392,7 @@ class TestQueryCache:
         """Cache strips .text to keep memory bounded — but a cache-hit with
         include_text=True must re-fetch the text from the chunk store so
         callers that need full bodies (e.g. compress_for_prompt) work."""
-        from src.memory.retrieval import search, invalidate_query_cache
+        from mayring_core.memory.retrieval import search, invalidate_query_cache
 
         invalidate_query_cache()
         conn, chunk = self._make_source_and_chunk(tmp_path)
@@ -590,9 +590,9 @@ class TestFeedbackRanking:
 
 def test_search_attaches_rationale_edges(tmp_path):
     """End-to-end: chunk im wiki-rationale-edge → rationale_edges befüllt."""
-    from src.memory.retrieval import search, invalidate_query_cache
-    from src.memory.store import init_memory_db, upsert_source, insert_chunk
-    from src.memory.schema import Source, Chunk
+    from mayring_core.memory.retrieval import search, invalidate_query_cache
+    from mayring_core.memory.store import init_memory_db, upsert_source, insert_chunk
+    from mayring_core.memory.schema import Source, Chunk
     from src.wiki_v2 import store as wstore
 
     invalidate_query_cache()
@@ -612,7 +612,7 @@ def test_search_attaches_rationale_edges(tmp_path):
     wraw.close()
 
     # Setup memory.db
-    import src.config as _cfg
+    import mayring_core.config as _cfg
     orig_cache = _cfg.CACHE_DIR
     _cfg.CACHE_DIR = cache
     try:
@@ -657,15 +657,15 @@ def test_search_attaches_rationale_edges(tmp_path):
 
 def test_search_no_rationale_when_wiki_db_missing(tmp_path):
     """Cold-start ohne wiki_v2.db: rationale_edges == [], kein crash."""
-    from src.memory.retrieval import search, invalidate_query_cache
-    from src.memory.store import init_memory_db, upsert_source, insert_chunk
-    from src.memory.schema import Source, Chunk
+    from mayring_core.memory.retrieval import search, invalidate_query_cache
+    from mayring_core.memory.store import init_memory_db, upsert_source, insert_chunk
+    from mayring_core.memory.schema import Source, Chunk
 
     invalidate_query_cache()
 
     cache = tmp_path / "cache"
     cache.mkdir()
-    import src.config as _cfg
+    import mayring_core.config as _cfg
     orig_cache = _cfg.CACHE_DIR
     _cfg.CACHE_DIR = cache
     try:

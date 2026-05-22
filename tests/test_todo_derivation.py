@@ -1,8 +1,8 @@
 from __future__ import annotations
 import pytest
 from unittest.mock import patch
-from src.memory.db_adapter import DBAdapter
-from src.memory.store import _init_schema
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.store import _init_schema
 
 
 @pytest.fixture
@@ -13,7 +13,7 @@ def conn():
 
 
 def test_derive_todo_creates_task_when_actionable(conn):
-    import src.memory.todo_derivation as td
+    import mayring_core.memory.todo_derivation as td
     with patch.object(td, "_embed_text", return_value=[0.1]*768), \
          patch.object(td, "_llm_todo", return_value={"actionable": True, "title": "Fix the auth bug"}):
         r = td.derive_todo("please fix the auth bug in jwt_auth", conn, "http://x", "ws1")
@@ -23,7 +23,7 @@ def test_derive_todo_creates_task_when_actionable(conn):
 
 
 def test_derive_todo_skips_when_not_actionable(conn):
-    import src.memory.todo_derivation as td
+    import mayring_core.memory.todo_derivation as td
     with patch.object(td, "_embed_text", return_value=[0.1]*768), \
          patch.object(td, "_llm_todo", return_value={"actionable": False, "title": ""}):
         r = td.derive_todo("what does this function do?", conn, "http://x", "ws1")
@@ -32,7 +32,7 @@ def test_derive_todo_skips_when_not_actionable(conn):
 
 
 def test_derive_todo_dedups_near_identical_open_todo(conn):
-    import src.memory.todo_derivation as td
+    import mayring_core.memory.todo_derivation as td
     emb = [0.2]*768
     with patch.object(td, "_embed_text", return_value=emb), \
          patch.object(td, "_llm_todo", return_value={"actionable": True, "title": "Fix auth"}):

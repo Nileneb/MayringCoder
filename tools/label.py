@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 
 # ---------------------------------------------------------------------------
 # I/O
@@ -256,7 +256,7 @@ def _default_log_path() -> Path | None:
 
 def _interactive_label_categories(output_path: Path) -> None:
     """Show uncategorized chunks from memory DB and ask for manual category assignment."""
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
 
     conn = init_memory_db()
     rows = conn.execute(

@@ -5,9 +5,9 @@ import time as _time
 from collections import deque
 from typing import Any
 
-from src.memory.ingest import ingest
-from src.memory.retrieval import compress_for_prompt, search
-from src.memory.schema import Source
+from mayring_core.memory.ingest import ingest
+from mayring_core.memory.retrieval import compress_for_prompt, search
+from mayring_core.memory.schema import Source
 
 # Brain visualization: recent search activations (ring buffer, shared in-process)
 _RECENT_ACTIVATIONS: deque[dict] = deque(maxlen=200)

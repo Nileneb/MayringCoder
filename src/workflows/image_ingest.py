@@ -1,8 +1,8 @@
 """Image-Ingest Workflow — Vision-Captioning + Memory-Ingest von Bildern."""
 from __future__ import annotations
 
-from src.model_router import ModelRouter
-from src.identity.cli import resolve_cli_workspace
+from mayring_core.model_router import ModelRouter
+from mayring_core.identity.cli import resolve_cli_workspace
 
 
 def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
@@ -10,7 +10,7 @@ def run_ingest_images(args, ollama_url: str, model: str, router: ModelRouter | N
         if router.is_available("vision"):
             model = router.resolve("vision")
 
-    from src.memory.ingest import run_image_ingest
+    from mayring_core.memory.ingest import run_image_ingest
 
     repo_url = args.ingest_images
     _default_vision = ModelRouter(ollama_url).resolve("vision") or "qwen2.5vl:3b"

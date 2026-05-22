@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.memory.db_adapter import DBAdapter
+    from mayring_core.memory.db_adapter import DBAdapter
     from src.wiki_v2.graph import WikiGraph
 
 

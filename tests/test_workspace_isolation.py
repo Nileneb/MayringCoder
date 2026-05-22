@@ -7,9 +7,9 @@ import pytest
 
 from src.api import mcp_auth as mcp_mod
 from src.api.jwt_auth import TokenInfo
-from src.memory.retrieval import _scope_filter
-from src.memory.schema import Chunk, Source
-from src.memory.store import init_memory_db, insert_chunk, upsert_source
+from mayring_core.memory.retrieval import _scope_filter
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import init_memory_db, insert_chunk, upsert_source
 
 
 @pytest.fixture
@@ -167,7 +167,7 @@ def test_effective_workspace_id_uses_jwt_in_http():
 
 def test_chroma_filter_failure_skips_vector_not_leaks(memory_db, monkeypatch):
     """Chroma filter exception → vector stage skipped entirely, no cross-workspace leak."""
-    import src.memory.retrieval as ret_mod
+    import mayring_core.memory.retrieval as ret_mod
 
     monkeypatch.setattr(ret_mod, "_HAS_EMBED", True)
     monkeypatch.setattr(ret_mod, "_embed_texts", lambda texts, url: [[0.1] * 4] * len(texts))
@@ -196,7 +196,7 @@ def test_chroma_filter_failure_skips_vector_not_leaks(memory_db, monkeypatch):
 
 def test_chroma_workspace_a_cannot_see_workspace_b_data(memory_db, monkeypatch):
     """Stage-1 scope filter blocks cross-workspace chunks even if chroma returns them."""
-    import src.memory.retrieval as ret_mod
+    import mayring_core.memory.retrieval as ret_mod
 
     monkeypatch.setattr(ret_mod, "_HAS_EMBED", True)
     monkeypatch.setattr(ret_mod, "_embed_texts", lambda texts, url: [[0.1] * 4] * len(texts))
@@ -233,10 +233,10 @@ def test_unknown_workspace_id_raises(monkeypatch, tmp_path):
     JWT- und CLI-Pfaden).
     """
     from types import SimpleNamespace
-    from src.identity.cli import resolve_cli_workspace
-    from src.identity.workspace_resolver import UnknownWorkspaceError
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.identity.cli import resolve_cli_workspace
+    from mayring_core.identity.workspace_resolver import UnknownWorkspaceError
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
 
     monkeypatch.delenv("MAYRING_USER_ID", raising=False)
     conn = DBAdapter.create(tmp_path / "test.db", check_same_thread=False)
@@ -252,9 +252,9 @@ def test_missing_workspace_with_local_email_resolves(monkeypatch, tmp_path):
     Slug aus email-localpart, kein user-N-Fallback."""
     import json
     from types import SimpleNamespace
-    from src.identity.cli import resolve_cli_workspace
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.identity.cli import resolve_cli_workspace
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
 
     cfg_dir = tmp_path / ".config"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg_dir))

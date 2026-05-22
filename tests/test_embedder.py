@@ -76,14 +76,14 @@ class TestFileSnippet:
 
 class TestIndexPath:
     def test_path_contains_slug_and_model(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         cfg.CACHE_DIR = tmp_path
         path = _index_path("https://github.com/owner/repo.git", "nomic-embed-text")
         assert "owner-repo" in path.name
         assert "nomic-embed-text" in path.name
 
     def test_colon_in_model_name_replaced(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         cfg.CACHE_DIR = tmp_path
         path = _index_path("https://github.com/a/b", "mxbai:latest")
         assert ":" not in path.name
@@ -104,7 +104,7 @@ def _fake_embed(texts, ollama_url):
 
 class TestBuildFileIndex:
     def test_returns_one_entry_per_file(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
@@ -116,7 +116,7 @@ class TestBuildFileIndex:
         assert {e["filename"] for e in index} == {"a.py", "b.py"}
 
     def test_each_entry_has_embedding(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path
@@ -128,7 +128,7 @@ class TestBuildFileIndex:
         assert len(index[0]["embedding"]) == 2
 
     def test_cache_is_written_and_reused(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         import src.analysis.context_embedfilter as _emb_filter
         cfg.CACHE_DIR = tmp_path
@@ -151,7 +151,7 @@ class TestBuildFileIndex:
         assert call_count["n"] == 1, "Embed should only be called once; second call uses cache"
 
     def test_force_reindex_bypasses_cache(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         import src.analysis.context_embedfilter as _emb_filter
         cfg.CACHE_DIR = tmp_path
@@ -173,7 +173,7 @@ class TestBuildFileIndex:
         assert call_count["n"] == 2
 
     def test_cache_invalidated_on_file_set_change(self, tmp_path):
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         import src.analysis.context_embedfilter as _emb_filter
         cfg.CACHE_DIR = tmp_path
@@ -204,7 +204,7 @@ class TestFilterByEmbedding:
     """Tests for the main prefilter function."""
 
     def _run_filter(self, files, query, top_k=10, threshold=None, tmp_path=None):
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         import src.analysis.context_embedfilter as _emb_filter
         if tmp_path is not None:
@@ -251,7 +251,7 @@ class TestFilterByEmbedding:
         Files with longer content produce longer snippets → higher embedding value.
         Our fake embed uses [len(text), 0], so longer snippets score higher vs a long query.
         Use a high threshold to force some files to be excluded."""
-        from src import config as cfg
+        from mayring_core import config as cfg
         from src.analysis import context as embedder
         cfg.CACHE_DIR = tmp_path
         embedder.CACHE_DIR = tmp_path

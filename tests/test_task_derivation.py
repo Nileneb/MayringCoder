@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.memory.store import init_memory_db
-from src.memory.task_derivation import (
+from mayring_core.memory.store import init_memory_db
+from mayring_core.memory.task_derivation import (
     derive_research_question,
     get_research_question_boost,
     link_chunk_to_research_question,
@@ -112,7 +112,7 @@ def test_derive_task_reuses_existing_via_embedding_similarity(conn):
         ),
     )
 
-    with patch("src.memory.task_derivation._embed_text", return_value=existing_emb):
+    with patch("mayring_core.memory.task_derivation._embed_text", return_value=existing_emb):
         result = derive_research_question("how do I validate JWT", conn, "http://ollama:11434", "default")
 
     assert result is not None
@@ -130,9 +130,9 @@ def test_derive_task_creates_new_when_below_similarity_threshold(conn):
     prompt_emb = [0.5] * 768
     title_emb = [0.6] * 768
 
-    with patch("src.memory.task_derivation._embed_text", side_effect=[prompt_emb, title_emb]):
+    with patch("mayring_core.memory.task_derivation._embed_text", side_effect=[prompt_emb, title_emb]):
         with patch(
-            "src.memory.task_derivation._call_mistral_for_task",
+            "mayring_core.memory.task_derivation._call_mistral_for_task",
             return_value="Deploy-Fehler diagnostizieren und beheben",
         ):
             result = derive_research_question(
@@ -171,9 +171,9 @@ def test_derive_task_workspace_isolation(conn):
     )
 
     # Bob in different workspace — should NOT find alice's task (workspace filter)
-    with patch("src.memory.task_derivation._embed_text", side_effect=[emb_b, emb_b]):
+    with patch("mayring_core.memory.task_derivation._embed_text", side_effect=[emb_b, emb_b]):
         with patch(
-            "src.memory.task_derivation._call_mistral_for_task",
+            "mayring_core.memory.task_derivation._call_mistral_for_task",
             return_value="Bob's distinct task",
         ):
             result = derive_research_question(
@@ -192,7 +192,7 @@ def test_derive_task_workspace_isolation(conn):
 
 def test_add_feedback_creates_task_link_when_rating_high(conn):
     """rating>=4 + metadata.task_id should create a task_chunk_link."""
-    from src.memory.store import add_feedback
+    from mayring_core.memory.store import add_feedback
 
     _seed_chunk(conn, "chk_fb_test")
     conn.execute(
@@ -213,7 +213,7 @@ def test_add_feedback_creates_task_link_when_rating_high(conn):
 
 def test_add_feedback_no_link_for_low_rating(conn):
     """rating < 4 should NOT create task-chunk-link (we only learn from positives)."""
-    from src.memory.store import add_feedback
+    from mayring_core.memory.store import add_feedback
 
     _seed_chunk(conn, "chk_low")
     conn.execute(
@@ -232,7 +232,7 @@ def test_add_feedback_no_link_for_low_rating(conn):
 
 def test_add_feedback_no_link_without_task_id_metadata(conn):
     """Legacy callers (no task_id in metadata) should not break feedback."""
-    from src.memory.store import add_feedback
+    from mayring_core.memory.store import add_feedback
 
     _seed_chunk(conn, "chk_legacy")
     # No research_questions row, no metadata — should still succeed
@@ -254,10 +254,10 @@ def test_derive_task_fast_returns_existing_match(conn):
            VALUES ('task_known', 'Known Task', ?, ?, ?, 'default')""",
         (json.dumps(emb), "2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
-    from src.memory.task_derivation import derive_research_question_fast
-    with patch("src.memory.task_derivation._embed_text", return_value=emb):
+    from mayring_core.memory.task_derivation import derive_research_question_fast
+    with patch("mayring_core.memory.task_derivation._embed_text", return_value=emb):
         # _call_mistral must NEVER be called in the fast path
-        with patch("src.memory.task_derivation._call_mistral_for_task") as mock_mistral:
+        with patch("mayring_core.memory.task_derivation._call_mistral_for_task") as mock_mistral:
             result = derive_research_question_fast("any prompt", conn, "http://ollama:11434", "default")
     assert result is not None
     assert result["research_question_id"] == "task_known"
@@ -267,9 +267,9 @@ def test_derive_task_fast_returns_existing_match(conn):
 
 def test_derive_task_fast_returns_none_when_no_match(conn):
     """derive_task_fast: no existing task → None (does NOT create one)."""
-    from src.memory.task_derivation import derive_research_question_fast
-    with patch("src.memory.task_derivation._embed_text", return_value=[0.9] * 768):
-        with patch("src.memory.task_derivation._call_mistral_for_task") as mock_mistral:
+    from mayring_core.memory.task_derivation import derive_research_question_fast
+    with patch("mayring_core.memory.task_derivation._embed_text", return_value=[0.9] * 768):
+        with patch("mayring_core.memory.task_derivation._call_mistral_for_task") as mock_mistral:
             result = derive_research_question_fast("brand new topic", conn, "http://ollama:11434", "default")
     assert result is None
     mock_mistral.assert_not_called()
@@ -285,16 +285,16 @@ def test_derive_task_fast_increments_occurrence_on_match(conn):
            VALUES ('task_c', 'T', ?, 5, ?, ?, 'default')""",
         (json.dumps(emb), "2026-05-11T00:00:00Z", "2026-05-11T00:00:00Z"),
     )
-    from src.memory.task_derivation import derive_research_question_fast
-    with patch("src.memory.task_derivation._embed_text", return_value=emb):
+    from mayring_core.memory.task_derivation import derive_research_question_fast
+    with patch("mayring_core.memory.task_derivation._embed_text", return_value=emb):
         derive_research_question_fast("prompt text", conn, "http://ollama:11434", "default")
     n = conn.execute("SELECT occurrence_count FROM research_questions WHERE research_question_id='task_c'").fetchone()[0]
     assert n == 6
 
 
 def test_migration_renames_task_categories_to_research_questions(tmp_path):
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _migrate_schema
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _migrate_schema
     db = DBAdapter.create(tmp_path / "legacy.db")
     db.execute("CREATE TABLE task_categories (task_id TEXT PRIMARY KEY, title TEXT, workspace_id TEXT)")
     db.execute("CREATE TABLE task_chunk_links (task_id TEXT, chunk_id TEXT, relevance_score REAL, created_at TEXT, PRIMARY KEY(task_id, chunk_id))")
@@ -317,7 +317,7 @@ def test_derive_research_question_clusters_near_identical_prompts(conn):
     reusing. The fix stores the prompt embedding in the row so the match path
     compares prompt-vs-prompt consistently.
     """
-    import src.memory.task_derivation as td
+    import mayring_core.memory.task_derivation as td
 
     p_emb = [1.0] * 384 + [0.0] * 384   # prompt embedding
     t_emb = [0.0] * 384 + [1.0] * 384  # title embedding — orthogonal to p_emb (cosine=0.0)
@@ -357,8 +357,8 @@ def test_derive_research_question_clusters_near_identical_prompts(conn):
 
 
 def test_init_schema_renames_legacy_task_categories_with_data(tmp_path):
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
     db = DBAdapter.create(tmp_path / "legacy2.db")
     db.execute("CREATE TABLE task_categories (task_id TEXT PRIMARY KEY, title TEXT, "
                "embedding_id TEXT, parent_task_id TEXT, occurrence_count INTEGER, "

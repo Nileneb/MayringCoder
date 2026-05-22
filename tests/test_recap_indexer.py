@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 from src.wiki_v2.recap_indexer import (
     Recap,
     _plans_mentioning_issue,

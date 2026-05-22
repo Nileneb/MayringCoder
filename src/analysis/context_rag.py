@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from src.config import (
+from mayring_core.config import (
     CACHE_DIR,
     EMBEDDING_MODEL,
     OLLAMA_TIMEOUT,
@@ -36,12 +36,12 @@ def _cache_key(text: str) -> str:
 def _batch_embed_via_api_embed(
     texts: list[str], ollama_url: str
 ) -> list[list[float]] | None:
-    from src.ollama_client import embed_batch as _oc_embed_batch
+    from mayring_core.ollama_client import embed_batch as _oc_embed_batch
     return _oc_embed_batch(ollama_url, EMBEDDING_MODEL, texts, timeout=OLLAMA_TIMEOUT)
 
 
 def _single_embed_with_retry(text: str, ollama_url: str, label: str) -> list[float]:
-    from src.ollama_client import embed_single as _oc_embed_single
+    from mayring_core.ollama_client import embed_single as _oc_embed_single
     return _oc_embed_single(ollama_url, EMBEDDING_MODEL, text, timeout=OLLAMA_TIMEOUT, label=label)
 
 

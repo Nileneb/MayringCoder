@@ -25,7 +25,7 @@ def _resolve_model(override: str | None) -> str:
     path so admin routes (/stats/admin/model-routes) actually take effect."""
     if override:
         return override
-    from src.model_router import ModelRouter
+    from mayring_core.model_router import ModelRouter
     return ModelRouter(_OLLAMA_URL).resolve("text") or "qwen2.5-coder:7b"
 
 
@@ -55,7 +55,7 @@ def register_second_opinion_tools(mcp: FastMCP) -> None:
             edge scope:    {action, rationale, validated, corrected_type, target_id, model}
             on error:      {error, hint, target_id}
         """
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.second_opinion import WikiSecondOpinion
 

@@ -16,7 +16,7 @@ import hashlib
 import re
 from pathlib import Path as _Path
 
-from src.config import INGEST_SEPARATOR
+from mayring_core.config import INGEST_SEPARATOR
 
 _SKIP_MARKERS = frozenset({"[Binary file]", "[Empty file]"})
 

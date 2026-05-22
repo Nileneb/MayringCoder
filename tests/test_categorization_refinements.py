@@ -15,11 +15,11 @@ from unittest.mock import patch
 
 import pytest
 
-from src.memory.ingestion.categorization import (
+from mayring_core.memory.ingestion.categorization import (
     _looks_like_test_path,
     mayring_categorize,
 )
-from src.memory.schema import Chunk
+from mayring_core.memory.schema import Chunk
 
 
 class TestPathDetection:
@@ -148,47 +148,47 @@ class TestSourceTypeCodebookRouting:
     the routing logic + the FAIL-loud behaviour for unmapped types."""
 
     def test_agent_result_uses_social_anchors_not_code(self):
-        from src.memory.ingestion.categorization import _resolve_codebook
+        from mayring_core.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "agent_result")
         assert "argumentation" in cats or "methodik" in cats
         assert "auth" not in cats and "api" not in cats and "data_access" not in cats
 
     def test_paper_uses_social_anchors(self):
-        from src.memory.ingestion.categorization import _resolve_codebook
+        from mayring_core.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "paper")
         assert "auth" not in cats and "api" not in cats
 
     def test_github_issue_uses_code_anchors_not_social(self):
         """GitHub issues are technical bug reports — code anchors, not prose."""
-        from src.memory.ingestion.categorization import _resolve_codebook
+        from mayring_core.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "github_issue")
         assert "api" in cats and "data_access" in cats
         assert "argumentation" not in cats
 
     def test_repo_file_still_uses_code_anchors(self):
-        from src.memory.ingestion.categorization import _resolve_codebook
+        from mayring_core.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "repo_file")
         assert "api" in cats and "data_access" in cats
 
     def test_unmapped_source_type_fails_loudly(self):
         """No silent fallback — unmapped source_type → a FAIL_ marker label."""
-        from src.memory.ingestion.categorization import _resolve_codebook
+        from mayring_core.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "some_future_type")
         assert cats == ["FAIL_unmapped_source_type:some_future_type"]
 
     def test_empty_source_type_fails_loudly(self):
-        from src.memory.ingestion.categorization import _resolve_codebook
+        from mayring_core.memory.ingestion.categorization import _resolve_codebook
 
         cats = _resolve_codebook("auto", "")
         assert cats == ["FAIL_unmapped_source_type:EMPTY"]
 
     def test_ingest_defaults_codebook_is_always_auto(self):
-        from src.memory.ingestion.categorization import _INGEST_DEFAULTS, _INGEST_DEFAULT_FALLBACK
+        from mayring_core.memory.ingestion.categorization import _INGEST_DEFAULTS, _INGEST_DEFAULT_FALLBACK
 
         for st, settings in _INGEST_DEFAULTS.items():
             assert settings["codebook"] == "auto", f"{st} must be auto"
@@ -200,7 +200,7 @@ class TestWorkspaceAnchorLabels:
     in the workspace, so labels get reused across texts instead of re-minted."""
 
     def _db(self, tmp_path):
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.store import init_memory_db
         c = init_memory_db(tmp_path / "m.db")
         now = "2026-05-12T00:00:00+00:00"
         c.execute("INSERT INTO sources (source_id, source_type, captured_at, workspace_id) VALUES (?,?,?,?)",
@@ -220,26 +220,26 @@ class TestWorkspaceAnchorLabels:
         return c
 
     def test_ranks_by_frequency_folds_neu_excludes_static(self, tmp_path):
-        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        from mayring_core.memory.ingestion.categorization import _workspace_anchor_labels
         c = self._db(tmp_path)
         anchors = _workspace_anchor_labels(c, "bene", exclude={"argumentation", "methodik", "ergebnis"}, limit=10)
         assert anchors == ["patientenautonomie", "shared-decision-making"]
         c.close()
 
     def test_empty_for_unknown_workspace(self, tmp_path):
-        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        from mayring_core.memory.ingestion.categorization import _workspace_anchor_labels
         c = self._db(tmp_path)
         assert _workspace_anchor_labels(c, "nonexistent", exclude=set()) == []
         c.close()
 
     def test_limit_caps_output(self, tmp_path):
-        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        from mayring_core.memory.ingestion.categorization import _workspace_anchor_labels
         c = self._db(tmp_path)
         assert len(_workspace_anchor_labels(c, "bene", exclude=set(), limit=1)) == 1
         c.close()
 
     def test_bad_conn_returns_empty(self):
-        from src.memory.ingestion.categorization import _workspace_anchor_labels
+        from mayring_core.memory.ingestion.categorization import _workspace_anchor_labels
 
         class _Boom:
             def execute(self, *a, **k):

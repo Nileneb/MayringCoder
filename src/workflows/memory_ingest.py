@@ -14,11 +14,11 @@ from src.analysis.categorizer import (
     load_exclude_patterns,
     load_mayringignore,
 )
-from src.identity.cli import resolve_cli_workspace
+from mayring_core.identity.cli import resolve_cli_workspace
 from src.analysis.fetcher import fetch_repo
 from src.analysis.splitter import split_into_files
-from src.config import CACHE_DIR, CODEBOOK_PATH, repo_slug as _repo_slug
-from src.model_router import ModelRouter
+from mayring_core.config import CACHE_DIR, CODEBOOK_PATH, repo_slug as _repo_slug
+from mayring_core.model_router import ModelRouter
 
 
 def _content_hash(text: str) -> str:
@@ -43,9 +43,9 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     print(f"[populate-memory] Modell: {_ingest_model} (Task: text)")
 
     from src.gpu_metrics import format_summary, parse_metrics, start_monitoring, stop_monitoring
-    from src.memory.ingest import get_or_create_chroma_collection, ingest
-    from src.memory.schema import Source, canonicalize_url
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.ingest import get_or_create_chroma_collection, ingest
+    from mayring_core.memory.schema import Source, canonicalize_url
+    from mayring_core.memory.store import init_memory_db
 
     # Collapse case-only typo variants (Nileneb/X vs nileneb/X) into one
     # source_id namespace so vector + symbolic stages see the same chunks.
@@ -125,8 +125,8 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     if do_force:
         print("[populate-memory] --force-reingest: alte Chunks werden invalidiert "
               "und Kategorisierung/Embedding läuft komplett neu.")
-        from src.memory.retrieval import invalidate_query_cache
-        from src.memory.store import deactivate_chunks_by_source, get_chunks_by_source
+        from mayring_core.memory.retrieval import invalidate_query_cache
+        from mayring_core.memory.store import deactivate_chunks_by_source, get_chunks_by_source
         old_chunk_ids: list[str] = []
         for f in files:
             src_id = Source.make_id(repo_url, f['filename'])
@@ -156,7 +156,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
 
     def _ingest_one(f: dict) -> dict:
         """Verarbeitet eine Datei — thread-safe (eigene DB-Connection pro Worker)."""
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.store import init_memory_db
         _conn = init_memory_db()
         try:
             _src = Source(

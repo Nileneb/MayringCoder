@@ -26,9 +26,9 @@ def test_populate_memory_calls_ingest_per_file(tmp_path):
         patch("src.workflows.memory_ingest.load_codebook", return_value={}),
         patch("src.workflows.memory_ingest.load_exclude_patterns", return_value=[]),
         patch("src.workflows.memory_ingest.load_mayringignore", return_value=[]),
-        patch("src.memory.store.init_memory_db", return_value=MagicMock()),
-        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-        patch("src.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
+        patch("mayring_core.memory.store.init_memory_db", return_value=MagicMock()),
+        patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+        patch("mayring_core.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
     ):
         run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
         assert mock_ingest.call_count == 2
@@ -51,9 +51,9 @@ def test_populate_memory_source_metadata():
         patch("src.workflows.memory_ingest.load_codebook", return_value={}),
         patch("src.workflows.memory_ingest.load_exclude_patterns", return_value=[]),
         patch("src.workflows.memory_ingest.load_mayringignore", return_value=[]),
-        patch("src.memory.store.init_memory_db", return_value=MagicMock()),
-        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-        patch("src.memory.ingest.ingest", side_effect=capture_ingest),
+        patch("mayring_core.memory.store.init_memory_db", return_value=MagicMock()),
+        patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+        patch("mayring_core.memory.ingest.ingest", side_effect=capture_ingest),
     ):
         run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")
 
@@ -86,9 +86,9 @@ def test_populate_memory_error_resilience():
         patch("src.workflows.memory_ingest.load_codebook", return_value={}),
         patch("src.workflows.memory_ingest.load_exclude_patterns", return_value=[]),
         patch("src.workflows.memory_ingest.load_mayringignore", return_value=[]),
-        patch("src.memory.store.init_memory_db", return_value=MagicMock()),
-        patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-        patch("src.memory.ingest.ingest", side_effect=flaky_ingest),
+        patch("mayring_core.memory.store.init_memory_db", return_value=MagicMock()),
+        patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+        patch("mayring_core.memory.ingest.ingest", side_effect=flaky_ingest),
     ):
         # Must not raise
         run_populate_memory(args, "https://github.com/test/repo", "http://localhost:11434", "mistral")

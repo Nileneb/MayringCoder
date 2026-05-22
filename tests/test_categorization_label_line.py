@@ -7,7 +7,7 @@ raw response for prompts that still return a bare comma list.
 """
 from __future__ import annotations
 
-from src.memory.ingestion.categorization import _extract_label_line
+from mayring_core.memory.ingestion.categorization import _extract_label_line
 
 
 class TestKategorienPrefix:

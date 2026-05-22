@@ -21,7 +21,7 @@ except ImportError:
 
 def _save_router_config(*model_values) -> str:
     try:
-        from src.model_router import ModelRouter
+        from mayring_core.model_router import ModelRouter
         from src.api.server import _router
 
         tasks = ModelRouter.TASKS
@@ -295,7 +295,7 @@ def build_settings_tab(app: gr.Blocks) -> None:
         )
 
         try:
-            from src.model_router import ModelRouter
+            from mayring_core.model_router import ModelRouter
             from src.api.server import _router as _active_router
             _router_available = True
         except Exception:

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.memory.schema import Chunk, Source
-from src.memory.store import (
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import (
     batch_context,
     get_chunks_by_source,
     get_source,

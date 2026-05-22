@@ -191,9 +191,9 @@ def _ingest_workspace(
     dry_run: bool,
     include_subagents: bool,
 ) -> tuple[int, int, int]:
-    from src.memory.ingest import ingest
-    from src.memory.retrieval import compress_for_prompt, search
-    from src.memory.schema import Source
+    from mayring_core.memory.ingest import ingest
+    from mayring_core.memory.retrieval import compress_for_prompt, search
+    from mayring_core.memory.schema import Source
 
     slug = _slug(workspace_path)
 
@@ -327,8 +327,8 @@ def main() -> None:
     if args.dry_run:
         print("[dry-run aktiv — keine Änderungen]")
 
-    from src.memory.ingest import get_or_create_chroma_collection
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.ingest import get_or_create_chroma_collection
+    from mayring_core.memory.store import init_memory_db
 
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()

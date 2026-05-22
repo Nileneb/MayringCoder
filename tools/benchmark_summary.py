@@ -23,7 +23,7 @@ from pathlib import Path
 # Allow running without package install
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 
 
 def _find_all_run_dirs() -> list[Path]:
@@ -158,7 +158,7 @@ def main() -> None:
         sys.exit(1)
 
     if args.repo:
-        from src.config import repo_slug
+        from mayring_core.config import repo_slug
         slug = repo_slug(args.repo) if args.repo.startswith("http") else args.repo
         run_dirs = [CACHE_DIR / slug / "runs"]
     else:

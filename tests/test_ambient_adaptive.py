@@ -2,8 +2,8 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
 
-from src.memory.ambient import _score_entry, _score_snapshot_entries, build_context
-from src.memory.store import init_memory_db, _now_iso
+from mayring_core.memory.ambient import _score_entry, _score_snapshot_entries, build_context
+from mayring_core.memory.store import init_memory_db, _now_iso
 
 
 def _iso(days_ago: float) -> str:
@@ -92,7 +92,7 @@ def test_dynamic_budget_respects_trigger_length(tmp_path, monkeypatch):
     )
     conn.commit()
 
-    import src.memory.ambient as _ambient
+    import mayring_core.memory.ambient as _ambient
 
     monkeypatch.setattr(
         _ambient,

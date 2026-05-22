@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from src.config import CACHE_DIR, repo_slug as _repo_slug
-from src.identity.cli import resolve_cli_workspace
-from src.model_router import ModelRouter
+from mayring_core.config import CACHE_DIR, repo_slug as _repo_slug
+from mayring_core.identity.cli import resolve_cli_workspace
+from mayring_core.model_router import ModelRouter
 
 
 def run_ingest_issues(args, ollama_url: str, model: str, router: ModelRouter | None = None) -> None:
@@ -14,8 +14,8 @@ def run_ingest_issues(args, ollama_url: str, model: str, router: ModelRouter | N
             model = router.resolve("embedding")
 
     from src.gpu_metrics import format_summary, parse_metrics, start_monitoring, stop_monitoring
-    from src.memory.ingest import fetch_issues, get_or_create_chroma_collection, ingest, issues_to_sources
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.ingest import fetch_issues, get_or_create_chroma_collection, ingest, issues_to_sources
+    from mayring_core.memory.store import init_memory_db
 
     issues_repo = args.ingest_issues
     state = getattr(args, "issues_state", "open")
@@ -47,8 +47,8 @@ def run_ingest_issues(args, ollama_url: str, model: str, router: ModelRouter | N
     dedup_count = 0
 
     if do_force:
-        from src.memory.retrieval import invalidate_query_cache
-        from src.memory.store import deactivate_chunks_by_source, get_chunks_by_source
+        from mayring_core.memory.retrieval import invalidate_query_cache
+        from mayring_core.memory.store import deactivate_chunks_by_source, get_chunks_by_source
         print("[ingest-issues] --force-reingest: Bestehende Chunks werden invalidiert ...")
         old_chunk_ids: list[str] = []
         for source, _ in sources:

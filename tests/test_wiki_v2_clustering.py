@@ -116,7 +116,7 @@ def test_10_node_louvain_produces_2_clusters(ten_node_graph):
 def test_orphan_nodes_absorbed_into_path_sibling(tmp_path, monkeypatch):
     """Orphan nodes (no edges) must NOT become singleton clusters when a
     path-sibling big cluster exists. They get folded into it."""
-    import src.config as conf
+    import mayring_core.config as conf
     monkeypatch.setattr(conf, "WIKI_DIR", tmp_path / "wiki", raising=False)
     g = WikiGraph("ws-orph", "repo", db_path=tmp_path / "wiki_orph.db")
     # api family: 5 nodes wired as a star → forms one cluster
@@ -145,7 +145,7 @@ def test_orphan_nodes_absorbed_into_path_sibling(tmp_path, monkeypatch):
 def test_sparse_graph_falls_back_to_path_prefix(tmp_path, monkeypatch):
     """When edges are too sparse for meaningful Louvain, fall back to
     path-prefix grouping rather than producing N singletons."""
-    import src.config as conf
+    import mayring_core.config as conf
     monkeypatch.setattr(conf, "WIKI_DIR", tmp_path / "wiki", raising=False)
     g = WikiGraph("ws-sparse", "repo", db_path=tmp_path / "wiki_sparse.db")
     files = [

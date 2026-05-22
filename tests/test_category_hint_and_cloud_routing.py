@@ -38,8 +38,8 @@ def _empty_conn():
 def test_rerank_applies_category_hint_boost():
     """Chunk dessen category_labels mit hint überlappen muss höher ranken
     als chunk ohne overlap, sonst war prompt-categorize-arbeit umsonst."""
-    from src.memory.retrieval import _rerank
-    from src.memory.schema import Chunk
+    from mayring_core.memory.retrieval import _rerank
+    from mayring_core.memory.schema import Chunk
 
     chunk_with_overlap = Chunk(
         chunk_id="chk_with",
@@ -86,8 +86,8 @@ def test_rerank_applies_category_hint_boost():
 
 def test_rerank_no_boost_when_hint_empty():
     """Empty hint-liste darf keine änderung gegen None bewirken."""
-    from src.memory.retrieval import _rerank
-    from src.memory.schema import Chunk
+    from mayring_core.memory.retrieval import _rerank
+    from mayring_core.memory.schema import Chunk
 
     chunk = Chunk(
         chunk_id="chk_a", source_id="s", chunk_level="function", ordinal=0,
@@ -110,7 +110,7 @@ def test_rerank_no_boost_when_hint_empty():
 
 def test_cloud_model_mapping_translates_local_names():
     """Local models bekommen ihr cloud-äquivalent ZUVOR — sonst 404."""
-    from src.ollama_client import _resolve_cloud_model
+    from mayring_core.ollama_client import _resolve_cloud_model
 
     assert _resolve_cloud_model("mistral:7b-instruct") == "gemma3:4b"
     assert _resolve_cloud_model("qwen2.5-coder:7b") == "qwen3-coder-next"
@@ -124,7 +124,7 @@ def test_cloud_routing_off_without_api_key(monkeypatch):
     returnt IMMER False, egal welcher ratio. Sicherheit gegen ratio=1.0
     bei fehlendem key (würde sonst jeder call cloud-fail+local-retry =
     double-latency)."""
-    import src.ollama_client as oc
+    import mayring_core.ollama_client as oc
     monkeypatch.setattr(oc, "_CLOUD_API_KEY", "")
     monkeypatch.setattr(oc, "_CLOUD_PRIMARY_RATIO", 1.0)
     for _ in range(100):
@@ -132,7 +132,7 @@ def test_cloud_routing_off_without_api_key(monkeypatch):
 
 
 def test_cloud_routing_off_at_zero_ratio(monkeypatch):
-    import src.ollama_client as oc
+    import mayring_core.ollama_client as oc
     monkeypatch.setattr(oc, "_CLOUD_API_KEY", "fake-key")
     monkeypatch.setattr(oc, "_CLOUD_PRIMARY_RATIO", 0.0)
     for _ in range(100):
@@ -213,7 +213,7 @@ def test_judge_returns_none_when_no_text():
 # ---------------------------------------------------------------------------
 
 def test_detect_igio_intent_outcome_de():
-    from src.memory.retrieval import detect_igio_intent
+    from mayring_core.memory.retrieval import detect_igio_intent
     assert detect_igio_intent("Was kam dabei raus?") == "outcome"
     assert detect_igio_intent("Welche Konsequenzen hat das?") == "outcome"
     assert detect_igio_intent("Was war das ergebnis der refactoring?") == "outcome"
@@ -221,27 +221,27 @@ def test_detect_igio_intent_outcome_de():
 
 
 def test_detect_igio_intent_outcome_en():
-    from src.memory.retrieval import detect_igio_intent
+    from mayring_core.memory.retrieval import detect_igio_intent
     assert detect_igio_intent("what happened after the deploy?") == "outcome"
     assert detect_igio_intent("Show me the results") == "outcome"
     assert detect_igio_intent("what was the impact?") == "outcome"
 
 
 def test_detect_igio_intent_issue():
-    from src.memory.retrieval import detect_igio_intent
+    from mayring_core.memory.retrieval import detect_igio_intent
     assert detect_igio_intent("Was ist das Problem mit der auth?") == "issue"
     assert detect_igio_intent("warum failed der test?") == "issue"
     assert detect_igio_intent("what's the root cause?") == "issue"
 
 
 def test_detect_igio_intent_intervention():
-    from src.memory.retrieval import detect_igio_intent
+    from mayring_core.memory.retrieval import detect_igio_intent
     assert detect_igio_intent("wie implementieren wir das?") == "intervention"
     assert detect_igio_intent("how do I fix this?") == "intervention"
 
 
 def test_detect_igio_intent_none_for_generic_query():
-    from src.memory.retrieval import detect_igio_intent
+    from mayring_core.memory.retrieval import detect_igio_intent
     assert detect_igio_intent("zeig mir den code") is None
     assert detect_igio_intent("xyz") is None
     assert detect_igio_intent("") is None
@@ -249,8 +249,8 @@ def test_detect_igio_intent_none_for_generic_query():
 
 def test_rerank_outcome_chunk_boosted_with_outcome_intent():
     """Outcome-chunk muss höher ranken als non-outcome bei outcome-intent."""
-    from src.memory.retrieval import _rerank
-    from src.memory.schema import Chunk
+    from mayring_core.memory.retrieval import _rerank
+    from mayring_core.memory.schema import Chunk
 
     chunk_outcome = Chunk(
         chunk_id="chk_out", source_id="s1", chunk_level="function",

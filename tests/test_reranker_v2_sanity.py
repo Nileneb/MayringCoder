@@ -31,16 +31,16 @@ def _write_model(path: Path, weights: dict[str, float]) -> None:
 @pytest.fixture(autouse=True)
 def _isolate_cache(tmp_path, monkeypatch):
     """Each test gets its own cache dir + cleared module cache."""
-    from src import config as _cfg
+    from mayring_core import config as _cfg
     monkeypatch.setattr(_cfg, "CACHE_DIR", tmp_path)
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     reranker_v2.invalidate_v2_cache()
     yield
     reranker_v2.invalidate_v2_cache()
 
 
 def test_healthy_weights_load(tmp_path):
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.5, "s": 0.4, "r": 0.1, "a": 0.1, "sf": 0.3, "sl": 0.2,
     })
@@ -51,7 +51,7 @@ def test_healthy_weights_load(tmp_path):
 
 def test_negative_vector_weight_rejected(tmp_path):
     """Production failure: v=-0.51 made vector hits rank below noise."""
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": -0.51, "s": 2.71, "r": -2.51, "a": 0.0, "sf": 8.77, "sl": -0.78,
     })
@@ -61,7 +61,7 @@ def test_negative_vector_weight_rejected(tmp_path):
 
 def test_negative_symbolic_weight_rejected(tmp_path):
     """Symbolic token-overlap is also retrieval-positive — guard both."""
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.5, "s": -0.1, "r": 0.0, "a": 0.0, "sf": 0.0, "sl": 0.0,
     })
@@ -72,7 +72,7 @@ def test_negative_pt_or_re_weight_rejected(tmp_path):
     """Issue #187: pt (predicted-topic) und re (rationale-presence) sind
     retrieval-positive Features. Negative weights würden chunks mit predicted-
     topic-match oder rationale-edge AKTIV runter ranken — analog v/s-flip."""
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     # pt negativ
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.5, "s": 0.4, "r": 0.1, "a": 0.1,
@@ -96,7 +96,7 @@ def test_zero_weights_pass(tmp_path):
     """Zero-weight on retrieval-positive feature is suspicious but legal —
     only NEGATIVE blocks. Catches the actual production bug, doesn't
     overclaim."""
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.0, "s": 0.0, "r": 0.0, "a": 0.0, "sf": 0.5, "sl": 0.5,
     })
@@ -106,7 +106,7 @@ def test_zero_weights_pass(tmp_path):
 def test_get_active_falls_back_to_v1_on_degenerate_model(tmp_path, monkeypatch):
     """End-to-end: even with RERANKER_VERSION=v2, a degenerate model
     triggers the silent v1-fallback that already exists for missing files."""
-    from src.memory import reranker_v2
+    from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": -1.0, "s": 1.0, "r": 0.0, "a": 0.0, "sf": 0.0, "sl": 0.0,
     })

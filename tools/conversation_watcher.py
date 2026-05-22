@@ -156,7 +156,7 @@ class WatcherSink:
 
 
 class LocalDBSink(WatcherSink):
-    """Legacy: writes directly into the local SQLite + ChromaDB via src.memory.ingest.
+    """Legacy: writes directly into the local SQLite + ChromaDB via mayring_core.memory.ingest.
 
     Only usable when the watcher runs inside or alongside the mayring-api
     process (same host, shared cache volume). For a normal SaaS user whose
@@ -172,8 +172,8 @@ class LocalDBSink(WatcherSink):
         if not turns:
             return False
         import hashlib
-        from src.memory.ingest import ingest
-        from src.memory.schema import Source
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.schema import Source
         first_ts = turns[0].get("timestamp", "")[:10]
         batch_key = f"{session_id}:{len(turns)}:{turns[-1].get('timestamp','')}"
         content_hash = "sha256:" + hashlib.sha256(batch_key.encode()).hexdigest()[:16]

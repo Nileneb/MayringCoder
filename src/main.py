@@ -33,6 +33,9 @@ def _thread(target: str, host: str, port: int, **env: str) -> threading.Thread:
 
 
 def main() -> None:
+    from src.provider_setup import setup_providers
+    setup_providers()  # wire embed/generate/vision into mayring_core (#267)
+
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     api_url = os.getenv("API_URL", "http://localhost:8080")
 

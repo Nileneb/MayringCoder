@@ -334,7 +334,7 @@ def generate(project_filter: str | None = None) -> dict[str, Path]:
     from dotenv import load_dotenv
     load_dotenv()
 
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.store import init_memory_db
     conn = init_memory_db()
 
     chunks = _load_chunks(conn)

@@ -17,16 +17,16 @@ _MEMORY_READY = False
 _IMPORT_ERROR: str = ""
 
 try:
-    from src.memory.store import (
+    from mayring_core.memory.store import (
         init_memory_db,
         add_feedback,
         get_chunks_by_source,
     )
-    from src.memory.ingest import ingest, ingest_conversation_summary
-    from src.memory.retrieval import search
-    from src.memory.schema import Source, Chunk
+    from mayring_core.memory.ingest import ingest, ingest_conversation_summary
+    from mayring_core.memory.retrieval import search
+    from mayring_core.memory.schema import Source, Chunk
     from src.github import parse_github_input, GitHubInputError
-    from src.config import CACHE_DIR
+    from mayring_core.config import CACHE_DIR
     import hashlib
 
     _MEMORY_READY = True
@@ -65,7 +65,7 @@ def _get_chroma() -> Any:
     if not _MEMORY_READY:
         return None
     try:
-        from src.memory.store import get_chroma_collection as get_collection
+        from mayring_core.memory.store import get_chroma_collection as get_collection
         _chroma_collection = get_collection()
         return _chroma_collection
     except Exception:
@@ -505,7 +505,7 @@ def _training_files() -> list[Path]:
     if not _MEMORY_READY:
         return []
     try:
-        from src.config import CACHE_DIR
+        from mayring_core.config import CACHE_DIR
         return sorted(CACHE_DIR.glob("*_training_log.jsonl"))
     except Exception:
         return []

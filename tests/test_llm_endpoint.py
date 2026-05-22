@@ -6,8 +6,8 @@ import time
 import httpx
 import pytest
 
-from src.llm import endpoint as endpoint_mod
-from src.llm.endpoint import LLMEndpoint, get_llm_endpoint, invalidate_cache
+from mayring_core.llm import endpoint as endpoint_mod
+from mayring_core.llm.endpoint import LLMEndpoint, get_llm_endpoint, invalidate_cache
 
 
 @pytest.fixture(autouse=True)

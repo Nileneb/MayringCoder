@@ -15,8 +15,8 @@ from pathlib import Path
 from src.analysis.context import load_overview_cache_raw
 from src.analysis.fetcher import fetch_repo
 from src.analysis.splitter import split_into_files
-from src.config import CACHE_DIR, REPORTS_DIR, repo_slug as _repo_slug
-from src.model_router import ModelRouter
+from mayring_core.config import CACHE_DIR, REPORTS_DIR, repo_slug as _repo_slug
+from mayring_core.model_router import ModelRouter
 
 
 def run_turbulence(

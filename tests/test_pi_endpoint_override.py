@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from src.agents.pi import _resolve_ollama_compatible, run_task_with_memory
-from src.llm.endpoint import LLMEndpoint
+from mayring_core.llm.endpoint import LLMEndpoint
 
 
 def test_resolve_ollama_compatible_unpacks_ollama_endpoint():

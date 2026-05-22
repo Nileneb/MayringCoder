@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 
-from src.config import EMBEDDING_MODEL
+from mayring_core.config import EMBEDDING_MODEL
 
 
 def parse_args() -> argparse.Namespace:

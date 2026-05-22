@@ -18,14 +18,14 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 from src.training.base import get_training_conn, write_jsonl
 
 _FINETUNING_DIR = CACHE_DIR / "finetuning"
 DEFAULT_OUTPUT = _FINETUNING_DIR / "kategorie_coaching_pairs.jsonl"
 
 try:
-    from src.memory.ingestion.categorization import _resolve_codebook as _cb
+    from mayring_core.memory.ingestion.categorization import _resolve_codebook as _cb
     _CODE_CATEGORIES: list[str] = _cb("code", "repo_file")
 except Exception:
     _CODE_CATEGORIES = [

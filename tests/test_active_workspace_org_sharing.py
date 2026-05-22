@@ -198,15 +198,15 @@ def test_effective_active_workspace_accessors_no_context():
 # ---------------------------------------------------------------------------
 
 def _conn(tmp_path):
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
     a = DBAdapter.create(tmp_path / "team.db", check_same_thread=False)
     _init_schema(a)
     return a
 
 
 def test_ensure_team_workspace_upserts_kind_team(tmp_path):
-    from src.identity.workspace_resolver import ensure_team_workspace
+    from mayring_core.identity.workspace_resolver import ensure_team_workspace
     conn = _conn(tmp_path)
     ws = ensure_team_workspace(conn, "org-acme", display_name="ACME Inc")
     assert ws == "org-acme"
@@ -217,7 +217,7 @@ def test_ensure_team_workspace_upserts_kind_team(tmp_path):
 
 
 def test_ensure_team_workspace_idempotent(tmp_path):
-    from src.identity.workspace_resolver import ensure_team_workspace
+    from mayring_core.identity.workspace_resolver import ensure_team_workspace
     conn = _conn(tmp_path)
     ensure_team_workspace(conn, "org-acme")
     ensure_team_workspace(conn, "org-acme")
@@ -279,8 +279,8 @@ def test_org_put_registers_team_workspace_with_name(monkeypatch):
     from src.api.auth import get_token_info, get_workspace
     import src.api.dependencies as _deps
     import src.api.routes.memory as _mod
-    from src.memory.db_adapter import DBAdapter
-    from src.memory.store import _init_schema
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
 
     db = DBAdapter.memory()
     _init_schema(db)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.identity.workspace_resolver import (
+from mayring_core.identity.workspace_resolver import (
     IdentityRequiredError,
     UnknownWorkspaceError,
     add_alias,
@@ -18,8 +18,8 @@ from src.identity.workspace_resolver import (
     list_workspaces_for_user,
     resolve_workspace,
 )
-from src.memory.db_adapter import DBAdapter
-from src.memory.store import _init_schema
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.store import _init_schema
 
 
 @pytest.fixture

@@ -38,7 +38,7 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import CACHE_DIR
+from mayring_core.config import CACHE_DIR
 
 DEFAULT_IN = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
 DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"

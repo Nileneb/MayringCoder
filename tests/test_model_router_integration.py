@@ -8,7 +8,7 @@ import pytest
 
 
 def _make_source(path: str, source_type: str = "repo_file"):
-    from src.memory.schema import Source
+    from mayring_core.memory.schema import Source
     return Source(
         source_id=f"test:{path}",
         source_type=source_type,
@@ -33,8 +33,8 @@ class TestIngestVisualPipeline:
 
     def test_image_extension_triggers_vision_when_available(self, tmp_path):
         """PNG path → ingest_image() called when vision is available."""
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem.db")
         router = _make_router(vision_available=True)
@@ -48,7 +48,7 @@ class TestIngestVisualPipeline:
             "superseded": 0,
         }
 
-        with patch("src.memory.ingestion.core.ingest_image", return_value=fake_image_result) as mock_img:
+        with patch("mayring_core.memory.ingestion.core.ingest_image", return_value=fake_image_result) as mock_img:
             result = ingest(
                 source=source,
                 content="<binary>",
@@ -66,15 +66,15 @@ class TestIngestVisualPipeline:
 
     def test_image_extension_fallback_when_vision_unavailable(self, tmp_path):
         """PNG path → falls through to generic pipeline when vision not available."""
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem.db")
         router = _make_router(vision_available=False)
         source = _make_source("docs/arch.png")
 
         with (
-            patch("src.memory.ingestion.core.ingest_image") as mock_img,
+            patch("mayring_core.memory.ingestion.core.ingest_image") as mock_img,
             patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
         ):
             result = ingest(
@@ -93,15 +93,15 @@ class TestIngestVisualPipeline:
 
     def test_non_image_extension_not_affected(self, tmp_path):
         """Python file → vision not triggered even with router."""
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem.db")
         router = _make_router(vision_available=True)
         source = _make_source("src/app.py")
 
         with (
-            patch("src.memory.ingestion.core.ingest_image") as mock_img,
+            patch("mayring_core.memory.ingestion.core.ingest_image") as mock_img,
             patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
             patch("src.analysis.analyzer._ollama_generate", return_value="domain"),
         ):
@@ -120,8 +120,8 @@ class TestIngestVisualPipeline:
 
     def test_ingest_without_router_unchanged_behavior(self, tmp_path):
         """ingest() with router=None behaves exactly as before."""
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem.db")
         source = _make_source("src/app.py")
@@ -141,8 +141,8 @@ class TestIngestVisualPipeline:
 
     def test_image_source_type_set_on_image_extension(self, tmp_path):
         """PNG source with source_type='repo_file' → source_type corrected to 'image'."""
-        from src.memory.ingest import ingest
-        from src.memory.store import init_memory_db
+        from mayring_core.memory.ingest import ingest
+        from mayring_core.memory.store import init_memory_db
 
         conn = init_memory_db(tmp_path / "mem.db")
         router = _make_router(vision_available=True)
@@ -161,7 +161,7 @@ class TestIngestVisualPipeline:
                 "superseded": 0,
             }
 
-        with patch("src.memory.ingestion.core.ingest_image", side_effect=fake_ingest_image):
+        with patch("mayring_core.memory.ingestion.core.ingest_image", side_effect=fake_ingest_image):
             ingest(
                 source=source,
                 content="<binary>",
@@ -180,8 +180,8 @@ class TestMayringCategorizeRouter:
 
     def test_router_model_used_when_no_explicit_model(self):
         """Router provides model when model='' passed."""
-        from src.memory.schema import Chunk
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.schema import Chunk
+        from mayring_core.memory.ingest import mayring_categorize
 
         router = MagicMock()
         router.is_available.return_value = True
@@ -221,8 +221,8 @@ class TestMayringCategorizeRouter:
 
     def test_explicit_model_not_overridden_by_router(self):
         """Explicit model wins over router."""
-        from src.memory.schema import Chunk
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.schema import Chunk
+        from mayring_core.memory.ingest import mayring_categorize
 
         router = MagicMock()
         router.is_available.return_value = True
@@ -262,8 +262,8 @@ class TestMayringCategorizeRouter:
 
     def test_no_router_passes_through_unchanged(self):
         """router=None → existing behavior, no router calls."""
-        from src.memory.schema import Chunk
-        from src.memory.ingest import mayring_categorize
+        from mayring_core.memory.schema import Chunk
+        from mayring_core.memory.ingest import mayring_categorize
 
         chunk = Chunk(
             chunk_id="chk_test_003",

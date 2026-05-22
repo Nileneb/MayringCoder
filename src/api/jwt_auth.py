@@ -168,7 +168,7 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
     # app.linn.games schickt 'email' seit 2026-04-18. Token ohne email
     # = invalid (z.B. battlefield-JWT mit anderer audience landet hier
     # eh nicht, weil aud-check vorher).
-    from src.identity.workspace_resolver import email_to_slug
+    from mayring_core.identity.workspace_resolver import email_to_slug
     workspace_id = email_to_slug(payload.get("email") or "")
     if not workspace_id:
         return None

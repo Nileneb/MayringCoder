@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 from src.wiki_v2.models import WikiEdge
 
 
@@ -72,7 +72,7 @@ class EdgeDetector:
         edges += self._detect_event_dispatch(overview_cache, workspace_id, repo_slug)
         if conn is not None:
             from src.wiki_v2.paper_rules import detect_from_papers
-            from src.memory.schema import Chunk
+            from mayring_core.memory.schema import Chunk
             paper_rows = conn.fetchall(
                 """SELECT c.chunk_id, c.source_id, c.text, c.workspace_id, c.created_at,
                           c.is_active, c.text_hash, c.dedup_key,

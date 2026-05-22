@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 from src.analysis.cache import reset_repo
 from src.analysis.history import cleanup_runs, compare_runs, list_runs
 from src.cli_args import parse_args
-from src.identity.cli import resolve_cli_workspace
-from src.config import (
+from mayring_core.identity.cli import resolve_cli_workspace
+from mayring_core.config import (
     CACHE_DIR,
     CODEBOOK_PATH,
     DEFAULT_PROMPT,
@@ -28,7 +28,7 @@ from src.config import (
     set_max_chars_per_file,
 )
 from src.analysis.context import set_max_context_chars
-from src.model_selector import resolve_model
+from mayring_core.model_selector import resolve_model
 from src.pipeline import (
     run_analysis,
     run_ingest_images,
@@ -96,7 +96,7 @@ def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str,
         from src.wiki_v2.graph import WikiGraph
         from src.wiki_v2.history import WikiHistory
         from src.wiki_v2.models import WikiNode
-        from src.config import repo_slug as _repo_slug_fn
+        from mayring_core.config import repo_slug as _repo_slug_fn
         slug = _repo_slug_fn(repo_url) if repo_url else wid
         oc = load_overview_cache_raw(repo_url) or {} if repo_url else {}
         db = WikiGraph(wid, slug, CACHE_DIR / "wiki_v2.db")
@@ -144,8 +144,8 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
     DBAdapter wraps sqlite3 with `row_factory = sqlite3.Row`, so rows are
     Mapping-like and we always use key access.
     """
-    from src.config import CACHE_DIR
-    from src.memory.store import init_memory_db
+    from mayring_core.config import CACHE_DIR
+    from mayring_core.memory.store import init_memory_db
     from src.wiki_v2.igio_classifier import IGIO_SKIP_SOURCE_TYPES, classify_chunk, now_iso
 
     if not model:
@@ -237,8 +237,8 @@ def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) ->
 
 def _cmd_generate_recap(args: argparse.Namespace) -> None:
     """Render a markdown recap for a single issue id."""
-    from src.config import CACHE_DIR, WIKI_DIR
-    from src.memory.store import init_memory_db
+    from mayring_core.config import CACHE_DIR, WIKI_DIR
+    from mayring_core.memory.store import init_memory_db
     from src.wiki_v2.recap_indexer import build_recap
     from src.wiki_v2.recap_renderer import render_recap
 
@@ -312,7 +312,7 @@ def _cmd_wiki_history_cleanup(args: argparse.Namespace) -> None:
 
 def _cmd_rebuild_transitions(args: argparse.Namespace, repo_url: str) -> None:
     from src.api.dependencies import get_conn
-    from src.memory.predictive import build_transition_matrix, persist_transitions
+    from mayring_core.memory.predictive import build_transition_matrix, persist_transitions
     conn = get_conn()
     matrix = build_transition_matrix(conn, repo_slug=(_repo_slug(repo_url) if repo_url else ""))
     persist_transitions(matrix, conn)
@@ -320,7 +320,7 @@ def _cmd_rebuild_transitions(args: argparse.Namespace, repo_url: str) -> None:
 
 
 def _cmd_extract_rationale(args: argparse.Namespace, repo_url: str) -> None:
-    from src.config import CACHE_DIR
+    from mayring_core.config import CACHE_DIR
     from src.wiki_v2.rationale_parser import extract_rationale_edges_for_repo
     from src.wiki_v2 import store as wstore
 
@@ -339,7 +339,7 @@ def _cmd_extract_rationale(args: argparse.Namespace, repo_url: str) -> None:
     # rationale_edges-Liste, damit cache-hits keine stale WHY-Texte
     # zeigen wenn sich die WHY-Marker im Code ändern.
     try:
-        from src.memory.retrieval import invalidate_query_cache
+        from mayring_core.memory.retrieval import invalidate_query_cache
         invalidate_query_cache()
     except ImportError:
         pass
@@ -348,7 +348,7 @@ def _cmd_extract_rationale(args: argparse.Namespace, repo_url: str) -> None:
 
 def _cmd_generate_ambient(args: argparse.Namespace, repo_url: str, ollama_url: str, model: str) -> None:
     from src.api.dependencies import get_conn
-    from src.memory.ambient import generate_ambient_snapshot
+    from mayring_core.memory.ambient import generate_ambient_snapshot
     result = generate_ambient_snapshot(get_conn(), ollama_url, model, _repo_slug(repo_url), resolve_cli_workspace(args))
     if result:
         print(f"[ambient] Snapshot generiert ({len(result)} Zeichen)")
@@ -435,7 +435,7 @@ def main() -> None:
     if args.model:
         model = args.model
     elif _needs_llm:
-        from src.model_router import ModelRouter
+        from mayring_core.model_router import ModelRouter
         router = ModelRouter(ollama_url=ollama_url)
         model = router.resolve_with_fallback("text")
         if not model:

@@ -1,6 +1,6 @@
 from pathlib import Path
 import pytest
-from src.memory.db_adapter import DBAdapter
+from mayring_core.memory.db_adapter import DBAdapter
 
 
 def test_memory_creates_in_memory_db():

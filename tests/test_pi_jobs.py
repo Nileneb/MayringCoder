@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from src.agents import pi_jobs, pi_worker
-from src.memory.store import init_memory_db
+from mayring_core.memory.store import init_memory_db
 
 
 @pytest.fixture

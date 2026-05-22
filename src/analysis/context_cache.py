@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from src.config import (
+from mayring_core.config import (
     CACHE_DIR,
     MAX_CONTEXT_CHARS,
     repo_slug as _repo_slug,

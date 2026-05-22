@@ -158,7 +158,7 @@ async def trigger_igio_backfill(
     if model is None:
         # Issue #88: ModelRouter is the only allowed path so admin
         # /stats/admin/model-routes overrides actually take effect.
-        from src.model_router import ModelRouter
+        from mayring_core.model_router import ModelRouter
         ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         model = ModelRouter(ollama_url).resolve("text") or "qwen2.5-coder:7b"
     job_id = f"igio-{int(time.time() * 1000)}"

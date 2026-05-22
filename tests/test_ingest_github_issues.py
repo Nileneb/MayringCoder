@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import json
 import pytest
 
-from src.memory.ingest import fetch_issues, issues_to_sources
+from mayring_core.memory.ingest import fetch_issues, issues_to_sources
 
 
 # ---------------------------------------------------------------------------
@@ -167,11 +167,11 @@ class TestRunIngestIssues:
         ]
 
         with (
-            patch("src.memory.ingest.subprocess.run",
+            patch("mayring_core.memory.ingest.subprocess.run",
                   return_value=MagicMock(returncode=0, stdout=json.dumps(mock_issues))),
-            patch("src.memory.store.init_memory_db", return_value=MagicMock()),
-            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-            patch("src.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
+            patch("mayring_core.memory.store.init_memory_db", return_value=MagicMock()),
+            patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+            patch("mayring_core.memory.ingest.ingest", return_value={"chunk_ids": ["c1"], "deduped": 0}) as mock_ingest,
         ):
             run_ingest_issues(self._make_args(), "http://localhost:11434", "mistral")
 
@@ -191,11 +191,11 @@ class TestRunIngestIssues:
             return {"chunk_ids": [], "deduped": 0}
 
         with (
-            patch("src.memory.ingest.subprocess.run",
+            patch("mayring_core.memory.ingest.subprocess.run",
                   return_value=MagicMock(returncode=0, stdout=json.dumps(mock_issues))),
-            patch("src.memory.store.init_memory_db", return_value=MagicMock()),
-            patch("src.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
-            patch("src.memory.ingest.ingest", side_effect=capture),
+            patch("mayring_core.memory.store.init_memory_db", return_value=MagicMock()),
+            patch("mayring_core.memory.ingest.get_or_create_chroma_collection", return_value=MagicMock()),
+            patch("mayring_core.memory.ingest.ingest", side_effect=capture),
         ):
             run_ingest_issues(self._make_args(), "http://localhost:11434", "mistral")
 

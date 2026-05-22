@@ -28,10 +28,10 @@ def run_ingest_paper(
     papers_dir is mounted from linn-papers-data volume at /data/papers.
     Files are named {paper_id}.pdf or {paper_id}.txt by the mcp-paper-search service.
     """
-    from src.memory.chunker import chunk_paper, extract_pdf_text  # noqa: F401
-    from src.memory.ingest import get_or_create_chroma_collection, ingest
-    from src.memory.schema import Source
-    from src.memory.store import init_memory_db
+    from mayring_core.memory.chunker import chunk_paper, extract_pdf_text  # noqa: F401
+    from mayring_core.memory.ingest import get_or_create_chroma_collection, ingest
+    from mayring_core.memory.schema import Source
+    from mayring_core.memory.store import init_memory_db
 
     conn = init_memory_db()
     chroma = get_or_create_chroma_collection()

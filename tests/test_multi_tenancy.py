@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.schema import Chunk, Source
-from src.memory.store import (
+from mayring_core.memory.schema import Chunk, Source
+from mayring_core.memory.store import (
     deactivate_chunks_by_source,
     find_by_text_hash,
     get_active_chunk_count,
@@ -23,7 +23,7 @@ from src.memory.store import (
     insert_chunk,
     upsert_source,
 )
-from src.memory.retrieval import _scope_filter
+from mayring_core.memory.retrieval import _scope_filter
 
 
 # ---------------------------------------------------------------------------

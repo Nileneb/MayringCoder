@@ -79,7 +79,7 @@ class TestLoadTurbulenceCache:
         cache_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
 
         repo_url = "https://example.com/example/repo.git"
-        with patch("src.config.CACHE_DIR", cache_dir):
+        with patch("mayring_core.config.CACHE_DIR", cache_dir):
             yield {"cache_dir": cache_dir, "repo_url": repo_url, "report": report}
 
     def test_returns_hot_zone_map_and_tier_map(self, turb_cache):

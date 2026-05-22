@@ -9,9 +9,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from src.memory.db_adapter import DBAdapter
-from src.memory.ingest import get_or_create_chroma_collection
-from src.memory.store import init_memory_db
+from mayring_core.memory.db_adapter import DBAdapter
+from mayring_core.memory.ingest import get_or_create_chroma_collection
+from mayring_core.memory.store import init_memory_db
 
 # Process-scoped lazy singletons
 _conn: DBAdapter | None = None
@@ -24,7 +24,7 @@ def get_conn() -> DBAdapter:
     if _conn is None:
         local_db = os.environ.get("MAYRING_LOCAL_DB", "")
         if local_db:
-            from src.memory.store import _init_schema
+            from mayring_core.memory.store import _init_schema
             _conn = DBAdapter.create(local_db)
             _init_schema(_conn)
         else:
@@ -38,7 +38,7 @@ def get_chroma() -> Any:
     if _chroma is None:
         chroma_dir_override = os.environ.get("MAYRING_LOCAL_CHROMA", "")
         if chroma_dir_override:
-            from src.memory.store import get_chroma_collection
+            from mayring_core.memory.store import get_chroma_collection
             _chroma = get_chroma_collection("memory_chunks", path=Path(chroma_dir_override))
         else:
             _chroma = get_or_create_chroma_collection()
