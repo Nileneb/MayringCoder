@@ -52,7 +52,10 @@ def _sign(private_pem: str, **claims) -> str:
     # abgeleitet (statt aus sub als 'user-N' gebaut). Tests, die nur
     # andere claims interessieren, bekommen eine Default-Email.
     claims.setdefault("email", "test@example.com")
-    claims.pop("workspace_id", None)
+    # WHY(#workspace-uuid-sot): workspace_id ist jetzt der von app.linn.games
+    # signierte UUID-Claim (Source of Truth), NICHT mehr aus der email abgeleitet.
+    # Tests, die nur andere claims testen, bekommen eine Default-UUID.
+    claims.setdefault("workspace_id", "ws-test-default")
     return pyjwt.encode(claims, private_pem, algorithm="RS256")
 
 
@@ -68,18 +71,19 @@ def test_valid_tenant_token(configured_env):
         exp=int(time.time()) + 300,
         sub="2",
         email="bene@linn.games",
+        workspace_id="019d6933-002e-7153-a7df-f14e4c7d52b4",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    # workspace_id ist email-slug deterministisch — keine Drift zwischen
-    # claude.ai web vs. CLI für denselben User (gleiche email = gleicher slug).
-    assert info.workspace_id == "bene"
+    # workspace_id = die von app.linn.games signierte Workspace-UUID (Source of
+    # Truth), nicht mehr email-slug. Mehrere Emails können dieselbe UUID tragen.
+    assert info.workspace_id == "019d6933-002e-7153-a7df-f14e4c7d52b4"
     assert info.sub == "2"
     assert info.is_admin is False
 
 
-def test_workspace_id_claim_is_ignored(configured_env):
-    """Ein `workspace_id`-Claim im JWT wird ignoriert — email-slug wins."""
+def test_workspace_id_claim_is_authoritative(configured_env):
+    """Der `workspace_id`-Claim (app.linn.games-UUID) IST die Identität (SoT)."""
     token = pyjwt.encode(
         {
             "iss": "https://app.linn.games",
@@ -87,7 +91,7 @@ def test_workspace_id_claim_is_ignored(configured_env):
             "exp": int(time.time()) + 300,
             "sub": "7",
             "email": "alice@x.de",
-            "workspace_id": "totally-different-workspace",  # ignored
+            "workspace_id": "019d-alice-uuid",
             "scope": ["mcp:memory"],
         },
         configured_env,
@@ -95,7 +99,24 @@ def test_workspace_id_claim_is_ignored(configured_env):
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    assert info.workspace_id == "alice"
+    assert info.workspace_id == "019d-alice-uuid"
+
+
+def test_token_without_workspace_id_is_rejected(configured_env):
+    """V2-contract: fehlender workspace_id-Claim → invalid (kein slug-Fallback)."""
+    token = pyjwt.encode(
+        {
+            "iss": "https://app.linn.games",
+            "aud": "mayringcoder",
+            "exp": int(time.time()) + 300,
+            "sub": "9",
+            "email": "x@y.de",
+            "scope": ["mcp:memory"],
+        },
+        configured_env,
+        algorithm="RS256",
+    )
+    assert jwt_auth.validate_jwt_token(token) is None
 
 
 def test_token_without_email_is_rejected(configured_env):
@@ -346,10 +367,11 @@ def test_sub_trimmed(configured_env):
         exp=int(time.time()) + 300,
         sub="  42  ",
         email="dora@x.de",
+        workspace_id="ws-dora",
     )
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
-    assert info.workspace_id == "dora"
+    assert info.workspace_id == "ws-dora"
     assert info.sub == "42"
 
 
@@ -395,13 +417,14 @@ class TestMiddlewareEnabled:
             exp=int(time.time()) + 300,
             sub="11",
             email="erika@x.de",
+            workspace_id="ws-erika",
         )
 
         async def _run():
             sent, downstream, scope = await _drive(mw, token=token)
             assert sent == []
             downstream.assert_awaited_once()
-            assert scope["workspace_id"] == "erika"
+            assert scope["workspace_id"] == "ws-erika"
 
         anyio.run(_run)
 
@@ -414,13 +437,14 @@ class TestMiddlewareEnabled:
             exp=int(time.time()) + 300,
             sub="22",
             email="charlie@x.de",
+            workspace_id="ws-charlie",
         )
 
         async def _run():
             sent, downstream, scope = await _drive(mw, token=token, bearer=True)
             assert sent == []
-            # Workspace = email-slug, NICHT 'user-22' (Refactor 2026-05-09).
-            assert scope["workspace_id"] == "charlie"
+            # Workspace = app.linn.games-UUID-Claim (SoT), nicht email-slug.
+            assert scope["workspace_id"] == "ws-charlie"
 
         anyio.run(_run)
 

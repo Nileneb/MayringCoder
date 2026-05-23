@@ -84,9 +84,9 @@ def test_active_workspace_id_extracted_from_claim(monkeypatch, tmp_path, keypair
     ]
     info = validate_jwt_token(_mint(payload, priv, pub, monkeypatch, tmp_path))
     assert info is not None
-    # Home bucket stays the email-slug — NOT re-keyed to the UUID.
-    assert info.workspace_id == "bene"
-    # Active workspace is the org the user switched into.
+    # WHY(#workspace-uuid-sot): workspace_id IST jetzt der UUID-Claim (Source of
+    # Truth) — bei Org-Switch also die Org-UUID. Eine Achse statt slug+active.
+    assert info.workspace_id == "org-acme-uuid"
     assert info.active_workspace_id == "org-acme-uuid"
     assert info.active_workspace_kind == "organization"
 
@@ -104,13 +104,12 @@ def test_active_workspace_kind_personal(monkeypatch, tmp_path, keypair):
     assert info.active_workspace_kind == "personal"
 
 
-def test_active_workspace_none_when_claim_absent(monkeypatch, tmp_path, keypair):
-    """Legacy JWT without workspace_id claim → no active workspace."""
+def test_token_without_workspace_id_rejected(monkeypatch, tmp_path, keypair):
+    """V2-contract (#workspace-uuid-sot): JWT ohne workspace_id-Claim → invalid.
+    workspace_id ist jetzt die Pflicht-Identität; kein email-slug-Fallback mehr."""
     priv, pub = keypair
     info = validate_jwt_token(_mint(_base_payload(), priv, pub, monkeypatch, tmp_path))
-    assert info is not None
-    assert info.active_workspace_id is None
-    assert info.active_workspace_kind == "personal"
+    assert info is None
 
 
 # ---------------------------------------------------------------------------

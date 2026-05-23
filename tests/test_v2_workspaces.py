@@ -153,6 +153,7 @@ class TestValidateJwtMemberships:
             "iss": "https://app.linn.games",
             "aud": "mayringcoder",
             "scope": ["mcp:memory"],
+            "workspace_id": "ws-personal",
             "memberships": [
                 {"id": "ws-personal", "type": "personal", "role": "owner"},
                 {"id": "org-acme", "type": "organization", "role": "editor"},
@@ -182,6 +183,7 @@ class TestValidateJwtMemberships:
             "iss": "https://app.linn.games",
             "aud": "mayringcoder",
             "scope": ["mcp:memory"],
+            "workspace_id": "ws-personal",
         }
         tok = self._make_jwt(payload, priv, pub, monkeypatch, tmp_path)
         info = validate_jwt_token(tok)

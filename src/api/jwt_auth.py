@@ -164,12 +164,17 @@ def validate_jwt_token(token: str) -> TokenInfo | None:
         return None
     sub_str = str(sub_raw).strip()
 
-    # email-Claim ist PFLICHT — kein user-N-Fallback. JwtIssuer in
-    # app.linn.games schickt 'email' seit 2026-04-18. Token ohne email
-    # = invalid (z.B. battlefield-JWT mit anderer audience landet hier
-    # eh nicht, weil aud-check vorher).
-    from mayring_core.identity.workspace_resolver import email_to_slug
-    workspace_id = email_to_slug(payload.get("email") or "")
+    # email-Claim ist PFLICHT als Identitäts-/Gültigkeitscheck (JwtIssuer in
+    # app.linn.games schickt 'email' seit 2026-04-18; Token ohne email = invalid),
+    # ist aber NICHT MEHR der Workspace-Schlüssel.
+    if not (payload.get("email") or "").strip():
+        return None
+    # WHY(#workspace-uuid-sot): app.linn.games ist Source of Truth und signiert die
+    # kanonische Workspace-UUID in den `workspace_id`-Claim. Die UUID IST die
+    # Speicher-Identität — kein email_to_slug-Re-Derive mehr (das forkte die
+    # Identität vom SoT weg und verhinderte mehrere Emails → eine UUID). V2-contract
+    # garantiert den Claim; fehlt er → Token invalid statt stiller Slug-Fallback.
+    workspace_id = str(payload.get("workspace_id") or "").strip()
     if not workspace_id:
         return None
 
