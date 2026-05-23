@@ -73,6 +73,67 @@ def test_capabilities_string_normalised(conn):
     assert ds.device_capabilities(conn, "d1", "ws") == ["local-gpu", "write"]
 
 
+def test_capabilities_list_normalised(conn):
+    """_join_caps non-string path (the API passes req.capabilities as a list):
+    dedup + insertion-order preserved."""
+    ds.upsert_device(conn, device_id="d1", workspace_id="ws",
+                     capabilities=["write", "write", "local-gpu"])
+    assert ds.device_capabilities(conn, "d1", "ws") == ["write", "local-gpu"]
+
+
+def test_same_device_id_isolated_across_workspaces(conn):
+    """Composite PK (device_id, workspace_id): the same device_id registered in
+    two workspaces stays two independent rows — a re-register in B must NOT
+    move/clobber the workspace-A row."""
+    ds.upsert_device(conn, device_id="shared", workspace_id="alpha",
+                     capabilities=["write"])
+    ds.upsert_device(conn, device_id="shared", workspace_id="beta",
+                     capabilities=["local-gpu"])
+    assert ds.device_capabilities(conn, "shared", "alpha") == ["write"]
+    assert ds.device_capabilities(conn, "shared", "beta") == ["local-gpu"]
+    assert len(ds.list_devices(conn, "alpha")) == 1
+    assert len(ds.list_devices(conn, "beta")) == 1
+
+
+def test_migrate_devices_to_composite_pk(tmp_path):
+    """v5→v6: a legacy `devices` table with a sole device_id PK is rebuilt to
+    the composite PK, preserving rows; idempotent on re-run."""
+    import sqlite3
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _migrate_devices_composite_pk
+
+    db = tmp_path / "legacy.db"
+    raw = sqlite3.connect(db)
+    raw.executescript(
+        """
+        CREATE TABLE devices (
+            device_id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'default',
+            name TEXT DEFAULT '', os TEXT DEFAULT '', capabilities TEXT DEFAULT '',
+            last_seen TEXT DEFAULT '', status TEXT DEFAULT 'active', created_at TEXT DEFAULT ''
+        );
+        INSERT INTO devices (device_id, workspace_id, capabilities)
+            VALUES ('d1', 'ws', 'write');
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    ad = DBAdapter.create(db)
+    pk_before = {r[1] for r in ad.execute("PRAGMA table_info(devices)").fetchall() if r[5] > 0}
+    assert pk_before == {"device_id"}
+
+    _migrate_devices_composite_pk(ad)
+    pk_after = {r[1] for r in ad.execute("PRAGMA table_info(devices)").fetchall() if r[5] > 0}
+    assert pk_after == {"device_id", "workspace_id"}
+    assert ad.execute("SELECT capabilities FROM devices WHERE device_id='d1'").fetchone()[0] == "write"
+
+    # idempotent — second run is a no-op
+    _migrate_devices_composite_pk(ad)
+    assert {r[1] for r in ad.execute("PRAGMA table_info(devices)").fetchall() if r[5] > 0} == {"device_id", "workspace_id"}
+    ad.close()
+
+
 def test_device_capabilities_none_when_unregistered(conn):
     ds.ensure_tables(conn)
     assert ds.device_capabilities(conn, "ghost", "ws") is None

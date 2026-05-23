@@ -103,8 +103,10 @@ async def register_device(
         os=req.os,
         capabilities=req.capabilities,
     )
-    return {"registered": True, "device_id": device_id,
-            "capabilities": device_store._split_caps(device_store._join_caps(req.capabilities))}
+    # Echo back the persisted, normalised capabilities (single source of truth)
+    # rather than re-deriving from the request body.
+    caps = device_store.device_capabilities(conn, device_id, workspace_id) or []
+    return {"registered": True, "device_id": device_id, "capabilities": caps}
 
 
 @router.post("/devices/heartbeat")
