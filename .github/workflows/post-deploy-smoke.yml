@@ -40,6 +40,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # stop_hook_e2e imports the real plugin hook. The plugin was extracted
+      # to its own repo (#268) and is NOT installed on the server runner, so
+      # _resolve_stop_hook_path() returned None → false-positive red. Check the
+      # plugin out and point MAYRING_PLUGIN_DIR at it so the e2e tests the
+      # latest published hook on CI.
+      - name: Check out the plugin (provides stop_hook.py for stop_hook_e2e)
+        uses: actions/checkout@v4
+        with:
+          repository: Nileneb/mayring-claude-plugin
+          path: _plugin
+
       - name: Wait for the new image to actually land in production
         if: github.event_name == 'workflow_run'
         run: |
@@ -55,6 +66,7 @@ jobs:
         id: smoke
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAYRING_PLUGIN_DIR: ${{ github.workspace }}/_plugin
         run: |
           ENV_FILE="$HOME/app.linn.games/.env"
           if [ -f "$ENV_FILE" ]; then
