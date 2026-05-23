@@ -41,6 +41,14 @@ from typing import Any
 API_DEFAULT = "https://mcp.linn.games"
 JWT_PATH = os.path.expanduser("~/.config/mayring/hook.jwt")
 
+# WHY(workspace-uuid-sot): the MCP_SERVICE_TOKEN defaults to workspace 'system',
+# which holds NO real embeddings — any vector check run against it returns
+# 'chroma_query_empty' forever (not a cold-start, not a regression). Every check
+# that asserts on vector hits MUST target the canonical populated workspace via
+# X-Workspace-Id. env-overridable for other tenants.
+SMOKE_VECTOR_WORKSPACE = os.environ.get(
+    "SMOKE_RAG_WORKSPACE", "019d6933-002e-7153-a7df-f14e4c7d52b4")
+
 
 # ---------------------------------------------------------------------------
 # Plumbing
@@ -335,6 +343,7 @@ def check_memory_search_returns_vector_hits(api: str, token: str) -> CheckResult
             body={"query": f"memory feedback hook stop attempt-{attempt}",
                   "top_k": 5, "include_text": False, "llm_prefilter": False},
             timeout=15.0,
+            workspace_id=SMOKE_VECTOR_WORKSPACE,
         )
         if code != 200:
             time.sleep(2)
@@ -1391,13 +1400,9 @@ def check_rag_function_search_finds_source(api: str, token: str) -> CheckResult:
       - source_id ends in '.py' (any Python source)
       - score_vector > 0.05 (real vector signal, not noise)
     """
-    # Suche im kanonischen User-Workspace (env-overridable für andere Tenants).
-    # Service-Token-Default ist 'system', das hat keine echten .py-source-Chunks
-    # → wir müssen den Tenant explizit mitgeben. Der email-slug 'bene' wurde von
-    # der UUID-Migration (workspace-uuid-sot) retired: alle echten Chunks liegen
-    # jetzt unter dieser Workspace-UUID, NICHT mehr unter 'bene' (sonst v=0.00).
-    target_ws = os.environ.get(
-        "SMOKE_RAG_WORKSPACE", "019d6933-002e-7153-a7df-f14e4c7d52b4")
+    # Service-Token-Default ist 'system' (keine echten .py-source-Chunks) → der
+    # populierte Tenant muss explizit mit. Siehe SMOKE_VECTOR_WORKSPACE.
+    target_ws = SMOKE_VECTOR_WORKSPACE
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "_rerank candidates vector_scores top_k re-rank "
