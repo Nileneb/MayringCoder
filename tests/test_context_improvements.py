@@ -331,16 +331,24 @@ class TestIndexOverviewFunctionDocs:
 
     @pytest.fixture
     def setup_index(self, tmp_path, monkeypatch):
-        """CACHE_DIR patchen, Overview-JSON schreiben, ChromaDB + embed mocken."""
-        import src.analysis.context as ctx_mod
+        """CACHE_DIR patchen, Overview-JSON schreiben, ChromaDB + embed mocken.
+
+        index_overview_to_vectordb lebt in context_rag und liest dort: CACHE_DIR
+        (via _chroma_dir), chromadb, _embed_texts; den Overview-Pfad über
+        context_cache.CACHE_DIR (_overview_path). Daher diese Module patchen —
+        sonst liest die Funktion das echte cache/ und der Test wird flaky.
+        """
+        import src.analysis.context_rag as ctxrag_mod
+        import src.analysis.context_cache as ctxcache_mod
         from unittest.mock import MagicMock, patch as _patch
 
-        if not ctx_mod._HAS_CHROMADB:
+        if not ctxrag_mod._HAS_CHROMADB:
             pytest.skip("chromadb not installed")
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
-        monkeypatch.setattr(ctx_mod, "CACHE_DIR", cache_dir)
+        monkeypatch.setattr(ctxrag_mod, "CACHE_DIR", cache_dir)
+        monkeypatch.setattr(ctxcache_mod, "CACHE_DIR", cache_dir)
 
         entries = [
             {
@@ -373,8 +381,8 @@ class TestIndexOverviewFunctionDocs:
         def fake_embed(texts, ollama_url):
             return [[0.0] * 4 for _ in texts]
 
-        with _patch.object(ctx_mod, "_embed_texts", fake_embed), \
-             _patch("src.analysis.context.chromadb.PersistentClient", return_value=mock_client):
+        with _patch.object(ctxrag_mod, "_embed_texts", fake_embed), \
+             _patch("src.analysis.context_rag.chromadb.PersistentClient", return_value=mock_client):
             yield {"entries": entries, "collection": mock_collection}
 
     def test_total_document_count(self, setup_index):
@@ -426,15 +434,17 @@ class TestIndexOverviewFunctionDocs:
         assert metadatas[sum_idx]["doc_type"] == "summary"
 
     def test_staleness_check_uses_expected_count(self, tmp_path, monkeypatch):
-        import src.analysis.context as ctx_mod
+        import src.analysis.context_rag as ctxrag_mod
+        import src.analysis.context_cache as ctxcache_mod
         from unittest.mock import MagicMock, patch as _patch
 
-        if not ctx_mod._HAS_CHROMADB:
+        if not ctxrag_mod._HAS_CHROMADB:
             pytest.skip("chromadb not installed")
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
-        monkeypatch.setattr(ctx_mod, "CACHE_DIR", cache_dir)
+        monkeypatch.setattr(ctxrag_mod, "CACHE_DIR", cache_dir)
+        monkeypatch.setattr(ctxcache_mod, "CACHE_DIR", cache_dir)
 
         entries = [
             {"filename": "a.php", "category": "domain", "file_summary": "A",
@@ -454,8 +464,8 @@ class TestIndexOverviewFunctionDocs:
         def fake_embed(texts, ollama_url):
             return [[0.0] * 4 for _ in texts]
 
-        with _patch.object(ctx_mod, "_embed_texts", fake_embed), \
-             _patch("src.analysis.context.chromadb.PersistentClient", return_value=mock_client):
+        with _patch.object(ctxrag_mod, "_embed_texts", fake_embed), \
+             _patch("src.analysis.context_rag.chromadb.PersistentClient", return_value=mock_client):
             from src.analysis.context import index_overview_to_vectordb
             result = index_overview_to_vectordb(self.REPO_URL, "http://localhost:11434")
 

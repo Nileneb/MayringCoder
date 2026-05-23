@@ -102,6 +102,62 @@ def register_agent_tools(mcp: FastMCP) -> None:
             return {"error": str(exc)}
 
     @mcp.tool()
+    def pi_optimize_searchstring(
+        searchstring: str,
+        database: str,
+        forschungsfrage: str,
+        repo_slug: str | None = None,
+        timeout: float = 120.0,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Überarbeite einen P4-Suchstring kostengünstig via Pi-Agent (#261).
+
+        Läuft über die PI_AGENT_URL-Boundary (Cloud-Distributor wenn gesetzt,
+        sonst in-process Ollama) — KEIN eigener Direct-Ollama-Pfad. Von
+        app.linn.games via PI_AGENT_URL aufrufbar.
+
+        Args:
+            searchstring: Bestehender Suchstring.
+            database: Datenbankname (z.B. 'PubMed', 'Scopus') — bestimmt die Syntax.
+            forschungsfrage: Forschungsfrage als Kontext für die Optimierung.
+            repo_slug: Optionaler Memory-Scope.
+            timeout: Pi-Call-Timeout (s).
+            workspace_id: Tenant-Scope.
+
+        Returns:
+            #260-konformes Paar: {input: {searchstring, database, forschungsfrage},
+            output: {revised, reasoning}, parsed: bool, workspace_id} oder {error}.
+        """
+        from src.workflows.searchstring_review import build_prompt, parse_response
+
+        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
+        if not searchstring or not searchstring.strip():
+            return {"error": "searchstring leer", "workspace_id": ws}
+
+        prompt = build_prompt(searchstring, database, forschungsfrage)
+        # Delegiert über pi_task → respektiert PI_AGENT_URL (Distributor/in-process).
+        res = pi_task(
+            task=prompt,
+            repo_slug=repo_slug,
+            system_prompt="Du bist ein Suchstring-Optimierer. Antworte NUR mit dem geforderten JSON.",
+            timeout=timeout,
+            workspace_id=workspace_id,
+        )
+        if "error" in res:
+            return res
+        parsed = parse_response(res.get("result", ""))
+        return {
+            "input": {
+                "searchstring": searchstring,
+                "database": database,
+                "forschungsfrage": forschungsfrage,
+            },
+            "output": {"revised": parsed["revised"], "reasoning": parsed["reasoning"]},
+            "parsed": parsed["parsed"],
+            "workspace_id": ws,
+        }
+
+    @mcp.tool()
     def pi_task_start(
         task: str,
         repo_slug: str | None = None,

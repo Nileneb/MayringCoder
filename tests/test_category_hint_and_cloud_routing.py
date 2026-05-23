@@ -3,21 +3,15 @@
 1. category_hint boost in _rerank (was reviewer-finding #1 — feature
    tot ohne diesen wire-up).
 2. cloud-primary routing in chat() / generate() — model-mapping correct.
-3. Stop-Hook _judge_chunks_with_llm — batch rating-parse.
+3. IGIO-intent detection + outcome-boost.
 
-Diese 4 features wurden heute eingefügt aber von der existing test-suite
+Diese features wurden heute eingefügt aber von der existing test-suite
 nicht abgedeckt (reviewer-finding #8).
+
+(Die Stop-Hook _judge_chunks_with_llm-Tests sind mit dem claude-plugin nach
+mayring-claude-plugin ausgezogen, #268.)
 """
 from __future__ import annotations
-
-import importlib.util
-import json
-import sys
-from pathlib import Path
-from unittest.mock import patch
-
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
@@ -137,74 +131,6 @@ def test_cloud_routing_off_at_zero_ratio(monkeypatch):
     monkeypatch.setattr(oc, "_CLOUD_PRIMARY_RATIO", 0.0)
     for _ in range(100):
         assert oc._should_route_cloud_primary() is False
-
-
-# ---------------------------------------------------------------------------
-# 3) Stop-Hook _judge_chunks_with_llm
-# ---------------------------------------------------------------------------
-
-def _load_stop_hook():
-    """Plugin hook nicht auf sys.path — import per file-spec."""
-    spec = importlib.util.spec_from_file_location(
-        "stop_hook_t", ROOT / "claude-plugin" / "hooks" / "stop_hook.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["stop_hook_t"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_judge_parses_rating_response_correctly():
-    sh = _load_stop_hook()
-
-    fake_response = json.dumps({"response": "5,2,3"}).encode()
-
-    class FakeResp:
-        def __init__(self, body): self._b = body
-        def read(self): return self._b
-        def __enter__(self): return self
-        def __exit__(self, *a): pass
-
-    chunks = [
-        {"chunk_id": "a", "source_id": "s1", "text": "JWT auth logic"},
-        {"chunk_id": "b", "source_id": "s2", "text": "unrelated config"},
-        {"chunk_id": "c", "source_id": "s3", "text": "loose context"},
-    ]
-    with patch("urllib.request.urlopen", return_value=FakeResp(fake_response)):
-        out = sh._judge_chunks_with_llm(
-            chunks, "how does auth work?",
-            "JWT is validated server-side and rejected if expired.",
-        )
-    assert out == {"a": "5", "b": "2", "c": "3"}
-
-
-def test_judge_handles_truncated_response():
-    """Wenn LLM nur 2 ratings für 3 chunks zurückgibt → 3. chunk wird
-    geskipt (kein eintrag im out-dict), aber kein crash."""
-    sh = _load_stop_hook()
-    fake_response = json.dumps({"response": "5,4"}).encode()
-
-    class FakeResp:
-        def __init__(self, body): self._b = body
-        def read(self): return self._b
-        def __enter__(self): return self
-        def __exit__(self, *a): pass
-
-    chunks = [
-        {"chunk_id": "a", "source_id": "s1", "text": "x"},
-        {"chunk_id": "b", "source_id": "s2", "text": "y"},
-        {"chunk_id": "c", "source_id": "s3", "text": "z"},
-    ]
-    with patch("urllib.request.urlopen", return_value=FakeResp(fake_response)):
-        out = sh._judge_chunks_with_llm(chunks, "q", "a")
-    assert "a" in out and "b" in out
-    assert "c" not in out
-
-
-def test_judge_returns_none_when_no_text():
-    sh = _load_stop_hook()
-    chunks = [{"chunk_id": "a", "source_id": "s", "text": ""}]
-    assert sh._judge_chunks_with_llm(chunks, "q", "a") is None
 
 
 # ---------------------------------------------------------------------------
