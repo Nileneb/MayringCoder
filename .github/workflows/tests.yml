@@ -26,9 +26,9 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install deps (ohne whisper/gradio/telegram — keine Test-Imports, spart torch)
+      - name: Install deps (nur openai-whisper raus — nirgends importiert, spart torch; gradio bleibt für test_web_ui)
         run: |
-          grep -vE "openai-whisper|gradio|python-telegram-bot" requirements.txt > requirements-ci.txt
+          grep -vE "^openai-whisper" requirements.txt > requirements-ci.txt
           python -m pip install --upgrade pip
           pip install -r requirements-ci.txt
           pip install -e ./core
