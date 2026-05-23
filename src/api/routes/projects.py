@@ -21,8 +21,10 @@ from src.api.dependencies import get_conn as _get_conn
 
 router = APIRouter(tags=["projects"])
 
+# WHY(py/polynomial-redos): single separator after host (git remotes have exactly
+# one ':' or '/'); the prior `[:/]+` backtracked polynomially on '::' repetitions.
 _REMOTE_RE = re.compile(
-    r"github\.com[:/]+(?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$",
+    r"github\.com[:/](?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$",
     re.IGNORECASE,
 )
 _SEMANTIC_MIN = 0.55
