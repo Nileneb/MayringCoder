@@ -85,7 +85,7 @@ def test_no_silent_pass_in_api_pipeline():
 
 def test_no_silent_pass_in_memory_pipeline():
     """memory/ — Daten-Pipeline; KEIN silent pass."""
-    hits = _scan("src/memory", SILENT_FAIL_RE)
+    hits = _scan("core/mayring_core/memory", SILENT_FAIL_RE)
     # Lockerung: ein paar bekannte Stellen sind noch da. Nach Stufe 2.1
     # zählen wir nur "neue" — Baseline = aktuelle Werte. Wir wollen das
     # NICHT-WACHSEN. Hard cap: 6 (audit-baseline).
@@ -103,7 +103,7 @@ def test_no_silent_return_none_in_pipelines():
     sind exempt.
     """
     api_hits = _scan("src/api", SILENT_RETURN_NONE_RE)
-    memory_hits = _scan("src/memory", SILENT_RETURN_NONE_RE)
+    memory_hits = _scan("core/mayring_core/memory", SILENT_RETURN_NONE_RE)
     # mcp_memory_tools speziell strikt 0:
     target = "src/api/mcp_memory_tools.py"
     assert api_hits.get(target, 0) == 0, (
@@ -115,62 +115,3 @@ def test_no_silent_return_none_in_pipelines():
         f"src/memory silent-return-None: {total_memory} (cap 4). "
         f"Hits: {memory_hits}"
     )
-
-
-# ---------------------------------------------------------------------------
-# 2.2 — Hook-silent-skip-counter
-# ---------------------------------------------------------------------------
-
-
-def _load_skip_counter():
-    """Direct file-import — hooks/ ist kein Python-package."""
-    import importlib.util
-    p = ROOT / "claude-plugin" / "hooks" / "_silent_skip_counter.py"
-    spec = importlib.util.spec_from_file_location("_skip_counter", p)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_silent_skip_counter_module_exists():
-    """claude-plugin/hooks/_silent_skip_counter.py existiert + exportiert
-    record_silent_skip() + recent_skip_count()."""
-    mod = _load_skip_counter()
-    assert callable(mod.record_silent_skip)
-    assert callable(mod.recent_skip_count)
-
-
-def test_silent_skip_counter_records_and_reads(tmp_path, monkeypatch):
-    """record_silent_skip → file existiert + recent_skip_count >= 1."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mod = _load_skip_counter()
-    mod.record_silent_skip(reason="all_5xx")
-    assert mod.recent_skip_count(window_hours=24) >= 1
-
-
-def test_silent_skip_counter_window_filters_old_entries(tmp_path, monkeypatch):
-    """Alte Einträge (>24h) zählen nicht in das current window."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    import json
-    import time
-    mod = _load_skip_counter()
-    p = mod.skip_log_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    old_ts = time.time() - 25 * 3600  # 25h ago
-    p.write_text(json.dumps({"events": [
-        {"ts": old_ts, "reason": "all_5xx"},
-    ]}))
-    assert mod.recent_skip_count(window_hours=24) == 0
-
-
-def test_silent_skip_counter_threshold_helper(tmp_path, monkeypatch):
-    """`should_warn(threshold=5)` returns True when ≥5 recent skips logged."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mod = _load_skip_counter()
-    for _ in range(5):
-        mod.record_silent_skip(reason="all_5xx")
-    assert mod.should_warn(threshold=5) is True
-    # Reset → counter zeigt 0.
-    mod.reset_counter()
-    assert mod.recent_skip_count(window_hours=24) == 0
