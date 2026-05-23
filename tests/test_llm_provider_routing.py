@@ -115,7 +115,7 @@ def test_token_info_extracts_openai_compatible_claims(configured_env):
         configured_env,
         llm_provider="openai-compatible",
         llm_model="llama3.2",
-        llm_endpoint="http://three.linn.games:11434",
+        llm_endpoint="https://three.linn.games",
         llm_requires_key=False,
         sub="99",
         iat=1700000000,
@@ -123,7 +123,7 @@ def test_token_info_extracts_openai_compatible_claims(configured_env):
     info = jwt_auth.validate_jwt_token(token)
     assert info is not None
     assert info.llm_provider == "openai-compatible"
-    assert info.llm_endpoint == "http://three.linn.games:11434"
+    assert info.llm_endpoint == "https://three.linn.games"
     assert info.sub == "99"
     assert info.iat == 1700000000
 
@@ -204,7 +204,7 @@ def test_openai_compatible_with_user_endpoint_skips_key_callback(configured_env)
         configured_env,
         llm_provider="openai-compatible",
         llm_model="llama3.2",
-        llm_endpoint="http://three.linn.games:11434",
+        llm_endpoint="https://three.linn.games",
         llm_requires_key=False,
     )
     info = jwt_auth.validate_jwt_token(token)
@@ -213,7 +213,7 @@ def test_openai_compatible_with_user_endpoint_skips_key_callback(configured_env)
         endpoint = get_endpoint_for_request(info, workspace_id="ws_test", user_jwt=token)
 
     assert endpoint.provider == "openai"
-    assert endpoint.base_url == "http://three.linn.games:11434"
+    assert endpoint.base_url == "https://three.linn.games"
     assert endpoint.model == "llama3.2"
     assert endpoint.api_key is None
     mock_post.assert_not_called()

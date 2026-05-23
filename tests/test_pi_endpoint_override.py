@@ -10,8 +10,8 @@ from mayring_core.llm.endpoint import LLMEndpoint
 
 
 def test_resolve_ollama_compatible_unpacks_ollama_endpoint():
-    endpoint = LLMEndpoint(provider="ollama", base_url="http://three.linn.games:11434", model="qwen3:30b")
-    assert _resolve_ollama_compatible(endpoint) == ("http://three.linn.games:11434", "qwen3:30b")
+    endpoint = LLMEndpoint(provider="ollama", base_url="https://three.linn.games", model="qwen3:30b")
+    assert _resolve_ollama_compatible(endpoint) == ("https://three.linn.games", "qwen3:30b")
 
 
 def test_resolve_ollama_compatible_accepts_platform():

@@ -169,7 +169,7 @@ async def wiki_rebuild(
                 db.upsert_node(_WikiNode(id=nid, repo_slug=_slug_safe, workspace_id=_wid_safe))
             for e in edges:
                 db.add_edge(e)
-            ollama = request.ollama_url or "http://three.linn.games:11434"
+            ollama = request.ollama_url or "https://three.linn.games"
             engine = ClusterEngine()
             engine.cluster(db, strategy=request.strategy, ollama_url=ollama, model=request.model)
             db.to_json()

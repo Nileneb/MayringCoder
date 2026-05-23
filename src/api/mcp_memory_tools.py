@@ -84,7 +84,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 "task_context": task_context,
             }
             result = _run_search(query, _get_conn(), _get_chroma(),
-                                 os.getenv("OLLAMA_URL", "http://three.linn.games:11434"),
+                                 os.getenv("OLLAMA_URL", "https://three.linn.games"),
                                  opts, char_budget, session_compacted=compacted)
             try:
                 import json as _json
@@ -281,7 +281,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 return {"error": str(exc), "workspace_id": ws}
         else:
             try:
-                ollama_url = os.getenv("OLLAMA_URL", "http://three.linn.games:11434")
+                ollama_url = os.getenv("OLLAMA_URL", "https://three.linn.games")
                 model = os.getenv("MAYRING_MODEL", "qwen2.5-coder:7b")
                 sid = source_id or f"text:{ws}:{hashlib.sha256(source[:64].encode()).hexdigest()[:12]}"
                 _stype = source_type if source_type not in ("auto", "text") else "knowledge"
@@ -460,7 +460,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 ).fetchall()
             chunk_ids = [r[0] for r in rows]
 
-            ollama_url = os.getenv("OLLAMA_URL", "http://three.linn.games:11434")
+            ollama_url = os.getenv("OLLAMA_URL", "https://three.linn.games")
             model = os.getenv("MAYRING_MODEL", "qwen2.5-coder:7b")
 
             if dry_run:
