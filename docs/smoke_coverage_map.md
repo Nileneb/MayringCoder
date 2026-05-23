@@ -170,3 +170,11 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 | 92  | mayringqwen retraining — won't fix (für jetzt) | Deprioritized: Hauptmodell ist mistral:7b-instruct, läuft gut; full-LLM-retrain macht jetzt wenig sinn. Spätere Richtung: kleine task-experten-models für mobile (Gaming-pool). Hebel liegt beim Reranker (#180). |
 | 180 | Reranker-v2 degeneriertes Modell | Resolved — sanity-gate (`_load_model` lehnt v_w<0 etc. ab) hielt degenerierte modelle ab, daily-cron-retrain mit genug daten liefert gesundes v2 (precision@5 0.89 vs v1 0.73, +16%). `rerank_default.txt: v1→v2` geflippt (live). Rollout-decision (`reranker_admin.py` + `reranker-rollout.yml`) entscheidet jetzt auf precision@K (NDCG saturiert) mit 2% threshold statt NDCG 25% (unreachable). |
 | 258 | mcp.linn.games synology-proxy flaky 502/HTML | Gefixt: fehlende DSM-custom-header (`Authorization`→`$http_authorization`, `X-Real-IP`→`$remote_addr`, `X-Forwarded-For`→`$proxy_add_x_forwarded_for`) gesetzt → 15/15 requests `200`. Owner-side. |
+
+## Recently Closed (today, 2026-05-23)
+
+| # | Description | Coverage |
+|---|---|---|
+| 268 | Stufe 1: claude-plugin in eigenes Repo `mayring-claude-plugin` auslagern | **Code-only** (Repo-Split): Plugin → `Nileneb/mayring-claude-plugin`, im MayringCoder-Repo bleibt nur der Stub `claude-plugin-moved.md`. Commit 05ea866 / PR #269. Folge-Fix: smoke `stop_hook_e2e` resolved `stop_hook.py` jetzt über `_resolve_stop_hook_path()` (env `MAYRING_PLUGIN_DIR` → installed `~/.claude/plugins/cache/**/hooks/` → Sibling-Checkout) statt hartem In-Repo-Pfad. |
+| 267 | Stufe 2: mayring-core als internes Python-Package extrahieren | **Code-only / Pytest**: `core/mayring_core`-Package (`pip install -e ./core`); entsperrt #266. Smoke-relevante DDL/Migrationen leben jetzt in `core/mayring_core/memory/store.py` (verifiziert über `pi_tasks_schema` + `db_wal_journal_active` + Pytest `tests/test_pi_jobs.py::test_server_startup_runs_schema_migration`). Commit 7976c58 / PR #271. |
+| 260 | spec: Datenstrategie für task-spezifische Spezialisten-Models (export-pipelines vorbereiten) | **Code-only** (Spec + Export-Pipelines): Spezialisten-Export-Pipelines vorbereitet (Commit 7976c58 / PR #271). Reine Datenstrategie-Spec ohne Live-HTTP-Surface — Acceptance = Export-Tooling vorhanden, kein Prod-Endpoint. |
