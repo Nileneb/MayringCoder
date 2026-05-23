@@ -1860,6 +1860,25 @@ def check_model_router_runtime(api: str, token: str) -> CheckResult:
     )
 
 
+def check_projects_route_cwd_remote(api: str, token: str) -> CheckResult:
+    """Project Router Slice 1: POST /projects/route with a known cwd-remote →
+    200 + project_id set (match-or-create); no signal + nonsense → 200 + null."""
+    code, body, _ = _http("POST", f"{api}/projects/route", token,
+        body={"cwd_remote": "git@github.com:Nileneb/MayringCoder.git",
+              "prompt": "fix the retrieval pipeline"})
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("projects_route_cwd_remote", False, f"http={code}")
+    if not body.get("project_id"):
+        return CheckResult("projects_route_cwd_remote", False,
+                           f"cwd-remote gave no project_id: {body}")
+    code2, body2, _ = _http("POST", f"{api}/projects/route", token,
+        body={"cwd_remote": None, "prompt": "zxqw nonsense %%%"})
+    null_ok = code2 == 200 and (body2 or {}).get("project_id") is None
+    return CheckResult("projects_route_cwd_remote",
+                       bool(body.get("project_id")) and null_ok,
+                       f"hard={body.get('reason')} null_branch_ok={null_ok}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -1894,6 +1913,7 @@ ALL_CHECKS = [
     ("visibility_isolation",          check_visibility_isolation),
     ("share_endpoint",                check_share_endpoint),
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
+    ("projects_route_cwd_remote",     check_projects_route_cwd_remote),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
