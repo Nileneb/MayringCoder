@@ -94,6 +94,8 @@ from src.api.routes import devices as _devices
 app.include_router(_devices.router)
 from src.api.routes import codebooks as _codebooks  # #workspace-uuid-sot v2.0 P1.3
 app.include_router(_codebooks.router)
+from src.api.routes import projects as _projects  # Project Router Slice 1
+app.include_router(_projects.router)
 
 
 @app.on_event("startup")
