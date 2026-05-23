@@ -115,6 +115,9 @@ async def memory_search(
             # #252: restrict to one logical sub-bucket (e.g. "project:<id>") —
             # a Recherche search stays inside that project's papers.
             opts["scope_key"] = request.scope.strip()
+        if request.project:
+            # #workspace-uuid-sot (v7): scope to one Project-ID within the workspace.
+            opts["project_id"] = request.project.strip()
         if request.task_context:
             opts["task_context"] = request.task_context
         if request.llm_prefilter is not None:

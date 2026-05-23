@@ -79,6 +79,9 @@ class MemorySearchRequest(BaseModel):
     # project's papers, never another project's (same workspace). Always
     # type-prefixed; None = search the whole workspace.
     scope: str | None = None
+    # #workspace-uuid-sot (v7): scope to ONE project (Project-ID-Dimension,
+    # User-Diagramm) within the workspace. None = whole workspace.
+    project: str | None = None
     # WHY(2026-05-10 multi-cat prompt-decomp): wenn der hook prompt-
     # kategorien via mistral:7b-instruct extrahiert hat, kann er sie als
     # hint mitsenden. Chunks deren category_labels mit diesen kategorien
