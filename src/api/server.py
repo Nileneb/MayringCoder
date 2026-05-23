@@ -90,6 +90,8 @@ from src.api.routes import admin_logs as _admin_logs
 app.include_router(_admin_logs.router)
 from src.api.routes import tasks as _tasks
 app.include_router(_tasks.router)
+from src.api.routes import devices as _devices
+app.include_router(_devices.router)
 
 
 @app.on_event("startup")

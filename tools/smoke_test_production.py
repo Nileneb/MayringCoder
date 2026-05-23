@@ -1135,6 +1135,48 @@ def check_share_endpoint(api: str, token: str) -> CheckResult:
     )
 
 
+def _resolve_stop_hook_path():
+    """Locate stop_hook.py after the plugin was extracted to its own repo (#268).
+
+    The hook no longer lives in the MayringCoder checkout — the actions-runner
+    sees only the `claude-plugin-moved.md` stub. Search order:
+      1. ``MAYRING_PLUGIN_DIR`` env → ``<dir>/hooks/stop_hook.py`` (explicit override)
+      2. legacy in-repo path (pre-#268 layouts / local dev still vendoring it)
+      3. installed plugin cache ``~/.claude/plugins/cache/**/hooks/stop_hook.py``
+         (same $HOME as the runner — newest version + mayring-named preferred)
+      4. sibling dev checkouts of mayring-claude-plugin
+    Returns the first existing Path, or None.
+    """
+    from pathlib import Path
+    env_dir = os.environ.get("MAYRING_PLUGIN_DIR", "").strip()
+    if env_dir:
+        p = Path(env_dir) / "hooks" / "stop_hook.py"
+        if p.exists():
+            return p
+
+    repo_root = Path(__file__).resolve().parent.parent
+    legacy = repo_root / "claude-plugin" / "hooks" / "stop_hook.py"
+    if legacy.exists():
+        return legacy
+
+    home = Path.home()
+    cached = list(home.glob(".claude/plugins/cache/**/hooks/stop_hook.py"))
+    # Prefer a mayring-named plugin, then the lexicographically-greatest path
+    # (newest version dir sorts last).
+    cached.sort(key=lambda c: ("mayring" in str(c).lower(), str(c)))
+    if cached:
+        return cached[-1]
+
+    for sibling in (
+        home / "Desktop" / "mayring-claude-plugin" / "hooks" / "stop_hook.py",
+        home / "mayring-claude-plugin" / "hooks" / "stop_hook.py",
+        home / "mayring-claude-plugin-work" / "hooks" / "stop_hook.py",
+    ):
+        if sibling.exists():
+            return sibling
+    return None
+
+
 def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
     """End-to-end: write a real inject-state file, drive _auto_feedback,
     verify DB-side feedback rows actually got written.
@@ -1164,12 +1206,14 @@ def check_stop_hook_auto_feedback_e2e(api: str, token: str) -> CheckResult:
                            f"could not get 2 chunks for e2e: http={code}")
     pairs = [(r["chunk_id"], r["source_id"]) for r in body["results"][:2]]
 
-    # Find the stop_hook.py module and import it
-    repo_root = Path(__file__).resolve().parent.parent
-    hook_path = repo_root / "claude-plugin" / "hooks" / "stop_hook.py"
-    if not hook_path.exists():
+    # Find the stop_hook.py module and import it. Plugin was extracted to its
+    # own repo (#268), so resolve across env / installed-cache / sibling.
+    hook_path = _resolve_stop_hook_path()
+    if hook_path is None:
         return CheckResult("stop_hook_e2e", False,
-                           f"stop_hook.py not at {hook_path}")
+                           "stop_hook.py not found — plugin extracted to "
+                           "mayring-claude-plugin (#268); set MAYRING_PLUGIN_DIR "
+                           "or install the plugin (~/.claude/plugins)")
     spec = importlib.util.spec_from_file_location("stop_hook_smoke", hook_path)
     sh = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sh)

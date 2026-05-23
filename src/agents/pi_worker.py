@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import threading
 import urllib.error
 import urllib.request
@@ -208,6 +209,9 @@ def _cloud_loop(stop: threading.Event, poll_interval: float) -> None:
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                # #274: stable device id on every cloud call so the registry
+                # can scope devices/hook-events + back write-job routing.
+                "X-Device-Id": worker_id,
             },
             method="POST",
         )
@@ -224,6 +228,16 @@ def _cloud_loop(stop: threading.Event, poll_interval: float) -> None:
         else:
             body["result"] = result
         _post("/pi_task_complete_cloud", body)
+
+    # #274: register so the cloud knows our capabilities. The claim path
+    # resolves capabilities from the registry (not the self-reported body),
+    # so without this the worker could only claim no-capability jobs.
+    _post("/devices/register", {
+        "device_id": worker_id,
+        "name": os.getenv("PI_WORKER_NAME", worker_id),
+        "os": platform.system(),
+        "capabilities": caps,
+    })
 
     while not stop.is_set():
         resp = _post(
