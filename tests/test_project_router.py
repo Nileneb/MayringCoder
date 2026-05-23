@@ -120,6 +120,24 @@ def test_route_semantic_match(tmp_path):
     assert out["reason"] == "semantic"
 
 
+def test_semantic_match_numpy_embeddings():
+    """Regression: real ChromaDB returns embeddings as a numpy array;
+    `data.get('embeddings') or []` raised ValueError (ambiguous truth value)."""
+    import numpy as np
+    from src.api.routes.projects import _semantic_match
+
+    class _NumpyChroma:
+        def get(self, include=None):
+            return {"ids": ["proj:p1", "proj:p2"],
+                    "embeddings": np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    "metadatas": [{"project_id": "p1"}, {"project_id": "p2"}]}
+
+    pid, score, margin = _semantic_match(_NumpyChroma(), [0.0, 1.0])
+    assert pid == "p1"
+    assert score == pytest.approx(1.0)
+    assert margin == pytest.approx(1.0)
+
+
 def test_route_null_when_uncertain(tmp_path):
     db = tmp_path / "memory.db"
     init_memory_db(db).close()

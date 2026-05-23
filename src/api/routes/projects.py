@@ -88,8 +88,12 @@ def _semantic_match(chroma, prompt_emb: list[float]) -> tuple[str | None, float,
     if chroma is None or not prompt_emb:
         return None, 0.0, 0.0
     data = chroma.get(include=["embeddings", "metadatas"])
-    embs = data.get("embeddings") or []
-    metas = data.get("metadatas") or []
+    # ChromaDB returns embeddings as a numpy array → `x or []` raises
+    # "truth value of an array is ambiguous". Use explicit None checks.
+    embs = data.get("embeddings")
+    embs = [] if embs is None else embs
+    metas = data.get("metadatas")
+    metas = [] if metas is None else metas
     scored = sorted(
         ((_cosine(prompt_emb, e), (m or {}).get("project_id"))
          for e, m in zip(embs, metas) if e is not None and len(e)),
