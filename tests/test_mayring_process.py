@@ -6,6 +6,7 @@ from mayring_core.memory.store import init_memory_db
 from mayring_core.memory.ingestion.mayring_process import (
     ProcessResult,
     _cosine,
+    link_chunks_deductive,
     mayring_process,
 )
 
@@ -187,3 +188,46 @@ def test_numpy_embeddings_no_crash(tmp_path):
 def test_cosine_zero_safe():
     assert _cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
     assert _cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+
+
+# ---- Phase 3.2: deductive link pass + project scoping ---------------------
+
+def test_link_chunks_deductive_links_best_match(tmp_path):
+    init_memory_db(tmp_path / "m.db").close()
+    conn, _cb = _seed(tmp_path / "m.db")
+    n = link_chunks_deductive(conn, _FakeChroma(CHROMA),
+                              [("c1", [1.0, 0.0, 0.0]), ("c2", [0.0, 0.0, 1.0])],
+                              min_score=0.55)
+    assert n == 1  # c1→api (cos 1.0); c2 unrelated (cos 0) → no link
+    row = conn.execute("SELECT source FROM chunk_categories WHERE chunk_id='c1'").fetchone()
+    assert row[0] == "deductive"
+    assert conn.execute("SELECT count(*) FROM chunk_categories WHERE chunk_id='c2'").fetchone()[0] == 0
+
+
+def test_link_scopes_by_project(tmp_path):
+    init_memory_db(tmp_path / "m.db").close()
+    conn, cb = _seed(tmp_path / "m.db")
+    conn.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
+                 "source, evidence_count, embedding_id, project_id) "
+                 "VALUES (?,?,?, 'active','induced',1,?,?)",
+                 (cb, "proj_only", "x", "cb:t:projonly", "proj-A"))
+    conn.commit()
+    chroma = _FakeChroma({**CHROMA, "cb:t:projonly": [0.0, 0.0, 1.0]})
+    # no active project → proj_only out of scope → [0,0,1] matches nothing
+    assert link_chunks_deductive(conn, chroma, [("c1", [0.0, 0.0, 1.0])],
+                                 project_id=None, min_score=0.55) == 0
+    # active project A → proj_only in scope → links
+    assert link_chunks_deductive(conn, chroma, [("c2", [0.0, 0.0, 1.0])],
+                                 project_id="proj-A", min_score=0.55) == 1
+
+
+def test_inductive_tags_active_project(tmp_path):
+    init_memory_db(tmp_path / "m.db").close()
+    conn, cb = _seed(tmp_path / "m.db")
+    embed = _make_embed({"fresh": [0.0, 0.0, 1.0]})
+    out = mayring_process("zzz unrelated rambling", "classify", cb, conn=conn,
+                          chroma_categories=_FakeChroma(CHROMA), embed_fn=embed,
+                          llm_fn=lambda p: "fresh_proj_cat", active_project_id="proj-Z")
+    assert out.decision == "inductive"
+    row = conn.execute("SELECT project_id FROM codebook_categories WHERE name='fresh_proj_cat'").fetchone()
+    assert row[0] == "proj-Z"  # induced category is project-scoped, not shared base

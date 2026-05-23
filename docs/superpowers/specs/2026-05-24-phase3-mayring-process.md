@@ -86,8 +86,32 @@ Stub-`embed_fn`/`llm_fn`. Fälle: fail-closed (leer text/task/keine Kategorien),
 deduktiv ≥0.78, hybrid 0.55..0.78 (Proposal angelegt), induktiv <0.55 (LLM, parent_hint
 gesetzt), Dedup >0.92 (evidence++ statt neu), chunk_categories-Write, numpy-Regression.
 
-## Out of Scope (Phase 3 Kern)
-- Thin-Wrapper der alten `pi_*`-MCP-Tools (Phase 3.2).
-- Auto-Promote-Cron (existiert als `/promote`-Endpoint; Cron = Phase 4).
-- igio_axis-Backfill-Importer (Phase 4/5).
-- UI (Phase 5).
+## Phase 3.2 — Project-scoped codebook + Ingestion-Wiring (User-Entscheid 2026-05-24)
+
+**Pivot:** Das Codebook wird **projekt-skopiert** statt rein domänen-profil-organisiert
+(User: „muss nach Projekt/Goal sortiert sein, nicht generisch python/sozialforschung").
+Methodisch korrekt (Mayring: Kategorien dienen der konkreten Frage), nutzt den
+Project-Router (active_project), behält Reuse via Vererbung.
+
+- **Schema (v10→v11):** `codebook_categories += project_id TEXT` (NULL = geteilte
+  Profil-Basis/imported, gesetzt = projekt-spezifisch induziert). Migration via
+  `_migrate_schema`-Dict + CREATE-TABLE-Spalte; verifiziert v10→v11.
+- **Aktiver Kategorien-Satz** (`_load_categories`, `link_chunks_deductive`): Scope =
+  `project_id IS NULL` (Basis) ∪ `project_id = active_project`. Ohne aktives Projekt →
+  nur Basis (eine Session sieht nie fremde projekt-private Kategorien). Per-Profil-
+  Verengung (nur `python` statt aller imported) = nächste Verfeinerung.
+- **Induzierte Kategorien** aus `mayring_process` werden mit `active_project_id` getaggt
+  → verschmutzen die geteilte Basis nicht. `record_proposal` + `/process` +
+  `/proposals` nehmen `project_id`.
+- **Ingestion-Wiring** (`core.py`): nach dem Embedden ruft die Pipeline
+  `link_chunks_deductive` (LLM-frei, keine Proposals, cross-base-Cosine, scope nach
+  `opts['project_id']`) → füllt `chunk_categories` aus echtem Ingest → entblockt
+  Reranker-v3. Läuft OUTSIDE batch_context (Link-Fehler darf Chunks nicht zurückrollen),
+  fail-soft + laut geloggt. Gated `opts['link_categories']` default True.
+
+## Out of Scope (jetzt)
+- Thin-Wrapper der alten `pi_*`-MCP-Tools (Phase 3.3).
+- Ingest-Route/Conversation-Capture an active_project_id verdrahten (Link läuft bis
+  dahin auf der geteilten Basis — bereits wertvoll).
+- Per-Profil-Basis-Verengung (projects.base_codebook_id).
+- Auto-Promote-Cron, igio_axis-Backfill (unused, NICHT bauen), UI (Phase 5).

@@ -30,11 +30,13 @@ def _category_row(r) -> dict:
         "parent_id": r[4], "description": r[5], "status": r[6], "source": r[7],
         "evidence_count": r[8], "embedding_id": r[9], "risk_level": r[10],
         "languages": json.loads(r[11] or "[]"), "patterns": json.loads(r[12] or "[]"),
+        "project_id": r[13],
     }
 
 
 _CAT_COLS = ("id, codebook_id, name, igio_axis, parent_id, description, status, "
-             "source, evidence_count, embedding_id, risk_level, languages, patterns")
+             "source, evidence_count, embedding_id, risk_level, languages, patterns, "
+             "project_id")
 
 
 class ProposalRequest(BaseModel):
@@ -44,6 +46,7 @@ class ProposalRequest(BaseModel):
     paraphrase: str = ""
     parent_hint_id: int | None = None
     igio_axis: str | None = None
+    project_id: str | None = None
 
 
 class ProcessRequest(BaseModel):
@@ -52,6 +55,7 @@ class ProcessRequest(BaseModel):
     chunk_id: str | None = None
     pi_job_id: str = ""
     codebook_version: int = 1
+    project_id: str | None = None
 
 
 @router.get("/codebooks")
@@ -99,6 +103,7 @@ def record_proposal(
     paraphrase: str = "", parent_hint_id: int | None = None,
     igio_axis: str | None = None, pi_job_id: str = "",
     chunk_id: str | None = None, embedding_id: str = "",
+    project_id: str | None = None,
 ) -> int:
     """Create-or-evidence a category + record the proposal row. Returns category_id.
 
@@ -114,10 +119,10 @@ def record_proposal(
         # bei induktiv — der Caller liefert ihn), bis evidence sie auto-promotet.
         conn.execute(
             "INSERT INTO codebook_categories(codebook_id, name, igio_axis, parent_id, "
-            "description, status, source, evidence_count, embedding_id) "
-            "VALUES (?,?,?,?,?, 'proposed','induced', 1, ?)",
+            "description, status, source, evidence_count, embedding_id, project_id) "
+            "VALUES (?,?,?,?,?, 'proposed','induced', 1, ?, ?)",
             (codebook_id, category_name, igio_axis, parent_hint_id,
-             paraphrase[:200], embedding_id))
+             paraphrase[:200], embedding_id, project_id))
         cat_id = conn.execute("SELECT id FROM codebook_categories WHERE codebook_id=? "
                               "AND name=?", (codebook_id, category_name)).fetchone()[0]
     else:
@@ -141,7 +146,7 @@ async def create_proposal(
     cat_id = record_proposal(
         conn, codebook_id, req.category_name, paraphrase=req.paraphrase,
         parent_hint_id=req.parent_hint_id, igio_axis=req.igio_axis,
-        pi_job_id=req.pi_job_id, chunk_id=req.chunk_id)
+        pi_job_id=req.pi_job_id, chunk_id=req.chunk_id, project_id=req.project_id)
     conn.commit()
     return {"category_id": cat_id, "status": "recorded"}
 
@@ -194,7 +199,8 @@ async def process_text(
             req.text, req.task, codebook_id, conn=conn,
             chroma_categories=get_chroma_collection("codebook_categories"),
             embed_fn=_embed_one, llm_fn=_llm, chunk_id=req.chunk_id,
-            pi_job_id=req.pi_job_id, codebook_version=req.codebook_version)
+            pi_job_id=req.pi_job_id, codebook_version=req.codebook_version,
+            active_project_id=req.project_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {
