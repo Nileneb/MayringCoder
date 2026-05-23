@@ -1886,6 +1886,24 @@ def check_projects_route_cwd_remote(api: str, token: str) -> CheckResult:
                        f"hard={body.get('reason')} null_branch_ok={null_ok}")
 
 
+def check_mayring_process_fail_closed(api: str, token: str) -> CheckResult:
+    """Phase 3 acceptance: POST /codebooks/{id}/process is fail-closed — an empty
+    task MUST yield 400 (never a silent 'uncategorized' default, the #270 anti-pattern).
+    Uses a real codebook id from GET /codebooks so the 404-guard isn't what trips."""
+    code, body, _ = _http("GET", f"{api}/codebooks", token, timeout=15.0)
+    cbs = (body or {}).get("codebooks") if isinstance(body, dict) else None
+    if code != 200 or not cbs:
+        return CheckResult("mayring_process_fail_closed", False,
+                           f"GET /codebooks http={code} body={body}")
+    cb_id = cbs[0]["id"]
+    # empty task against a VALID codebook → fail-closed 400 (not 404, not 200)
+    code2, body2, _ = _http("POST", f"{api}/codebooks/{cb_id}/process", token,
+                            body={"text": "some text to classify", "task": ""}, timeout=15.0)
+    ok = code2 == 400
+    return CheckResult("mayring_process_fail_closed", ok,
+                       f"empty-task http={code2} (expected 400) detail={body2}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -1921,6 +1939,7 @@ ALL_CHECKS = [
     ("share_endpoint",                check_share_endpoint),
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("projects_route_cwd_remote",     check_projects_route_cwd_remote),
+    ("mayring_process_fail_closed",   check_mayring_process_fail_closed),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),

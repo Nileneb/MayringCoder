@@ -46,6 +46,14 @@ class ProposalRequest(BaseModel):
     igio_axis: str | None = None
 
 
+class ProcessRequest(BaseModel):
+    text: str = ""
+    task: str = ""
+    chunk_id: str | None = None
+    pi_job_id: str = ""
+    codebook_version: int = 1
+
+
 @router.get("/codebooks")
 async def list_codebooks(_ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
@@ -86,28 +94,32 @@ async def list_categories(
     return {"categories": [_category_row(r) for r in rows], "count": len(rows)}
 
 
-@router.post("/codebooks/{codebook_id}/proposals")
-async def create_proposal(
-    codebook_id: int, req: ProposalRequest, _ws: str = Depends(get_workspace),
-) -> dict:
-    """Pi-Agent proposes a (possibly new) category. Embedding-dedup + auto-promote
-    run via the promote endpoint / cron. New category → status='proposed'."""
-    conn = _get_conn()
+def record_proposal(
+    conn, codebook_id: int, category_name: str, *,
+    paraphrase: str = "", parent_hint_id: int | None = None,
+    igio_axis: str | None = None, pi_job_id: str = "",
+    chunk_id: str | None = None, embedding_id: str = "",
+) -> int:
+    """Create-or-evidence a category + record the proposal row. Returns category_id.
+
+    Shared by the /proposals endpoint and mayring_process (DRY). Does NOT commit —
+    the caller owns the transaction so the mixed-method pipeline can batch its writes.
+    """
     now = _now()
     cat = conn.execute(
-        "SELECT id, evidence_count FROM codebook_categories WHERE codebook_id=? AND name=?",
-        (codebook_id, req.category_name)).fetchone()
+        "SELECT id FROM codebook_categories WHERE codebook_id=? AND name=?",
+        (codebook_id, category_name)).fetchone()
     if cat is None:
         # WHY(#270): induzierte Kategorie startet als 'proposed' (parent_hint PFLICHT
         # bei induktiv — der Caller liefert ihn), bis evidence sie auto-promotet.
         conn.execute(
             "INSERT INTO codebook_categories(codebook_id, name, igio_axis, parent_id, "
             "description, status, source, evidence_count, embedding_id) "
-            "VALUES (?,?,?,?,?, 'proposed','induced', 1, '')",
-            (codebook_id, req.category_name, req.igio_axis, req.parent_hint_id,
-             req.paraphrase[:200]))
+            "VALUES (?,?,?,?,?, 'proposed','induced', 1, ?)",
+            (codebook_id, category_name, igio_axis, parent_hint_id,
+             paraphrase[:200], embedding_id))
         cat_id = conn.execute("SELECT id FROM codebook_categories WHERE codebook_id=? "
-                              "AND name=?", (codebook_id, req.category_name)).fetchone()[0]
+                              "AND name=?", (codebook_id, category_name)).fetchone()[0]
     else:
         cat_id = cat[0]
         conn.execute("UPDATE codebook_categories SET evidence_count = evidence_count + 1 "
@@ -115,7 +127,21 @@ async def create_proposal(
     conn.execute(
         "INSERT INTO codebook_proposals(category_id, pi_job_id, chunk_id, paraphrase, "
         "parent_hint_id, proposed_at) VALUES (?,?,?,?,?,?)",
-        (cat_id, req.pi_job_id, req.chunk_id, req.paraphrase, req.parent_hint_id, now))
+        (cat_id, pi_job_id, chunk_id, paraphrase, parent_hint_id, now))
+    return cat_id
+
+
+@router.post("/codebooks/{codebook_id}/proposals")
+async def create_proposal(
+    codebook_id: int, req: ProposalRequest, _ws: str = Depends(get_workspace),
+) -> dict:
+    """Pi-Agent proposes a (possibly new) category. Embedding-dedup + auto-promote
+    run via mayring_process / the promote endpoint. New category → status='proposed'."""
+    conn = _get_conn()
+    cat_id = record_proposal(
+        conn, codebook_id, req.category_name, paraphrase=req.paraphrase,
+        parent_hint_id=req.parent_hint_id, igio_axis=req.igio_axis,
+        pi_job_id=req.pi_job_id, chunk_id=req.chunk_id)
     conn.commit()
     return {"category_id": cat_id, "status": "recorded"}
 
@@ -131,3 +157,48 @@ async def promote_category(
                  "WHERE category_id=? AND decision IS NULL", (category_id,))
     conn.commit()
     return {"category_id": category_id, "status": "active"}
+
+
+@router.post("/codebooks/{codebook_id}/process")
+async def process_text(
+    codebook_id: int, req: ProcessRequest, _ws: str = Depends(get_workspace),
+) -> dict:
+    """Phase 3 mixed-method, fail-closed categorization. Wires the real Ollama
+    embed/LLM providers + the codebook_categories Chroma collection into the pure
+    mayring_process pipeline. ValueError (empty text/task, no active categories) → 400."""
+    import os
+
+    from mayring_core import providers
+    from mayring_core.memory.ingestion.mayring_process import mayring_process
+    from mayring_core.memory.store import get_chroma_collection
+    from mayring_core.model_router import ModelRouter
+
+    conn = _get_conn()
+    if conn.execute("SELECT 1 FROM codebooks WHERE id=?", (codebook_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail=f"codebook {codebook_id} not found")
+
+    # Ollama via Proxy ohne Port (CLAUDE.md-Invariante); Modell aus ModelRouter, nicht env.
+    ollama_url = os.environ.get("OLLAMA_URL", "https://three.linn.games")
+    model = ModelRouter(ollama_url=ollama_url).resolve("text") or "mistral:7b-instruct"
+
+    def _embed_one(t: str) -> list[float]:
+        out = providers.embed_texts([t], ollama_url)
+        return (out[0] if out else []) or []
+
+    def _llm(prompt: str) -> str:
+        return providers.generate_text(prompt=prompt, ollama_url=ollama_url,
+                                       model=model, label="mayring_process")
+
+    try:
+        res = mayring_process(
+            req.text, req.task, codebook_id, conn=conn,
+            chroma_categories=get_chroma_collection("codebook_categories"),
+            embed_fn=_embed_one, llm_fn=_llm, chunk_id=req.chunk_id,
+            pi_job_id=req.pi_job_id, codebook_version=req.codebook_version)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "category_id": res.category_id, "category_name": res.category_name,
+        "decision": res.decision, "confidence": res.confidence,
+        "igio_axis": res.igio_axis, "proposed": res.proposed,
+    }
