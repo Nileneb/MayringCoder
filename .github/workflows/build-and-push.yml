@@ -5,6 +5,9 @@ on:
     branches: [master]
     paths:
       - 'src/**'
+      - 'core/**'        # WHY(#workspace-uuid-sot): mayring_core (Schema, Resolver,
+                         # Retrieval) lebt seit #267 hier — ohne diesen Eintrag
+                         # deployt eine core-only-Änderung NICHT (silent no-deploy).
       - 'docker/**'
       - 'requirements.txt'
       - 'prompts/**'
