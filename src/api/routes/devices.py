@@ -148,9 +148,9 @@ async def record_hook_event(
             summary=req.summary,
         )
         return {"recorded": True, "id": rid}
-    except Exception as e:  # noqa: BLE001 — hook must never see a 5xx
+    except Exception:  # noqa: BLE001 — hook must never see a 5xx
         logger.exception("hooks/events: insert failed")
-        return {"recorded": False, "error": str(e)}
+        return {"recorded": False, "error": "failed to record hook event"}
 
 
 @router.get("/hooks/events")
