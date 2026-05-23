@@ -48,7 +48,20 @@ def _tables_with_workspace_col(conn: sqlite3.Connection) -> dict[str, bool]:
         if "workspace_id" not in cols:
             continue
         ws_in_pk = any(r[1] == "workspace_id" and r[5] > 0 for r in info)
-        out[t] = ws_in_pk
+        # Also detect workspace_id inside a UNIQUE index (not just the PK) —
+        # e.g. wiki_edges UNIQUE(source,target,type,workspace_id). Re-keying such
+        # a table with a plain UPDATE blows up on collisions; these need the
+        # OR IGNORE + leftover-delete path (which also dedups, as the user wants).
+        ws_collidable = ws_in_pk
+        if not ws_collidable:
+            for idx in conn.execute(f"PRAGMA index_list({t})"):
+                if idx[2]:  # unique index
+                    idx_cols = [r[2] for r in conn.execute(
+                        f"PRAGMA index_info({idx[1]})")]
+                    if "workspace_id" in idx_cols:
+                        ws_collidable = True
+                        break
+        out[t] = ws_collidable
     return out
 
 
