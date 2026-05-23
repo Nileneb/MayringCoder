@@ -1391,10 +1391,13 @@ def check_rag_function_search_finds_source(api: str, token: str) -> CheckResult:
       - source_id ends in '.py' (any Python source)
       - score_vector > 0.05 (real vector signal, not noise)
     """
-    # Suche im User-Workspace (env-overridable für andere Tenants).
-    # Service-Token-Default ist 'system', das hat keine echten .py-
-    # source-Chunks — daher müssen wir explizit den Tenant mitgeben.
-    target_ws = os.environ.get("SMOKE_RAG_WORKSPACE", "bene")
+    # Suche im kanonischen User-Workspace (env-overridable für andere Tenants).
+    # Service-Token-Default ist 'system', das hat keine echten .py-source-Chunks
+    # → wir müssen den Tenant explizit mitgeben. Der email-slug 'bene' wurde von
+    # der UUID-Migration (workspace-uuid-sot) retired: alle echten Chunks liegen
+    # jetzt unter dieser Workspace-UUID, NICHT mehr unter 'bene' (sonst v=0.00).
+    target_ws = os.environ.get(
+        "SMOKE_RAG_WORKSPACE", "019d6933-002e-7153-a7df-f14e4c7d52b4")
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "_rerank candidates vector_scores top_k re-rank "
