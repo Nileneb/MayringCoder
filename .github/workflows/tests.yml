@@ -1,0 +1,37 @@
+name: tests
+
+# Gate für die ~1600 pytest-Tests (liefen bisher NUR lokal). Klar benannter
+# Check "MayringCoder: pytest" → bricht etwas, ist sofort sichtbar welche
+# Komponente, ohne die Pipeline zu durchsuchen.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: "MayringCoder: pytest"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install deps (ohne whisper/gradio/telegram — keine Test-Imports, spart torch)
+        run: |
+          grep -vE "openai-whisper|gradio|python-telegram-bot" requirements.txt > requirements-ci.txt
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+          pip install -e ./core
+
+      - name: pytest
+        run: pytest -q -p no:cacheprovider
