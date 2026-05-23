@@ -62,6 +62,27 @@ jobs:
           done
           sleep 10
 
+      # Chroma's HNSW index loads into RAM lazily on the first vector query after
+      # a container restart — the first queries return diag='chroma_query_empty'
+      # for a few seconds. Without this, memory_search_vector (and the semantic
+      # branch of projects_route) flaked red on every deploy. Poll with UNIQUE
+      # queries (bypass _QUERY_CACHE) until vector_stage is 'ok'. If embeddings
+      # are genuinely missing (a real regression), this never reaches 'ok' → the
+      # loop exhausts and the smoke fails correctly — it warms, it does not mask.
+      - name: Warm Chroma before asserting (HNSW load after restart)
+        run: |
+          ENV_FILE="$HOME/app.linn.games/.env"
+          TOK="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          for i in $(seq 1 24); do
+            diag=$(curl -sS -m 20 -X POST https://mcp.linn.games/memory/search \
+              -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+              -d "{\"query\":\"chroma warmup probe $i $RANDOM\",\"top_k\":3,\"include_text\":false}" \
+              | python3 -c "import sys,json; print((json.load(sys.stdin).get('diagnostics') or {}).get('vector_stage',''))" 2>/dev/null)
+            echo "warmup $i: ${diag:-<none>}"
+            case "$diag" in ok*) echo "chroma warm after ${i} probes"; break;; esac
+            sleep 5
+          done
+
       - name: Run smoke test (reads MCP_SERVICE_TOKEN from server's .env)
         id: smoke
         env:
