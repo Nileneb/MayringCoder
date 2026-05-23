@@ -1865,14 +1865,16 @@ def check_projects_route_cwd_remote(api: str, token: str) -> CheckResult:
     200 + project_id set (match-or-create); no signal + nonsense → 200 + null."""
     code, body, _ = _http("POST", f"{api}/projects/route", token,
         body={"cwd_remote": "git@github.com:Nileneb/MayringCoder.git",
-              "prompt": "fix the retrieval pipeline"})
+              "prompt": "fix the retrieval pipeline"}, timeout=30.0)
     if code != 200 or not isinstance(body, dict):
         return CheckResult("projects_route_cwd_remote", False, f"http={code}")
     if not body.get("project_id"):
         return CheckResult("projects_route_cwd_remote", False,
                            f"cwd-remote gave no project_id: {body}")
+    # null-branch embeds the prompt (Ollama) → generous timeout: the embed is
+    # ~0.14s warm but can be several seconds cold right after a deploy.
     code2, body2, _ = _http("POST", f"{api}/projects/route", token,
-        body={"cwd_remote": None, "prompt": "zxqw nonsense %%%"})
+        body={"cwd_remote": None, "prompt": "zxqw nonsense %%%"}, timeout=30.0)
     null_ok = code2 == 200 and (body2 or {}).get("project_id") is None
     return CheckResult("projects_route_cwd_remote",
                        bool(body.get("project_id")) and null_ok,
