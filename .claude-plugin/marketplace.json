@@ -12,8 +12,8 @@
       "description": "MayringCoder memory integration: hybrid retrieval, conversation summary capture, pi_task dispatch via local MCP.",
       "category": "memory",
       "source": {
-        "source": "github",
-        "repo": "Nileneb/mayring-claude-plugin"
+        "source": "url",
+        "url": "https://github.com/Nileneb/mayring-claude-plugin.git"
       }
     }
   ]
