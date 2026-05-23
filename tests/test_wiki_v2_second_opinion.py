@@ -107,6 +107,6 @@ def test_cli_has_wiki_second_opinion_flag():
     import subprocess, sys
     result = subprocess.run(
         [sys.executable, "-m", "src.cli", "--help"],
-        capture_output=True, text=True, cwd="/home/nileneb/Desktop/MayringCoder"
+        capture_output=True, text=True, cwd=str(__import__("pathlib").Path(__file__).resolve().parents[1])
     )
     assert "--wiki-second-opinion" in result.stdout
