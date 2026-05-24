@@ -187,7 +187,7 @@ def test_trigger_scan_no_hit_below_threshold(monkeypatch):
     """trigger_scan returns empty context when embedding score is below threshold."""
     cluster_embs = {"ClusterA": [1.0, 0.0]}
     monkeypatch.setattr(
-        "src.analysis.context._embed_texts",
+        "src.analysis.context_rag._embed_texts",
         lambda texts, url: [[0.5, 0.866]]  # cosine ~0.5 < threshold 0.75
     )
     result = trigger_scan("some query", {}, cluster_embs, "http://localhost:11434", threshold=0.75)

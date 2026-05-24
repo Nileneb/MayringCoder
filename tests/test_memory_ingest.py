@@ -150,9 +150,12 @@ class TestIngest:
         col.upsert = MagicMock()
         return col
 
-    # Fix: patch src.analysis.context._embed_texts (the actual import location used inside ingest())
-    # rather than mayring_core.memory.ingest._embed_texts which is not a module-level name.
-    @patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4])
+    # WHY(#267): ingest() lives in mayring_core now and embeds via
+    # providers._embed → src.analysis.context_rag._embed_texts (resolved per-call,
+    # see src/provider_setup.py). context_rag is the canonical patch seam; the old
+    # src.analysis.context._embed_texts is only a re-export → patching it leaks the
+    # real Ollama call (5× retry backoff = ~41s hang in CI without Ollama).
+    @patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 4])
     def test_first_ingest_returns_chunks(self, mock_embed, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")
         source = _make_source()
@@ -173,7 +176,7 @@ class TestIngest:
         assert len(result["chunk_ids"]) >= 1
         assert result["deduped"] == 0
 
-    @patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4])
+    @patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 4])
     def test_changed_content_deactivates_removed_chunks(self, mock_embed, tmp_path: Path) -> None:
         """Issue #137: second ingest with different content_hash → state="changed".
         Chunks that no longer exist in V2 (because V2 has fewer functions than V1)
@@ -212,7 +215,7 @@ class TestIngest:
         assert removed.isdisjoint(active), \
             f"removed chunks {removed & active} still active after CHANGED"
 
-    @patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4])
+    @patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 4])
     def test_second_ingest_same_content_is_deduped(self, mock_embed, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")
         source = _make_source()
@@ -238,7 +241,7 @@ class TestIngest:
         log_path = tmp_path / "test_memory_log.jsonl"
         miu._MEMORY_LOG_PATH = log_path
 
-        with patch("src.analysis.context._embed_texts", return_value=[[0.1] * 4]):
+        with patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 4]):
             ingest(source, "def bar(): pass\n", conn, None, "http://localhost:11434", "", {"log": True})
 
         miu._MEMORY_LOG_PATH = None  # reset
@@ -364,7 +367,7 @@ class TestIngestConversationSummary:
         conn = init_memory_db(tmp_path / "mem.db")
         summary = "## Session Summary\n\nWir haben die MCP-Architektur implementiert.\n\n## Offene Punkte\n\nTests fehlen noch."
 
-        with _patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]):
+        with _patch("src.analysis.context_rag._embed_texts", return_value=[[0.1, 0.2, 0.3]]):
             result = ingest_conversation_summary(
                 summary_text=summary,
                 conn=conn,
@@ -386,7 +389,7 @@ class TestIngestConversationSummary:
 
         conn = init_memory_db(tmp_path / "mem2.db")
 
-        with _patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2]]):
+        with _patch("src.analysis.context_rag._embed_texts", return_value=[[0.1, 0.2]]):
             result = ingest_conversation_summary(
                 summary_text="## Summary\n\nKurzfassung.",
                 conn=conn,
@@ -418,7 +421,7 @@ class TestIngestConversationSummary:
             "und welche Entscheidungen wir bezüglich des Schemas getroffen haben.\n"
         )
 
-        with _patch("src.analysis.context._embed_texts", return_value=[[0.1]]):
+        with _patch("src.analysis.context_rag._embed_texts", return_value=[[0.1]]):
             result = ingest_conversation_summary(
                 summary_text=summary,
                 conn=conn,

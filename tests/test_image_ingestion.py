@@ -88,7 +88,7 @@ def test_ingest_image_produces_image_caption_chunk(tmp_path: Path) -> None:
 
     with (
         patch("src.agents.vision.caption_image", return_value=fake_caption),
-        patch("src.analysis.context._embed_texts", return_value=[[0.1] * 768]),
+        patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 768]),
         patch("mayring_core.memory.ingestion.core.resolve_dedup") as mock_dedup,
     ):
         mock_dedup.return_value = (MagicMock(), False)
@@ -133,7 +133,7 @@ def test_ingest_image_svg_no_ollama_call(tmp_path: Path) -> None:
 
     with (
         patch("mayring_core.ollama_client.generate") as mock_gen,
-        patch("src.analysis.context._embed_texts", return_value=[[0.1] * 768]),
+        patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 768]),
         patch("mayring_core.memory.ingestion.core.resolve_dedup") as mock_dedup,
     ):
         mock_dedup.return_value = (MagicMock(), False)
@@ -172,7 +172,7 @@ def test_ingest_image_fallback_caption_on_empty_response(tmp_path: Path) -> None
 
     with (
         patch("src.agents.vision.caption_image", return_value=""),
-        patch("src.analysis.context._embed_texts", return_value=[[0.1] * 768]),
+        patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 768]),
         patch("mayring_core.memory.ingestion.core.resolve_dedup") as mock_dedup,
     ):
         mock_dedup.return_value = (MagicMock(), False)

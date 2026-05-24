@@ -75,7 +75,7 @@ class TestIngestVisualPipeline:
 
         with (
             patch("mayring_core.memory.ingestion.core.ingest_image") as mock_img,
-            patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
+            patch("src.analysis.context_rag._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
         ):
             result = ingest(
                 source=source,
@@ -102,7 +102,7 @@ class TestIngestVisualPipeline:
 
         with (
             patch("mayring_core.memory.ingestion.core.ingest_image") as mock_img,
-            patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
+            patch("src.analysis.context_rag._embed_texts", return_value=[[0.1, 0.2, 0.3]]),
             patch("src.analysis.analyzer._ollama_generate", return_value="domain"),
         ):
             result = ingest(
@@ -126,7 +126,7 @@ class TestIngestVisualPipeline:
         conn = init_memory_db(tmp_path / "mem.db")
         source = _make_source("src/app.py")
 
-        with patch("src.analysis.context._embed_texts", return_value=[[0.1, 0.2, 0.3]]):
+        with patch("src.analysis.context_rag._embed_texts", return_value=[[0.1, 0.2, 0.3]]):
             result = ingest(
                 source=source,
                 content="def main(): pass",
