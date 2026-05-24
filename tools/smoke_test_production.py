@@ -1043,6 +1043,23 @@ def check_ingest_state_field(api: str, token: str) -> CheckResult:
     )
 
 
+def _http_await_source(method: str, url: str, token: str, *, body=None,
+                       timeout: float = 15.0, tries: int = 6, delay: float = 0.5):
+    """Like _http, but retry while the response is 404 — for operating on a
+    just-PUT source. Multi-worker + SQLite-WAL has a sub-second window where a
+    source committed by one worker isn't yet visible to another (the create→
+    immediately-PATCH the smoke does; a human in the UI never hits it). Retries
+    up to ~tries*delay so the check tests the visibility/share LOGIC, not the
+    cross-process commit-propagation timing."""
+    code, body_r, hdrs = _http(method, url, token, body=body, timeout=timeout)
+    for _ in range(tries - 1):
+        if code != 404:
+            break
+        time.sleep(delay)
+        code, body_r, hdrs = _http(method, url, token, body=body, timeout=timeout)
+    return code, body_r, hdrs
+
+
 def check_visibility_isolation(api: str, token: str) -> CheckResult:
     """Ingest a private + a public source, search, verify visibility flags.
 
@@ -1089,7 +1106,7 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     if code2 != 200:
         return CheckResult("visibility_isolation", False,
                            f"public ingest failed http={code2}: {body2}")
-    code3, body3, _ = _http(
+    code3, body3, _ = _http_await_source(
         "PATCH", f"{api}/sources/{urllib.parse.quote(pub_id, safe='')}/visibility",
         token, body={"visibility": "public"},
     )
@@ -1137,7 +1154,7 @@ def check_share_endpoint(api: str, token: str) -> CheckResult:
     )
     if code1 != 200:
         return CheckResult("share_endpoint", False, f"ingest failed http={code1}: {body1}")
-    code2, body2, _ = _http(
+    code2, body2, _ = _http_await_source(
         "POST", f"{api}/sources/{urllib.parse.quote(sid, safe='')}/share", token, body={},
     )
     ok = (code2 == 200 and isinstance(body2, dict)
