@@ -1908,6 +1908,37 @@ def check_mayring_process_fail_closed(api: str, token: str) -> CheckResult:
                        f"empty-task http={code2} (expected 400) detail={body2}")
 
 
+def check_ingest_links_categories(api: str, token: str) -> CheckResult:
+    """Phase 3.2 acceptance: a LIVE ingest auto-links chunks to the codebook
+    (chunk_categories, deductive path — link_chunks_deductive, do_link default-on).
+    Guards the silent no-op: the wiring runs but links 0 because the
+    codebook_categories Chroma collection went empty (e.g. after a chroma
+    migration) — chunks would still ingest, but reranker-v3 cat_match would
+    quietly never fire. Ingests a category-matching note, asserts
+    category_links>=1, then invalidates the probe source (no prod pollution)."""
+    src = f"smoke:phase32-catlink:{int(time.time())}"
+    code, body, _ = _http(
+        "POST", f"{api}/memory/put", token,
+        body={
+            "source_id": src, "source_type": "note", "categorize": False,
+            "content": ("User authentication and login: OAuth flow, JWT auth "
+                        "middleware, password hashing, session token validation. "
+                        "Database access layer with SQL queries + connection pooling."),
+        },
+        timeout=40.0,
+    )
+    links = body.get("category_links") if isinstance(body, dict) else None
+    # Clean up the probe source regardless of outcome — never leave smoke junk.
+    _http("POST", f"{api}/memory/invalidate", token,
+          body={"source_id": src}, timeout=20.0)
+    ok = code == 200 and isinstance(links, int) and links >= 1
+    return CheckResult(
+        "ingest_links_categories", ok,
+        f"PUT http={code} category_links={links} "
+        f"(Phase 3.2: live ingest must link chunk→codebook, need >=1; probe invalidated)",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -1944,6 +1975,7 @@ ALL_CHECKS = [
     ("stop_hook_e2e",                 check_stop_hook_auto_feedback_e2e),
     ("projects_route_cwd_remote",     check_projects_route_cwd_remote),
     ("mayring_process_fail_closed",   check_mayring_process_fail_closed),
+    ("ingest_links_categories",       check_ingest_links_categories),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
