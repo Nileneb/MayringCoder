@@ -106,6 +106,11 @@ def run_search(
                     # `pt` und `re` wären phantom-features im API-Response.
                     "pt": round(getattr(r, "score_predicted_topic", 0.0) or 0.0, 4),
                     "re": 1.0 if (getattr(r, "rationale_edges", None) or []) else 0.0,
+                    # WHY(#270 reranker-v3): cat_match (query↔chunk codebook-category
+                    # overlap) must be logged so the daily trainer can learn its
+                    # weight (Phase B) — otherwise only the deterministic 0.08 boost
+                    # (Phase A) ever uses it and it's a phantom feature in the model.
+                    "cat_match": round(getattr(r, "score_cat_match", 0.0) or 0.0, 4),
                     "f":  round(getattr(r, "score_final", 0.0) or 0.0, 4),
                 }
                 for r in results
