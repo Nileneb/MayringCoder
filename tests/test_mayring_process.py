@@ -204,6 +204,26 @@ def test_link_chunks_deductive_links_best_match(tmp_path):
     assert conn.execute("SELECT count(*) FROM chunk_categories WHERE chunk_id='c2'").fetchone()[0] == 0
 
 
+def test_derive_query_category_ids_maps_query_to_codebook(tmp_path, monkeypatch):
+    """Reranker-v3 query side: the query embedding maps to the codebook
+    category_ids it's closest to (>= threshold), so cat_match can fire without
+    the caller passing category_hint."""
+    from mayring_core.memory.ingestion import mayring_process as mp
+    init_memory_db(tmp_path / "m.db").close()
+    conn, _cb = _seed(tmp_path / "m.db")
+    api_id = conn.execute("SELECT id FROM codebook_categories WHERE name='api'").fetchone()[0]
+    dom_id = conn.execute("SELECT id FROM codebook_categories WHERE name='domain'").fetchone()[0]
+    chroma = _FakeChroma(CHROMA)  # api→[1,0,0], domain→[0,1,0]
+    monkeypatch.setattr(mp, "_CAT_EMB_CACHE", {})  # isolate the per-process cache
+
+    assert mp.derive_query_category_ids(conn, chroma, [0.95, 0.05, 0.0]) == {api_id}
+    assert mp.derive_query_category_ids(conn, chroma, [0.0, 0.98, 0.1]) == {dom_id}
+    # orthogonal query → below _HYBRID_MIN (0.55) → no spurious category
+    assert mp.derive_query_category_ids(conn, chroma, [0.0, 0.0, 1.0]) == set()
+    # no embedding → empty (fail-soft)
+    assert mp.derive_query_category_ids(conn, chroma, []) == set()
+
+
 def test_link_scopes_by_project(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
