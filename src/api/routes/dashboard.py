@@ -75,8 +75,11 @@ def _dashboard_ttl_cache(fn):
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/recent-ops")
-@_dashboard_ttl_cache
-async def recent_ops(
+async def recent_ops(  # NOT cached: live ingest feed (WHY, smoke-fix 2026-05-24).
+    # The 15s @_dashboard_ttl_cache served the pre-ingest list on a write-then-read
+    # (watcher_hook_fires polled within 8s and never saw the just-PUT source until
+    # the TTL expired). ORDER BY created_at DESC LIMIT is index-backed (v13), so
+    # running it per-poll is cheap — same call as the /stats/feedback-log fix.
     source_id: str | None = None,
     since_minutes: int | None = None,
     limit: int = 50,

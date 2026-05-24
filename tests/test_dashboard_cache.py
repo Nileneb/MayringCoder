@@ -40,15 +40,19 @@ def _reset_conn(tmp_path, monkeypatch):
 
 
 def test_decorated_endpoint_still_resolves_deps_and_returns_200():
-    """functools.wraps preserved the signature → FastAPI resolved get_workspace."""
+    """functools.wraps preserved the signature → FastAPI resolved get_workspace.
+
+    Uses /stats/triggers as the example: /stats/recent-ops is intentionally
+    UNcached now (live ingest feed — see the smoke-fix WHY in dashboard.py).
+    """
     client = TestClient(app)
-    r = client.get("/stats/recent-ops")
+    r = client.get("/stats/triggers")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["workspace_id"] == "test-ws"
-    assert "ops" in body
+    assert "triggers" in body
     # the call populated the cache
-    assert any(k.startswith("recent_ops:") for k in dashboard._DASH_CACHE)
+    assert any(k.startswith("triggers:") for k in dashboard._DASH_CACHE)
 
 
 def _run(coro):

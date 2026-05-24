@@ -1956,6 +1956,38 @@ def check_ingest_links_categories(api: str, token: str) -> CheckResult:
     )
 
 
+def check_reranker_cat_match_fires(api: str, token: str) -> CheckResult:
+    """Reranker-v3 acceptance (end-to-end): a category-themed search must derive
+    the query's codebook category server-side AND surface >=1 result whose
+    chunk_categories overlap it (score_cat_match > 0). This guards the WHOLE v3
+    chain together — query-side derivation + chunk_categories (Phase 3.2 deductive
+    link) + the cat_match feature — which was silently inert before (the query was
+    never categorized and cat_match was never logged). Read-only: leans on the
+    existing auth/data-access-linked corpus. Two themes so a single sparse
+    category can't false-red it."""
+    themes = [
+        "user authentication login session token oauth jwt password hashing access control",
+        "sqlite database query connection pool data access layer repository persistence",
+    ]
+    fired = 0
+    n = 0
+    for q in themes:
+        code, body, _ = _http("POST", f"{api}/memory/search", token,
+                              body={"query": q, "top_k": 10, "include_text": False,
+                                    "llm_prefilter": False}, timeout=40.0)
+        if code != 200 or not isinstance(body, dict):
+            return CheckResult("reranker_cat_match_fires", False, f"search http={code}")
+        results = body.get("results", []) or []
+        n += len(results)
+        fired += sum(1 for r in results
+                     if isinstance(r, dict) and (r.get("score_cat_match") or 0) > 0)
+    return CheckResult(
+        "reranker_cat_match_fires", fired >= 1,
+        f"cat_match>0 hits={fired} across {n} results / {len(themes)} themes "
+        f"(reranker-v3: query→category + chunk_categories must intersect on >=1)",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -1993,6 +2025,7 @@ ALL_CHECKS = [
     ("projects_route_cwd_remote",     check_projects_route_cwd_remote),
     ("mayring_process_fail_closed",   check_mayring_process_fail_closed),
     ("ingest_links_categories",       check_ingest_links_categories),
+    ("reranker_cat_match_fires",      check_reranker_cat_match_fires),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
