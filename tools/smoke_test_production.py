@@ -1085,6 +1085,25 @@ def _act_as(sub: str, *, orgs: tuple[str, ...] = (), workspace: str | None = Non
     return h
 
 
+def _search_finds(api: str, token: str, query: str, sid: str, *,
+                  extra_headers: dict | None = None, tries: int = 6, delay: float = 0.5) -> bool:
+    """Search up to `tries` times; True as soon as `sid` is in the results.
+
+    Absorbs the multi-worker commit-propagation window so a positive check
+    doesn't false-RED. For isolation checks, confirm the OWNER finds the
+    source first (propagation proven), then assert the other identity does
+    not — so a not-found is real isolation, not just lag.
+    """
+    for _ in range(tries):
+        _c, body, _ = _http("POST", f"{api}/memory/search", token,
+            body={"query": query, "top_k": 10, "include_text": True, "llm_prefilter": False},
+            extra_headers=extra_headers, timeout=12.0)
+        if sid in {r.get("source_id") for r in (body or {}).get("results", [])}:
+            return True
+        time.sleep(delay)
+    return False
+
+
 def check_visibility_isolation(api: str, token: str) -> CheckResult:
     """Ingest a private + a public source, search, verify visibility flags.
 
@@ -2052,13 +2071,18 @@ def check_private_isolation(api: str, token: str) -> CheckResult:
         extra_headers=_act_as("A", workspace=wa), timeout=15.0)
     if code1 != 200:
         return CheckResult("private_isolation", False, f"ingest A failed http={code1}: {body1}")
-    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"PRIV-ISO {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as("B", workspace=wb), timeout=12.0)
-    seen = {r["source_id"] for r in (body2 or {}).get("results", [])}
-    leaked = sid in seen
+    # WHY(fix4-isolation): confirm owner sees it first (proves propagation),
+    # then check B cannot — so not-found is real isolation, not commit lag.
+    owner_sees = _search_finds(api, token, f"PRIV-ISO {suffix}", sid,
+                               extra_headers=_act_as("A", workspace=wa))
+    if not owner_sees:
+        return CheckResult("private_isolation", False,
+            f"INCONCLUSIVE: owner A could not find the source — "
+            f"propagation not proven, isolation cannot be asserted  marker={suffix}")
+    leaked = _search_finds(api, token, f"PRIV-ISO {suffix}", sid,
+                           extra_headers=_act_as("B", workspace=wb), tries=2)
     return CheckResult("private_isolation", not leaked,
-        f"B_sees_A_private={leaked} (must be False)  results={len(seen)}  marker={suffix}")
+        f"B_sees_A_private={leaked} (must be False)  marker={suffix}")
 
 
 def check_public_visibility(api: str, token: str) -> CheckResult:
@@ -2078,13 +2102,10 @@ def check_public_visibility(api: str, token: str) -> CheckResult:
         extra_headers=_act_as("A", workspace=wa))
     if code2 != 200 or (body2 or {}).get("visibility") != "public":
         return CheckResult("public_visibility", False, f"share failed http={code2}: {body2}")
-    code3, body3, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"PUB-VIS {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as("B", workspace=wb), timeout=12.0)
-    seen = {r["source_id"] for r in (body3 or {}).get("results", [])}
-    visible = sid in seen
-    return CheckResult("public_visibility", visible,
-        f"B_sees_A_public={visible} (must be True)  results={len(seen)}  marker={suffix}")
+    found = _search_finds(api, token, f"PUB-VIS {suffix}", sid,
+                          extra_headers=_act_as("B", workspace=wb))
+    return CheckResult("public_visibility", found,
+        f"B_sees_A_public={found} (must be True)  marker={suffix}")
 
 
 def check_user_cross_device(api: str, token: str) -> CheckResult:
@@ -2101,14 +2122,18 @@ def check_user_cross_device(api: str, token: str) -> CheckResult:
         extra_headers=_act_as(sub_s, workspace=wa), timeout=15.0)
     if code1 != 200:
         return CheckResult("user_cross_device", False, f"ingest failed http={code1}")
-    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"USER-XD {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as(sub_s, workspace=wb), timeout=12.0)
-    same_sub_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
-    code3, body3, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"USER-XD {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as(f"other-{suffix}", workspace=wb), timeout=12.0)
-    other_sub_sees = sid in {r["source_id"] for r in (body3 or {}).get("results", [])}
+    # Positive arm: same sub, different workspace must see it (retry for lag).
+    same_sub_sees = _search_finds(api, token, f"USER-XD {suffix}", sid,
+                                  extra_headers=_act_as(sub_s, workspace=wb))
+    # WHY(fix4-isolation): prove owner sees it first, then check other sub.
+    owner_sees = _search_finds(api, token, f"USER-XD {suffix}", sid,
+                               extra_headers=_act_as(sub_s, workspace=wa))
+    if not owner_sees:
+        return CheckResult("user_cross_device", False,
+            f"INCONCLUSIVE: owner could not find source — "
+            f"propagation not proven  same_sub_sees={same_sub_sees}  marker={suffix}")
+    other_sub_sees = _search_finds(api, token, f"USER-XD {suffix}", sid,
+                                   extra_headers=_act_as(f"other-{suffix}", workspace=wb), tries=2)
     ok = same_sub_sees and not other_sub_sees
     return CheckResult("user_cross_device", ok,
         f"same_sub_sees={same_sub_sees}(want True)  other_sub_sees={other_sub_sees}(want False)  marker={suffix}")
@@ -2127,12 +2152,10 @@ def check_org_member_visibility(api: str, token: str) -> CheckResult:
         extra_headers=_act_as("A", orgs=(org,), workspace=f"oa-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("org_member_visibility", False, f"ingest failed http={code1}: {body1}")
-    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"ORG-VIS {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as("B", orgs=(org,), workspace=f"ob-{suffix}"), timeout=12.0)
-    member_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
-    return CheckResult("org_member_visibility", member_sees,
-        f"org_member_sees={member_sees} (must be True)  marker={suffix}")
+    found = _search_finds(api, token, f"ORG-VIS {suffix}", sid,
+                          extra_headers=_act_as("B", orgs=(org,), workspace=f"ob-{suffix}"))
+    return CheckResult("org_member_visibility", found,
+        f"org_member_sees={found} (must be True)  marker={suffix}")
 
 
 def check_org_non_member_blocked(api: str, token: str) -> CheckResult:
@@ -2148,10 +2171,17 @@ def check_org_non_member_blocked(api: str, token: str) -> CheckResult:
         extra_headers=_act_as("A", orgs=(org,), workspace=f"oba-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("org_non_member_blocked", False, f"ingest failed http={code1}")
-    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"ORG-BLOCK {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as("C", orgs=(f"other-{suffix}",), workspace=f"obc-{suffix}"), timeout=12.0)
-    non_member_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
+    # WHY(fix4-isolation): prove owner (A, member of org) sees the source before
+    # asserting non-member C cannot — rules out commit-lag false-PASS.
+    owner_sees = _search_finds(api, token, f"ORG-BLOCK {suffix}", sid,
+                               extra_headers=_act_as("A", orgs=(org,), workspace=f"oba-{suffix}"))
+    if not owner_sees:
+        return CheckResult("org_non_member_blocked", False,
+            f"INCONCLUSIVE: owner A could not find source — "
+            f"propagation not proven, isolation cannot be asserted  marker={suffix}")
+    non_member_sees = _search_finds(api, token, f"ORG-BLOCK {suffix}", sid,
+                                    extra_headers=_act_as("C", orgs=(f"other-{suffix}",),
+                                                          workspace=f"obc-{suffix}"), tries=2)
     return CheckResult("org_non_member_blocked", not non_member_sees,
         f"non_member_sees={non_member_sees} (must be False)  marker={suffix}")
 
@@ -2171,11 +2201,19 @@ def check_org_revoke_isolation(api: str, token: str) -> CheckResult:
         extra_headers=_act_as("A", orgs=(org,), workspace=f"ora-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("org_revoke_isolation", False, f"ingest failed http={code1}")
-    # Same sub A, but org-X membership revoked (no orgs in the act-as identity).
-    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"ORG-REVOKE {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as("A", workspace=f"ora-{suffix}"), timeout=12.0)
-    still_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
+    # WHY(fix4-isolation): prove owner (A WITH org membership) sees source first.
+    owner_sees = _search_finds(api, token, f"ORG-REVOKE {suffix}", sid,
+                               extra_headers=_act_as("A", orgs=(org,), workspace=f"ora-{suffix}"))
+    if not owner_sees:
+        return CheckResult("org_revoke_isolation", False,
+            f"INCONCLUSIVE: owner A (with org) could not find source — "
+            f"propagation not proven  marker={suffix}")
+    # WHY(fix3-revoke-workspace): use a DIFFERENT workspace for the revoked read
+    # so only the org-membership dimension is under test. Reusing the same
+    # workspace (ora-{suffix}) would allow a private-workspace fallback to mask
+    # the org dimension — making the isolation check vacuous.
+    still_sees = _search_finds(api, token, f"ORG-REVOKE {suffix}", sid,
+                               extra_headers=_act_as("A", workspace=f"orr-{suffix}"), tries=2)
     return CheckResult("org_revoke_isolation", not still_sees,
         f"sees_after_revoke={still_sees} (must be False)  marker={suffix}")
 
@@ -2217,13 +2255,13 @@ def check_multi_org_membership(api: str, token: str) -> CheckResult:
             extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=15.0)
         if code != 200:
             return CheckResult("multi_org_membership", False, f"ingest {org} failed http={code}")
-    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
-        body={"query": f"MULTI-ORG {suffix}", "top_k": 10, "include_text": True, "llm_prefilter": False},
-        extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=12.0)
-    seen = {r["source_id"] for r in (body2 or {}).get("results", [])}
-    both = sx in seen and sy in seen
+    found_x = _search_finds(api, token, f"MULTI-ORG {suffix}", sx,
+                            extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws))
+    found_y = _search_finds(api, token, f"MULTI-ORG {suffix}", sy,
+                            extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws))
+    both = found_x and found_y
     return CheckResult("multi_org_membership", both,
-        f"sees_org_x={sx in seen}  sees_org_y={sy in seen} (both must be True)  marker={suffix}")
+        f"sees_org_x={found_x}  sees_org_y={found_y} (both must be True)  marker={suffix}")
 
 
 def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
@@ -2234,16 +2272,26 @@ def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
     WHY(task-11): /stats/workspaces scopes to the caller's memberships for
     non-admin callers (confirmed: handler uses member_ws_ids from info.memberships,
     falls back to {workspace_id} for legacy JWTs). Row key is 'workspace_id'
-    (not 'id') — assertion adjusted to the actual shape."""
+    (not 'id') — assertion adjusted to the actual shape.
+
+    WHY(fix2-stats-workspace): /stats/workspaces rows come from GROUP BY
+    workspace_id on the chunks table, so a brand-new empty workspace never
+    appears. Ingest one chunk first so the workspace shows up in the query.
+    """
     suffix = int(time.time())
     ws = f"swa-{suffix}"
     ox, oy = f"swx-{suffix}", f"swy-{suffix}"
+    # Ingest a chunk so ws has at least one row in the chunks table.
+    _http("POST", f"{api}/memory/put", token,
+        body={"source_id": f"smoke:stats-ws:{suffix}", "source_type": "note",
+              "repo": "smoke-stats-ws", "path": "p",
+              "content": f"STATS-WS {suffix}", "categorize": False},
+        extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=15.0)
     code, body, _ = _http("GET", f"{api}/stats/workspaces", token,
         extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=12.0)
     if code != 200 or not isinstance(body, dict):
         return CheckResult("stats_workspaces_lists_all", False, f"http={code} body={body}")
     ids = {w.get("workspace_id") for w in body.get("workspaces", [])}
-    # The personal/active ws must be present; org rows appear once they hold data.
     ok = ws in ids
     return CheckResult("stats_workspaces_lists_all", ok,
         f"active_ws_listed={ws in ids}  rows={len(ids)} (active must be listed)  marker={suffix}")
