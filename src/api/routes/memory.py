@@ -743,9 +743,15 @@ def _bust_stats() -> None:
 async def search_alias(
     request: MemorySearchRequest,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> dict:
-    """Alias for /memory/search — used by Laravel MayringMcpClient."""
-    return await memory_search(request, workspace_id)
+    """Alias for /memory/search — used by Laravel MayringMcpClient.
+
+    Must declare + forward ``info`` itself: calling memory_search() directly is a
+    plain Python call, so memory_search's own ``Depends(get_token_info)`` default
+    is never resolved (it would stay a Depends object → ``info.sub`` raises → 500).
+    """
+    return await memory_search(request, workspace_id, info)
 
 
 @router.post("/ingest")
