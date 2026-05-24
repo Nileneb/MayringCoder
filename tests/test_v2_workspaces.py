@@ -553,3 +553,106 @@ class TestIngestOrgIdResolution:
 
         app.dependency_overrides.clear()
         _deps._conn = None
+
+
+class TestIngestUserIdResolution:
+    """L3 FIX1: visibility='user' bei /memory/put muss user_id aus TokenInfo.sub stempeln.
+
+    Ohne diesen Stamp: _scope_filter's `s.visibility='user' AND s.user_id=?`
+    findet nie einen Match → 'user'-Visibility (cross-device-of-same-human) ist
+    für REST-Caller komplett gebrochen. MCP-Pfad tut dies korrekt via
+    resolve_write_visibility; REST-Pfad war blind dafür.
+    """
+
+    def test_ingest_user_visibility_stamps_user_id(self, monkeypatch):
+        """visibility='user' → source_dict bekommt user_id == caller.sub."""
+        from fastapi.testclient import TestClient
+        from src.api.server import app
+        from src.api.auth import get_token_info, get_workspace
+        import src.api.dependencies as _deps
+        import src.api.routes.memory as _mod
+
+        db = _db()
+        ti = TokenInfo(
+            workspace_id="ws-bene",
+            sub="42",
+            scopes=("mcp:memory",),
+            memberships=(
+                Membership(id="ws-bene", type="personal", role="owner"),
+            ),
+        )
+        app.dependency_overrides[get_token_info] = lambda: ti
+        app.dependency_overrides[get_workspace] = lambda: "ws-bene"
+        _deps._conn = db
+
+        captured: dict = {}
+
+        def _fake_ingest(source_dict, content, conn, chroma, ollama_url, model, opts, ws):
+            captured["source_dict"] = dict(source_dict)
+            return {"source_id": source_dict["source_id"], "chunk_ids": []}
+
+        monkeypatch.setattr(_mod, "_run_ingest", _fake_ingest)
+
+        client = TestClient(app)
+        resp = client.post(
+            "/memory/put",
+            json={
+                "source_id": "s-user-vis-1",
+                "content": "cross-device note",
+                "visibility": "user",
+            },
+            headers={"Authorization": "Bearer test"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert captured["source_dict"].get("visibility") == "user"
+        assert captured["source_dict"].get("user_id") == "42", (
+            "user_id must be stamped from TokenInfo.sub so _scope_filter "
+            "'s.visibility=user AND s.user_id=?' can match on cross-device reads"
+        )
+
+        app.dependency_overrides.clear()
+        _deps._conn = None
+
+    def test_ingest_non_user_visibility_does_not_stamp_user_id(self, monkeypatch):
+        """visibility='private' (not 'user') must NOT add user_id to source_dict."""
+        from fastapi.testclient import TestClient
+        from src.api.server import app
+        from src.api.auth import get_token_info, get_workspace
+        import src.api.dependencies as _deps
+        import src.api.routes.memory as _mod
+
+        db = _db()
+        ti = TokenInfo(
+            workspace_id="ws-bene",
+            sub="42",
+            scopes=("mcp:memory",),
+        )
+        app.dependency_overrides[get_token_info] = lambda: ti
+        app.dependency_overrides[get_workspace] = lambda: "ws-bene"
+        _deps._conn = db
+
+        captured: dict = {}
+
+        def _fake_ingest(source_dict, content, conn, chroma, ollama_url, model, opts, ws):
+            captured["source_dict"] = dict(source_dict)
+            return {"source_id": source_dict["source_id"], "chunk_ids": []}
+
+        monkeypatch.setattr(_mod, "_run_ingest", _fake_ingest)
+
+        client = TestClient(app)
+        resp = client.post(
+            "/memory/put",
+            json={
+                "source_id": "s-private-1",
+                "content": "private note",
+                "visibility": "private",
+            },
+            headers={"Authorization": "Bearer test"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert "user_id" not in captured["source_dict"], (
+            "visibility='private' must not add user_id (only 'user' needs it)"
+        )
+
+        app.dependency_overrides.clear()
+        _deps._conn = None

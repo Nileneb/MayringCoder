@@ -351,6 +351,14 @@ async def memory_put(
                     first_org, info.sub,
                 )
                 source_dict["org_id"] = first_org
+        elif request.visibility == "user":
+            # WHY(fix-user-visibility-rest): _scope_filter matches
+            # `s.visibility='user' AND s.user_id=?` — without stamping
+            # user_id here the column stays NULL and the filter never
+            # matches, so 'user' cross-device visibility is fully broken
+            # for REST callers. MCP path handles this via
+            # resolve_write_visibility; mirror it here.
+            source_dict["user_id"] = info.sub
         elif request.org_id:
             # Honor explicit org_id even outside visibility=org (e.g. when
             # caller wants to stamp the source for later promotion).
