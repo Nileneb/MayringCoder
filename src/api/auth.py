@@ -37,9 +37,6 @@ def _maybe_act_as(
     orgs: object,
     workspace: object,
 ) -> TokenInfo:
-    sub = _coerce_header(sub)
-    orgs = _coerce_header(orgs)
-    workspace = _coerce_header(workspace)
     """Admin/service-only test harness: simulate another caller so the prod
     smoke can prove cross-tenant isolation.
 
@@ -51,6 +48,9 @@ def _maybe_act_as(
     trivially passes. Non-privileged callers' act-as headers are ignored (never
     escalate).
     """
+    sub = _coerce_header(sub)
+    orgs = _coerce_header(orgs)
+    workspace = _coerce_header(workspace)
     if not (sub or orgs or workspace):
         return info
     if os.getenv("MAYRING_ALLOW_ACT_AS", "").lower() not in ("1", "true", "yes"):

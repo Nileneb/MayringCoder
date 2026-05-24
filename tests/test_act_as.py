@@ -61,3 +61,27 @@ def test_act_as_ignored_for_non_privileged_token(monkeypatch):
 def test_no_act_as_headers_is_passthrough(service_token):
     info = _run(get_token_info(creds=_creds("svc")))
     assert "*" in info.scopes
+
+
+def test_act_as_allowed_for_admin_jwt(monkeypatch):
+    """The privileged caller may be an admin JWT (scope 'admin'), not only the
+    service token ('*'). Both arms of _is_privileged must permit act-as."""
+    monkeypatch.setattr("src.api.auth._SERVICE_TOKEN", "svc")
+    monkeypatch.setenv("MAYRING_ALLOW_ACT_AS", "1")
+    admin = TokenInfo(workspace_id="ws-admin", scopes=("mcp:memory", "admin"), sub="1")
+    with patch("src.api.auth.validate_jwt_token", return_value=admin):
+        info = _run(get_token_info(creds=_creds("admin-jwt"), x_act_as_sub="99",
+                                   x_act_as_orgs="org-z", x_act_as_workspace="ws-z"))
+    assert info.sub == "99"
+    assert info.workspace_id == "ws-z"
+    assert set(info.org_ids) == {"org-z"}
+    assert info.is_admin is False  # synthetic identity is downgraded
+
+
+def test_act_as_workspace_only_keeps_real_sub(service_token):
+    """Spec: 'at least one header' triggers the override. With only a workspace
+    header, sub falls back to the real caller's sub and orgs stay empty."""
+    info = _run(get_token_info(creds=_creds("svc"), x_act_as_workspace="ws-only"))
+    assert info.workspace_id == "ws-only"
+    assert info.org_ids == ()
+    assert "*" not in info.scopes  # still downgraded
