@@ -1988,6 +1988,28 @@ def check_reranker_cat_match_fires(api: str, token: str) -> CheckResult:
     )
 
 
+def check_igio_lens_axes_present(api: str, token: str) -> CheckResult:
+    """IGIO-Lens acceptance: GET /stats/igio-lens returns all four IGIO axes with
+    integer counts + an unclassified bucket (workspace-scoped). Guards the
+    endpoint the IgioLens view binds to — if it 404s/changes shape the lens goes
+    silently empty."""
+    code, body, _ = _http("GET", f"{api}/stats/igio-lens", token, timeout=20.0)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("igio_lens_axes_present", False, f"http={code} body={body}")
+    axes = body.get("axes") or {}
+    expected = {"issue", "goal", "intervention", "outcome"}
+    have_all = expected <= set(axes)
+    counts_ok = all(isinstance((axes.get(a) or {}).get("count"), int) for a in expected)
+    uncl_ok = isinstance((body.get("unclassified") or {}).get("count"), int)
+    ok = have_all and counts_ok and uncl_ok
+    summary = {a: (axes.get(a) or {}).get("count") for a in sorted(expected)}
+    return CheckResult(
+        "igio_lens_axes_present", ok,
+        f"http={code} axes={summary} unclassified={(body.get('unclassified') or {}).get('count')} "
+        f"(need all 4 axes + int counts + unclassified)",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -2026,6 +2048,7 @@ ALL_CHECKS = [
     ("mayring_process_fail_closed",   check_mayring_process_fail_closed),
     ("ingest_links_categories",       check_ingest_links_categories),
     ("reranker_cat_match_fires",      check_reranker_cat_match_fires),
+    ("igio_lens_axes_present",        check_igio_lens_axes_present),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
