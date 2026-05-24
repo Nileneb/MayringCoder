@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends
 
 from src.api.auth import get_workspace
 from src.api.dependencies import get_conn as _conn
+from src.api import shared_state as _shared_state
 
 router = APIRouter()
 
@@ -51,6 +52,11 @@ def _dashboard_ttl_cache(fn):
     async def _wrapper(**kwargs):
         key = fn.__name__ + ":" + repr(sorted(kwargs.items()))
         now = _time.monotonic()
+        # Shared L2 (Redis) — consistent across uvicorn workers when reachable.
+        shared = _shared_state.cache_get("dash:" + key)
+        if shared is not None:
+            return shared
+        # Per-process L1 (and the sole cache if Redis is down).
         hit = _DASH_CACHE.get(key)
         if hit is not None and hit[0] > now:
             return hit[1]
@@ -58,6 +64,7 @@ def _dashboard_ttl_cache(fn):
         if len(_DASH_CACHE) >= _DASH_CACHE_MAX:
             _DASH_CACHE.clear()
         _DASH_CACHE[key] = (now + _DASH_CACHE_TTL, value)
+        _shared_state.cache_set("dash:" + key, value, _DASH_CACHE_TTL)
         return value
 
     return _wrapper
@@ -470,7 +477,10 @@ async def activations(
 
     info = _TOKEN_CTX.get()
     is_admin = bool(info and "admin" in (info.scopes or ()))
-    items = list(_RECENT_ACTIVATIONS)
+    # Shared (Redis) activations span all workers; None → Redis down, use local deque.
+    items = _shared_state.activations_redis()
+    if items is None:
+        items = list(_RECENT_ACTIVATIONS)
     if not is_admin:
         items = [a for a in items if a.get("workspace_id") == workspace_id]
     items = sorted(items, key=lambda a: a.get("ts", 0), reverse=True)[:limit]

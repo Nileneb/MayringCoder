@@ -41,6 +41,12 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
     import time as _time_g
     from mayring_core.config import CACHE_DIR, WIKI_DIR
     from src.api.memory_service import _RECENT_ACTIVATIONS
+    from src.api import shared_state as _shared_state
+
+    # Shared activations span all uvicorn workers; None → Redis down → local deque.
+    _acts = _shared_state.activations_redis()
+    if _acts is None:
+        _acts = list(_RECENT_ACTIVATIONS)
 
     if not slug and not workspace_id:
         return {"clusters": [], "edges": [], "activations": [], "error": "slug or workspace_id required"}
@@ -64,7 +70,7 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
         for c in data.get("clusters", []):
             for m in c.get("members", []):
                 member_lookup[m] = c["cluster_id"]
-        for ev in _RECENT_ACTIVATIONS:
+        for ev in _acts:
             if ev["workspace_id"] != wid or now - ev["ts"] > 60:
                 continue
             hit: set[str] = set()
@@ -115,7 +121,7 @@ async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json
 
     now = _time_g.time()
     activations = []
-    for ev in _RECENT_ACTIVATIONS:
+    for ev in _acts:
         if ev["workspace_id"] != wid or now - ev["ts"] > 60:
             continue
         hit: set[str] = set()

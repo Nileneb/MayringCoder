@@ -237,6 +237,9 @@ def bust_stats_cache() -> None:
     """
     _STATS_CACHE["fresh"] = None
     _STATS_CACHE["expires_at"] = 0.0
+    # Also drop the shared (cross-worker) copy so every worker recomputes.
+    from src.api import shared_state
+    shared_state.cache_del("stats:summary")
 
 
 def _stats_summary_uncached() -> dict:
@@ -330,11 +333,18 @@ def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
          is NO cache at all (first-ever call + DB down).
     """
     import time as _t
+    from src.api import shared_state
     _ = workspace_id  # auth-only; response is global
 
     now = _t.time()
 
-    # Fast path — cache hit
+    # Shared L2 (Redis) — authoritative across uvicorn workers when reachable,
+    # so the dashboard shows the same numbers regardless of which worker answers.
+    shared = shared_state.cache_get("stats:summary")
+    if shared is not None:
+        return {**shared, "_cache_status": "hit"}
+
+    # Per-process L1 fast path (also the sole cache if Redis is down).
     if _STATS_CACHE["fresh"] is not None and now < _STATS_CACHE["expires_at"]:
         return {**_STATS_CACHE["fresh"], "_cache_status": "hit"}
 
@@ -344,6 +354,7 @@ def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
         _STATS_CACHE["fresh"] = result
         _STATS_CACHE["stale"] = result
         _STATS_CACHE["expires_at"] = now + _STATS_CACHE_TTL
+        shared_state.cache_set("stats:summary", result, _STATS_CACHE_TTL)
         return {**result, "_cache_status": "fresh"}
     except Exception as exc:
         # DB-crash or timeout — fall back to stale cache if we have one.

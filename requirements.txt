@@ -3,6 +3,7 @@ httpx
 python-dotenv
 pyyaml
 chromadb
+redis
 mcp
 Pillow
 PyJWT

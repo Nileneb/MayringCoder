@@ -32,12 +32,17 @@ def run_search(
         session_compacted=session_compacted,
     )
     workspace_id = opts.get("workspace_id", "default")
-    _RECENT_ACTIVATIONS.append({
+    _activation = {
         "workspace_id": workspace_id,
         "query": query,
         "source_ids": [r.source_id for r in results],
         "ts": _time.time(),
-    })
+    }
+    _RECENT_ACTIVATIONS.append(_activation)  # per-process L1 fallback
+    # Write-through to the shared ring so every uvicorn worker (and the
+    # dashboard, whichever worker serves it) sees this search (§5.3).
+    from src.api import shared_state
+    shared_state.activation_push(_activation)
     response = {
         "results": [r.to_dict() for r in results],
         "prompt_context": compress_for_prompt(results, char_budget),
