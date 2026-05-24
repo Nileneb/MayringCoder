@@ -196,7 +196,21 @@ Celery/job-queue rework; full async rewrite; per-prompt-trace UI (separate, buil
 ### Worker-Tuning
 `--workers 2` löste bereits den Hook-Timeout (3 Suchen ~4s), ließ aber `/health` ~2.5s hinter einer Suche warten. `--workers 4` gibt der Hook-Last einen freien Worker → `/health` <0.2s. (Zwischenmessung „alle 502 bei workers=4" war das Deploy-Cutover-/Boot-Fenster, kein OOM — 4 Worker laufen stabil.)
 
+### §5.2 — run_in_threadpool + per-thread-Connections (umgesetzt, commit 6fec396)
+Der Such-Body (`_memory_search_sync`) läuft jetzt via `starlette.run_in_threadpool`,
+`dependencies.get_conn()` ist thread-local (jeder Worker-Thread eigene SQLite-
+Connection; expliziter `_conn`-Override gewinnt weiter → Tests unverändert). Damit
+sind die zwei Vorbedingungen erfüllt, die der reverted 8b0ff34-Versuch (bbabe22)
+nicht hatte: Chroma-Server (HttpClient, concurrency-safe) + per-thread-Connections.
+TDD: `tests/test_threadpool_per_thread_conn.py`; volle Suite 1681 passed.
+
+**Verifiziert auf Prod (warm, Hook-Muster 3 concurrent):** Suchen alle 200, max 5.2s;
+**`/health` unter Such-Last max 0.116s / p50 0.069s** (vorher 2.5-6.8s) → §5.2-Ziel
+erreicht. Einzelsuche warm 2.2-2.9s (kein per-thread-Overhead-Regress). Caveat: bei
+6-concurrent (> Hook-Muster) sättigt der Embed-Pfad (three.linn.games) → Suchen
+spiken; das ist Embed-Kapazität (Spec §8-Risiko), nicht der Event-Loop.
+
 ### Offen / separat
 - `coverage_map_complete` Smoke rot: `missing=[429]` — Coverage-Map-Docs-Lücke, unabhängig von dieser Arbeit (#429).
 - Phase 3 (Redis Cross-Worker-State): deferred bis Dashboard-Inkonsistenz unter Multi-Worker tatsächlich auffällt.
-- `/health <0.2s` auch unter n>Worker-Last: bräuchte `run_in_threadpool` mit per-thread-Connections (§5.2, bewusst deferred).
+- Embed-Concurrency-Limit an `three.linn.games` (>3 gleichzeitige Suchen): nächster echter Engpass, falls je mehr als die 3 Hook-Suchen gleichzeitig nötig.
