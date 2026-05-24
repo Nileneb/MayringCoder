@@ -46,8 +46,12 @@ JWT_PATH = os.path.expanduser("~/.config/mayring/hook.jwt")
 # 'chroma_query_empty' forever (not a cold-start, not a regression). Every check
 # that asserts on vector hits MUST target the canonical populated workspace via
 # X-Workspace-Id. env-overridable for other tenants.
+# WHY(workspace-repoint 2026-05-24): die Memory wurde von der verwaisten 019d6933
+# auf die app.linn.games-SoT 019e14d6 ("Bene Workspace") re-pointed — 019d6933 ist
+# jetzt leer. Der Smoke muss den kanonischen Ziel-Workspace targeten (nicht auf den
+# Alias-Resolver angewiesen sein).
 SMOKE_VECTOR_WORKSPACE = os.environ.get(
-    "SMOKE_RAG_WORKSPACE", "019d6933-002e-7153-a7df-f14e4c7d52b4")
+    "SMOKE_RAG_WORKSPACE", "019e14d6-0489-7348-bca8-e29c11293cb7")
 
 
 # ---------------------------------------------------------------------------

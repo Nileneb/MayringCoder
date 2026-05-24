@@ -75,7 +75,7 @@ jobs:
         run: |
           ENV_FILE="$HOME/app.linn.games/.env"
           TOK="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
-          WS="${SMOKE_RAG_WORKSPACE:-019d6933-002e-7153-a7df-f14e4c7d52b4}"
+          WS="${SMOKE_RAG_WORKSPACE:-019e14d6-0489-7348-bca8-e29c11293cb7}"
           for i in $(seq 1 24); do
             diag=$(curl -sS -m 20 -X POST https://mcp.linn.games/memory/search \
               -H "Authorization: Bearer $TOK" -H "X-Workspace-Id: $WS" \
