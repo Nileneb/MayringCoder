@@ -173,7 +173,8 @@ def _login_via_sanctum(sanctum_token: str) -> str:
 
 def _http(method: str, url: str, token: str, body: dict | None = None,
           timeout: float = 10.0,
-          workspace_id: str | None = None) -> tuple[int, dict | None, float]:
+          workspace_id: str | None = None,
+          extra_headers: dict | None = None) -> tuple[int, dict | None, float]:
     """Returns (status_code, parsed_json_or_None, elapsed_seconds).
 
     Retries on 502/503/504 and connection errors up to 6 times with a
@@ -204,6 +205,8 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
     }
     if workspace_id:
         headers["X-Workspace-Id"] = workspace_id
+    if extra_headers:
+        headers.update(extra_headers)
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     t0 = time.time()
@@ -1057,20 +1060,29 @@ def check_ingest_state_field(api: str, token: str) -> CheckResult:
 
 
 def _http_await_source(method: str, url: str, token: str, *, body=None,
-                       timeout: float = 15.0, tries: int = 6, delay: float = 0.5):
-    """Like _http, but retry while the response is 404 — for operating on a
-    just-PUT source. Multi-worker + SQLite-WAL has a sub-second window where a
-    source committed by one worker isn't yet visible to another (the create→
-    immediately-PATCH the smoke does; a human in the UI never hits it). Retries
-    up to ~tries*delay so the check tests the visibility/share LOGIC, not the
-    cross-process commit-propagation timing."""
-    code, body_r, hdrs = _http(method, url, token, body=body, timeout=timeout)
+                       timeout: float = 15.0, tries: int = 6, delay: float = 0.5,
+                       extra_headers: dict | None = None):
+    """Like _http, but retry while the response is 404 (just-PUT source not yet
+    visible across workers). Any non-404 (200/403/...) returns immediately."""
+    code, body_r, hdrs = _http(method, url, token, body=body, timeout=timeout, extra_headers=extra_headers)
     for _ in range(tries - 1):
         if code != 404:
             break
         time.sleep(delay)
-        code, body_r, hdrs = _http(method, url, token, body=body, timeout=timeout)
+        code, body_r, hdrs = _http(method, url, token, body=body, timeout=timeout, extra_headers=extra_headers)
     return code, body_r, hdrs
+
+
+def _act_as(sub: str, *, orgs: tuple[str, ...] = (), workspace: str | None = None) -> dict:
+    """Build X-Act-As-* headers so a privileged smoke token simulates another
+    caller. Requires MAYRING_ALLOW_ACT_AS=1 on the server (set in the smoke
+    job env). workspace defaults to the caller's home if omitted."""
+    h = {"X-Act-As-Sub": sub}
+    if orgs:
+        h["X-Act-As-Orgs"] = ",".join(orgs)
+    if workspace:
+        h["X-Act-As-Workspace"] = workspace
+    return h
 
 
 def check_visibility_isolation(api: str, token: str) -> CheckResult:
