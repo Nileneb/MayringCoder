@@ -115,12 +115,21 @@ jobs:
           ENV_FILE="$HOME/app.linn.games/.env"
           TOK="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
           WS="${SMOKE_RAG_WORKSPACE:-019e14d6-0489-7348-bca8-e29c11293cb7}"
+          # WHY(smoke-warmup-resilience 2026-05-24): the FIRST search after a
+          # container restart can exceed the 20s curl budget while Chroma's HNSW
+          # index loads — curl exits 28, python gets empty stdin and json.load
+          # raises (exit 1), and under `bash -e` that command-substitution
+          # failure aborted the ENTIRE retry loop on the first slow probe,
+          # defeating its purpose (red smoke on a healthy-but-cold server). The
+          # `|| true` makes a slow/empty/non-JSON probe count as "not warm yet"
+          # so the loop keeps polling — it still fails correctly if NO probe
+          # ever reaches 'ok' (genuine missing-embeddings regression).
           for i in $(seq 1 24); do
             diag=$(curl -sS -m 20 -X POST https://mcp.linn.games/memory/search \
               -H "Authorization: Bearer $TOK" -H "X-Workspace-Id: $WS" \
               -H 'Content-Type: application/json' \
               -d "{\"query\":\"chroma warmup probe $i $RANDOM\",\"top_k\":3,\"include_text\":false}" \
-              | python3 -c "import sys,json; print((json.load(sys.stdin).get('diagnostics') or {}).get('vector_stage',''))" 2>/dev/null)
+              | python3 -c "import sys,json; print((json.load(sys.stdin).get('diagnostics') or {}).get('vector_stage',''))" 2>/dev/null) || true
             echo "warmup $i: ${diag:-<none>}"
             case "$diag" in ok*) echo "chroma warm after ${i} probes"; break;; esac
             sleep 5
