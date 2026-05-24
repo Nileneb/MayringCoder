@@ -85,3 +85,20 @@ def test_act_as_workspace_only_keeps_real_sub(service_token):
     assert info.workspace_id == "ws-only"
     assert info.org_ids == ()
     assert "*" not in info.scopes  # still downgraded
+
+
+def test_act_as_orgs_cannot_inject_privilege(service_token):
+    """Defense-in-depth: org ids and scopes are orthogonal axes. A crafted
+    X-Act-As-Orgs containing '*'/'admin' lands as literal org-bucket ids and
+    must NEVER raise the synthetic identity's privilege."""
+    info = _run(get_token_info(
+        creds=_creds("svc"),
+        x_act_as_sub="42",
+        x_act_as_orgs="*,admin,org-real",
+        x_act_as_workspace="ws-x",
+    ))
+    assert info.is_admin is False
+    assert "*" not in info.scopes
+    assert "admin" not in info.scopes
+    # the literal strings are confined to org_ids, never privilege
+    assert set(info.org_ids) == {"*", "admin", "org-real"}
