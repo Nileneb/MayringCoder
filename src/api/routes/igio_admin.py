@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.api.auth import get_token_info
 from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
+from src.wiki_v2.igio_classifier import VALID_AXES
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -76,6 +77,65 @@ async def igio_coverage(
         "total_active": total,
         "with_axis": with_axis,
         "ratio": ratio,
+    }
+
+
+@router.get("/stats/igio-lens")
+async def igio_lens(
+    limit: int = 10,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Per-IGIO-axis distribution + recent chunks for the IGIO-Lens view.
+
+    Workspace-scoped exactly like /stats/igio-coverage: a service token / admin
+    (scope '*') sees all workspaces; a regular JWT sees only its own. Uncached —
+    a GROUP BY on idx_chunks_workspace_id is cheap, and caching a live feed caused
+    write-then-read staleness elsewhere.
+    """
+    limit = max(1, min(limit, 50))
+    conn = _conn()
+    admin = _is_admin(info)
+    ws = info.workspace_id
+    ws_clause = "" if admin else "AND workspace_id = ?"
+    ws_params: tuple = () if admin else (ws,)
+    scope = "all" if admin else "workspace"
+
+    counts = {
+        (row[0] or ""): row[1]
+        for row in conn.execute(
+            f"SELECT igio_axis, COUNT(*) FROM chunks "
+            f"WHERE is_active = 1 {ws_clause} GROUP BY igio_axis",
+            ws_params,
+        ).fetchall()
+    }
+
+    axes: dict[str, dict] = {}
+    for axis in VALID_AXES:
+        rows = conn.execute(
+            f"SELECT chunk_id, summary, text, source_id, igio_confidence, created_at "
+            f"FROM chunks WHERE is_active = 1 AND igio_axis = ? {ws_clause} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            (axis, *ws_params, limit),
+        ).fetchall()
+        axes[axis] = {
+            "count": counts.get(axis, 0),
+            "chunks": [
+                {
+                    "chunk_id":  r[0],
+                    "preview":   (r[1] or r[2] or "")[:160],
+                    "source_id": r[3],
+                    "confidence": round(r[4] or 0.0, 3),
+                    "created_at": r[5],
+                }
+                for r in rows
+            ],
+        }
+
+    return {
+        "workspace_id": ws,
+        "scope": scope,
+        "axes": axes,
+        "unclassified": {"count": counts.get("", 0)},
     }
 
 
