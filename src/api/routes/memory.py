@@ -9,6 +9,7 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_chroma as _get_chroma, get_conn as _get_conn
@@ -97,15 +98,21 @@ async def memory_search(
 ) -> dict:
     """Search workspace memory.
 
-    NOTE(2026-05-24): a ``run_in_threadpool`` offload was tried here and
-    REVERTED. On the single shared SQLite connection + single Chroma client,
-    concurrent searches in threadpool workers DEADLOCKED (3 concurrent → all
-    hung 35s, vs serialised-but-completing when run on the event loop). The real
-    fix for the hook's 3-concurrent-search pattern is multi-worker / connection-
-    pool capacity (load-tested), NOT a threadpool over shared mutable state — do
-    not re-try the threadpool route without per-thread connections + a Chroma
-    client that is safe under concurrent queries.
+    The body (embed + Chroma query + SQLite rerank, ~3-4s) is fully synchronous,
+    so it runs in run_in_threadpool to keep the worker's event loop free — the
+    session hook fires 3 concurrent searches and /health must stay responsive
+    (api-concurrency-capacity §5.2). Thread-safe now: Chroma is a server
+    (HttpClient, safe under concurrent queries) and get_conn() hands each worker
+    thread its own SQLite connection — the two preconditions the earlier 8b0ff34
+    attempt lacked (it deadlocked on a shared connection + embedded client →
+    reverted in bbabe22).
     """
+    return await run_in_threadpool(_memory_search_sync, request, workspace_id, info)
+
+
+def _memory_search_sync(
+    request: MemorySearchRequest, workspace_id: str, info: TokenInfo
+) -> dict:
     try:
         # WHY(L7, v2-workspaces): without user_id + org_ids the retrieval
         # scope_filter sees only public+private — chunks shared via
