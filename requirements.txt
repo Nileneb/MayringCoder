@@ -7,8 +7,6 @@ mcp
 Pillow
 PyJWT
 anthropic
-python-telegram-bot
-openai-whisper
 fastapi
 uvicorn[standard]
 psycopg2-binary
