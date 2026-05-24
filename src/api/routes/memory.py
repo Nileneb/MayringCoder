@@ -9,7 +9,6 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
-from starlette.concurrency import run_in_threadpool
 
 from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_chroma as _get_chroma, get_conn as _get_conn
@@ -98,24 +97,15 @@ async def memory_search(
 ) -> dict:
     """Search workspace memory.
 
-    WHY(api-saturation 2026-05-24): the search body is fully synchronous
-    (embed + Chroma query + SQLite rerank, ~3-4s) and used to run directly on
-    the event loop — so concurrent searches (the session-start hook fires three:
-    primary/ambient/conversation) serialised and ballooned to 16-30s, blowing
-    the 9s hook timeout AND starving /health for everyone else. Offloading to
-    the threadpool frees the event loop so the embed/Chroma/CPU parts of
-    concurrent searches run in parallel. Safe on the shared connection: it is
-    check_same_thread=False and sqlite3 serialises its own calls (no
-    corruption); only the heavy non-DB work parallelises.
+    NOTE(2026-05-24): a ``run_in_threadpool`` offload was tried here and
+    REVERTED. On the single shared SQLite connection + single Chroma client,
+    concurrent searches in threadpool workers DEADLOCKED (3 concurrent → all
+    hung 35s, vs serialised-but-completing when run on the event loop). The real
+    fix for the hook's 3-concurrent-search pattern is multi-worker / connection-
+    pool capacity (load-tested), NOT a threadpool over shared mutable state — do
+    not re-try the threadpool route without per-thread connections + a Chroma
+    client that is safe under concurrent queries.
     """
-    return await run_in_threadpool(_memory_search_sync, request, workspace_id, info)
-
-
-def _memory_search_sync(
-    request: MemorySearchRequest,
-    workspace_id: str,
-    info: TokenInfo,
-) -> dict:
     try:
         # WHY(L7, v2-workspaces): without user_id + org_ids the retrieval
         # scope_filter sees only public+private — chunks shared via
