@@ -150,6 +150,34 @@ def test_resolve_from_token_canonicalizes_alias(conn):
     assert resolve_workspace_from_token(svc, override_header="old-ws", conn=conn) == "bene"
 
 
+def test_mcp_path_canonicalizes_alias(conn, monkeypatch):
+    """The MCP/connector workspace resolution must canonicalize aliases too.
+
+    Regression: the claude.ai Memory connector's pre-migration token
+    (workspace_id='old-ws') ingested into the ORPHANED workspace because
+    mcp_auth resolved without `conn` → no alias lookup. Both _effective_workspace_id
+    (no tool-arg) and _enforce_tenant (tool-arg path) must now map old→canonical.
+    """
+    from src.api import mcp_auth
+    from src.api.jwt_auth import TokenInfo
+    import src.api.dependencies as _deps
+
+    ensure_user_workspace(conn, 1, email="bene@linn.games")  # slug 'bene'
+    add_alias(conn, "old-ws", "bene")
+    monkeypatch.setattr(_deps, "_conn", conn)
+
+    tok = TokenInfo(workspace_id="old-ws", scopes=("mcp:memory",))
+    set_token = mcp_auth._TOKEN_CTX.set(tok)
+    try:
+        # default path (ingest without explicit workspace_id arg)
+        assert mcp_auth._effective_workspace_id() == "bene"
+        # tool-arg path: non-admin is pinned to their (canonicalized) workspace
+        assert mcp_auth._enforce_tenant(None) == "bene"
+        assert mcp_auth._enforce_tenant("ignored-by-non-admin") == "bene"
+    finally:
+        mcp_auth._TOKEN_CTX.reset(set_token)
+
+
 # ─── Unknown workspace ──────────────────────────────────────────────
 
 

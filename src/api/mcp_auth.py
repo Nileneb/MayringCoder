@@ -43,7 +43,17 @@ def _effective_workspace_id(caller_default: str = "default") -> str:
     if info is None:
         return caller_default or "default"
     from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
-    return resolve_workspace_from_token(info, override_header=None)
+    # conn → Alias-Auflösung (workspace-repoint): alte Tokens (019d6933 — z.B. der
+    # claude.ai-Memory-Connector, der vor der Migration ausgestellt wurde) lösen
+    # transparent auf die kanonische 019e14d6 auf. OHNE conn (wie bisher) blieb der
+    # MCP-/Connector-Ingest auf 019d6933 hängen → Goal/Memory im verwaisten
+    # Workspace. Ohne DB (Tests) bleibt der Resolver alias-los, bricht aber nicht.
+    try:
+        from src.api.dependencies import get_conn
+        conn = get_conn()
+    except Exception:  # noqa: BLE001 — ohne DB kein Alias, aber MCP-Auth darf nicht brechen
+        conn = None
+    return resolve_workspace_from_token(info, override_header=None, conn=conn)
 
 
 def _enforce_tenant(requested: str | None) -> str | None:
@@ -63,9 +73,18 @@ def _enforce_tenant(requested: str | None) -> str | None:
     info = _TOKEN_CTX.get(None)
     if info is None:
         return requested
-    if info.is_admin:
-        return requested
-    return info.workspace_id
+    target = requested if info.is_admin else info.workspace_id
+    # Alias-Canonicalization auch auf dem MCP-tool-arg-Pfad (workspace-repoint):
+    # ob admin-override oder gepinnter User-Workspace — 019d6933 → 019e14d6.
+    if not target:
+        return target
+    from mayring_core.identity.workspace_resolver import _canonicalize_alias
+    try:
+        from src.api.dependencies import get_conn
+        conn = get_conn()
+    except Exception:  # noqa: BLE001 — ohne DB kein Alias, aber MCP-Auth darf nicht brechen
+        conn = None
+    return _canonicalize_alias(conn, target)
 
 
 def _effective_user_id() -> str | None:
