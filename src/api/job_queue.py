@@ -87,7 +87,16 @@ def make_job(workspace_id: str) -> str:
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
-    return _JOBS.get(job_id)
+    job = _JOBS.get(job_id)
+    if job is not None:
+        return job
+    # Cross-worker (uvicorn --workers): a job created/updated by ANOTHER worker
+    # lives only in that process's _JOBS. _save_jobs writes the whole registry
+    # atomically (tmp+rename) on every change to the shared-volume file, so
+    # re-read it to find jobs this process didn't make. WHY(smoke-fix 2026-05-24):
+    # without this /jobs/{id} 404'd across workers → pipeline_stage_observability
+    # red after the move to --workers 4.
+    return _load_jobs().get(job_id)
 
 
 def python_exe() -> str:

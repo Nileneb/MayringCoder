@@ -183,7 +183,6 @@ async def jobs_history(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/feedback-log")
-@_dashboard_ttl_cache
 async def feedback_log(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
@@ -192,6 +191,13 @@ async def feedback_log(
 
     Killer-metric for memory effectiveness. ``referenced_rate`` answers
     "are we wasting prompt tokens?" at a glance.
+
+    NOT cached (WHY, smoke-fix 2026-05-24): this is a LIVE-movement metric —
+    ``injections_24h`` ticks up on every search. The 15s shared cache served the
+    pre-search value on an immediate re-read (feedback_log_movement smoke red once
+    the cartesian-join saturation that used to expire the cache between calls was
+    fixed). The COUNT is a range-scan on idx_context_feedback_captured (v12), so
+    running it per-poll is cheap.
     """
     conn = _conn()
     total_24h = conn.execute(
