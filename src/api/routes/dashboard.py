@@ -520,27 +520,40 @@ async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
                 member_ws_types[m.id] = m.type
 
     conn = _conn()
+    # WHY(smoke-fix 2026-05-24): the old query did
+    #   chunks c LEFT JOIN sources s ON s.workspace_id = c.workspace_id
+    # — a per-workspace CARTESIAN product (every chunk × every source in the same
+    # ws) before COUNT(DISTINCT). On bene's workspace (~60k chunks × ~4k sources)
+    # that's ~250M intermediate rows → /stats/workspaces timed out (smoke
+    # workspace_scoping/dashboard_endpoints red, box saturated). Count chunks and
+    # sources INDEPENDENTLY per workspace (index GROUP BY on workspace_id) and
+    # merge — identical result, O(chunks+sources) instead of O(chunks×sources).
     if is_admin:
-        rows = conn.execute(
-            "SELECT c.workspace_id, "
-            "       COUNT(DISTINCT c.chunk_id), "
-            "       COUNT(DISTINCT s.source_id), "
-            "       MAX(c.created_at) "
-            "FROM chunks c LEFT JOIN sources s ON s.workspace_id = c.workspace_id "
-            "GROUP BY c.workspace_id ORDER BY 4 DESC"
+        chunk_rows = conn.execute(
+            "SELECT workspace_id, COUNT(*), MAX(created_at) "
+            "FROM chunks GROUP BY workspace_id"
+        ).fetchall()
+        src_rows = conn.execute(
+            "SELECT workspace_id, COUNT(*) FROM sources GROUP BY workspace_id"
         ).fetchall()
     else:
         # SAFE: placeholders is "?,?,?" — no user-input concatenation.
         placeholders = ",".join("?" * len(member_ws_ids))
-        rows = conn.execute(
-            f"SELECT c.workspace_id, "
-            f"       COUNT(DISTINCT c.chunk_id), "
-            f"       COUNT(DISTINCT s.source_id), MAX(c.created_at) "
-            f"FROM chunks c LEFT JOIN sources s ON s.workspace_id = c.workspace_id "
-            f"WHERE c.workspace_id IN ({placeholders}) "
-            f"GROUP BY c.workspace_id ORDER BY 4 DESC",
+        chunk_rows = conn.execute(
+            f"SELECT workspace_id, COUNT(*), MAX(created_at) FROM chunks "
+            f"WHERE workspace_id IN ({placeholders}) GROUP BY workspace_id",
             tuple(member_ws_ids),
         ).fetchall()
+        src_rows = conn.execute(
+            f"SELECT workspace_id, COUNT(*) FROM sources "
+            f"WHERE workspace_id IN ({placeholders}) GROUP BY workspace_id",
+            tuple(member_ws_ids),
+        ).fetchall()
+    _src_counts = {r[0]: r[1] for r in src_rows}
+    # chunks drive the row set (matches the old chunks-LEFT-JOIN-sources shape:
+    # a ws with chunks but no sources still appears with sources=0).
+    rows = [(r[0], r[1], _src_counts.get(r[0], 0), r[2]) for r in chunk_rows]
+    rows.sort(key=lambda r: (r[3] or ""), reverse=True)  # ORDER BY last_activity DESC
 
     return {
         "workspace_id": workspace_id,
