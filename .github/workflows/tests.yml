@@ -35,6 +35,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-ci.txt
           pip install -e ./core
+          # Test-only: Parallelität (xdist) + Per-Test-Timeout. Bewusst NICHT in
+          # requirements.txt → kein Prod-Image-Bloat, kein Deploy.
+          pip install pytest-xdist pytest-timeout
 
       - name: pytest
-        run: pytest -q -p no:cacheprovider
+        # -n auto: parallel über alle Runner-Cores (single-threaded waren es ~12 min).
+        # --timeout: killt hängende Tests (z.B. Netzwerk-Retries ohne Ollama) statt
+        # die ganze Pipeline zu blocken. --durations: macht die langsamsten Tests
+        # sichtbar (Basis fürs Ausmisten veralteter, teuer getesteter Funktionen).
+        run: pytest -q -p no:cacheprovider -n auto --timeout=120 --timeout-method=thread --durations=15
