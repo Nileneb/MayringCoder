@@ -427,6 +427,17 @@ def test_migration_preserves_existing_data_realdb(tmp_path: Path) -> None:
     test_db = tmp_path / "memory.db"
     shutil.copy(real_db, test_db)
 
+    # Precondition: a real, POPULATED db. In CI the shared cache/memory.db can be
+    # a partial artifact from another test (codebook tables but no chunks) — this
+    # optional integration check then has nothing to verify, so skip rather than
+    # error on "no such table: chunks".
+    probe = sqlite3.connect(test_db)
+    has_chunks = probe.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks'").fetchone()
+    probe.close()
+    if not has_chunks:
+        pytest.skip("real memory.db has no chunks table (partial db) — nothing to migrate-check")
+
     before = sqlite3.connect(test_db).execute(
         "SELECT COUNT(*) FROM chunks"
     ).fetchone()[0]
