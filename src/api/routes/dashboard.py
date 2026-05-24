@@ -220,6 +220,88 @@ async def feedback_log(
 
 
 # ---------------------------------------------------------------------------
+# 3b. per-prompt retrieval trace  →  context_feedback_log (query + stage_scores)
+# ---------------------------------------------------------------------------
+
+@router.get("/stats/prompt-trace")
+@_dashboard_ttl_cache
+async def prompt_trace(
+    limit: int = 20,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Per-prompt retrieval trace — "what actually happened for THIS prompt?".
+
+    For each recent memory search: the query that ran, which chunks were
+    injected, their per-stage reranker scores (vector/symbolic/recency/
+    affinity/feedback/llm/predicted-topic/rationale/final), the reranker
+    version, and whether Claude ended up referencing the context. Sourced from
+    ``context_feedback_log`` (query + trigger_ids + stage_scores), enriched with
+    each chunk's ``source_id`` (batch-resolved in one query — no N+1).
+
+    Distinct from ``/stats/feedback-log``, which is the 24h aggregate metric and
+    deliberately omits the per-prompt query + scores.
+    """
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT id, query, trigger_ids, stage_scores, reranker_version, "
+        "       was_referenced, relevance_score, captured_at "
+        "FROM context_feedback_log "
+        "WHERE workspace_id = ? AND query != '' "
+        "ORDER BY id DESC LIMIT ?",
+        (workspace_id, limit),
+    ).fetchall()
+
+    parsed: list[tuple] = []
+    all_ids: set[str] = set()
+    for r in rows:
+        ids = _safe_json(r[2]) or []
+        if not isinstance(ids, list):
+            ids = []
+        scores = _safe_json(r[3]) or {}
+        if not isinstance(scores, dict):
+            scores = {}
+        all_ids.update(i for i in ids if isinstance(i, str))
+        parsed.append((r, ids, scores))
+
+    # Batch-resolve source_id for every chunk across all rows (no N+1).
+    src_map: dict[str, str] = {}
+    if all_ids:
+        ids_list = list(all_ids)
+        qp = ",".join("?" * len(ids_list))
+        for cid, sid in conn.execute(
+            f"SELECT chunk_id, source_id FROM chunks WHERE chunk_id IN ({qp})",
+            tuple(ids_list),
+        ).fetchall():
+            src_map[cid] = sid
+
+    prompts = []
+    for r, ids, scores in parsed:
+        chunks = []
+        for cid in ids:
+            sc = scores.get(cid, {}) if isinstance(scores.get(cid), dict) else {}
+            chunks.append({
+                "chunk_id": cid,
+                "source_id": src_map.get(cid),
+                "final": sc.get("f"),
+                "scores": sc,
+            })
+        # Order by the reranker's final score — what it actually preferred.
+        chunks.sort(key=lambda c: c["final"] if c["final"] is not None else -1.0,
+                    reverse=True)
+        prompts.append({
+            "id": r[0],
+            "query": r[1],
+            "reranker_version": r[4],
+            "was_referenced": bool(r[5]),
+            "relevance_score": r[6],
+            "captured_at": r[7],
+            "chunk_count": len(ids),
+            "chunks": chunks,
+        })
+    return {"workspace_id": workspace_id, "prompts": prompts}
+
+
+# ---------------------------------------------------------------------------
 # 4. cross-source chunk refs  →  chunk_source_refs
 # ---------------------------------------------------------------------------
 
