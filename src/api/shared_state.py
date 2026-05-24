@@ -85,6 +85,15 @@ def _degrade(exc: Exception) -> None:
 # Shared TTL cache (L2). Call sites keep their own L1 dict.
 # ---------------------------------------------------------------------------
 
+def enabled() -> bool:
+    """True if Redis is reachable. When True, Redis is the SINGLE source of truth
+    for shared caches: a caller must NOT serve a per-process L1 on a cache_get
+    miss — a bust on one worker deletes the shared key, but other workers' L1 is
+    untouched, so an L1-on-miss fallback would serve stale (the feedback_count_delta
+    bug). L1 is only legitimate when Redis is down."""
+    return _get_client() is not None
+
+
 def cache_get(key: str) -> Any | None:
     """Shared cache read. None = miss OR Redis unavailable (caller checks L1)."""
     c = _get_client()

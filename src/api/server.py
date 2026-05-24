@@ -344,8 +344,13 @@ def stats_summary(workspace_id: str = Depends(get_workspace)) -> dict:
     if shared is not None:
         return {**shared, "_cache_status": "hit"}
 
-    # Per-process L1 fast path (also the sole cache if Redis is down).
-    if _STATS_CACHE["fresh"] is not None and now < _STATS_CACHE["expires_at"]:
+    # Per-process L1 fast path — ONLY when Redis is down. WHY(feedback_count_delta):
+    # with Redis up, a cache_get miss means the key was busted (feedback/ingest
+    # called bust_stats_cache → cache_del) or expired → recompute. Serving the
+    # local L1 here would return a stale count that a bust on ANOTHER worker never
+    # cleared (delta=0). Redis is the single source when reachable.
+    if (not shared_state.enabled()
+            and _STATS_CACHE["fresh"] is not None and now < _STATS_CACHE["expires_at"]):
         return {**_STATS_CACHE["fresh"], "_cache_status": "hit"}
 
     # Slow path — run the heavy query

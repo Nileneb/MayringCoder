@@ -80,6 +80,50 @@ def test_db_crash_returns_stale_cache():
     assert result["chunks"]["active"] == 100  # cached data preserved
 
 
+def test_redis_up_miss_recomputes_instead_of_stale_l1():
+    """feedback_count_delta fix: Redis up + cache_get miss (busted on another
+    worker) MUST recompute — never serve a non-expired but stale local L1, which
+    a cross-worker bust didn't clear."""
+    from src.api.server import stats_summary, _STATS_CACHE
+    import src.api.shared_state as ss
+
+    stale = _fake_uncached_response()
+    stale["chunks"]["active"] = 1            # stale marker
+    _STATS_CACHE["fresh"] = stale
+    _STATS_CACHE["expires_at"] = time.time() + 100   # NOT expired → old code would serve it
+    fresh = _fake_uncached_response()
+    fresh["chunks"]["active"] = 999          # fresh marker
+
+    with patch.object(ss, "enabled", return_value=True), \
+         patch.object(ss, "cache_get", return_value=None), \
+         patch.object(ss, "cache_set", return_value=None), \
+         patch("src.api.server._stats_summary_uncached", return_value=fresh) as mock_func:
+        result = stats_summary(workspace_id="default")
+
+    assert mock_func.call_count == 1, "redis-up miss must recompute, not serve stale L1"
+    assert result["chunks"]["active"] == 999
+
+
+def test_redis_down_still_uses_local_l1():
+    """Fallback preserved: Redis down → the per-process L1 is still served."""
+    from src.api.server import stats_summary, _STATS_CACHE
+    import src.api.shared_state as ss
+
+    cached = _fake_uncached_response()
+    cached["chunks"]["active"] = 42
+    _STATS_CACHE["fresh"] = cached
+    _STATS_CACHE["expires_at"] = time.time() + 100
+
+    with patch.object(ss, "enabled", return_value=False), \
+         patch.object(ss, "cache_get", return_value=None), \
+         patch("src.api.server._stats_summary_uncached") as mock_func:
+        result = stats_summary(workspace_id="default")
+
+    assert mock_func.call_count == 0, "redis down → serve local L1"
+    assert result["chunks"]["active"] == 42
+    assert result["_cache_status"] == "hit"
+
+
 def test_db_crash_without_cache_returns_503():
     """Erste call jemals + DB down → 503, kein stale verfügbar."""
     from src.api.server import stats_summary
