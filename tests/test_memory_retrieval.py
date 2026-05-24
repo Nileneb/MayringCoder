@@ -723,3 +723,66 @@ def test_compress_for_prompt_renders_rationale_block():
     assert "cli._SLUG_RE" in out
     assert "path-traversal defence" in out
     assert "#185" in out
+
+
+class TestLlmAdvisorBatched:
+    """The PI-advisor (Stage 3b) must score every candidate in ONE batched,
+    fail-fast LLM call — the old per-candidate loop blew the 9s inject budget
+    (see _llm_relevance_scores WHY note)."""
+
+    def test_single_batched_call_maps_indices_to_chunk_ids(self, monkeypatch):
+        import mayring_core.ollama_client as oc
+        from mayring_core.memory.retrieval import _llm_relevance_scores
+
+        calls = []
+
+        def fake_generate(url, model, prompt, **kw):
+            calls.append((model, kw))
+            return '{"0": 0.9, "1": 0.1, "2": 0.4}'
+
+        monkeypatch.setattr(oc, "generate", fake_generate)
+        cands = [
+            _make_chunk("s:a", 0, text="alpha"),
+            _make_chunk("s:b", 1, text="beta"),
+            _make_chunk("s:c", 2, text="gamma"),
+        ]
+        scores = _llm_relevance_scores("q", cands, "http://x", model="mistral:7b-instruct")
+
+        assert len(calls) == 1, "must batch into a single LLM call, not one per candidate"
+        assert scores[cands[0].chunk_id] == 0.9
+        assert scores[cands[1].chunk_id] == 0.1
+        assert scores[cands[2].chunk_id] == 0.4
+        # latency-critical path: fail fast, no retry storm that re-blows the budget
+        assert calls[0][1].get("max_retries") == 1
+
+    def test_graceful_empty_on_bad_json(self, monkeypatch):
+        import mayring_core.ollama_client as oc
+        from mayring_core.memory.retrieval import _llm_relevance_scores
+
+        monkeypatch.setattr(oc, "generate", lambda *a, **k: "I cannot rate these.")
+        scores = _llm_relevance_scores("q", [_make_chunk("s:a", 0, text="alpha")], "http://x")
+        assert scores == {}, "unparseable response degrades to cheap ranking, not a crash"
+
+    def test_graceful_empty_on_timeout(self, monkeypatch):
+        import mayring_core.ollama_client as oc
+        from mayring_core.memory.retrieval import _llm_relevance_scores
+
+        def boom(*a, **k):
+            raise TimeoutError("slow/cold model")
+
+        monkeypatch.setattr(oc, "generate", boom)
+        scores = _llm_relevance_scores("q", [_make_chunk("s:a", 0, text="alpha")], "http://x")
+        assert scores == {}
+
+    def test_tolerates_trailing_prose_after_json(self, monkeypatch):
+        import mayring_core.ollama_client as oc
+        from mayring_core.memory.retrieval import _llm_relevance_scores
+
+        monkeypatch.setattr(
+            oc, "generate",
+            lambda *a, **k: '{"0": 1.0, "1": 0.0}\n\nExplanation: chunk 0 matches the query.',
+        )
+        cands = [_make_chunk("s:a", 0, text="alpha"), _make_chunk("s:b", 1, text="beta")]
+        scores = _llm_relevance_scores("q", cands, "http://x")
+        assert scores[cands[0].chunk_id] == 1.0
+        assert scores[cands[1].chunk_id] == 0.0
