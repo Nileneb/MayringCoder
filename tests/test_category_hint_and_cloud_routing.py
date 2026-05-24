@@ -78,6 +78,52 @@ def test_rerank_applies_category_hint_boost():
     assert score_with_overlap_hinted - score_with_baseline >= 0.07
 
 
+def test_category_id_match_helper():
+    from mayring_core.memory.retrieval import _category_id_match
+
+    assert _category_id_match({1, 2}, {2, 3}) == 1.0
+    assert _category_id_match({1}, {2}) == 0.0
+    assert _category_id_match(set(), {1}) == 0.0
+    assert _category_id_match({1}, set()) == 0.0
+
+
+def test_rerank_structured_category_id_boost(tmp_path):
+    """Reranker-v3: ein Kandidat mit chunk_categories-FK zur Query-Kategorie wird
+    geboostet — auch wenn seine category_labels NICHT matchen (isoliert cat_match
+    vom Free-String _CAT_HINT_BOOST)."""
+    from mayring_core.memory.retrieval import _rerank
+    from mayring_core.memory.schema import Chunk
+    from mayring_core.memory.store import init_memory_db
+
+    db = tmp_path / "m.db"
+    conn = init_memory_db(db)
+    now = "2026-05-24T00:00:00Z"
+    conn.execute("INSERT INTO codebooks(slug,description,version,auto_promote_threshold,"
+                 "created_at,updated_at) VALUES ('t','',1,3,?,?)", (now, now))
+    cb = conn.execute("SELECT id FROM codebooks WHERE slug='t'").fetchone()[0]
+    conn.execute("INSERT INTO codebook_categories(codebook_id,name,description,status,source,"
+                 "evidence_count,embedding_id) VALUES (?,?,?, 'active','imported',1,?)",
+                 (cb, "auth", "a", "cb:t:auth"))
+    cat_id = conn.execute("SELECT id FROM codebook_categories WHERE name='auth'").fetchone()[0]
+    conn.execute("INSERT INTO chunk_categories(chunk_id,category_id,codebook_version,confidence,"
+                 "source) VALUES (?,?,1,0.9,'deductive')", ("chk_struct", cat_id))
+    conn.commit()
+
+    # beide haben category_labels=["other"] → Free-String-Match feuert NICHT;
+    # nur chk_struct hat den chunk_categories-FK zu 'auth'.
+    chk_struct = Chunk(chunk_id="chk_struct", source_id="s1", chunk_level="function",
+                       ordinal=0, text="x", category_labels=["other"], workspace_id="default")
+    chk_none = Chunk(chunk_id="chk_none", source_id="s2", chunk_level="function",
+                     ordinal=0, text="y", category_labels=["other"], workspace_id="default")
+    vs = {"chk_struct": 0.5, "chk_none": 0.5}
+    ss = {"chk_struct": 0.5, "chk_none": 0.5}
+
+    out = _rerank([chk_struct, chk_none], vs, ss, top_k=2, conn=conn, category_hint=["auth"])
+    s_struct = next(r for r in out if r.chunk_id == "chk_struct").score_final
+    s_none = next(r for r in out if r.chunk_id == "chk_none").score_final
+    assert s_struct > s_none  # strukturierter category_id-Match hat geboostet
+
+
 def test_rerank_no_boost_when_hint_empty():
     """Empty hint-liste darf keine änderung gegen None bewirken."""
     from mayring_core.memory.retrieval import _rerank
