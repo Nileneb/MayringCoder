@@ -1,8 +1,8 @@
 # V2.0 Workspaces, Organisations & Public Memory — Spec
 
-**Stand:** 2026-05-10
-**Status:** Draft — wartet auf User-Approval
-**Verbunden mit:** Audit-Report (parallel zu diesem Doc), Issue #104 (MayringCoder), Issue #225 (app.linn.games)
+**Stand:** 2026-05-10 · **Finalisiert:** 2026-05-24
+**Status:** ✅ Approved (2026-05-24, User „leg los") — bereit für writing-plans
+**Verbunden mit:** Audit-Report (parallel zu diesem Doc), Issue #104 (MayringCoder), Issue #225 (app.linn.games), [[project_mayringcoder_workspace_model]], `docs/superpowers/specs/2026-05-24-workspace-repoint-migration.md`
 
 ## Problem (User-Aussage)
 
@@ -117,12 +117,13 @@ Keine destruktiven Migrationen nötig — alles additive.
 
 ### Implementations-Reihenfolge (Iterationen)
 
-**Iter 1 — JWT-Vertrag (Foundation):**
+**Iter 1 — JWT-Vertrag + Token-Reissue (Foundation):**
 1. Laravel: `workspaces.type`-column migration
 2. Laravel: `JwtIssuer::issueForUser` setzt `memberships[]` aus `workspace_users`
 3. MayringCoder: `TokenInfo` parst `memberships[]` (backward-compat: alte JWTs ohne field → 1-element array aus workspace_id)
 4. MayringCoder: `_scope_filter` nutzt `caller.org_ids` (List-IN-Query) statt `caller.org_id` (Single)
-5. **Smoke-test:** User in 2 orgs sieht beide org-buckets
+5. **Token-Reissue (Repoint-Loose-End):** das stale `hook.jwt` (`sub:2`/`019d6933`, kein `memberships[]`) per app.linn.games refresh-token neu minten → trägt jetzt `sub:1`/`019e14d6` + `memberships[]`. Watcher refresht selbst. Damit ist der Identitäts-Drift aus der Repoint-Migration geschlossen, OHNE den generellen alias-aware Resolver zu bauen (bleibt deferred).
+6. **Smoke-test:** User in 2 orgs sieht beide org-buckets; frisch geminteter Hook-JWT trifft `019e14d6`-Daten (nicht leer/`system`)
 
 **Iter 2 — Bug-Fixes (Hardening):**
 1. L7 — REST `/memory/search` passes `org_id`/`user_id` aus TokenInfo
@@ -138,7 +139,7 @@ Keine destruktiven Migrationen nötig — alles additive.
 **Iter 4 — Public-Share (UI):**
 1. `POST /sources/{id}/share`
 2. Livewire: "Share with Org/Public"-Button im Memory-Dashboard
-3. Re-Audit: 0 chunks im `system`-bucket nach Migration; alle `paper:`-sources im richtigen ws
+3. Re-Audit: keine *persönlichen* sources mehr im `system`-bucket (der Service-Bucket `system`=2.132 chunks + `public`=8 bleiben bewusst); alle `paper:`-sources im richtigen ws
 
 ### Test-Matrix (Smoke + Pest, alle MUST pass)
 
@@ -169,15 +170,16 @@ Keine destruktiven Migrationen nötig — alles additive.
 10. ✓ `stats_workspaces_lists_all` — `/stats/workspaces` listet alle
 11. ✓ `Bug L1-L8 fixed` — alle 8 Audit-Bugs durch ihre eigenen Tests abgedeckt
 
-## Open Questions (für User-Entscheidung)
+## Entscheidungen (finalisiert 2026-05-24)
 
-Defaults oben sind sinnvolle KISS-Wahlen. User-Entscheidung wenn anderes gewünscht:
+Alle Open-Questions aufgelöst — die KISS-Defaults wurden bestätigt:
 
-1. **Sub-Workspaces (project)** — drinhaben oder Iter 5+? **Default: Iter 5+.**
-2. **Workspace-Tier-Differenzierung** — Personal-tier kostenlos, Org-tier kostet? **Default: heutige Stripe-tier-Logik bleibt unverändert.**
-3. **Org-Branding** — eigenes Logo/Color für Orgs? **Default: nur `name`, kein Branding V2.**
-4. **Soft-delete** für Orgs — leave statt delete? **Default: hard-delete blockt wenn andere members; soft-delete bei single-owner-leave.**
-5. **Backfill der existierenden 671 system-bucket-sources** — wohin? **Default: SQL-migration mit `paper_id`→`p5_treffer.projekt_id`→`projekt.user_id`-Lookup; sources die das nicht resolven können bleiben in `system`.**
+1. **Sub-Workspaces (project)** → **Iter 5+ (deferred).** `projects` bleiben `project_id`-Subdimension innerhalb eines Workspace (8 Projekte unter Bene), nicht first-class WS. Kein Breaking Change für später.
+2. **Workspace-Tier** → **heutige Stripe-Logik unverändert, kein Billing-Gate** auf Org-Erstellung. (User-Entscheid 2026-05-24)
+3. **Org-Branding** → **nur `name`, kein Branding V2.**
+4. **Org-Delete** → **hybrid:** hard-delete blockt wenn andere Members existieren; soft-delete (leave/archive) bei Single-Owner-Leave. (User-Entscheid 2026-05-24)
+5. **Backfill system-bucket** → **weitgehend erledigt durch die Repoint-Migration** (2026-05-24): die persönlichen Daten liegen jetzt unter `019e14d6`; `system` (2.132 chunks, Service-Bucket) + `public` (8) bleiben bewusst unberührt. Kein zusätzlicher Backfill in A nötig.
+6. **Org-Split (Reassignment bestehender Projekte → Orgs)** → **out of scope A.** A liefert die Machinery (memberships/visibility/share) → NEUE org-shares funktionieren. Das Reassignment der 2 bestehenden Laravel-Orgs + `DiakonieWhisper`→Bergische-Diakonie ist ein separater späterer project→workspace-Move. (User-Entscheid 2026-05-24)
 
 ## Estimated Effort
 
