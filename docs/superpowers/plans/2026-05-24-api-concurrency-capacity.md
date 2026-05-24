@@ -210,7 +210,19 @@ erreicht. Einzelsuche warm 2.2-2.9s (kein per-thread-Overhead-Regress). Caveat: 
 6-concurrent (> Hook-Muster) sättigt der Embed-Pfad (three.linn.games) → Suchen
 spiken; das ist Embed-Kapazität (Spec §8-Risiko), nicht der Event-Loop.
 
+### Phase 3 — Redis Cross-Worker-State (umgesetzt, commit 1646246 + app.linn.games 4c7ea02)
+Multi-Worker (4) fragmentierte die per-Prozess-Caches (`_STATS_CACHE`, `_DASH_CACHE`,
+`_RECENT_ACTIVATIONS`) → `/stats` flackerte je nach bedienendem Worker. Fix:
+`src/api/shared_state.py` = fail-soft Redis-L2 (Call-Sites behalten per-Prozess-L1 →
+kein SQLite-Flood + Tests unverändert ohne Redis; Redis autoritativ wenn da).
+Verdrahtet: `stats_summary`(+bust), `_dashboard_ttl_cache`, `dashboard.activations`,
+`run_search`(write-through), `wiki_graph`. **Eigener `mayring-redis`** (redis:alpine,
+mayring-internal, kein Volume) statt app.linn.games' redis → keine Cross-Service-
+Kopplung (User-Entscheid). **Verifiziert Prod:** 6 parallele Suchen → `/stats/activations`
+8× = `[6,6,6,6,6,6,6,6]` konsistent (vorher fragmentiert). Suite 1686 passed.
+
 ### Offen / separat
-- `coverage_map_complete` Smoke rot: `missing=[429]` — Coverage-Map-Docs-Lücke, unabhängig von dieser Arbeit (#429).
-- Phase 3 (Redis Cross-Worker-State): deferred bis Dashboard-Inkonsistenz unter Multi-Worker tatsächlich auffällt.
+- `coverage_map_complete` Smoke: #429 (app.linn.games CI/CD-Konsolidierung) nachgetragen → grün (dcf52bd).
+- `/search`-Alias 500 (Laravel-Pfad): `info` wurde nicht aufgelöst — gefixt (2c9877b).
 - Embed-Concurrency-Limit an `three.linn.games` (>3 gleichzeitige Suchen): nächster echter Engpass, falls je mehr als die 3 Hook-Suchen gleichzeitig nötig.
+- `_JOBS`-Registry (job_queue): noch per-Prozess (bereits file-persistiert auf shared volume) — bei Bedarf ebenfalls auf shared_state migrieren.
