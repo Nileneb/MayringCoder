@@ -7,7 +7,7 @@ import os
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.api.jwt_auth import TokenInfo, validate_jwt_token
+from src.api.jwt_auth import Membership, TokenInfo, validate_jwt_token
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -17,15 +17,71 @@ _bearer = HTTPBearer(auto_error=False)
 _SERVICE_TOKEN = os.getenv("MCP_SERVICE_TOKEN", "")
 
 
+def _is_privileged(info: TokenInfo) -> bool:
+    """Service token (scope '*') or admin JWT — the only callers allowed to act-as."""
+    return info.is_admin or "*" in info.scopes
+
+
+def _coerce_header(val: object) -> str | None:
+    """Return the value only if it's a plain str; swallow FastAPI sentinel objects.
+
+    WHY(test-compat): when get_token_info is called directly (not via FastAPI
+    DI), Header(default=None) sentinel objects are passed for unset params.
+    """
+    return val if isinstance(val, str) else None
+
+
+def _maybe_act_as(
+    info: TokenInfo,
+    sub: object,
+    orgs: object,
+    workspace: object,
+) -> TokenInfo:
+    sub = _coerce_header(sub)
+    orgs = _coerce_header(orgs)
+    workspace = _coerce_header(workspace)
+    """Admin/service-only test harness: simulate another caller so the prod
+    smoke can prove cross-tenant isolation.
+
+    WHY(v2-org-acceptance): the 9 acceptance smokes need a SECOND identity
+    (User B / org-member / non-member); the service token only carries one.
+    STRICTLY gated: only a privileged token, only when MAYRING_ALLOW_ACT_AS is
+    set. The synthetic identity DROPS privilege (scope=('mcp:memory',)) — else
+    an admin/service caller bypasses _scope_filter and every isolation test
+    trivially passes. Non-privileged callers' act-as headers are ignored (never
+    escalate).
+    """
+    if not (sub or orgs or workspace):
+        return info
+    if os.getenv("MAYRING_ALLOW_ACT_AS", "").lower() not in ("1", "true", "yes"):
+        return info
+    if not _is_privileged(info):
+        return info
+    org_tuple = tuple(o.strip() for o in (orgs or "").split(",") if o.strip())
+    memberships = tuple(
+        Membership(id=o, type="organization", role="viewer") for o in org_tuple
+    )
+    ws = workspace or info.workspace_id
+    return TokenInfo(
+        workspace_id=ws,
+        scopes=("mcp:memory",),
+        sub=sub or info.sub,
+        memberships=memberships,
+        active_workspace_id=ws,
+    )
+
+
 async def get_token_info(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    x_act_as_sub: str | None = Header(default=None, alias="X-Act-As-Sub"),
+    x_act_as_orgs: str | None = Header(default=None, alias="X-Act-As-Orgs"),
+    x_act_as_workspace: str | None = Header(default=None, alias="X-Act-As-Workspace"),
 ) -> TokenInfo:
-    """Validate Bearer token — accepts RS256 JWT (users) or MCP_SERVICE_TOKEN (server daemons).
+    """Validate Bearer token — accepts RS256 JWT (users) or MCP_SERVICE_TOKEN.
 
-    Service-Token: scope='*', workspace_id='system' als Maintenance-
-    Default. Wer in einen anderen Workspace schreiben will, muss
-    explizit den X-Workspace-Id-Header oder einen body.workspace_id
-    mitgeben — siehe get_workspace().
+    Service-Token: scope='*', workspace_id='system'. X-Workspace-Id / body
+    override per get_workspace(). X-Act-As-* lets a privileged caller simulate
+    another identity (admin-only test harness, see _maybe_act_as).
     """
     if not creds:
         raise HTTPException(
@@ -37,14 +93,16 @@ async def get_token_info(
         token.encode() if isinstance(token, str) else token,
         _SERVICE_TOKEN.encode() if isinstance(_SERVICE_TOKEN, str) else _SERVICE_TOKEN,
     ):
-        return TokenInfo(workspace_id="system", scopes=("*",))
-    info = validate_jwt_token(token)
-    if not info:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-    return info
+        info: TokenInfo = TokenInfo(workspace_id="system", scopes=("*",))
+    else:
+        validated = validate_jwt_token(token)
+        if not validated:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+            )
+        info = validated
+    return _maybe_act_as(info, x_act_as_sub, x_act_as_orgs, x_act_as_workspace)
 
 
 async def get_workspace(
