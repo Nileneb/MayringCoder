@@ -165,3 +165,38 @@ Keep the embedded path for tests/standalone (`MAYRING_CHROMA_HOST` unset).
 
 ## Out of scope
 Celery/job-queue rework; full async rewrite; per-prompt-trace UI (separate, built).
+
+---
+
+## Umsetzung & Ergebnis (2026-05-24, deployed)
+
+**Status: Phase 0–2 umgesetzt + auf Prod verifiziert. Phase 3 (Redis) NICHT — Bedingung „nur falls Multi-Worker Inkonsistenz zeigt" nicht eingetreten.**
+
+### Was geliefert wurde
+- **Phase 0:** `tools/loadtest_search.py` (MayringCoder, commit c5eed5f).
+- **Phase 1.2:** `get_chroma_collection` HttpClient-Branch + `tests/test_chroma_httpclient.py` (commit ec5ed5c). Volle Suite 1679 passed.
+- **Phase 1.1 + 2.1:** `mayring-chroma`-Service + `MAYRING_CHROMA_HOST` (api/mcp/webui) + `--workers 4` in `app.linn.games/docker-compose.mayring.yml`.
+
+### Korrekturen am Plan-Snippet (waren falsch für dieses Setup)
+1. **Volume:** Bestehende Daten liegen im **named volume `linn-mayring-cache`** (`/app/cache/memory_chroma`), NICHT in einem `../cache`-bind. Chroma-Service mountet das named volume.
+2. **Netz:** `mayring-internal` (nicht `mayring`).
+3. **Image-Tag:** auf **`chromadb/chroma:1.5.9`** gepinnt (== client-lib → identisches Persist-Format, keine Migration).
+4. **KRITISCH — Persist-Pfad:** `chromadb/chroma:1.x` ignoriert `PERSIST_DIRECTORY`/`IS_PERSISTENT` (das war der 0.4/0.5-Env-Contract). Entrypoint ist `chroma run [CONFIG]`. Mit nur den Env-Vars startete der Server LEER → `score_vector=0` für alle Treffer (symbolisches Fallback maskierte es). **Fix:** `command: ["run","--path","/app/cache/memory_chroma","--host","0.0.0.0","--port","8000"]`.
+5. **Healthcheck:** entfernt — 1.x ist ein Rust-Binary-Slim-Image ohne garantiertes curl/python für eine in-container-Probe.
+
+### Messungen
+| Szenario | Baseline (1 Worker) | Nach Fix (4 Worker, warm) |
+|---|---|---|
+| 3 gleichzeitige Suchen (Hook) | max 6.8s, alle 200 | max ~2.6s, alle 200 |
+| `/health` unter Such-Last | **6.79s** | **~0.06–0.08s** (gelegentl. 0.24s-Blip) |
+| `score_vector` | (n/a) | echt & variiert (0.15–0.31) ✓ |
+
+→ **Akzeptanzkriterium (Hook-Muster: 3 Suchen <5s, `/health` <0.2s) erfüllt.** n=6 (Stress > Worker-Zahl) degradiert erwartungsgemäß (max ~8s) — bräuchte den deferrten threadpool/async-Schliff (§5.2).
+
+### Worker-Tuning
+`--workers 2` löste bereits den Hook-Timeout (3 Suchen ~4s), ließ aber `/health` ~2.5s hinter einer Suche warten. `--workers 4` gibt der Hook-Last einen freien Worker → `/health` <0.2s. (Zwischenmessung „alle 502 bei workers=4" war das Deploy-Cutover-/Boot-Fenster, kein OOM — 4 Worker laufen stabil.)
+
+### Offen / separat
+- `coverage_map_complete` Smoke rot: `missing=[429]` — Coverage-Map-Docs-Lücke, unabhängig von dieser Arbeit (#429).
+- Phase 3 (Redis Cross-Worker-State): deferred bis Dashboard-Inkonsistenz unter Multi-Worker tatsächlich auffällt.
+- `/health <0.2s` auch unter n>Worker-Last: bräuchte `run_in_threadpool` mit per-thread-Connections (§5.2, bewusst deferred).
