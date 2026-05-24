@@ -558,12 +558,25 @@ def check_coverage_map_complete(api: str, token: str) -> CheckResult:
             url, headers={"Accept": "application/vnd.github+json",
                           **({"Authorization": f"Bearer {gh_token}"} if gh_token else {})},
         )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as r:
-                items = json.loads(r.read())
-        except Exception as e:
+        # WHY(smoke-flake 2026-05-24): the GitHub API occasionally drops a
+        # multi-page response body mid-download (http.client.IncompleteRead) —
+        # a transient network blip, not a coverage regression. A single failure
+        # used to red the whole post-deploy smoke. Retry the page fetch a few
+        # times before giving up (smoke-stability policy: root-cause the flake).
+        items = None
+        last_err: Exception | None = None
+        for _attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    items = json.loads(r.read())
+                last_err = None
+                break
+            except Exception as e:  # IncompleteRead, timeout, transient 5xx
+                last_err = e
+                time.sleep(1.5)
+        if last_err is not None:
             return CheckResult("coverage_map_complete", False,
-                               f"GitHub API page {page} failed: {e}")
+                               f"GitHub API page {page} failed after retries: {last_err}")
         if not items:
             break
         for it in items:
