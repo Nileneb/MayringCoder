@@ -132,6 +132,24 @@ def test_alias_to_unknown_workspace_rejects(conn):
         add_alias(conn, "anything", "ghost-workspace")
 
 
+def test_resolve_from_token_canonicalizes_alias(conn):
+    """workspace-repoint: alte Tokens (alias) lösen via conn transparent auf die
+    kanonische Workspace auf; ohne conn bleibt das Verhalten unverändert."""
+    from types import SimpleNamespace
+
+    from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
+
+    ensure_user_workspace(conn, 1, email="bene@linn.games")  # slug 'bene'
+    add_alias(conn, "old-ws", "bene")
+
+    tok = SimpleNamespace(workspace_id="old-ws", scopes=("mcp:memory",))
+    assert resolve_workspace_from_token(tok, conn=conn) == "bene"   # alias → canonical
+    assert resolve_workspace_from_token(tok) == "old-ws"            # no conn → unchanged
+
+    svc = SimpleNamespace(workspace_id="system", scopes=("*",))
+    assert resolve_workspace_from_token(svc, override_header="old-ws", conn=conn) == "bene"
+
+
 # ─── Unknown workspace ──────────────────────────────────────────────
 
 

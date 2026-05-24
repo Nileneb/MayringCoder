@@ -60,4 +60,11 @@ async def get_workspace(
     konsolidiert.
     """
     from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
-    return resolve_workspace_from_token(info, override_header=x_workspace_id)
+    # conn → Alias-Auflösung (workspace-repoint): alte Tokens (019d6933) lösen
+    # transparent auf die kanonische 019e14d6 auf, kein Reissue nötig.
+    try:
+        from src.api.dependencies import get_conn
+        conn = get_conn()
+    except Exception:  # noqa: BLE001 — ohne DB kein Alias, aber Auth darf nicht brechen
+        conn = None
+    return resolve_workspace_from_token(info, override_header=x_workspace_id, conn=conn)
