@@ -10,7 +10,9 @@ explicit ``workspace_id`` query param is given.
 """
 from __future__ import annotations
 
+import functools as _functools
 import json as _json
+import time as _time
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -22,10 +24,51 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Short TTL cache for the read-only aggregation endpoints below.
+# ---------------------------------------------------------------------------
+
+_DASH_CACHE: dict[str, tuple[float, Any]] = {}
+_DASH_CACHE_TTL = 15.0
+_DASH_CACHE_MAX = 2000
+
+
+def _dashboard_ttl_cache(fn):
+    """Per-(endpoint, args, workspace) TTL cache for read-only dashboard reads.
+
+    WHY(api-saturation 2026-05-24): the Livewire dashboards poll ~10 of these
+    endpoints every 10s and each is a fresh SQLite COUNT/GROUP-BY scan over
+    million-row tables. On the single-worker API, concurrent polls saturated
+    the event loop (every request 14s+, even /health starved). A short TTL
+    means most polls hit memory instead of the DB; staleness is fine for
+    observability widgets.
+
+    Keyed by the resolved kwargs — crucially ``workspace_id`` (a Depends
+    kwarg) — so a cache entry can never bleed across tenants. ``functools.wraps``
+    preserves the original signature so FastAPI still resolves Depends/query
+    params. Apply BELOW ``@router.get`` so the router registers the wrapper.
+    """
+    @_functools.wraps(fn)
+    async def _wrapper(**kwargs):
+        key = fn.__name__ + ":" + repr(sorted(kwargs.items()))
+        now = _time.monotonic()
+        hit = _DASH_CACHE.get(key)
+        if hit is not None and hit[0] > now:
+            return hit[1]
+        value = await fn(**kwargs)
+        if len(_DASH_CACHE) >= _DASH_CACHE_MAX:
+            _DASH_CACHE.clear()
+        _DASH_CACHE[key] = (now + _DASH_CACHE_TTL, value)
+        return value
+
+    return _wrapper
+
+
+# ---------------------------------------------------------------------------
 # 1. recent ingestion events  →  ingestion_log
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/recent-ops")
+@_dashboard_ttl_cache
 async def recent_ops(
     source_id: str | None = None,
     since_minutes: int | None = None,
@@ -133,6 +176,7 @@ async def jobs_history(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/feedback-log")
+@_dashboard_ttl_cache
 async def feedback_log(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
@@ -180,6 +224,7 @@ async def feedback_log(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/source-refs")
+@_dashboard_ttl_cache
 async def source_refs(
     limit: int = 50,
     min_sources: int = 2,
@@ -213,6 +258,7 @@ async def source_refs(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/triggers")
+@_dashboard_ttl_cache
 async def triggers(
     only_active: bool = True,
     limit: int = 50,
@@ -246,6 +292,7 @@ async def triggers(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/topic-flow")
+@_dashboard_ttl_cache
 async def topic_flow(
     from_topic: str | None = None,
     limit: int = 50,
@@ -283,6 +330,7 @@ async def topic_flow(
 # through to the default location and gets routed to the MCP server
 # (404). /stats/* is already whitelisted.
 @router.get("/stats/pi-tasks")
+@_dashboard_ttl_cache
 async def pi_tasks(
     status: str | None = None,
     limit: int = 50,
@@ -448,6 +496,7 @@ async def llm_call_types(
 
 
 @router.get("/stats/vector-trend")
+@_dashboard_ttl_cache
 async def vector_trend(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),

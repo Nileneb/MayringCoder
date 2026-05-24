@@ -12,6 +12,18 @@ setup_providers()
 
 
 @pytest.fixture(autouse=True)
+def _clear_dashboard_cache():
+    """The /stats dashboard endpoints share a process-global TTL cache
+    (api-saturation 2026-05-24). Tests reuse the same workspace_id against
+    fresh per-test DBs, so a leftover entry would bleed a prior test's result
+    into the next. Clear it before each test for isolation (prod keys by real
+    workspace_id, so this is purely a test concern)."""
+    from src.api.routes.dashboard import _DASH_CACHE
+    _DASH_CACHE.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _default_test_identity(monkeypatch, tmp_path_factory):
     """Stelle eine Default-Test-Identity (User+Email) bereit, damit
     Mock-Tests (args=MagicMock) keinen IdentityRequiredError werfen.

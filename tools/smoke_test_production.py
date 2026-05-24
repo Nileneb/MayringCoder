@@ -2194,6 +2194,13 @@ def main() -> int:
                    help="open a GitHub issue when any check fails (uses gh CLI)")
     p.add_argument("--ready-timeout", type=float, default=60.0,
                    help="max seconds to wait for /health before running checks (#250)")
+    p.add_argument("--pace", type=float, default=float(os.getenv("SMOKE_PACE", "0.5")),
+                   help="seconds to pause between checks. WHY(api-saturation "
+                        "2026-05-24): the prod API is a single uvicorn worker; firing "
+                        "~30 heavy checks back-to-back (right as post-deploy-ingest also "
+                        "hammers it on a cold Chroma) saturated the event loop and the "
+                        "smoke red-flagged its own self-inflicted load. A small pause lets "
+                        "the worker drain between checks.")
     args = p.parse_args()
 
     token = _load_token()
@@ -2228,6 +2235,8 @@ def main() -> int:
         results.append(res)
         if args.fail_fast and not res.passed:
             break
+        if args.pace > 0:
+            time.sleep(args.pace)
 
     failed = [r for r in results if not r.passed]
     elapsed = time.time() - t_start
