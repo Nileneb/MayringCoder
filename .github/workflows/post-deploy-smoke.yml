@@ -51,8 +51,29 @@ jobs:
           repository: Nileneb/mayring-claude-plugin
           path: _plugin
 
-      - name: Wait for the new image to actually land in production
+      # Skip a now-stale smoke: if a newer Build & Push is queued/in-progress,
+      # a new image is about to land → asserting against the current (about to be
+      # torn down) box flaky-fails AND wastes the run. The newer deploy's own
+      # smoke will cover it. Only relevant for workflow_run; schedule/manual
+      # always run (gate step skipped → skip output empty → != '1' is true).
+      - name: Gate — skip if a newer deploy is queued/in-progress
+        id: gate
         if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          inprog=$(gh run list --workflow=build-and-push.yml --status in_progress --json databaseId -q 'length' 2>/dev/null || echo 0)
+          queued=$(gh run list --workflow=build-and-push.yml --status queued     --json databaseId -q 'length' 2>/dev/null || echo 0)
+          echo "pending Build & Push: in_progress=$inprog queued=$queued"
+          if [ "${inprog:-0}" -gt 0 ] || [ "${queued:-0}" -gt 0 ]; then
+            echo "::notice::Newer Build & Push pending — skipping this now-stale smoke."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for the new image to actually land in production
+        if: steps.gate.outputs.skip != '1' && github.event_name == 'workflow_run'
         run: |
           for i in $(seq 1 60); do
             if curl -sf -m 4 -o /dev/null https://mcp.linn.games/health; then
@@ -61,6 +82,23 @@ jobs:
             sleep 5
           done
           sleep 10
+
+      # Don't assert while post-deploy-ingest is still hammering the box — that
+      # window saturates the single API and flaky-fails timing-sensitive checks
+      # (feedback_count_delta, stop_hook_e2e, watcher_hook_fires, …). Wait until
+      # /health is consistently fast (box quiet): 3 consecutive <0.5s probes,
+      # best-effort up to ~4 min, then proceed regardless.
+      - name: Wait for the box to settle (post-deploy-ingest load)
+        if: steps.gate.outputs.skip != '1'
+        run: |
+          ok=0
+          for i in $(seq 1 48); do
+            t=$(curl -sS -m 5 -o /dev/null -w '%{time_total}' https://mcp.linn.games/health 2>/dev/null || echo 9)
+            if awk "BEGIN{exit !($t < 0.5)}"; then ok=$((ok+1)); else ok=0; fi
+            echo "settle probe $i: health=${t}s  consecutive_fast=$ok"
+            if [ "$ok" -ge 3 ]; then echo "box settled"; break; fi
+            sleep 5
+          done
 
       # Chroma's HNSW index loads into RAM lazily on the first vector query after
       # a container restart — the first queries return diag='chroma_query_empty'
@@ -72,6 +110,7 @@ jobs:
       # genuinely missing (a real regression), this never reaches 'ok' → the loop
       # exhausts and the smoke fails correctly — it warms, it does not mask.
       - name: Warm Chroma before asserting (HNSW load after restart)
+        if: steps.gate.outputs.skip != '1'
         run: |
           ENV_FILE="$HOME/app.linn.games/.env"
           TOK="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
@@ -89,6 +128,7 @@ jobs:
 
       - name: Run smoke test (reads MCP_SERVICE_TOKEN from server's .env)
         id: smoke
+        if: steps.gate.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAYRING_PLUGIN_DIR: ${{ github.workspace }}/_plugin
@@ -105,7 +145,7 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Fail the workflow if smoke failed
-        if: steps.smoke.outputs.exit_code != '0'
+        if: steps.gate.outputs.skip != '1' && steps.smoke.outputs.exit_code != '0'
         run: |
           echo "::error::Smoke test failed — see issue created above"
           exit 1
