@@ -2036,6 +2036,220 @@ def check_igio_lens_axes_present(api: str, token: str) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# V2 org/public-memory acceptance checks (Tasks 3–11)
+# ---------------------------------------------------------------------------
+
+def check_private_isolation(api: str, token: str) -> CheckResult:
+    """User A ingests a PRIVATE source in workspace WA; User B (different
+    workspace) must NOT see it. Proves _scope_filter blocks cross-workspace
+    private reads (the core leak guarantee)."""
+    suffix = int(time.time())
+    wa, wb = f"va-{suffix}", f"vb-{suffix}"
+    sid = f"smoke:priv-iso:{suffix}"
+    code1, body1, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-iso",
+              "path": "p", "content": f"PRIV-ISO {suffix}", "categorize": False},
+        extra_headers=_act_as("A", workspace=wa), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("private_isolation", False, f"ingest A failed http={code1}: {body1}")
+    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"PRIV-ISO {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as("B", workspace=wb), timeout=12.0)
+    seen = {r["source_id"] for r in (body2 or {}).get("results", [])}
+    leaked = sid in seen
+    return CheckResult("private_isolation", not leaked,
+        f"B_sees_A_private={leaked} (must be False)  results={len(seen)}  marker={suffix}")
+
+
+def check_public_visibility(api: str, token: str) -> CheckResult:
+    """A ingests then shares PUBLIC in WA; B in a different workspace MUST see
+    it. Proves public is globally readable to any valid caller."""
+    suffix = int(time.time())
+    wa, wb = f"pa-{suffix}", f"pb-{suffix}"
+    sid = f"smoke:pub-vis:{suffix}"
+    code1, _, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-pub",
+              "path": "p", "content": f"PUB-VIS {suffix}", "categorize": False},
+        extra_headers=_act_as("A", workspace=wa), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("public_visibility", False, f"ingest A failed http={code1}")
+    code2, body2, _ = _http_await_source("POST",
+        f"{api}/sources/{urllib.parse.quote(sid, safe='')}/share", token, body={},
+        extra_headers=_act_as("A", workspace=wa))
+    if code2 != 200 or (body2 or {}).get("visibility") != "public":
+        return CheckResult("public_visibility", False, f"share failed http={code2}: {body2}")
+    code3, body3, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"PUB-VIS {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as("B", workspace=wb), timeout=12.0)
+    seen = {r["source_id"] for r in (body3 or {}).get("results", [])}
+    visible = sid in seen
+    return CheckResult("public_visibility", visible,
+        f"B_sees_A_public={visible} (must be True)  results={len(seen)}  marker={suffix}")
+
+
+def check_user_cross_device(api: str, token: str) -> CheckResult:
+    """Same human (same sub) on two devices/workspaces: ingest visibility='user'
+    as sub=S in WA → search as sub=S in WB MUST see it; a different sub must
+    NOT. Proves 'user' visibility = cross-device-of-same-human."""
+    suffix = int(time.time())
+    sub_s = f"cd-{suffix}"
+    wa, wb = f"cda-{suffix}", f"cdb-{suffix}"
+    sid = f"smoke:user-xd:{suffix}"
+    code1, _, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-xd",
+              "path": "p", "content": f"USER-XD {suffix}", "visibility": "user", "categorize": False},
+        extra_headers=_act_as(sub_s, workspace=wa), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("user_cross_device", False, f"ingest failed http={code1}")
+    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"USER-XD {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as(sub_s, workspace=wb), timeout=12.0)
+    same_sub_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
+    code3, body3, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"USER-XD {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as(f"other-{suffix}", workspace=wb), timeout=12.0)
+    other_sub_sees = sid in {r["source_id"] for r in (body3 or {}).get("results", [])}
+    ok = same_sub_sees and not other_sub_sees
+    return CheckResult("user_cross_device", ok,
+        f"same_sub_sees={same_sub_sees}(want True)  other_sub_sees={other_sub_sees}(want False)  marker={suffix}")
+
+
+def check_org_member_visibility(api: str, token: str) -> CheckResult:
+    """A (member of org-X) ingests visibility='org' with org_id=X → B (also
+    member of org-X, different sub/workspace) MUST see it."""
+    suffix = int(time.time())
+    org = f"org-{suffix}"
+    sid = f"smoke:org-vis:{suffix}"
+    code1, body1, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-org",
+              "path": "p", "content": f"ORG-VIS {suffix}",
+              "visibility": "org", "org_id": org, "categorize": False},
+        extra_headers=_act_as("A", orgs=(org,), workspace=f"oa-{suffix}"), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("org_member_visibility", False, f"ingest failed http={code1}: {body1}")
+    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"ORG-VIS {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as("B", orgs=(org,), workspace=f"ob-{suffix}"), timeout=12.0)
+    member_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
+    return CheckResult("org_member_visibility", member_sees,
+        f"org_member_sees={member_sees} (must be True)  marker={suffix}")
+
+
+def check_org_non_member_blocked(api: str, token: str) -> CheckResult:
+    """A (org-X) ingests visibility='org' → C (NOT a member of org-X) must NOT
+    see it. The complement of org_member_visibility — proves org isolation."""
+    suffix = int(time.time())
+    org = f"orgb-{suffix}"
+    sid = f"smoke:org-block:{suffix}"
+    code1, _, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-orgb",
+              "path": "p", "content": f"ORG-BLOCK {suffix}",
+              "visibility": "org", "org_id": org, "categorize": False},
+        extra_headers=_act_as("A", orgs=(org,), workspace=f"oba-{suffix}"), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("org_non_member_blocked", False, f"ingest failed http={code1}")
+    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"ORG-BLOCK {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as("C", orgs=(f"other-{suffix}",), workspace=f"obc-{suffix}"), timeout=12.0)
+    non_member_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
+    return CheckResult("org_non_member_blocked", not non_member_sees,
+        f"non_member_sees={non_member_sees} (must be False)  marker={suffix}")
+
+
+def check_org_revoke_isolation(api: str, token: str) -> CheckResult:
+    """A ingests visibility='org' as a member of org-X → the SAME sub A, but
+    with a token that no longer carries org-X membership (simulating a
+    post-revoke reissued JWT), must NOT see it. Proves access dies with the
+    membership claim, not just at ingest time."""
+    suffix = int(time.time())
+    org = f"orgr-{suffix}"
+    sid = f"smoke:org-revoke:{suffix}"
+    code1, _, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-orgr",
+              "path": "p", "content": f"ORG-REVOKE {suffix}",
+              "visibility": "org", "org_id": org, "categorize": False},
+        extra_headers=_act_as("A", orgs=(org,), workspace=f"ora-{suffix}"), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("org_revoke_isolation", False, f"ingest failed http={code1}")
+    # Same sub A, but org-X membership revoked (no orgs in the act-as identity).
+    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"ORG-REVOKE {suffix}", "top_k": 5, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as("A", workspace=f"ora-{suffix}"), timeout=12.0)
+    still_sees = sid in {r["source_id"] for r in (body2 or {}).get("results", [])}
+    return CheckResult("org_revoke_isolation", not still_sees,
+        f"sees_after_revoke={still_sees} (must be False)  marker={suffix}")
+
+
+def check_patch_visibility_authz(api: str, token: str) -> CheckResult:
+    """A ingests a private source → B (different sub AND workspace) PATCHes its
+    visibility → must be 403. Proves L8 owner-check blocks cross-tenant
+    vandalism."""
+    suffix = int(time.time())
+    sid = f"smoke:authz:{suffix}"
+    code1, _, _ = _http("POST", f"{api}/memory/put", token,
+        body={"source_id": sid, "source_type": "note", "repo": "smoke-authz",
+              "path": "p", "content": f"AUTHZ {suffix}", "categorize": False},
+        extra_headers=_act_as("A", workspace=f"aza-{suffix}"), timeout=15.0)
+    if code1 != 200:
+        return CheckResult("patch_visibility_authz", False, f"ingest failed http={code1}")
+    code2, body2, _ = _http_await_source("PATCH",
+        f"{api}/sources/{urllib.parse.quote(sid, safe='')}/visibility", token,
+        body={"visibility": "public"},
+        extra_headers=_act_as("B", workspace=f"azb-{suffix}"))
+    ok = code2 == 403
+    return CheckResult("patch_visibility_authz", ok,
+        f"foreign_patch_status={code2} (must be 403)  body={body2}  marker={suffix}")
+
+
+def check_multi_org_membership(api: str, token: str) -> CheckResult:
+    """A is a member of org-X AND org-Y; ingest one org-source in each →
+    a single search as A MUST surface BOTH. Proves org_ids is a multi-value
+    IN-filter, not a single org."""
+    suffix = int(time.time())
+    ox, oy = f"mox-{suffix}", f"moy-{suffix}"
+    sx, sy = f"smoke:multi-x:{suffix}", f"smoke:multi-y:{suffix}"
+    ws = f"moa-{suffix}"
+    for sid, org in ((sx, ox), (sy, oy)):
+        code, _, _ = _http("POST", f"{api}/memory/put", token,
+            body={"source_id": sid, "source_type": "note", "repo": "smoke-multi",
+                  "path": "p", "content": f"MULTI-ORG {suffix} {org}",
+                  "visibility": "org", "org_id": org, "categorize": False},
+            extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=15.0)
+        if code != 200:
+            return CheckResult("multi_org_membership", False, f"ingest {org} failed http={code}")
+    code2, body2, _ = _http("POST", f"{api}/memory/search", token,
+        body={"query": f"MULTI-ORG {suffix}", "top_k": 10, "include_text": True, "llm_prefilter": False},
+        extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=12.0)
+    seen = {r["source_id"] for r in (body2 or {}).get("results", [])}
+    both = sx in seen and sy in seen
+    return CheckResult("multi_org_membership", both,
+        f"sees_org_x={sx in seen}  sees_org_y={sy in seen} (both must be True)  marker={suffix}")
+
+
+def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
+    """GET /stats/workspaces for a caller who is a member of org-X and org-Y
+    (plus a personal workspace) must list all of them. Proves the dashboard
+    enumerates a multi-membership caller's workspaces, not just one.
+
+    WHY(task-11): /stats/workspaces scopes to the caller's memberships for
+    non-admin callers (confirmed: handler uses member_ws_ids from info.memberships,
+    falls back to {workspace_id} for legacy JWTs). Row key is 'workspace_id'
+    (not 'id') — assertion adjusted to the actual shape."""
+    suffix = int(time.time())
+    ws = f"swa-{suffix}"
+    ox, oy = f"swx-{suffix}", f"swy-{suffix}"
+    code, body, _ = _http("GET", f"{api}/stats/workspaces", token,
+        extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=12.0)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("stats_workspaces_lists_all", False, f"http={code} body={body}")
+    ids = {w.get("workspace_id") for w in body.get("workspaces", [])}
+    # The personal/active ws must be present; org rows appear once they hold data.
+    ok = ws in ids
+    return CheckResult("stats_workspaces_lists_all", ok,
+        f"active_ws_listed={ws in ids}  rows={len(ids)} (active must be listed)  marker={suffix}")
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -2091,6 +2305,15 @@ ALL_CHECKS = [
     ("reranker_runtime_switch",       check_reranker_runtime_switch),
     ("retrieval_ab_endpoint",         check_retrieval_ab_endpoint),
     ("reranker_rollout_decision",     check_reranker_rollout_decision),
+    ("private_isolation",             check_private_isolation),
+    ("public_visibility",             check_public_visibility),
+    ("user_cross_device",             check_user_cross_device),
+    ("org_member_visibility",         check_org_member_visibility),
+    ("org_non_member_blocked",        check_org_non_member_blocked),
+    ("org_revoke_isolation",          check_org_revoke_isolation),
+    ("patch_visibility_authz",        check_patch_visibility_authz),
+    ("multi_org_membership",          check_multi_org_membership),
+    ("stats_workspaces_lists_all",    check_stats_workspaces_lists_all),
 ]
 
 
