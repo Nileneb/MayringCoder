@@ -134,6 +134,19 @@ jobs:
             case "$diag" in ok*) echo "chroma warm after ${i} probes"; break;; esac
             sleep 5
           done
+          # WHY(smoke-warmup-aggregations 2026-05-24): the heavy aggregation
+          # endpoints (/stats/igio-lens GROUP BY igio_axis, /stats/workspaces
+          # GROUP BY workspace_id) are SQLite-page-cache-cold right after a
+          # restart — their first hit took 14-31s and red-flagged
+          # igio_lens_axes_present + dashboard_endpoints on a healthy server
+          # (verified <0.4s once warm). The Chroma loop above only warms HNSW.
+          # Prime them best-effort so the checks assert against a warm cache.
+          for ep in "stats/igio-lens?limit=10" "stats/workspaces"; do
+            t=$(curl -sS -m 30 -o /dev/null -w '%{time_total}' \
+              -H "Authorization: Bearer $TOK" -H "X-Workspace-Id: $WS" \
+              "https://mcp.linn.games/${ep}") || true
+            echo "warm ${ep}: ${t:-<timeout>}s"
+          done
 
       - name: Run smoke test (reads MCP_SERVICE_TOKEN from server's .env)
         id: smoke
