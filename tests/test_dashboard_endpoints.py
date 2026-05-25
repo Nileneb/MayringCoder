@@ -353,12 +353,16 @@ def test_jobs_history_reads_cross_worker_shared_file(tmp_path, monkeypatch):
         "jobs_history must read the cross-worker shared file, not just local _JOBS"
 
 
-def test_jobs_history_filters_other_workspaces():
+def test_jobs_history_filters_other_workspaces(tmp_path, monkeypatch):
     """Bene's dashboard must not show jobs that belong to another tenant
     or to the system maintenance bucket — pre-fix, smoke-runs (ws=system)
     leaked into the user-facing memory-dashboard job history.
+
+    Isolated state-file: workspace='system' sees ALL jobs, so a populated
+    local cache/jobs_state.json would crowd the seeds past limit=50 and flake.
     """
     from src.api import job_queue
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
     job_queue._JOBS.update({
         "ws_bene":   {"job_id": "ws_bene",   "status": "done",
                       "started_at": "2026-05-08", "workspace_id": "bene"},
@@ -382,6 +386,48 @@ def test_jobs_history_filters_other_workspaces():
     finally:
         for k in ("ws_bene", "ws_system", "ws_other"):
             job_queue._JOBS.pop(k, None)
+
+
+def test_jobs_history_hides_smoke_jobs_by_default(tmp_path, monkeypatch):
+    """#253: smoke-getriggerte populate-jobs (source='smoke') failen bewusst
+    und landen in workspace:system — sie rauschen die job-history zu. Default
+    blendet sie aus. Der smoke-CHECK bleibt grün (er prüft /jobs/{id}, nicht
+    diese history). Isoliertes state-file, damit echte cache-jobs die Seeds
+    nicht über das limit verdrängen."""
+    from src.api import job_queue
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
+    job_queue._JOBS.update({
+        "real1":  {"job_id": "real1", "status": "done", "started_at": "2026-05-08",
+                   "workspace_id": "system"},
+        "smoke1": {"job_id": "smoke1", "status": "error", "started_at": "2026-05-08",
+                   "workspace_id": "system", "source": "smoke"},
+    })
+    try:
+        res = _run(dashboard.jobs_history(workspace_id="system"))
+        ids = {j["job_id"] for j in res["jobs"]}
+        assert "real1" in ids
+        assert "smoke1" not in ids, "smoke-jobs müssen per default ausgeblendet sein"
+    finally:
+        for k in ("real1", "smoke1"):
+            job_queue._JOBS.pop(k, None)
+
+
+def test_jobs_history_includes_smoke_when_requested(tmp_path, monkeypatch):
+    """include_smoke=True macht die gefilterten jobs sichtbar; der source-tag
+    wird mit ausgegeben, damit die UI sie als smoke labeln kann."""
+    from src.api import job_queue
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
+    job_queue._JOBS["smoke2"] = {
+        "job_id": "smoke2", "status": "error", "started_at": "2026-05-08",
+        "workspace_id": "system", "source": "smoke",
+    }
+    try:
+        res = _run(dashboard.jobs_history(workspace_id="system", include_smoke=True))
+        smoke = next((j for j in res["jobs"] if j["job_id"] == "smoke2"), None)
+        assert smoke is not None
+        assert smoke["source"] == "smoke"
+    finally:
+        job_queue._JOBS.pop("smoke2", None)
 
 
 def test_jobs_history_status_filter():
@@ -497,6 +543,21 @@ def test_save_and_load_jobs_round_trip(tmp_path, monkeypatch):
         assert loaded["jPersist"]["status"] == "done"
     finally:
         del job_queue._JOBS["jPersist"]
+
+
+def test_make_job_records_source(tmp_path, monkeypatch):
+    """#253: make_job tags the record with an optional source so the dashboard
+    can default-filter smoke-triggered jobs. Default is empty (visible)."""
+    from src.api import job_queue
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
+    jid_smoke = job_queue.make_job("system", source="smoke")
+    jid_plain = job_queue.make_job("system")
+    try:
+        assert job_queue._JOBS[jid_smoke]["source"] == "smoke"
+        assert job_queue._JOBS[jid_plain]["source"] == ""
+    finally:
+        del job_queue._JOBS[jid_smoke]
+        del job_queue._JOBS[jid_plain]
 
 
 def test_load_jobs_handles_missing_file(tmp_path, monkeypatch):

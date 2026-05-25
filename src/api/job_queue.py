@@ -72,7 +72,7 @@ _FILECOUNT_RE = re.compile(r"\[populate-memory\]\s+(\d+)\s+Dateien gefunden")
 _STAGE_RE = re.compile(r"\[STAGE\]\s+(?P<name>\S+)\s+(?P<detail>.*)")
 
 
-def make_job(workspace_id: str, repo: str | None = None) -> str:
+def make_job(workspace_id: str, repo: str | None = None, source: str = "") -> str:
     job_id = str(uuid.uuid4())[:8]
     record: dict = {
         "job_id": job_id,
@@ -80,6 +80,9 @@ def make_job(workspace_id: str, repo: str | None = None) -> str:
         "output": "",
         "progress": None,
         "workspace_id": workspace_id,
+        # WHY(#253): provenance tag so the job-history UI can default-filter
+        # smoke-triggered jobs (source="smoke") out of the noise. Empty = real.
+        "source": source,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
     if repo is not None:

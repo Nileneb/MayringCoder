@@ -49,6 +49,9 @@ class PopulateRequest(BaseModel):
     # means use BATCH_DELAY_SECONDS from src/config.py. 0 disables the
     # delay entirely.
     batch_delay: float | None = None
+    # WHY(#253): smoke-tests POST a known-bad repo that fails fast; tagging the
+    # job source="smoke" lets the job-history default-filter it out as noise.
+    source: str = ""
 
 
 class PaperIngestRequest(BaseModel):

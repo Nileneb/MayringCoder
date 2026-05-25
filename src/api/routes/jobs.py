@@ -246,7 +246,8 @@ async def trigger_issues_ingest(
     return {"job_id": job_id, "status": "started", "repo": request.repo}
 
 
-def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None = None) -> str:
+def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None = None,
+                     source: str = "") -> str:
     """Enqueue a repo re-ingest (populate + v2-chain) and return the job id.
     Debounce: if a populate job for the same repo is still running in this
     workspace, reuse it instead of spawning a storm (rapid pushes).
@@ -282,7 +283,7 @@ def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None 
     # atomically; a different uvicorn worker reading _load_jobs() sees it for
     # cross-worker debounce.  Post-tagging after make_job left repo absent from
     # jobs_state.json, defeating the entire cross-worker dedup.
-    job_id = _make_job(workspace_id, repo=repo)
+    job_id = _make_job(workspace_id, repo=repo, source=source)
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, repo))
     return job_id
 
@@ -305,7 +306,8 @@ async def trigger_populate(
         # Issue #85: forward the throttle to the populate-memory loop.
         # CLI flag is --batch-delay (src/cli_args.py); 0 means no pause.
         extra += ["--batch-delay", str(max(0.0, float(request.batch_delay)))]
-    job_id = enqueue_populate(request.repo, workspace_id, extra_args=extra)
+    job_id = enqueue_populate(request.repo, workspace_id, extra_args=extra,
+                              source=request.source)
     return {
         "job_id": job_id, "status": "started", "repo": request.repo,
         "batch_delay": request.batch_delay,

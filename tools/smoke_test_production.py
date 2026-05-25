@@ -793,7 +793,10 @@ def check_pipeline_stage_observability(api: str, token: str) -> CheckResult:
     """
     code, body, _ = _http(
         "POST", f"{api}/populate", token,
-        body={"repo": "https://github.com/Nileneb/smoke-stage-observability-bogus"},
+        # WHY(#253): source="smoke" tags the (intentionally failing) job so the
+        # job-history UI default-filters it out of workspace:system noise.
+        body={"repo": "https://github.com/Nileneb/smoke-stage-observability-bogus",
+              "source": "smoke"},
     )
     if code != 200 or not isinstance(body, dict) or "job_id" not in body:
         return CheckResult("pipeline_stage_observability", False,

@@ -123,6 +123,7 @@ async def recent_ops(  # NOT cached: live ingest feed (WHY, smoke-fix 2026-05-24
 async def jobs_history(
     status: str | None = None,
     limit: int = 50,
+    include_smoke: bool = False,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """All checker/wiki/duel jobs from the in-process queue plus persisted state.
@@ -148,10 +149,17 @@ async def jobs_history(
     # _save_jobs writes the WHOLE registry to the shared jobs_state.json on every
     # status change, so _load_jobs() is the cross-worker source of truth. Merge
     # local _JOBS on top for the freshest in-process status.
+    # WHY(#253): smoke-triggered populate jobs (source="smoke") fail by design
+    # against a known-bad repo and pile up in workspace:system as noise. Hide
+    # them by default; include_smoke=true surfaces them for debugging.
+    def _smoke_match(j: dict) -> bool:
+        return include_smoke or j.get("source") != "smoke"
+
     merged: dict[str, dict] = {**_load_jobs(), **_JOBS}
     items = sorted(
         (j for j in merged.values()
-         if _ws_match(j) and (not status or j.get("status") == status)),
+         if _ws_match(j) and _smoke_match(j)
+         and (not status or j.get("status") == status)),
         key=lambda x: x.get("started_at", ""),
         reverse=True,
     )[:limit]
@@ -181,6 +189,7 @@ async def jobs_history(
                 "stages": j.get("stages", {}),
                 "progress": j.get("progress"),
                 "workspace_id": j.get("workspace_id"),
+                "source": j.get("source", ""),
                 "error_tail": _error_tail(j),
             }
             for j in items
