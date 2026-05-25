@@ -276,6 +276,11 @@ def _stats_summary_uncached() -> dict:
             "ORDER BY created_at DESC LIMIT 20"
         ).fetchall()
     ]
+    # WHY(pi-dashboard multi-worker 2026-05-25): _JOBS is per-process; under
+    # --workers 4 this widget saw only the serving worker's jobs. Merge the
+    # cross-worker shared file (_load_jobs) with local _JOBS for a complete view.
+    from src.api.job_queue import _load_jobs as _load_jobs_shared
+    _jobs_merged = {**_load_jobs_shared(), **_JOBS}
     recent_jobs = [
         {
             "job_id":     j["job_id"],
@@ -283,9 +288,9 @@ def _stats_summary_uncached() -> dict:
             "started_at": j.get("started_at"),
             "stages":     j.get("stages", {}),
             "progress":   j.get("progress"),
-            "v2_jobs":    {k: _JOBS.get(v, {}).get("status") for k, v in j.get("v2_jobs", {}).items()},
+            "v2_jobs":    {k: _jobs_merged.get(v, {}).get("status") for k, v in j.get("v2_jobs", {}).items()},
         }
-        for j in sorted(_JOBS.values(), key=lambda x: x.get("started_at", ""), reverse=True)[:5]
+        for j in sorted(_jobs_merged.values(), key=lambda x: x.get("started_at", ""), reverse=True)[:5]
     ]
     try:
         llm_recent = [

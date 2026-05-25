@@ -131,7 +131,7 @@ async def jobs_history(
     job's status changes; loaded on FastAPI startup. So a container restart
     no longer wipes the visible history.
     """
-    from src.api.job_queue import _JOBS
+    from src.api.job_queue import _JOBS, _load_jobs
 
     # Multi-Tenant: Nur Jobs des aufrufenden Workspaces zurückgeben.
     # 'system' (Service-Token) sieht alles — ist Maintenance-Bucket.
@@ -142,8 +142,15 @@ async def jobs_history(
             return True
         return j.get("workspace_id") == workspace_id
 
+    # WHY(pi-dashboard multi-worker 2026-05-25): _JOBS is per-PROCESS — under
+    # uvicorn --workers 4 a request hits one worker and saw only ~1/4 of jobs
+    # (often none) → the Pi-Agent dashboard job list looked empty/broken.
+    # _save_jobs writes the WHOLE registry to the shared jobs_state.json on every
+    # status change, so _load_jobs() is the cross-worker source of truth. Merge
+    # local _JOBS on top for the freshest in-process status.
+    merged: dict[str, dict] = {**_load_jobs(), **_JOBS}
     items = sorted(
-        (j for j in _JOBS.values()
+        (j for j in merged.values()
          if _ws_match(j) and (not status or j.get("status") == status)),
         key=lambda x: x.get("started_at", ""),
         reverse=True,

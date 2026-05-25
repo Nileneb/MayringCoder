@@ -335,6 +335,24 @@ def test_jobs_history_reads_in_memory_dict():
         del job_queue._JOBS["jobX"]
 
 
+def test_jobs_history_reads_cross_worker_shared_file(tmp_path, monkeypatch):
+    """A job created by ANOTHER uvicorn worker lives only in the shared state
+    file, not this process's _JOBS. jobs_history must still surface it — under
+    --workers 4 the Pi-Agent dashboard job list was empty before the _load_jobs
+    merge (only saw the serving worker's per-process _JOBS)."""
+    from src.api import job_queue
+    monkeypatch.setattr(job_queue, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
+    job_queue._JOBS["fromA"] = {
+        "job_id": "fromA", "status": "done",
+        "started_at": "2026-05-08T00:00:00Z", "workspace_id": "user-2",
+    }
+    job_queue._save_jobs()        # worker A persists to the shared file
+    job_queue._JOBS.clear()       # simulate worker B: never saw it in-process
+    res = _run(dashboard.jobs_history(workspace_id="user-2"))
+    assert any(j["job_id"] == "fromA" for j in res["jobs"]), \
+        "jobs_history must read the cross-worker shared file, not just local _JOBS"
+
+
 def test_jobs_history_filters_other_workspaces():
     """Bene's dashboard must not show jobs that belong to another tenant
     or to the system maintenance bucket — pre-fix, smoke-runs (ws=system)
