@@ -20,6 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from mayring_core.memory.tasks import list_tasks
 from src.api.auth import get_token_info
 from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
@@ -130,6 +131,25 @@ async def igio_lens(
                 for r in rows
             ],
         }
+
+    # Attach the workspace's task-list to the intervention axis so the lens
+    # intervention column can render them (open first, then recently-done).
+    # Admin scope sees all workspaces for chunks but todos are always scoped
+    # to the caller's own workspace — task ownership is per-workspace.
+    todo_ws = ws if not admin else ws
+    open_todos = list_tasks(_conn(), todo_ws, status="open")
+    done_todos = list_tasks(_conn(), todo_ws, status="done")
+    axes["intervention"]["todos"] = [
+        {
+            "task_id":     t["task_id"],
+            "title":       t["title"],
+            "status":      t["status"],
+            "created_by":  t.get("created_by"),
+            "created_at":  t.get("created_at"),
+            "completed_at": t.get("completed_at"),
+        }
+        for t in [*open_todos, *done_todos][:limit]
+    ]
 
     return {
         "workspace_id": ws,
