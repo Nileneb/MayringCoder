@@ -2264,6 +2264,27 @@ def check_multi_org_membership(api: str, token: str) -> CheckResult:
         f"sees_org_x={found_x}  sees_org_y={found_y} (both must be True)  marker={suffix}")
 
 
+def check_intervention_todos_surface(api: str, token: str) -> CheckResult:
+    """A task created via POST /tasks must appear in GET /stats/igio-lens under
+    intervention.todos (the lens intervention column source)."""
+    suffix = int(time.time())
+    ws = f"todo-{suffix}"
+    title = f"SMOKE-TODO {suffix}"
+    code1, body1, _ = _http("POST", f"{api}/tasks", token,
+        body={"title": title, "created_by": "agent", "tags": "agent",
+              "external_id": f"smoke-{suffix}"},
+        extra_headers=_act_as("A", workspace=ws), timeout=12.0)
+    if code1 != 200:
+        return CheckResult("intervention_todos_surface", False,
+                           f"create failed http={code1}: {body1}")
+    code2, body2, _ = _http("GET", f"{api}/stats/igio-lens?limit=20", token,
+        extra_headers=_act_as("A", workspace=ws), timeout=12.0)
+    todos = ((((body2 or {}).get("axes") or {}).get("intervention") or {}).get("todos")) or []
+    found = any(t.get("title") == title for t in todos)
+    return CheckResult("intervention_todos_surface", found,
+        f"task_in_intervention_todos={found} (must be True)  todos={len(todos)}  marker={suffix}")
+
+
 def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
     """GET /stats/workspaces for a caller who is a member of org-X and org-Y
     (plus a personal workspace) must list all of them. Proves the dashboard
@@ -2336,6 +2357,7 @@ ALL_CHECKS = [
     ("ingest_links_categories",       check_ingest_links_categories),
     ("reranker_cat_match_fires",      check_reranker_cat_match_fires),
     ("igio_lens_axes_present",        check_igio_lens_axes_present),
+    ("intervention_todos_surface",    check_intervention_todos_surface),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
