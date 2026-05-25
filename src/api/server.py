@@ -96,6 +96,8 @@ from src.api.routes import codebooks as _codebooks  # #workspace-uuid-sot v2.0 P
 app.include_router(_codebooks.router)
 from src.api.routes import projects as _projects  # Project Router Slice 1
 app.include_router(_projects.router)
+from src.api.routes import repo_events as _repo_events  # Repo-watching Task 2
+app.include_router(_repo_events.router)
 
 
 @app.on_event("startup")

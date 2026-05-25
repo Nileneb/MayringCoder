@@ -272,3 +272,15 @@ class TaskUpdateRequest(BaseModel):
     tags: str | None = None
     linked_chunk_id: str | None = None
     scope_key: str | None = None
+
+
+class RepoEventRequest(BaseModel):
+    event_type: str               # 'push' | 'workflow_run' | 'security'
+    repo: str                     # repo URL (matches projects.source_ref)
+    sha: str | None = None
+    ref: str | None = None
+    conclusion: str | None = None  # workflow_run: success|failure|...
+    workflow: str | None = None
+    severity: str | None = None    # security: low|moderate|high|critical
+    summary: str | None = None
+    url: str | None = None

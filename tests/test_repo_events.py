@@ -1,6 +1,6 @@
 from __future__ import annotations
 import inspect
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock, MagicMock, call
 
 
 def _capture_task(coro):
@@ -59,3 +59,58 @@ def test_enqueue_populate_does_not_debounce_across_workspaces(monkeypatch, tmp_p
         jid_a = jobs.enqueue_populate("https://github.com/a/b", "ws-1")
         jid_b = jobs.enqueue_populate("https://github.com/a/b", "ws-2")  # same repo, other workspace
     assert jid_a != jid_b, "debounce must be workspace-scoped — different workspace gets its own job"
+
+
+# ---------------------------------------------------------------------------
+# POST /repo-events tests (Task 2)
+# ---------------------------------------------------------------------------
+
+def _make_repo_events_client(monkeypatch, tmp_path):
+    import src.api.job_queue as jq
+    monkeypatch.setattr(jq, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
+    jq._JOBS.clear()
+    from fastapi.testclient import TestClient
+    from src.api import server as srv
+    from src.api import auth as auth_module
+    from src.api.jwt_auth import TokenInfo
+    async def _svc():
+        return TokenInfo(workspace_id="system", scopes=("*",))
+    srv.app.dependency_overrides[auth_module.get_token_info] = _svc
+    return TestClient(srv.app)
+
+
+def test_repo_events_push_enqueues_populate(monkeypatch, tmp_path):
+    client = _make_repo_events_client(monkeypatch, tmp_path)
+    try:
+        with patch("src.api.routes.repo_events.enqueue_populate", return_value="job-1") as m:
+            r = client.post("/repo-events",
+                            json={"event_type": "push", "repo": "https://github.com/a/b",
+                                  "sha": "abc"},
+                            headers={"Authorization": "Bearer t"})
+        assert r.status_code == 200
+        assert m.called
+        assert m.call_args.args[0] == "https://github.com/a/b"
+    finally:
+        from src.api import server as srv
+        srv.app.dependency_overrides.clear()
+
+
+def test_repo_events_rejects_non_privileged(monkeypatch, tmp_path):
+    import src.api.job_queue as jq
+    monkeypatch.setattr(jq, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
+    jq._JOBS.clear()
+    from fastapi.testclient import TestClient
+    from src.api import server as srv
+    from src.api import auth as auth_module
+    from src.api.jwt_auth import TokenInfo
+    async def _unprivileged():
+        return TokenInfo(workspace_id="bene", scopes=("mcp:memory",))
+    srv.app.dependency_overrides[auth_module.get_token_info] = _unprivileged
+    try:
+        client = TestClient(srv.app)
+        r = client.post("/repo-events",
+                        json={"event_type": "push", "repo": "https://github.com/a/b"},
+                        headers={"Authorization": "Bearer t"})
+        assert r.status_code == 403
+    finally:
+        srv.app.dependency_overrides.clear()
