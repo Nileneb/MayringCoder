@@ -12,6 +12,7 @@ from src.api.job_queue import (
     make_job as _make_job,
     python_exe as _python_exe,
     run_checker_job as _run_checker_job,
+    _load_jobs,
     _JOBS,
 )
 from src.api.routes.models import (
@@ -245,6 +246,44 @@ async def trigger_issues_ingest(
     return {"job_id": job_id, "status": "started", "repo": request.repo}
 
 
+def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None = None) -> str:
+    """Enqueue a repo re-ingest (populate + v2-chain) and return the job id.
+    Debounce: if a populate job for the same repo is still running in this
+    workspace, reuse it instead of spawning a storm (rapid pushes).
+
+    WHY(repo-watching): shared by POST /populate and POST /repo-events so a
+    push event re-ingests exactly like a manual populate.
+
+    extra_args: optional caller-specific flags (e.g. --force-reingest,
+    --batch-delay) appended after the base args. Not used in debounce check
+    so callers with extra args still reuse a running base job.
+    """
+    # WHY(multi-worker): _JOBS is per-process; merge with shared file so we
+    # catch jobs started by other uvicorn workers (API-Concurrency-Fix 2026-05-24).
+    merged = {**_load_jobs(), **_JOBS}
+    for j in merged.values():
+        if (j.get("workspace_id") == workspace_id
+                and j.get("repo") == repo
+                and j.get("status") in ("started", "running")):
+            return j["job_id"]
+    # --memory-categorize: ohne diesen Flag setzt run_populate_memory() in
+    # _opts ein `categorize=False`, wodurch ingest() mayring_categorize
+    # komplett überspringt und alle chunks ohne category_labels landen.
+    # Das war der Befund aus dem ersten Prod-Smoke (d5023372): 1128 Chunks,
+    # 0 mit Labels. Standard-Weg aus dem UI muss Mayring aktiv haben.
+    # --workers 2: server-side parallelization halves wall-clock time on
+    # large repos. Ollama+mistral:7b handles 2 concurrent generations on
+    # the three.linn.games GPU without VRAM pressure.
+    args = ["--repo", repo, "--populate-memory", "--multiview",
+            "--memory-categorize", "--workers", "2"]
+    if extra_args:
+        args.extend(extra_args)
+    job_id = _make_job(workspace_id)
+    _JOBS[job_id]["repo"] = repo  # tag for debounce + UI
+    asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, repo))
+    return job_id
+
+
 @router.post("/populate")
 async def trigger_populate(
     request: PopulateRequest,
@@ -256,24 +295,14 @@ async def trigger_populate(
     (wiki index, ambient snapshot, predictive transitions) as background jobs.
     The child job ids are returned under ``v2_jobs`` when polled via GET /jobs/{id}.
     """
-    job_id = _make_job(workspace_id)
-    # --memory-categorize: ohne diesen Flag setzt run_populate_memory() in
-    # _opts ein `categorize=False`, wodurch ingest() mayring_categorize
-    # komplett überspringt und alle chunks ohne category_labels landen.
-    # Das war der Befund aus dem ersten Prod-Smoke (d5023372): 1128 Chunks,
-    # 0 mit Labels. Standard-Weg aus dem UI muss Mayring aktiv haben.
-    # --workers 2: server-side parallelization halves wall-clock time on
-    # large repos. Ollama+mistral:7b handles 2 concurrent generations on
-    # the three.linn.games GPU without VRAM pressure.
-    args = ["--repo", request.repo, "--populate-memory", "--multiview",
-            "--memory-categorize", "--workers", "2"]
+    extra: list[str] = []
     if request.force_reingest:
-        args.append("--force-reingest")
+        extra.append("--force-reingest")
     if request.batch_delay is not None:
         # Issue #85: forward the throttle to the populate-memory loop.
         # CLI flag is --batch-delay (src/cli_args.py); 0 means no pause.
-        args += ["--batch-delay", str(max(0.0, float(request.batch_delay)))]
-    asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, request.repo))
+        extra += ["--batch-delay", str(max(0.0, float(request.batch_delay)))]
+    job_id = enqueue_populate(request.repo, workspace_id, extra_args=extra or None)
     return {
         "job_id": job_id, "status": "started", "repo": request.repo,
         "batch_delay": request.batch_delay,
