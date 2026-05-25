@@ -6,6 +6,7 @@ WHY(repo-watching C+D): closes the gap where only MayringCoder auto-ingested and
 gives every watched repo's CI/security a memory presence."""
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -51,8 +52,30 @@ _AXIS = {
 }
 
 
-def _record_repo_event(*a):  # filled in Task 3
-    pass
+def _record_repo_event(conn, workspace_id: str, hook_type: str, req: RepoEventRequest) -> None:
+    """Log a CI/security event into hook_events (reuse payload JSON, NO migration).
+
+    WHY(repo-watching): idempotent on the exact serialized payload so a
+    GitHub re-delivery of the same event does not create a duplicate row.
+    Exact-match (not LIKE) is used deliberately: it handles None sha/workflow
+    correctly (json null), which a LIKE '%"workflow": "None"%' pattern would not."""
+    payload = json.dumps({
+        "repo": req.repo, "sha": req.sha, "ref": req.ref,
+        "conclusion": req.conclusion, "workflow": req.workflow,
+        "severity": req.severity, "summary": req.summary, "url": req.url,
+    }, default=str)
+    existing = conn.execute(
+        "SELECT 1 FROM hook_events WHERE workspace_id=? AND hook_type=? AND payload=? LIMIT 1",
+        (workspace_id, hook_type, payload),
+    ).fetchone()
+    if existing is not None:
+        return
+    conn.execute(
+        "INSERT INTO hook_events (workspace_id, device_id, hook_type, fired_at, payload) "
+        "VALUES (?, 'github-action', ?, ?, ?)",
+        (workspace_id, hook_type, datetime.now(timezone.utc).isoformat(), payload),
+    )
+    conn.commit()
 
 
 def _repo_event_chunk(*a):   # filled in Task 4

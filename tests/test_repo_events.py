@@ -115,6 +115,43 @@ def test_repo_events_push_enqueues_populate(monkeypatch, tmp_path):
         srv.app.dependency_overrides.clear()
 
 
+def test_workflow_run_records_hook_event(monkeypatch, tmp_path):
+    client = _make_repo_events_client(monkeypatch, tmp_path)
+    from src.api.dependencies import get_conn
+    try:
+        r = client.post("/repo-events", headers={"Authorization": "Bearer t"},
+            json={"event_type": "workflow_run", "repo": "https://github.com/a/b",
+                  "sha": "deadbeef", "conclusion": "failure", "workflow": "ci"})
+        assert r.status_code == 200 and r.json()["action"] == "repo_ci"
+        rows = get_conn().execute(
+            "SELECT hook_type, payload FROM hook_events WHERE hook_type='repo_ci'").fetchall()
+        assert any('"sha": "deadbeef"' in row[1] for row in rows)
+        # idempotent: same event again → still one row
+        client.post("/repo-events", headers={"Authorization": "Bearer t"},
+            json={"event_type": "workflow_run", "repo": "https://github.com/a/b",
+                  "sha": "deadbeef", "conclusion": "failure", "workflow": "ci"})
+        rows2 = get_conn().execute(
+            "SELECT id FROM hook_events WHERE hook_type='repo_ci' AND payload LIKE '%deadbeef%'").fetchall()
+        assert len(rows2) == 1, "re-delivered event must not duplicate"
+    finally:
+        from src.api import server as srv; srv.app.dependency_overrides.clear()
+
+
+def test_security_event_records_and_dedups_with_none_fields(monkeypatch, tmp_path):
+    client = _make_repo_events_client(monkeypatch, tmp_path)
+    from src.api.dependencies import get_conn
+    try:
+        payload = {"event_type": "security", "repo": "https://github.com/a/b",
+                   "severity": "high", "summary": "CVE-1 in dep"}
+        assert client.post("/repo-events", headers={"Authorization": "Bearer t"}, json=payload).status_code == 200
+        client.post("/repo-events", headers={"Authorization": "Bearer t"}, json=payload)  # re-deliver
+        rows = get_conn().execute(
+            "SELECT id FROM hook_events WHERE hook_type='repo_security'").fetchall()
+        assert len(rows) == 1, "security re-delivery (None sha/workflow) must dedup"
+    finally:
+        from src.api import server as srv; srv.app.dependency_overrides.clear()
+
+
 def test_repo_events_rejects_non_privileged(monkeypatch, tmp_path):
     import src.api.job_queue as jq
     monkeypatch.setattr(jq, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
