@@ -2,6 +2,8 @@ from __future__ import annotations
 import inspect
 from unittest.mock import patch, AsyncMock, MagicMock, call
 
+import src.api.dependencies as _deps
+
 
 def _capture_task(coro):
     """Stand-in for asyncio.create_task in sync tests: dispose the coroutine
@@ -66,6 +68,12 @@ def test_enqueue_populate_does_not_debounce_across_workspaces(monkeypatch, tmp_p
 # ---------------------------------------------------------------------------
 
 def _make_repo_events_client(monkeypatch, tmp_path):
+    from mayring_core.memory.db_adapter import DBAdapter
+    from mayring_core.memory.store import _init_schema
+    adapter = DBAdapter.create(tmp_path / "test.db", check_same_thread=False)
+    _init_schema(adapter)
+    monkeypatch.setattr(_deps, "_conn", adapter)
+
     import src.api.job_queue as jq
     monkeypatch.setattr(jq, "_JOBS_STATE_FILE", tmp_path / "jobs.json")
     jq._JOBS.clear()
@@ -89,7 +97,19 @@ def test_repo_events_push_enqueues_populate(monkeypatch, tmp_path):
                             headers={"Authorization": "Bearer t"})
         assert r.status_code == 200
         assert m.called
-        assert m.call_args.args[0] == "https://github.com/a/b"
+        assert m.call_args.args == ("https://github.com/a/b", "system"), \
+            "enqueue_populate must receive (repo, resolved_workspace_id)"
+        body = r.json()
+        assert body["action"] == "populate"
+        assert body["job_id"] == "job-1"
+        assert body["workspace_id"] == "system"
+        # verify match-or-create persisted a projects row in the isolated DB
+        row = _deps._conn.execute(
+            "SELECT workspace_id FROM projects WHERE source_type='github' AND source_ref=?",
+            ("https://github.com/a/b",),
+        ).fetchone()
+        assert row is not None and row[0] == "system", \
+            "unknown repo must be match-or-created under 'system'"
     finally:
         from src.api import server as srv
         srv.app.dependency_overrides.clear()
