@@ -14,6 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY core/ ./core/
 RUN pip install --no-cache-dir -e ./core
 
+# mayring-pi-agent (git-submodule, vendor/) — installed editable WITHOUT deps:
+# its mayring-core git-dependency is already satisfied by ./core above, and the
+# remaining runtime deps (httpx/fastapi/uvicorn) live in requirements.txt.
+COPY vendor/mayring-pi-agent ./vendor/mayring-pi-agent
+RUN pip install --no-cache-dir -e ./vendor/mayring-pi-agent --no-deps
+
 COPY src/ ./src/
 COPY prompts/ ./prompts/
 COPY codebooks/ ./codebooks/
