@@ -2318,6 +2318,24 @@ def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
         f"active_ws_listed={ws in ids}  rows={len(ids)} (active must be listed)  marker={suffix}")
 
 
+def check_repo_event_surfaces(api: str, token: str) -> CheckResult:
+    """POST a synthetic workflow_run failure to /repo-events → the response must
+    be action=repo_ci + igio_axis=issue (a hook_events row + repo_event chunk are
+    created server-side, workspace-scoped). Uses a unique repo URL per run."""
+    suffix = int(time.time())
+    repo = f"https://github.com/smoke/repo-{suffix}"
+    code, body, _ = _http("POST", f"{api}/repo-events", token,
+        body={"event_type": "workflow_run", "repo": repo, "sha": f"s{suffix}",
+              "conclusion": "failure", "workflow": "smoke-ci"}, timeout=12.0)
+    if code != 200:
+        return CheckResult("repo_event_surfaces", False, f"post failed http={code}: {body}")
+    ok = isinstance(body, dict) and body.get("action") == "repo_ci" and body.get("igio_axis") == "issue"
+    return CheckResult("repo_event_surfaces", ok,
+        f"action={body.get('action') if isinstance(body, dict) else body} "
+        f"igio_axis={body.get('igio_axis') if isinstance(body, dict) else '?'} "
+        f"(want repo_ci/issue) marker={suffix}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -2384,6 +2402,7 @@ ALL_CHECKS = [
     ("patch_visibility_authz",        check_patch_visibility_authz),
     ("multi_org_membership",          check_multi_org_membership),
     ("stats_workspaces_lists_all",    check_stats_workspaces_lists_all),
+    ("repo_event_surfaces",           check_repo_event_surfaces),
 ]
 
 
