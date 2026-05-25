@@ -1,27 +1,28 @@
 name: Build & Push
 
+# Deploy-Gate (#299): triggert NICHT mehr direkt auf push, sondern erst wenn der
+# `tests`-Workflow auf master GRÜN durchläuft (workflow_run). Verhindert, dass ein
+# Push mit roten Tests gebaut + nach Prod deployt wird (Incident 2026-05-26: commit
+# 32c246a, rote Codebook-Tests, wurde deployt → Prod-Smoke rot). Spiegelt das
+# bewährte app.linn.games/.github/workflows/deploy.yml-Pattern.
+#
+# Nebeneffekt: workflow_run kennt keinen paths-Filter → baut/deployt bei JEDEM
+# grünen master-Push. Das ist gewollt: der alte paths-Filter hatte eine
+# Silent-no-deploy-Lücke (z.B. vendor/mayring-pi-agent-Submodul-Bumps waren nicht
+# gelistet → kein Rebuild trotz geänderter Image-Inhalte).
 on:
-  push:
+  workflow_run:
+    workflows: ["tests"]
     branches: [master]
-    paths:
-      - 'src/**'
-      - 'vendor/mayring-core'   # WHY(#workspace-uuid-sot): mayring_core (Schema, Resolver,
-                         # Retrieval) ist seit #267 ein Submodul — ein Pointer-Bump ändert
-                         # diesen Gitlink; ohne Eintrag deployt eine core-Änderung NICHT
-                         # (silent no-deploy).
-      - 'docker/**'
-      - 'requirements.txt'
-      - 'prompts/**'
-      - 'codebooks/**'
-      - 'tools/**'
-      # Smoke-tests in `tools/` lesen Files aus `docs/` (coverage-map,
-      # smoke_runbook). Ohne docs/** im paths filter wird ein docs-only
-      # Commit nicht gebaut → smoke-Container hat alten Inhalt → fail.
-      - 'docs/**'
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: build-deploy
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -30,12 +31,22 @@ jobs:
   build:
     name: Build image + trigger deploy
     runs-on: ubuntu-latest
+    # Nur bei grünem tests-Lauf (oder manuellem Dispatch). Roter tests-Lauf →
+    # Job übersprungen → kein Build, kein Deploy.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - uses: actions/checkout@v5
         with:
+          # Den GETESTETEN Commit bauen, nicht master-HEAD: workflow_run läuft sonst
+          # gegen den default-branch-HEAD statt gegen den Commit, der die Tests bestand.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           submodules: true
           token: ${{ secrets.GH_PAT }}
+
+      - name: Resolve tested SHA
+        id: sha
+        run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v4
@@ -54,7 +65,7 @@ jobs:
           push: true
           tags: |
             nileneb/mayring:latest
-            nileneb/mayring:${{ github.sha }}
+            nileneb/mayring:${{ steps.sha.outputs.sha }}
           cache-from: type=gha,scope=mayring
           cache-to: type=gha,mode=max,scope=mayring
           provenance: false
@@ -69,6 +80,6 @@ jobs:
               owner: 'Nileneb',
               repo: 'app.linn.games',
               event_type: 'mayring-deploy',
-              client_payload: { tag: '${{ github.sha }}' }
+              client_payload: { tag: '${{ steps.sha.outputs.sha }}' }
             });
-            console.log('mayring-deploy event dispatched to app.linn.games');
+            console.log('mayring-deploy dispatched to app.linn.games (tag=${{ steps.sha.outputs.sha }})');
