@@ -305,7 +305,7 @@ async def trigger_populate(
         # Issue #85: forward the throttle to the populate-memory loop.
         # CLI flag is --batch-delay (src/cli_args.py); 0 means no pause.
         extra += ["--batch-delay", str(max(0.0, float(request.batch_delay)))]
-    job_id = enqueue_populate(request.repo, workspace_id, extra_args=extra or None)
+    job_id = enqueue_populate(request.repo, workspace_id, extra_args=extra)
     return {
         "job_id": job_id, "status": "started", "repo": request.repo,
         "batch_delay": request.batch_delay,
