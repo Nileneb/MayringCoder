@@ -7,13 +7,18 @@ the shared-volume file atomically, so get_job re-reads it on a local miss.
 """
 from __future__ import annotations
 
-import importlib
-
 
 def test_get_job_falls_back_to_shared_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAYRING_JOBS_STATE", str(tmp_path / "jobs_state.json"))
     import src.api.job_queue as jq
-    importlib.reload(jq)  # re-read _JOBS_STATE_FILE from the patched env
+    # Isolate the shared state file WITHOUT importlib.reload. WHY(flake-fix
+    # 2026-05-25): reload rebinds jq._JOBS to a NEW dict, but server.py/jobs.py
+    # keep the OLD dict they imported via `from job_queue import _JOBS`. After
+    # this test ran, every later test's make_job wrote to the new dict while the
+    # route's _fake_checker read srv._JOBS (old) → flaky KeyError in
+    # test_populate_fires_full_v2_chain_on_success (green isolated, red in-suite).
+    # setattr rebinds only this module's attr; no divergence.
+    monkeypatch.setattr(jq, "_JOBS_STATE_FILE", tmp_path / "jobs_state.json")
+    jq._JOBS.clear()
 
     job_id = jq.make_job("ws-1")
     assert jq.get_job(job_id) is not None  # present in this process
