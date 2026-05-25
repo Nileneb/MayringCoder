@@ -37,6 +37,23 @@ async def list_workspace_goals(workspace_id: str = Depends(get_workspace)) -> di
             "goals": _t.list_workspace_goals(_get_conn(), workspace_id)}
 
 
+@router.patch("/tasks/by-external/{external_id}")
+async def update_task_by_external(external_id: str, req: TaskUpdateRequest,
+                                  workspace_id: str = Depends(get_workspace)) -> dict:
+    row = _get_conn().execute(
+        "SELECT task_id FROM tasks WHERE workspace_id=? AND external_id=?",
+        (workspace_id, external_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    fields = {k: v for k, v in req.model_dump(exclude_none=True).items()}
+    try:
+        updated = _t.update_task(_get_conn(), workspace_id, row[0], **fields)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return updated
+
+
 @router.patch("/tasks/{task_id}")
 async def update_task(task_id: str, req: TaskUpdateRequest, workspace_id: str = Depends(get_workspace)) -> dict:
     fields = {k: v for k, v in req.model_dump().items() if v is not None}
