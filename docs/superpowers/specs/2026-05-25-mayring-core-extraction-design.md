@@ -1,7 +1,7 @@
 # mayring-core in eigenes Repo extrahieren — Design (#267-Follow-up)
 
 **Datum:** 2026-05-25
-**Status:** ✅ Approved (User „sieht gut aus", pi-agent zusätzlich public gestellt)
+**Status:** ✅ UMGESETZT (2026-05-26) — siehe „Umsetzung" am Ende. Zyklus bewiesen gebrochen.
 **Verbunden mit:** #266 (Pi-Agent-Dedup, Follow-up „mayring-core eigenes Repo bricht den vendor↔core-Zyklus"), #267 (core/-Package-Extraktion, PR #271/#273), [[project_mayring_core_extraction_267]], [[project_pi_agent_dedup_266]], [[project_pi_agent_release_tagging]]
 
 ## Problem
@@ -175,3 +175,25 @@ pytest -q          # grün
   geändert werden. Direkter Push auf default-Branch ist für MayringCoder/
   pi-agent autorisiert; mayring-core ist neu (Erst-Push). S0 ist ein separater
   CI-Fix-Commit; S1-S3 folgen in Reihenfolge.
+
+## Umsetzung (2026-05-26)
+
+Alle Schritte ausgeführt, jeder Schritt auf CI verifiziert:
+- **S0** CI-Fix `c7dc7d5` → grün (run 26421164008).
+- **S1** `Nileneb/mayring-core` PUBLIC, branch `main`, `v0.1.0` (filter-repo, 25 Commits). Import-Smoke-CI grün.
+- **S2** pi-agent `6eebcde` / `v0.1.3` (dep → `mayring-core@v0.1.0`). pi-agent-CI grün.
+- **S3** MayringCoder `32c246a`: core/ raus, Submodul `vendor/mayring-core@v0.1.0` + pi-agent→`v0.1.3`, 5 Pfad-Refs umgestellt.
+
+**Regression gefunden + gefixt (das Hauptlernen):** S3-CI rot — die fixen `__file__`-Tiefen in
+`config.py`/`model_router.py`/`categorization.py` zeigten nach `vendor/` statt Repo-Root (vendor/mayring-core
+ist eine Ebene tiefer als core/) → codebooks/prompts/config nicht gefunden → 40 Codebook-Test-Failures.
+Root-Cause-Fix in **mayring-core `v0.1.1` (c011958):** zentraler `config._resolve_base_dir()` ankert
+tiefen-UNABHÄNGIG an Marker-Dirs (`codebooks/`+`prompts/`), `MAYRING_BASE_DIR`-override; die anderen Module
+konsumieren `config.BASE_DIR`. → künftige Relocations brechen die Pfade nicht mehr (vorher 3× passiert).
+MayringCoder-Submodul → `v0.1.1` (`52f9030`) → **full suite 1731 passed, CI grün** (run 26422635306).
+
+**Outcome bewiesen:** `pip install mayring-pi-agent@v0.1.3` in Clean-venv klont nur `mayring-core` +
+`mayring-pi-agent`, **kein MayringCoder** → Zyklus gebrochen, pi-agent-Image-Rebuild entsperrt.
+
+**Offen (User-Entscheidung):** pi-agent-Prod-Container-Rebuild (Deploy). Optional: pi-agent-core-Pin
+`v0.1.0`→`v0.1.1` (pi-agent nutzt die Codebook-Pfade nicht → vom Bug unberührt, reiner Hygiene-Bump).
