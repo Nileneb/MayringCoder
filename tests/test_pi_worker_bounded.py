@@ -5,26 +5,17 @@ and immediately looped for the next with no pacing, draining a backlog at full
 HTTP speed + firing unbounded concurrent job callbacks → single-core API
 CPU-pegged, memory hooks starved into 9s timeouts.
 
-WHY(#266): _claim_one was in src/agents/pi_worker (the local duplicate, now
-deleted). The vendored mayring_pi_agent package inlines the cloud loop without
-the semaphore abstraction. These tests are xfail until _claim_one (or an
-equivalent bounded-claim API) is added to the vendor package.
+WHY(#266): _claim_one now lives in the vendored mayring_pi_agent package
+(v0.1.2 — bounded-claim fix released); MayringCoder consumes it instead of
+the deleted src/agents copy.
 """
 import threading
-
-import pytest
 
 from mayring_pi_agent import pi_worker
 
 _JOB = {"job": {"job_id": "j1", "task_text": "do x"}}
 
-_REASON = (
-    "#266: _claim_one not yet in mayring_pi_agent package; "
-    "backport bounded-claim invariant before removing xfail"
-)
 
-
-@pytest.mark.xfail(reason=_REASON, strict=True)
 def test_busy_capacity_does_not_claim():
     """At capacity → no claim is issued at all (the anti-flood guard)."""
     slots = threading.Semaphore(1)
@@ -43,7 +34,6 @@ def test_busy_capacity_does_not_claim():
     assert waited == [1]
 
 
-@pytest.mark.xfail(reason=_REASON, strict=True)
 def test_dispatch_consumes_one_slot():
     slots = threading.Semaphore(2)
     submitted, posts = [], []
@@ -66,7 +56,6 @@ def test_dispatch_consumes_one_slot():
     assert slots.acquire(blocking=False) is False   # in-flight job holds the other
 
 
-@pytest.mark.xfail(reason=_REASON, strict=True)
 def test_empty_queue_releases_slot():
     slots = threading.Semaphore(1)
     outcome = pi_worker._claim_one(
@@ -81,7 +70,6 @@ def test_empty_queue_releases_slot():
     assert slots.acquire(blocking=False) is True     # slot not leaked
 
 
-@pytest.mark.xfail(reason=_REASON, strict=True)
 def test_completion_releases_slot_and_calls_through():
     slots = threading.Semaphore(1)
     captured, completed = {}, []
@@ -103,7 +91,6 @@ def test_completion_releases_slot_and_calls_through():
     assert slots.acquire(blocking=False) is True      # freed by completion
 
 
-@pytest.mark.xfail(reason=_REASON, strict=True)
 def test_submit_failure_releases_slot():
     slots = threading.Semaphore(1)
 
