@@ -17,7 +17,8 @@ async def create_task(req: TaskCreateRequest, workspace_id: str = Depends(get_wo
         return _t.create_task(_get_conn(), workspace_id=workspace_id, title=req.title,
                               description=req.description, priority=req.priority,
                               due_date=req.due_date, tags=req.tags, created_by=info.sub,
-                              linked_chunk_id=req.linked_chunk_id, scope_key=req.scope_key)
+                              linked_chunk_id=req.linked_chunk_id, scope_key=req.scope_key,
+                              external_id=req.external_id)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

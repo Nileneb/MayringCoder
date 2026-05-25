@@ -260,6 +260,7 @@ class TaskCreateRequest(BaseModel):
     tags: str = ""
     linked_chunk_id: str | None = None
     scope_key: str | None = None
+    external_id: str | None = None
 
 
 class TaskUpdateRequest(BaseModel):
