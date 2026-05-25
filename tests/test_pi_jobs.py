@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.agents import pi_jobs, pi_worker
+from mayring_pi_agent import pi_jobs, pi_worker
 from mayring_core.memory.store import init_memory_db
 
 
@@ -143,13 +143,13 @@ def test_worker_drains_queued_job(db: Path, monkeypatch) -> None:
     """A queued job is claimed by the worker, executed (mocked LLM), and
     persisted as 'completed'."""
     monkeypatch.setattr(
-        "src.agents.pi_jobs.CACHE_DIR",
+        "mayring_pi_agent.pi_jobs.CACHE_DIR",
         db.parent,
         raising=True,
     )
 
     pi_worker.stop()  # ensure clean state if a previous test left state
-    with patch("src.agents.pi.run_task_with_memory", return_value="hello world"):
+    with patch("mayring_pi_agent.pi.run_task_with_memory", return_value="hello world"):
         pi_worker.start(poll_interval=0.05)
         try:
             job = pi_jobs.insert_job("hi", db_path=db)
@@ -163,10 +163,10 @@ def test_worker_drains_queued_job(db: Path, monkeypatch) -> None:
 
 
 def test_worker_marks_failure_on_exception(db: Path, monkeypatch) -> None:
-    monkeypatch.setattr("src.agents.pi_jobs.CACHE_DIR", db.parent, raising=True)
+    monkeypatch.setattr("mayring_pi_agent.pi_jobs.CACHE_DIR", db.parent, raising=True)
     pi_worker.stop()
     with patch(
-        "src.agents.pi.run_task_with_memory",
+        "mayring_pi_agent.pi.run_task_with_memory",
         side_effect=RuntimeError("ollama down"),
     ):
         pi_worker.start(poll_interval=0.05)
@@ -414,7 +414,7 @@ def test_list_recent_combines_workspace_and_scope_filters(db: Path) -> None:
 # ----- Issue #183 T1: PiJob extension + classify_pi_job -------------------
 
 
-from src.agents.pi_jobs import classify_pi_job  # noqa: E402
+from mayring_pi_agent.pi_jobs import classify_pi_job  # noqa: E402
 
 
 def test_pijob_has_new_fields() -> None:

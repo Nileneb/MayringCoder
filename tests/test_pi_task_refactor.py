@@ -21,7 +21,7 @@ def anyio_backend():
 
 @pytest.fixture(autouse=True)
 def reset_singleton():
-    from src.agents import pi_queue
+    from mayring_pi_agent import pi_queue
     pi_queue._SINGLETON = None
     yield
     pi_queue._SINGLETON = None
@@ -31,7 +31,7 @@ async def test_pi_task_response_schema_unchanged():
     """Backward-compat: /pi-task returns {workspace_id, content}."""
     from src.api.routes.memory import pi_task
     from src.api.routes.models import PiTaskRequest
-    from src.agents import pi_queue
+    from mayring_pi_agent import pi_queue
 
     q = pi_queue.get_pi_queue()
 
@@ -54,7 +54,7 @@ async def test_pi_task_propagates_exception():
     from fastapi import HTTPException
     from src.api.routes.memory import pi_task
     from src.api.routes.models import PiTaskRequest
-    from src.agents import pi_queue
+    from mayring_pi_agent import pi_queue
 
     q = pi_queue.get_pi_queue()
 
@@ -76,8 +76,8 @@ async def test_pi_task_uses_repo_slug_from_request():
     """repo_slug from request is forwarded through the job."""
     from src.api.routes.memory import pi_task
     from src.api.routes.models import PiTaskRequest
-    from src.agents import pi_queue
-    from src.agents.pi_jobs import PiJob
+    from mayring_pi_agent import pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob
 
     captured: list[PiJob] = []
     q = pi_queue.get_pi_queue()
@@ -101,8 +101,8 @@ async def test_pi_task_job_class_classified():
     """Job class is classified based on task length."""
     from src.api.routes.memory import pi_task
     from src.api.routes.models import PiTaskRequest
-    from src.agents import pi_queue
-    from src.agents.pi_jobs import PiJob
+    from mayring_pi_agent import pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob
 
     captured: list[PiJob] = []
     q = pi_queue.get_pi_queue()

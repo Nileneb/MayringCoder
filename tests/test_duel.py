@@ -30,7 +30,7 @@ def test_run_duel_executes_both_models(monkeypatch):
         calls.append(kw["model"])
         return f"response from {kw['model']}"
 
-    monkeypatch.setattr("src.agents.pi.run_task_with_memory", _fake_task)
+    monkeypatch.setattr("mayring_pi_agent.pi.run_task_with_memory", _fake_task)
 
     job_id = _make_job("ws1")
     req = DuelRequest(task="test", model_a="mA", model_b="mB")
@@ -50,7 +50,7 @@ def test_run_duel_captures_exception_as_text(monkeypatch):
     def _raising(**kw):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("src.agents.pi.run_task_with_memory", _raising)
+    monkeypatch.setattr("mayring_pi_agent.pi.run_task_with_memory", _raising)
 
     job_id = _make_job("ws1")
     req = DuelRequest(task="test", model_a="mA", model_b="mB")

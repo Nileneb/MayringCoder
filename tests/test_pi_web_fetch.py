@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.agents.pi import (
+from mayring_pi_agent.pi import (
     _domain_allowed,
     _execute_web_fetch,
     _WEB_FETCH_CACHE,

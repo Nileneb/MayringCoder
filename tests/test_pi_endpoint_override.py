@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.agents.pi import _resolve_ollama_compatible, run_task_with_memory
+from mayring_pi_agent.pi import _resolve_ollama_compatible, run_task_with_memory
 from mayring_core.llm.endpoint import LLMEndpoint
 
 
@@ -39,9 +39,9 @@ def test_run_task_passes_endpoint_url_and_model_to_agent_loop():
     """The endpoint wins over explicit ollama_url+model parameters."""
     endpoint = LLMEndpoint(provider="ollama", base_url="http://user-ollama:11434", model="custom-model")
 
-    with patch("src.agents.pi._agent_loop") as mock_loop, \
-         patch("src.agents.pi.init_memory_db"), \
-         patch("src.agents.pi.get_or_create_chroma_collection"):
+    with patch("mayring_pi_agent.pi._agent_loop") as mock_loop, \
+         patch("mayring_pi_agent.pi.init_memory_db"), \
+         patch("mayring_pi_agent.pi.get_or_create_chroma_collection"):
         mock_loop.return_value = ("some result text", 0)
 
         run_task_with_memory(
@@ -60,9 +60,9 @@ def test_run_task_passes_endpoint_url_and_model_to_agent_loop():
 
 def test_run_task_without_endpoint_uses_default_args():
     """Backward compat: callers not passing endpoint still use ollama_url+model."""
-    with patch("src.agents.pi._agent_loop") as mock_loop, \
-         patch("src.agents.pi.init_memory_db"), \
-         patch("src.agents.pi.get_or_create_chroma_collection"):
+    with patch("mayring_pi_agent.pi._agent_loop") as mock_loop, \
+         patch("mayring_pi_agent.pi.init_memory_db"), \
+         patch("mayring_pi_agent.pi.get_or_create_chroma_collection"):
         mock_loop.return_value = ("ok", 0)
 
         run_task_with_memory(

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from src.agents.vision import caption_image
+from mayring_pi_agent.vision import caption_image
 from mayring_core.memory.schema import Source
 from mayring_core.memory.store import init_memory_db, _init_schema
 
@@ -87,7 +87,7 @@ def test_ingest_image_produces_image_caption_chunk(tmp_path: Path) -> None:
     fake_caption = "A red architecture diagram."
 
     with (
-        patch("src.agents.vision.caption_image", return_value=fake_caption),
+        patch("mayring_pi_agent.vision.caption_image", return_value=fake_caption),
         patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 768]),
         patch("mayring_core.memory.ingestion.core.resolve_dedup") as mock_dedup,
     ):
@@ -171,7 +171,7 @@ def test_ingest_image_fallback_caption_on_empty_response(tmp_path: Path) -> None
     )
 
     with (
-        patch("src.agents.vision.caption_image", return_value=""),
+        patch("mayring_pi_agent.vision.caption_image", return_value=""),
         patch("src.analysis.context_rag._embed_texts", return_value=[[0.1] * 768]),
         patch("mayring_core.memory.ingestion.core.resolve_dedup") as mock_dedup,
     ):

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from src.agents.vision import (
+from mayring_pi_agent.vision import (
     caption_image,
     caption_images_batch,
     get_image_metadata,

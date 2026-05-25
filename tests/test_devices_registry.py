@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 import src.api.dependencies as _deps
 from mayring_core.memory import devices as ds
-from src.agents import pi_jobs
+from mayring_pi_agent import pi_jobs
 from src.api.auth import get_workspace
 from src.api.server import app
 

@@ -63,7 +63,7 @@ def test_build_context_empty_graph(tmp_path):
 def test_analyze_with_memory_accepts_wiki_context():
     """analyze_with_memory accepts wiki_context kwarg without error (signature test)."""
     import inspect
-    from src.agents.pi import analyze_with_memory
+    from mayring_pi_agent.pi import analyze_with_memory
     sig = inspect.signature(analyze_with_memory)
     assert "wiki_context" in sig.parameters
 

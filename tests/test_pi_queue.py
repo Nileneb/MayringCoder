@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from src.agents.pi_jobs import PiJob
+from mayring_pi_agent.pi_jobs import PiJob
 
 # PiQueue uses asyncio primitives (asyncio.Queue, asyncio.Future, asyncio.Event)
 # which are not compatible with trio — restrict to asyncio backend.
@@ -20,7 +20,7 @@ def anyio_backend():
 @pytest.fixture(autouse=True)
 def reset_singleton():
     """Each test gets a fresh queue (singleton would otherwise leak state)."""
-    from src.agents import pi_queue
+    from mayring_pi_agent import pi_queue
     pi_queue._SINGLETON = None
     yield
     pi_queue._SINGLETON = None
@@ -32,7 +32,7 @@ def _make_job(text: str = "ping", **kw) -> PiJob:
 
 async def test_enqueue_returns_future_resolving_with_result():
     """Caller enqueues, awaits future, gets result. Worker calls handler."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
 
     q = PiQueue(concurrency=2)
     async def _handler(job: PiJob) -> dict:
@@ -49,7 +49,7 @@ async def test_enqueue_returns_future_resolving_with_result():
 
 async def test_concurrency_cap_respected():
     """With concurrency=2 and 5 enqueued, max 2 are in-flight at any time."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
 
     q = PiQueue(concurrency=2)
     in_flight = 0
@@ -73,7 +73,7 @@ async def test_concurrency_cap_respected():
 
 async def test_handler_exception_propagates_to_future():
     """Handler-error → future.set_exception, caller sees the error."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
 
     q = PiQueue(concurrency=1)
     async def _handler(job: PiJob) -> dict:
@@ -90,7 +90,7 @@ async def test_handler_exception_propagates_to_future():
 
 async def test_shutdown_cancels_pending_jobs():
     """Pending (un-started) jobs see future cancelled on shutdown."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
 
     q = PiQueue(concurrency=1)
     started = asyncio.Event()
@@ -113,7 +113,7 @@ async def test_shutdown_cancels_pending_jobs():
 
 async def test_singleton_get_pi_queue_returns_same_instance():
     """Module-level singleton — same FastAPI process gets same queue."""
-    from src.agents.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_queue import get_pi_queue
     q1 = get_pi_queue()
     q2 = get_pi_queue()
     assert q1 is q2
@@ -121,7 +121,7 @@ async def test_singleton_get_pi_queue_returns_same_instance():
 
 async def test_stats_after_jobs():
     """Stats ring-buffer tracks completed jobs per class."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
     q = PiQueue(concurrency=1)
 
     async def _h(job):
@@ -144,7 +144,7 @@ async def test_stats_after_jobs():
 
 async def test_stats_fallback_rate():
     """fallback_rate is 1.0 when model_used differs from model_requested."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
 
     q = PiQueue(concurrency=1)
 
@@ -166,7 +166,7 @@ async def test_stats_fallback_rate():
 
 async def test_stats_empty_queue():
     """stats() on a fresh queue returns zero counts."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
 
     q = PiQueue(concurrency=1)
 
@@ -188,7 +188,7 @@ async def test_stats_empty_queue():
 async def test_priority_lane_runs_independently_from_background():
     """Hook-burst auf priority lane darf background nicht ausbremsen, und
     umgekehrt: laufender background-job blockiert nicht den priority lane."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
     q = PiQueue.with_lanes(priority=2, standard=2, background=1)
     handler_calls = []
     started = asyncio.Event()
@@ -219,7 +219,7 @@ async def test_priority_lane_runs_independently_from_background():
 async def test_lane_concurrency_caps_independent():
     """Each lane hat seine OWN concurrency — 5 priority + 5 standard sollte
     bis zu 4 parallel haben (2 prio + 2 standard), nicht 4 von einer lane."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
     from collections import Counter
     q = PiQueue.with_lanes(priority=2, standard=2, background=1)
     in_flight_per_lane: Counter = Counter()
@@ -252,7 +252,7 @@ async def test_lane_concurrency_caps_independent():
 @pytest.mark.anyio
 async def test_stats_per_lane():
     """stats() reports per-lane counts + p50/p95."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
     q = PiQueue.with_lanes(priority=2, standard=2, background=1)
     async def _h(job): return {}
     q.set_handler(_h)
@@ -275,7 +275,7 @@ async def test_stats_per_lane():
 async def test_backward_compat_PiQueue_constructor():
     """Original `PiQueue(concurrency=2)` muss weiter funktionieren — wir
     mappen es als 'standard'-only-Queue hinter den Kulissen."""
-    from src.agents.pi_queue import PiQueue
+    from mayring_pi_agent.pi_queue import PiQueue
     q = PiQueue(concurrency=2)
     async def _h(job): return {"ok": True}
     q.set_handler(_h)
