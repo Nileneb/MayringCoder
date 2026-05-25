@@ -40,7 +40,7 @@ def test_igio_lens_includes_intervention_todos(tmp_path, monkeypatch):
     monkeypatch.setattr(igio_admin, "_conn", lambda: db)
 
     info = TokenInfo(workspace_id="ws-todos", scopes=())
-    res = _run(igio_admin.igio_lens(info=info))
+    res = _run(igio_admin.igio_lens(info=info, workspace="ws-todos"))
 
     assert res["workspace_id"] == "ws-todos"
     todos = res["axes"]["intervention"]["todos"]
@@ -58,7 +58,7 @@ def test_igio_lens_todos_shape(tmp_path, monkeypatch):
     monkeypatch.setattr(igio_admin, "_conn", lambda: db)
 
     info = TokenInfo(workspace_id="ws-shape", scopes=())
-    res = _run(igio_admin.igio_lens(info=info))
+    res = _run(igio_admin.igio_lens(info=info, workspace="ws-shape"))
     todos = res["axes"]["intervention"]["todos"]
     assert todos, "expected at least one todo"
     t = todos[0]
@@ -73,7 +73,7 @@ def test_igio_lens_todos_open_task_has_no_completed_at(tmp_path, monkeypatch):
     monkeypatch.setattr(igio_admin, "_conn", lambda: db)
 
     info = TokenInfo(workspace_id="ws-open", scopes=())
-    res = _run(igio_admin.igio_lens(info=info))
+    res = _run(igio_admin.igio_lens(info=info, workspace="ws-open"))
     todos = res["axes"]["intervention"]["todos"]
     assert todos
     assert todos[0]["completed_at"] is None
@@ -85,6 +85,6 @@ def test_igio_lens_intervention_count_still_present(tmp_path, monkeypatch):
     monkeypatch.setattr(igio_admin, "_conn", lambda: db)
 
     info = TokenInfo(workspace_id="ws-compat", scopes=())
-    res = _run(igio_admin.igio_lens(info=info))
+    res = _run(igio_admin.igio_lens(info=info, workspace="ws-compat"))
     assert "count" in res["axes"]["intervention"], "intervention.count must not be removed (back-compat)"
     assert "todos" in res["axes"]["intervention"], "intervention.todos must be added"

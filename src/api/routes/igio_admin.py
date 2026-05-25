@@ -21,7 +21,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from mayring_core.memory.tasks import list_tasks
-from src.api.auth import get_token_info
+from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
 from src.wiki_v2.igio_classifier import VALID_AXES
@@ -85,6 +85,7 @@ async def igio_coverage(
 async def igio_lens(
     limit: int = 10,
     info: TokenInfo = Depends(get_token_info),
+    workspace: str = Depends(get_workspace),
 ) -> dict:
     """Per-IGIO-axis distribution + recent chunks for the IGIO-Lens view.
 
@@ -92,11 +93,16 @@ async def igio_lens(
     (scope '*') sees all workspaces; a regular JWT sees only its own. Uncached —
     a GROUP BY on idx_chunks_workspace_id is cheap, and caching a live feed caused
     write-then-read staleness elsewhere.
+
+    WHY(alias 2026-05-25): scope on the ALIAS-RESOLVED workspace (get_workspace),
+    not raw info.workspace_id — a stale token (019d6933) must resolve to the
+    canonical 019e14d6, else the intervention todos (created via /tasks, which
+    DOES alias-resolve) land in one workspace and the lens reads another → empty.
     """
     limit = max(1, min(limit, 50))
     conn = _conn()
     admin = _is_admin(info)
-    ws = info.workspace_id
+    ws = workspace
     ws_clause = "" if admin else "AND workspace_id = ?"
     ws_params: tuple = () if admin else (ws,)
     scope = "all" if admin else "workspace"

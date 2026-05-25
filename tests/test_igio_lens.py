@@ -40,7 +40,7 @@ def test_igio_lens_workspace_scoped_counts(tmp_path, monkeypatch):
     db = _seed(tmp_path)
     monkeypatch.setattr(igio_admin, "_conn", lambda: db)
     info = TokenInfo(workspace_id="ws-a", scopes=())
-    res = _run(igio_admin.igio_lens(info=info))
+    res = _run(igio_admin.igio_lens(info=info, workspace="ws-a"))
     assert res["workspace_id"] == "ws-a"
     assert res["scope"] == "workspace"
     assert res["axes"]["issue"]["count"] == 2
@@ -57,6 +57,6 @@ def test_igio_lens_admin_sees_all_workspaces(tmp_path, monkeypatch):
     db = _seed(tmp_path)
     monkeypatch.setattr(igio_admin, "_conn", lambda: db)
     info = TokenInfo(workspace_id="system", scopes=("*",))
-    res = _run(igio_admin.igio_lens(info=info))
+    res = _run(igio_admin.igio_lens(info=info, workspace="system"))
     assert res["scope"] == "all"
     assert res["axes"]["issue"]["count"] == 3
