@@ -78,8 +78,35 @@ def _record_repo_event(conn, workspace_id: str, hook_type: str, req: RepoEventRe
     conn.commit()
 
 
-def _repo_event_chunk(*a):   # filled in Task 4
-    pass
+def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str) -> None:
+    """Insert a lightweight, searchable source+chunk for a CI/security event,
+    tagged with the deterministic igio axis (NO LLM in the hot path).
+
+    WHY(repo-watching): gives every watched repo's CI/security a memory presence
+    (recall + IGIO-Lens). igio_axis is written via update_chunk_igio_axis because
+    insert_chunk does not persist igio columns."""
+    from mayring_core.memory.store import upsert_source, insert_chunk, update_chunk_igio_axis
+    from mayring_core.memory.schema import Source, Chunk
+    now = datetime.now(timezone.utc).isoformat()
+    if req.event_type == "workflow_run":
+        text = f"CI {req.workflow or ''} {req.conclusion or ''} on {req.repo}@{(req.sha or '')[:8]}".strip()
+    else:
+        text = f"Security {req.severity or ''}: {req.summary or ''} in {req.repo}".strip()
+    sid = f"repo_event:{req.repo}:{req.event_type}:{(req.sha or now)[:12]}"
+    thash = Chunk.compute_text_hash(text)   # already 'sha256:...'
+    src = Source(
+        source_id=sid, source_type="repo_event", repo=req.repo,
+        path=req.url or "", branch=req.ref or "main", commit=req.sha or "",
+        content_hash=thash, captured_at=now,
+    )
+    upsert_source(conn, src, workspace_id=workspace_id)
+    chunk = Chunk(
+        chunk_id=Chunk.make_id(sid, 0, "event"), source_id=sid, chunk_level="event",
+        ordinal=0, text=text, text_hash=thash, created_at=now, workspace_id=workspace_id,
+    )
+    insert_chunk(conn, chunk, workspace_id=workspace_id)
+    if axis:
+        update_chunk_igio_axis(conn, chunk.chunk_id, axis, confidence=0.9)
 
 
 @router.post("/repo-events")
