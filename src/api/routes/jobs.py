@@ -278,8 +278,11 @@ def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None 
             "--memory-categorize", "--workers", "2"]
     if extra_args:
         args.extend(extra_args)
-    job_id = _make_job(workspace_id)
-    _JOBS[job_id]["repo"] = repo  # tag for debounce + UI
+    # WHY(repo-watching): pass repo into make_job so _save_jobs() persists it
+    # atomically; a different uvicorn worker reading _load_jobs() sees it for
+    # cross-worker debounce.  Post-tagging after make_job left repo absent from
+    # jobs_state.json, defeating the entire cross-worker dedup.
+    job_id = _make_job(workspace_id, repo=repo)
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, repo))
     return job_id
 

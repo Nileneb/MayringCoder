@@ -72,9 +72,9 @@ _FILECOUNT_RE = re.compile(r"\[populate-memory\]\s+(\d+)\s+Dateien gefunden")
 _STAGE_RE = re.compile(r"\[STAGE\]\s+(?P<name>\S+)\s+(?P<detail>.*)")
 
 
-def make_job(workspace_id: str) -> str:
+def make_job(workspace_id: str, repo: str | None = None) -> str:
     job_id = str(uuid.uuid4())[:8]
-    _JOBS[job_id] = {
+    record: dict = {
         "job_id": job_id,
         "status": "started",
         "output": "",
@@ -82,6 +82,11 @@ def make_job(workspace_id: str) -> str:
         "workspace_id": workspace_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
+    if repo is not None:
+        # WHY(repo-watching): include repo BEFORE _save_jobs so any worker that
+        # reads the shared file sees it for cross-worker debounce.
+        record["repo"] = repo
+    _JOBS[job_id] = record
     _save_jobs()
     return job_id
 
