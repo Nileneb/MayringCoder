@@ -43,7 +43,7 @@ def _run_judge(task: str, answer_a: str, answer_b: str, judge_model: str) -> dic
 
 async def _run_duel(job_id: str, request: DuelRequest, workspace_id: str) -> None:
     """Sequential execution of Pi-task on both models, optional judge + baseline."""
-    from src.agents.pi import run_task_with_memory
+    from mayring_pi_agent.pi import run_task_with_memory
     _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
     loop = asyncio.get_event_loop()
 
@@ -126,7 +126,7 @@ async def benchmark_tasks(
     """Run task suite on two models, score each answer and return comparison report."""
     import yaml
     from pathlib import Path as _Path
-    from src.agents.pi import run_task_with_memory
+    from mayring_pi_agent.pi import run_task_with_memory
 
     suite_path = _Path(__file__).parent.parent.parent.parent / "benchmarks" / "task_suite.yaml"
     if not suite_path.exists():

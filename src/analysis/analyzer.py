@@ -407,7 +407,7 @@ def analyze_files(
         hz_ctx = hot_zone_context_map.get(fn) if hot_zone_context_map else None
         wctx = (wiki_context_map or {}).get(fn, "")
         if use_pi:
-            from src.agents.pi import analyze_with_memory
+            from mayring_pi_agent.pi import analyze_with_memory
             result = analyze_with_memory(file, ollama_url, model, pi_repo_slug, wiki_context=wctx)
         else:
             result = analyze_file(file, prompt_template, ollama_url, model, ctx, hz_ctx, wiki_context=wctx)

@@ -72,7 +72,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             except httpx.ConnectError:
                 return {
                     "error": f"Pi-Server nicht erreichbar ({pi_url})",
-                    "hint": "pi_server.py starten: cd MayringCoder && .venv/bin/python -m src.agents.pi_server",
+                    "hint": "pi_server.py starten: cd MayringCoder && .venv/bin/python -m mayring_pi_agent.pi_server",
                 }
             except Exception as exc:
                 return {"error": str(exc), "hint": "Pi-Server-Fehler"}
@@ -88,7 +88,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 "hint": f"Ollama starten: ollama serve  (erwartet unter {_OLLAMA_URL})",
             }
         try:
-            from src.agents.pi import run_task_with_memory
+            from mayring_pi_agent.pi import run_task_with_memory
             result = run_task_with_memory(
                 task=task,
                 ollama_url=_OLLAMA_URL,
@@ -186,7 +186,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
         Returns:
             {"job_id": "pij_...", "status": "queued", "workspace_id": "..."}
         """
-        from src.agents import pi_jobs
+        from mayring_pi_agent import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         if prefer not in pi_jobs.VALID_PREFER:
             return {
@@ -219,7 +219,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
             {"job_id", "status", "result", "error",
              "started_at", "finished_at", "workspace_id"}
         """
-        from src.agents import pi_jobs
+        from mayring_pi_agent import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         job = pi_jobs.get_job(job_id, workspace_id=ws)
         if job is None:
@@ -249,7 +249,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
         Set `only_active=True` to see only queued+running jobs. Only jobs
         belonging to the caller's tenant are returned.
         """
-        from src.agents import pi_jobs
+        from mayring_pi_agent import pi_jobs
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         jobs = pi_jobs.list_recent(
             only_active=only_active,
@@ -493,7 +493,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
         Returns:
             {file, commits, model, summary} oder {error}
         """
-        from src.agents.diff_history import DiffHistoryError, run as _run
+        from mayring_pi_agent.diff_history import DiffHistoryError, run as _run
         try:
             return _run(
                 file,

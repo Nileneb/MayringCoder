@@ -141,14 +141,14 @@ def _run_pending_schema_migrations() -> None:
 @app.on_event("startup")
 async def _start_pi_queue() -> None:
     import asyncio
-    from src.agents.pi_queue import get_pi_queue
-    from src.agents.pi_jobs import PiJob
+    from mayring_pi_agent.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob
 
     queue = get_pi_queue()
 
     async def _handler(job: PiJob) -> dict:
         import time as _time
-        from src.agents.pi import run_task_with_memory
+        from mayring_pi_agent.pi import run_task_with_memory
         # T4: ModelRouter mit job_class-hint. 'mini' kann auf phi3:3.8b
         # routen wenn yaml es definiert, 'standard' bleibt mistral:7b.
         # Plus per-class timeout — kleine Tasks dürfen nicht 240s warten.
@@ -185,7 +185,7 @@ async def _start_pi_queue() -> None:
 
 @app.on_event("shutdown")
 async def _stop_pi_queue() -> None:
-    from src.agents.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_queue import get_pi_queue
     await get_pi_queue().shutdown()
 
 

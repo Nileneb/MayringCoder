@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from mayring_core.memory import devices as device_store
-from src.agents import pi_jobs
+from mayring_pi_agent import pi_jobs
 from src.api.auth import get_workspace
 from src.api.dependencies import get_conn as _get_conn
 

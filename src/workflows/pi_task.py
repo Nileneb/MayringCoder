@@ -10,7 +10,7 @@ def run_pi_task(args, ollama_url: str, model: str, router: ModelRouter | None = 
         if router.is_available("text"):
             model = router.resolve("text")
 
-    from src.agents.pi import run_task_with_memory
+    from mayring_pi_agent.pi import run_task_with_memory
 
     task = args.pi_task
     repo_url = getattr(args, "repo", None)

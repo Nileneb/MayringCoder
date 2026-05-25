@@ -54,7 +54,7 @@ def main() -> None:
     threads = [
         _thread("src.api.server:app", "0.0.0.0", 8080),
         threading.Thread(target=_run_mcp, daemon=True, name="mcp"),
-        _thread("src.agents.pi_server:app", "0.0.0.0", 8091),
+        _thread("mayring_pi_agent.pi_server:app", "0.0.0.0", 8091),
     ]
     for t in threads:
         t.start()

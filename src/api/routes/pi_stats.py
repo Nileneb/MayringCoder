@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from src.agents.pi_queue import get_pi_queue
+from mayring_pi_agent.pi_queue import get_pi_queue
 
 router = APIRouter(tags=["pi"])
 

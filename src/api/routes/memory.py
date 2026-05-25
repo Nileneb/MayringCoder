@@ -66,8 +66,8 @@ async def pi_task(
     """
     import uuid as _uuid
     from datetime import datetime, timezone
-    from src.agents.pi_queue import get_pi_queue
-    from src.agents.pi_jobs import PiJob, classify_pi_job
+    from mayring_pi_agent.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob, classify_pi_job
 
     _repo_slug = request.repo_slug or os.getenv("PI_REPO_SLUG", "")
     job = PiJob(

@@ -1,7 +1,7 @@
 """Wire host-side implementations into ``mayring_core.providers`` (#267).
 
 Core defines a provider registry so it never imports ``src.analysis`` /
-``src.agents`` at runtime. The host registers the rich implementations here:
+``mayring_pi_agent`` at runtime. The host registers the rich implementations here:
 the cached/batched embedder, the Ollama-streaming generator and the Pillow
 vision captioner.
 
@@ -30,12 +30,12 @@ def _generate(*args, **kwargs) -> str:
 
 
 def _vision_caption(*args, **kwargs) -> str:
-    from src.agents.vision import caption_image
+    from mayring_pi_agent.vision import caption_image
     return caption_image(*args, **kwargs)
 
 
 def _vision_metadata(path: Path) -> Optional[dict]:
-    from src.agents.vision import get_image_metadata
+    from mayring_pi_agent.vision import get_image_metadata
     return get_image_metadata(path)
 
 
