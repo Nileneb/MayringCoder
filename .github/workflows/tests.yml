@@ -35,9 +35,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e ./core
+          pip install -e ./vendor/mayring-core
           # pi-agent (Submodul) editable, --no-deps: seine mayring-core-git-dep ist
-          # durch ./core oben befriedigt, restliche Runtime-Deps via requirements.txt.
+          # durch ./vendor/mayring-core oben befriedigt, restliche Runtime-Deps via requirements.txt.
           # Ohne diesen Install scheitern ~10 Tests mit `import mayring_pi_agent` (#266).
           pip install -e ./vendor/mayring-pi-agent --no-deps
           # Test-only: Parallelität (xdist) + Per-Test-Timeout. Bewusst NICHT in

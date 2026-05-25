@@ -1,3 +1,6 @@
 [submodule "vendor/mayring-pi-agent"]
 	path = vendor/mayring-pi-agent
 	url = https://github.com/Nileneb/mayring-pi-agent.git
+[submodule "vendor/mayring-core"]
+	path = vendor/mayring-core
+	url = https://github.com/Nileneb/mayring-core.git

@@ -9,14 +9,15 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # mayring-core shared library (memory, llm routing, identity, ollama client).
-# Installed editable so `import mayring_core` resolves from /app/core; src/ and
-# tools/ import exclusively from it (#267).
-COPY core/ ./core/
-RUN pip install --no-cache-dir -e ./core
+# Eigenes Repo seit #267, als vendor/mayring-core-Submodul eingebunden. Editable
+# installiert, damit `import mayring_core` aus /app/vendor/mayring-core zieht;
+# src/ und tools/ importieren ausschliesslich daraus.
+COPY vendor/mayring-core ./vendor/mayring-core
+RUN pip install --no-cache-dir -e ./vendor/mayring-core
 
 # mayring-pi-agent (git-submodule, vendor/) — installed editable WITHOUT deps:
-# its mayring-core git-dependency is already satisfied by ./core above, and the
-# remaining runtime deps (httpx/fastapi/uvicorn) live in requirements.txt.
+# its mayring-core git-dependency is already satisfied by ./vendor/mayring-core
+# above, and the remaining runtime deps (httpx/fastapi/uvicorn) live in requirements.txt.
 COPY vendor/mayring-pi-agent ./vendor/mayring-pi-agent
 RUN pip install --no-cache-dir -e ./vendor/mayring-pi-agent --no-deps
 
