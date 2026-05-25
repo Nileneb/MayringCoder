@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # vendor/mayring-pi-agent (public) → kein token nötig
 
       - uses: actions/setup-python@v5
         with:
@@ -34,6 +36,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -e ./core
+          # pi-agent (Submodul) editable, --no-deps: seine mayring-core-git-dep ist
+          # durch ./core oben befriedigt, restliche Runtime-Deps via requirements.txt.
+          # Ohne diesen Install scheitern ~10 Tests mit `import mayring_pi_agent` (#266).
+          pip install -e ./vendor/mayring-pi-agent --no-deps
           # Test-only: Parallelität (xdist) + Per-Test-Timeout. Bewusst NICHT in
           # requirements.txt → kein Prod-Image-Bloat, kein Deploy.
           pip install pytest-xdist pytest-timeout
