@@ -22,6 +22,55 @@ from src.api.dependencies import get_conn as _get_conn, get_chroma as _get_chrom
 from src.api.memory_service import run_ingest as _run_ingest
 
 
+def _record_pi_task_cloud(
+    *,
+    job_id: str,
+    task_text: str,
+    status: str,
+    workspace_id: str,
+    model: str = "",
+    prefer: str = "auto",
+    scope: str = "local",
+    repo_slug: str = "",
+    result: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Best-effort mirror of a pi-task into the cloud pi_jobs table so the
+    app.linn.games Pi-Agent dashboard reflects locally-run tasks (which run in
+    the plugin and never reach the cloud otherwise). Fire-and-forget + fail-soft
+    — observability must never break or noticeably slow task execution. Needs a
+    process identity (init_stdio_identity / hook.jwt); skips silently without one."""
+    jwt = _current_raw_jwt()
+    if not jwt:
+        return
+    api = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
+    from datetime import datetime, timezone
+
+    finished = datetime.now(timezone.utc).isoformat() if status in ("completed", "failed") else ""
+    try:
+        import httpx
+
+        httpx.post(
+            f"{api}/stats/pi-tasks/record",
+            json={
+                "job_id": job_id, "task_text": task_text, "status": status,
+                "model": model, "prefer": prefer, "scope": scope,
+                "repo_slug": repo_slug, "result": result, "error": error,
+                "finished_at": finished,
+            },
+            headers={"Authorization": f"Bearer {jwt}", "X-Workspace-Id": workspace_id},
+            timeout=4.0,
+        )
+    except Exception as exc:  # noqa: BLE001 — telemetry push, never fatal to the task
+        import logging
+        logging.getLogger(__name__).debug("pi-task cloud-record failed (non-fatal): %s", exc)
+
+
+def _new_pij_id() -> str:
+    import uuid
+    return f"pij_{uuid.uuid4().hex[:12]}"
+
+
 def register_agent_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
@@ -68,7 +117,13 @@ def register_agent_tools(mcp: FastMCP) -> None:
                     timeout=timeout + 10,
                 )
                 resp.raise_for_status()
-                return {**resp.json(), "workspace_id": ws}
+                data = resp.json()
+                _record_pi_task_cloud(
+                    job_id=_new_pij_id(), task_text=task, status="completed",
+                    workspace_id=ws, model=_model("text"), scope="local",
+                    repo_slug=repo_slug or "", result=str(data.get("result", "")),
+                )
+                return {**data, "workspace_id": ws}
             except httpx.ConnectError:
                 return {
                     "error": f"Pi-Server nicht erreichbar ({pi_url})",
@@ -96,6 +151,11 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 repo_slug=repo_slug,
                 system_prompt=system_prompt,
                 timeout=timeout,
+            )
+            _record_pi_task_cloud(
+                job_id=_new_pij_id(), task_text=task, status="completed",
+                workspace_id=ws, model=_model("text"), scope="local",
+                repo_slug=repo_slug or "", result=result,
             )
             return {"result": result, "workspace_id": ws}
         except Exception as exc:
@@ -205,6 +265,11 @@ def register_agent_tools(mcp: FastMCP) -> None:
             )
         except Exception as exc:
             return {"error": str(exc), "workspace_id": ws}
+        _record_pi_task_cloud(
+            job_id=job.job_id, task_text=task, status="queued", workspace_id=ws,
+            model=model or _model("text"), prefer=prefer, scope="local",
+            repo_slug=repo_slug or "",
+        )
         return {"job_id": job.job_id, "status": "queued", "workspace_id": ws}
 
     @mcp.tool()
@@ -225,6 +290,17 @@ def register_agent_tools(mcp: FastMCP) -> None:
         if job is None:
             return {"error": "not found", "job_id": job_id, "workspace_id": ws}
         d = job.to_dict()
+        # Mirror the terminal state to the cloud so the dashboard reflects async
+        # task outcomes (pi_task_start recorded the 'queued' row; this closes it).
+        if d["status"] in ("completed", "failed"):
+            _res = d.get("result")
+            _record_pi_task_cloud(
+                job_id=d["job_id"], task_text=d.get("task_text", ""),
+                status=d["status"], workspace_id=ws, model=d.get("model", ""),
+                scope=d.get("scope", "local"),
+                result=_res if isinstance(_res, str) else (str(_res) if _res else None),
+                error=d.get("error") or None,
+            )
         return {
             "job_id": d["job_id"],
             "status": d["status"],

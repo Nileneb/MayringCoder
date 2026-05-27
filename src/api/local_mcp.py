@@ -54,6 +54,12 @@ from mayring_pi_agent import pi_worker  # noqa: E402
 _local_db = Path(os.environ["MAYRING_LOCAL_DB"])
 init_memory_db(_local_db).close()
 
+# Seed a process-wide identity from the local hook.jwt so MCP tools scope to the
+# user's real workspace (not 'default') and can authenticate cloud pushes. Fail-
+# soft: missing/expired token → tools fall back to 'default' exactly as before.
+from src.api.mcp_auth import init_stdio_identity  # noqa: E402
+init_stdio_identity()
+
 from src.api.mcp_task_tools import register_task_tools  # noqa: E402
 
 mcp = FastMCP("memory-agents")

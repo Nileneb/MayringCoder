@@ -22,13 +22,86 @@ _RAW_JWT_CTX: contextvars.ContextVar["str | None"] = contextvars.ContextVar(
     "raw_jwt", default=None
 )
 
+# WHY(pi-observability): the stdio MCP server (local_mcp) has no per-HTTP-request
+# token, so the contextvars above stay None → every tool fell back to workspace
+# 'default' and had no token to authenticate cloud calls. A process-wide identity
+# loaded once from the local hook.jwt fixes both (works across the worker thread,
+# unlike a contextvar). Prod HTTP never calls init_stdio_identity() → unaffected.
+_STDIO_TOKEN_INFO: "TokenInfo | None" = None
+_STDIO_RAW_JWT: "str | None" = None
+
+
+def init_stdio_identity() -> "TokenInfo | None":
+    """Seed a process-wide identity from the local hook.jwt for the stdio MCP
+    server. Validates the token; on missing/expired/invalid it silently leaves
+    the identity unset (callers then fall back to 'default' as before)."""
+    global _STDIO_TOKEN_INFO, _STDIO_RAW_JWT
+    path = os.environ.get("MAYRING_HOOK_JWT") or os.path.expanduser(
+        "~/.config/mayring/hook.jwt"
+    )
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    # Prefer full RS256 validation when a public key is configured (server-side).
+    # The plugin has no JWT_PUBLIC_KEY_PATH, so fall back to decoding the claims
+    # unverified. Safe: this token only tags the LOCAL workspace and is forwarded
+    # verbatim on cloud pushes, where the server validates its real signature and
+    # scopes by the verified claims — a tampered local token cannot reach another
+    # tenant's cloud data.
+    info = validate_jwt_token(raw) or _decode_identity_unverified(raw)
+    if info is not None:
+        _STDIO_TOKEN_INFO = info
+        _STDIO_RAW_JWT = raw
+    return info
+
+
+def _decode_identity_unverified(token: str) -> "TokenInfo | None":
+    """Build a TokenInfo from a JWT's claims WITHOUT signature verification.
+    Returns None for an expired or workspace-less token (so we never seed a
+    stale identity). Signature is intentionally not checked here — see
+    init_stdio_identity for why that is safe."""
+    import time
+
+    try:
+        import jwt  # PyJWT
+
+        payload = jwt.decode(token, options={"verify_signature": False})
+    except Exception:  # noqa: BLE001 — malformed token → no identity, never raise
+        return None
+    exp = payload.get("exp")
+    try:
+        if exp and time.time() >= float(exp):
+            return None
+    except (TypeError, ValueError):
+        return None
+    ws = str(payload.get("workspace_id") or "").strip()
+    if not ws:
+        return None
+    raw_scopes = payload.get("scope", [])
+    if isinstance(raw_scopes, str):
+        scopes = tuple(s for s in raw_scopes.split() if s)
+    elif isinstance(raw_scopes, list):
+        scopes = tuple(str(s) for s in raw_scopes if s)
+    else:
+        scopes = ()
+    return TokenInfo(
+        workspace_id=ws,
+        scopes=scopes,
+        sub=str(payload["sub"]) if payload.get("sub") else None,
+        iat=payload.get("iat"),
+    )
+
 
 def _current_token_info() -> "TokenInfo | None":
-    return _TOKEN_CTX.get(None)
+    return _TOKEN_CTX.get(None) or _STDIO_TOKEN_INFO
 
 
 def _current_raw_jwt() -> "str | None":
-    return _RAW_JWT_CTX.get(None)
+    return _RAW_JWT_CTX.get(None) or _STDIO_RAW_JWT
 
 
 def _effective_workspace_id(caller_default: str = "default") -> str:
@@ -39,7 +112,7 @@ def _effective_workspace_id(caller_default: str = "default") -> str:
     Wenn kein TokenInfo (Tests / manueller MCP-Call), fallback auf
     caller_default ('default').
     """
-    info = _TOKEN_CTX.get(None)
+    info = _current_token_info()
     if info is None:
         return caller_default or "default"
     from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
@@ -70,7 +143,7 @@ def _enforce_tenant(requested: str | None) -> str | None:
     nur Service-Token-Override erlaubt. Hier ist die Semantik anders
     (MCP-explicit-arg vs HTTP-header).
     """
-    info = _TOKEN_CTX.get(None)
+    info = _current_token_info()
     if info is None:
         return requested
     target = requested if info.is_admin else info.workspace_id

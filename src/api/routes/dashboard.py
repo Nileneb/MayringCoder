@@ -16,6 +16,7 @@ import time as _time
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from src.api.auth import get_workspace
 from src.api.dependencies import get_conn as _conn
@@ -452,8 +453,12 @@ async def pi_tasks(
 ) -> dict:
     """All pi-agent tasks for the caller's workspace, newest first."""
     sql = [
+        # NOTE: pi_jobs has no `updated_at` column — selecting it errored and the
+        # fail-soft except below returned an empty list, so this endpoint showed
+        # nothing even when rows existed. `finished_at` is the real terminal-time
+        # column; map it onto the response's updated_at to keep the shape.
         "SELECT job_id, task_text, status, prefer, scope, model, error, "
-        "       created_at, updated_at FROM pi_jobs "
+        "       created_at, finished_at FROM pi_jobs "
         "WHERE workspace_id = ?"
     ]
     params: list = [workspace_id]
@@ -484,6 +489,65 @@ async def pi_tasks(
             for r in rows
         ],
     }
+
+
+class _PiTaskRecord(BaseModel):
+    job_id: str
+    task_text: str = ""
+    status: str = "completed"
+    prefer: str = "auto"
+    model: str = ""
+    scope: str = "local"
+    repo_slug: str = ""
+    result: str | None = None
+    error: str | None = None
+    claimed_by: str = ""
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+# WHY(pi-observability): pi-tasks run locally in the plugin (Phase-1 always-local)
+# and never reached the cloud, so this dashboard was structurally empty. The MCP
+# server mirrors each task here so the Pi-Agent view reflects real activity.
+# Path stays under /stats/ so the prod nginx whitelist already routes it (no
+# allowlist change). Upsert by job_id, scoped to the caller's workspace.
+@router.post("/stats/pi-tasks/record")
+async def record_pi_task(
+    rec: _PiTaskRecord,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Mirror a (locally-executed) pi-task into the cloud pi_jobs table."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    result_json = _json.dumps({"text": rec.result}) if rec.result is not None else ""
+    try:
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO pi_jobs (job_id, task_text, repo_slug, workspace_id, "
+            "status, prefer, ollama_url, model, result_json, error, timeout_s, "
+            "scope, capability_required, claimed_by, claimed_at, created_at, "
+            "started_at, finished_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, 0, ?, '', ?, '', ?, ?, ?) "
+            "ON CONFLICT(job_id) DO UPDATE SET "
+            "  status=excluded.status, model=excluded.model, "
+            "  result_json=excluded.result_json, error=excluded.error, "
+            "  claimed_by=excluded.claimed_by, started_at=excluded.started_at, "
+            "  finished_at=excluded.finished_at",
+            (
+                rec.job_id, rec.task_text, rec.repo_slug, workspace_id,
+                rec.status, rec.prefer, rec.model, result_json, rec.error or "",
+                rec.scope, rec.claimed_by, rec.created_at or now,
+                rec.started_at or "", rec.finished_at or "",
+            ),
+        )
+        conn.commit()
+    except Exception as exc:  # fail-soft: observability must never 500 a caller
+        import logging
+        logging.getLogger(__name__).warning("record_pi_task failed: %s", exc)
+        return {"ok": False, "error": str(exc), "workspace_id": workspace_id}
+    return {"ok": True, "job_id": rec.job_id, "workspace_id": workspace_id}
 
 
 # ---------------------------------------------------------------------------
