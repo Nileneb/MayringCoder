@@ -545,8 +545,10 @@ async def record_pi_task(
         conn.commit()
     except Exception as exc:  # fail-soft: observability must never 500 a caller
         import logging
+        # Log the detail server-side; never echo the exception text to the caller
+        # (py/stack-trace-exposure). The caller only needs the soft-fail signal.
         logging.getLogger(__name__).warning("record_pi_task failed: %s", exc)
-        return {"ok": False, "error": str(exc), "workspace_id": workspace_id}
+        return {"ok": False, "error": "record failed", "workspace_id": workspace_id}
     return {"ok": True, "job_id": rec.job_id, "workspace_id": workspace_id}
 
 
