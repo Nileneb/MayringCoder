@@ -464,6 +464,24 @@ async def cat_match_debug(
                         f"SELECT name FROM codebook_categories WHERE id IN ({ph})",
                         tuple(ids)).fetchall()
                 ]
+            # Chunk side: which category_ids do chunks actually link to? If the
+            # query-derived ids are duplicate "auth" ids that chunks never link
+            # to, the set-intersection is empty even though both sides look
+            # populated (id fragmentation across the codebook).
+            top = conn.execute(
+                "SELECT cc.category_id, cat.name, COUNT(*) c "
+                "FROM chunk_categories cc JOIN codebook_categories cat ON cat.id = cc.category_id "
+                "GROUP BY cc.category_id ORDER BY c DESC LIMIT 15"
+            ).fetchall()
+            out["chunk_side_top_category_ids"] = [
+                {"id": r[0], "name": r[1], "chunks": r[2]} for r in top
+            ]
+            if ids:
+                chunk_ids_with_derived = conn.execute(
+                    f"SELECT COUNT(DISTINCT chunk_id) FROM chunk_categories "
+                    f"WHERE category_id IN ({','.join('?' for _ in ids)})",
+                    tuple(ids)).fetchone()[0]
+                out["chunks_linked_to_query_ids"] = chunk_ids_with_derived
     except Exception as e:  # noqa: BLE001 — diagnostic, surface the error
         out["derive_err"] = f"{type(e).__name__}: {e}"
     return out
