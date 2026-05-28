@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,44 @@ from src.api.jwt_auth import TokenInfo
 router = APIRouter()
 _log = logging.getLogger(__name__)
 _ROOT = Path(__file__).parent.parent.parent.parent
-_TRAIN_JOBS: dict[str, dict[str, Any]] = {}
+
+# WHY(multi-worker, 2026-05-28): under uvicorn --workers the train job is
+# created in ONE worker's in-memory _TRAIN_JOBS; a status GET routed to another
+# worker found nothing ("status: None") → the dashboard "Status prüfen" button
+# + the train_reranker MCP tool polled blind. Mirror job_queue's shared-file
+# pattern (atomic tmp+rename) so every worker sees the same job state. Schema
+# differs from populate jobs, so it gets its own file.
+_TRAIN_JOBS_FILE = Path(
+    os.environ.get("MAYRING_TRAIN_JOBS_STATE", str(_ROOT / "cache" / "train_jobs_state.json"))
+)
+_TRAIN_JOBS_LOCK = threading.Lock()
+
+
+def _load_train_jobs() -> dict[str, dict[str, Any]]:
+    try:
+        if _TRAIN_JOBS_FILE.exists():
+            return json.loads(_TRAIN_JOBS_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        pass  # corrupt state must not take the API down — next save overwrites
+    return {}
+
+
+def _save_train_job(job_id: str) -> None:
+    """Merge one job into the shared file atomically (read-modify-write so a
+    concurrent worker's jobs are never clobbered). Best-effort; never raises."""
+    try:
+        _TRAIN_JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _TRAIN_JOBS_LOCK:
+            shared = _load_train_jobs()
+            shared[job_id] = _TRAIN_JOBS.get(job_id, {})
+            tmp = _TRAIN_JOBS_FILE.with_suffix(_TRAIN_JOBS_FILE.suffix + ".tmp")
+            tmp.write_text(json.dumps(shared, default=str), encoding="utf-8")
+            tmp.replace(_TRAIN_JOBS_FILE)
+    except OSError:
+        pass
+
+
+_TRAIN_JOBS: dict[str, dict[str, Any]] = _load_train_jobs()
 
 
 def _python_exe() -> str:
@@ -135,7 +173,12 @@ async def _run_train_subprocess(
 ) -> None:
     """Spawn export → train as a subprocess so the API stays responsive."""
     state = _TRAIN_JOBS[job_id]
-    state.update(status="running", started_at=time.time())
+
+    def _upd(**kw: Any) -> None:
+        state.update(**kw)
+        _save_train_job(job_id)  # persist to shared file so any worker's GET sees it
+
+    _upd(status="running", started_at=time.time())
     from mayring_core.config import CACHE_DIR
     out_jsonl = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
     out_model = CACHE_DIR / "rerank_v2.json"
@@ -158,12 +201,12 @@ async def _run_train_subprocess(
         )
         export_out, _ = await proc.communicate()
         export_log = (export_out or b"").decode(errors="replace")
-        state.update(export_returncode=proc.returncode,
-                     export_log=export_log[-1500:])
+        _upd(export_returncode=proc.returncode,
+             export_log=export_log[-1500:])
         if proc.returncode != 0:
-            state.update(status="error",
-                         error="export failed",
-                         ended_at=time.time())
+            _upd(status="error",
+                 error="export failed",
+                 ended_at=time.time())
             return
         rows_written = 0
         if out_jsonl.exists():
@@ -172,9 +215,9 @@ async def _run_train_subprocess(
                     rows_written = sum(1 for _ in f)
             except OSError:
                 pass
-        state.update(rows_exported=rows_written)
+        _upd(rows_exported=rows_written)
         if rows_written < 50:
-            state.update(
+            _upd(
                 status="error",
                 error=f"only {rows_written} rows exported — need ≥50 for training",
                 ended_at=time.time(),
@@ -193,22 +236,22 @@ async def _run_train_subprocess(
         )
         train_out, _ = await proc2.communicate()
         train_log = (train_out or b"").decode(errors="replace")
-        state.update(train_returncode=proc2.returncode,
-                     train_log=train_log[-1500:])
+        _upd(train_returncode=proc2.returncode,
+             train_log=train_log[-1500:])
         model_data: dict | None = None
         if out_model.exists():
             try:
                 model_data = json.loads(out_model.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 pass
-        state.update(
+        _upd(
             status="done" if proc2.returncode == 0 else "error",
             model=model_data,
             model_path=str(out_model.relative_to(_ROOT)) if out_model.exists() else None,
             ended_at=time.time(),
         )
     except Exception as e:
-        state.update(status="error", error=str(e), ended_at=time.time())
+        _upd(status="error", error=str(e), ended_at=time.time())
         _log.exception("train-reranker job %s failed", job_id)
 
 
@@ -240,6 +283,7 @@ async def trigger_train_reranker(
         "span_judge": span_judge,
         "queued_at": time.time(),
     }
+    _save_train_job(job_id)  # persist before the task starts so a GET on any worker finds it
     asyncio.create_task(_run_train_subprocess(job_id, days, span_judge))
     return {"job_id": job_id, "status": "queued", "days": days,
             "span_judge": span_judge}
@@ -252,7 +296,9 @@ async def get_train_reranker_status(
 ) -> dict:
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
-    state = _TRAIN_JOBS.get(job_id)
+    # Read the shared file FIRST (the job may run in a different worker); fall
+    # back to this worker's in-memory copy.
+    state = _load_train_jobs().get(job_id) or _TRAIN_JOBS.get(job_id)
     if not state:
         raise HTTPException(status_code=404, detail="job not found")
     return {"job_id": job_id, **state}
