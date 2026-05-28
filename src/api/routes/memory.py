@@ -1015,42 +1015,35 @@ async def memory_goals(
     Returns chunks with igio_axis='goal', ranked by recency + feedback score.
     """
     try:
-        opts: dict[str, Any] = {
-            "top_k": top_k,
-            "workspace_id": workspace_id,
-            "user_id": info.sub,
-            "org_ids": info.org_ids,
-            "igio_intent": "goal",
-            "llm_prefilter": False,
-        }
-        result = _run_search(
-            "goal objective aim target we want to achieve",
-            _get_conn(), _get_chroma(), _OLLAMA_URL,
-            opts, char_budget=3000,
-        )
-        # WHY(2026-05-28): run_search returns "results" (NOT "chunks") and the
-        # result dict from RetrievalRecord.to_dict() has no igio_axis field, so
-        # the old `result.get("chunks")` + `c.get("igio_axis")` filter ALWAYS
-        # yielded [] → /memory/goals was silently empty (session_start goal-inject
-        # dead). Read the axis from the chunks table for the returned ids.
-        results = result.get("results", []) or []
-        chunk_ids = [c.get("chunk_id") for c in results if c.get("chunk_id")]
-        goal_ids: set[str] = set()
-        if chunk_ids:
-            ph = ",".join("?" for _ in chunk_ids)
-            goal_ids = {
-                r[0] for r in _get_conn().execute(
-                    f"SELECT chunk_id FROM chunks WHERE chunk_id IN ({ph}) "
-                    "AND lower(igio_axis) = 'goal'",
-                    tuple(chunk_ids),
-                ).fetchall()
+        # WHY(2026-05-28): the old impl semantic-searched "goal objective…" and
+        # filtered the top-K by igio_axis — which (a) read run_search's wrong key
+        # ("chunks") and (b) never surfaced goal chunks because they rarely rank
+        # top-K for that generic query (491 goal chunks existed, endpoint returned
+        # 0). Per the docstring this must return goal-axis chunks DIRECTLY, ranked
+        # by recency — same direct query the IGIO-lens uses (igio_admin.py).
+        top_k = max(1, min(top_k, 50))
+        rows = _get_conn().execute(
+            "SELECT chunk_id, summary, text, source_id, igio_confidence, created_at "
+            "FROM chunks WHERE is_active = 1 AND igio_axis = 'goal' AND workspace_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (workspace_id, top_k),
+        ).fetchall()
+        goals = [
+            {
+                "chunk_id": r[0],
+                "summary": (r[1] or r[2] or "")[:300],
+                "source_id": r[3],
+                "confidence": round(r[4] or 0.0, 3),
+                "created_at": r[5],
             }
-        goal_chunks = [c for c in results if c.get("chunk_id") in goal_ids]
+            for r in rows
+        ]
+        prompt_context = "\n".join(f"- {g['summary']}" for g in goals)
         return {
             "workspace_id": workspace_id,
-            "goals": goal_chunks,
-            "total": len(goal_chunks),
-            "prompt_context": result.get("prompt_context", ""),
+            "goals": goals,
+            "total": len(goals),
+            "prompt_context": prompt_context,
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
