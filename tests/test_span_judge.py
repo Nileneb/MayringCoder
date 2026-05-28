@@ -81,3 +81,21 @@ def test_scores_for_query_empty_inputs():
     conn = _chunks_db()
     assert span_judge.scores_for_query(conn, "", ["chk_a"]) == {}
     assert span_judge.scores_for_query(conn, "q", []) == {}
+
+
+def test_scores_for_query_survives_cache_write_lock(monkeypatch):
+    """The export runs in-container next to the live API (shared memory.db).
+    A 'database is locked' on the cache write must NOT crash the export — the
+    fresh scores are still returned (cache is an optimization, not critical).
+    Regression for the bug that made the in-prod span_judge run write no model."""
+    conn = _chunks_db()
+    monkeypatch.setattr(span_judge, "_judge_model", lambda *a, **k: "m")
+    monkeypatch.setattr(span_judge, "judge_relevance",
+                        lambda q, items, **k: {cid: 0.7 for cid, _ in items})
+
+    def _locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(span_judge, "_write_cache", _locked)
+    out = span_judge.scores_for_query(conn, "q", ["chk_a"])
+    assert out == {"chk_a": pytest.approx(0.7)}

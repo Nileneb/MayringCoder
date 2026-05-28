@@ -195,6 +195,17 @@ def scores_for_query(
                 query, items, ollama_url=ollama_url, model=model, timeout=timeout
             )
             if fresh:
-                _write_cache(conn, qhash, fresh, model)
+                # WHY(2026-05-28): the export runs in-container next to the live
+                # API, which holds write locks on the shared memory.db. An
+                # uncaught OperationalError("database is locked") here crashed
+                # the WHOLE export (returncode≠0 → train never ran → no model
+                # written — that's why the in-prod span_judge run produced
+                # nothing). The cache is an optimization, not load-bearing —
+                # skip the write on contention, keep the fresh scores. Fail-soft
+                # like the rest of span_judge.
+                try:
+                    _write_cache(conn, qhash, fresh, model)
+                except sqlite3.OperationalError as exc:
+                    _log.warning("span_judge cache write skipped (db busy): %s", exc)
                 cached.update(fresh)
     return cached
