@@ -1028,8 +1028,24 @@ async def memory_goals(
             _get_conn(), _get_chroma(), _OLLAMA_URL,
             opts, char_budget=3000,
         )
-        chunks = result.get("chunks", [])
-        goal_chunks = [c for c in chunks if (c.get("igio_axis") or "").lower() == "goal"]
+        # WHY(2026-05-28): run_search returns "results" (NOT "chunks") and the
+        # result dict from RetrievalRecord.to_dict() has no igio_axis field, so
+        # the old `result.get("chunks")` + `c.get("igio_axis")` filter ALWAYS
+        # yielded [] → /memory/goals was silently empty (session_start goal-inject
+        # dead). Read the axis from the chunks table for the returned ids.
+        results = result.get("results", []) or []
+        chunk_ids = [c.get("chunk_id") for c in results if c.get("chunk_id")]
+        goal_ids: set[str] = set()
+        if chunk_ids:
+            ph = ",".join("?" for _ in chunk_ids)
+            goal_ids = {
+                r[0] for r in _get_conn().execute(
+                    f"SELECT chunk_id FROM chunks WHERE chunk_id IN ({ph}) "
+                    "AND lower(igio_axis) = 'goal'",
+                    tuple(chunk_ids),
+                ).fetchall()
+            }
+        goal_chunks = [c for c in results if c.get("chunk_id") in goal_ids]
         return {
             "workspace_id": workspace_id,
             "goals": goal_chunks,
