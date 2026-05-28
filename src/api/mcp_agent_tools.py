@@ -114,6 +114,33 @@ def _pi_run(
     return (resp.json().get("content") or "").strip()
 
 
+def _loads_json_lenient(raw: str):
+    """json.loads tolerant of the markdown fences / leading prose that some
+    Ollama backends — notably the ollama.com cloud (now ~50% of generate jobs
+    via OLLAMA_CLOUD_PRIMARY_RATIO) — wrap around JSON even under format:json.
+    three.linn.games returns raw JSON; the cloud returns ```json … ```. This is
+    NOT error-masking: the payload IS valid JSON, just unwrapped here. Genuinely
+    non-JSON output still raises JSONDecodeError so the caller surfaces it."""
+    import json as _json
+    s = (raw or "").strip()
+    try:
+        return _json.loads(s)
+    except _json.JSONDecodeError:
+        pass
+    if s.startswith("```"):  # ```json\n{…}\n```  → inner
+        s = s.split("\n", 1)[-1]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+        s = s.strip()
+    try:
+        return _json.loads(s)
+    except _json.JSONDecodeError:
+        i, j = s.find("{"), s.rfind("}")  # last resort: first {…} object
+        if i >= 0 and j > i:
+            return _json.loads(s[i:j + 1])
+        raise
+
+
 def register_agent_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
@@ -787,7 +814,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 kind="mark-categories", model=_model("text"),
                 timeout=timeout, response_format="json", workspace_id=ws,
             )
-            data = _json.loads(raw)
+            data = _loads_json_lenient(raw)
             markings_in = data.get("markings", []) or []
             markings_out = []
             for m in markings_in[:20]:
@@ -932,7 +959,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 prompt, kind="judge-relevance", model=_model("text"),
                 timeout=timeout, response_format="json", workspace_id=ws,
             )
-            data = _json.loads(raw)
+            data = _loads_json_lenient(raw)
             scores = {
                 str(k): max(0.0, min(1.0, float(v)))
                 for k, v in (data.get("scores") or {}).items()
@@ -1095,7 +1122,7 @@ def register_agent_tools(mcp: FastMCP) -> None:
                 prompt, kind="summarize", model=_model("text"),
                 timeout=timeout, response_format="json", workspace_id=ws,
             )
-            data = _json.loads(raw)
+            data = _loads_json_lenient(raw)
             return {
                 "paraphrase": data.get("paraphrase", ""),
                 "generalize": data.get("generalize", ""),

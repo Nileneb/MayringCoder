@@ -393,3 +393,27 @@ def test_pi_mark_categories_routes_through_pi_run_json(tools):
     assert captured["url"].endswith("/pi/run")
     assert captured["json"]["kind"] == "mark-categories"
     assert captured["json"]["response_format"] == "json"
+
+
+# ── lenient JSON parse: cloud (ollama.com) fences JSON even under format:json ──
+
+def test_loads_json_lenient_handles_raw_fenced_and_prose():
+    from src.api.mcp_agent_tools import _loads_json_lenient
+    import json as _json
+    assert _loads_json_lenient('{"ok": true}') == {"ok": True}            # raw (local)
+    assert _loads_json_lenient('```json\n{"ok": true}\n```') == {"ok": True}  # fenced (cloud)
+    assert _loads_json_lenient('here: {"a": 1} done') == {"a": 1}          # leading/trailing prose
+    with pytest.raises(_json.JSONDecodeError):  # genuinely non-JSON still surfaces
+        _loads_json_lenient("not json at all")
+
+
+def test_pi_judge_relevance_parses_fenced_cloud_output(tools):
+    """The cloud returns ```json … ``` even under format:json — the tool must
+    still parse it instead of failing (the regression caught in live verify)."""
+    fenced = MagicMock()
+    fenced.raise_for_status = MagicMock()
+    fenced.json.return_value = {"content": '```json\n{"scores": {"chk_a": 0.8}}\n```'}
+    with patch("httpx.post", return_value=fenced), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = tools["pi_judge_relevance"](query="q", chunks=[{"chunk_id": "chk_a", "text": "t"}])
+    assert result["scores"]["chk_a"] == 0.8
