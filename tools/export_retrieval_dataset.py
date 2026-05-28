@@ -139,7 +139,11 @@ IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # commit 46e9c2e/c9db1bf live im API-Response, aber bislang nicht im Trainer
 # — Phantom-Features. Hier zur FEATURES_OUT hinzu damit der nächste
 # train_reranker.py-Run sie als Eingabe sieht und ein Gewicht lernt.
-FEATURES_OUT = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
+# cat_match (#270 reranker-v3): am Runtime geloggt (memory_service stage_scores)
+# UND vom Scorer (_FEATURES) gewichtet, war aber NIE im Export/Trainer → das
+# v2-Modell lernte nie ein cat_match-Gewicht (immer 0). Jetzt im Trainings-Set,
+# damit v2 die strukturierte Kategorie-Übereinstimmung wirklich nutzt.
+FEATURES_OUT = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES) + ("cat_match",)
 
 # Span-Judge-Schwellen (Offline-Teacher, #SSA): nur Rows OHNE explizites
 # Human-Rating werden anhand des LLM-Relevanz-Scores korrigiert. Der
@@ -185,6 +189,9 @@ def _normalize_features(
         # alten context_feedback_log-rows (die sf/sl/pt/re nicht hatten).
         "pt": float(feats.get("pt", 0.0) or 0.0),
         "re": float(feats.get("re", 0.0) or 0.0),
+        # cat_match: strukturierter Kategorie-Match (query↔chunk_categories),
+        # am Runtime geloggt; Default 0.0 für alte Rows ohne das Feld.
+        "cat_match": float(feats.get("cat_match", 0.0) or 0.0),
     }
     for a in IGIO_AXES:
         out[f"igio_{a}"] = 1.0 if axis == a else 0.0

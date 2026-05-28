@@ -60,7 +60,10 @@ IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # (score_predicted_topic, rationale_edges). Vorher: phantom-features ohne
 # Trainings-Pfad. Jetzt im Trainings-Set, sodass v2-Modell sie als Gewicht
 # lernen kann.
-FEATURES = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
+# cat_match (#270): runtime-logged + scored by _FEATURES, but was missing from the
+# trainer → the model could never learn its weight (silently 0). Now trained so v2
+# actually uses the structured category match. Not loader-gated; left unclamped.
+FEATURES = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES) + ("cat_match",)
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
