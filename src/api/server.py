@@ -145,21 +145,25 @@ def _plain_ollama_generate(
     """Pure Ollama /api/generate — NO memory augmentation. Used for every
     non-'pi-task' kind (judge/categorize/summarize/…) so all those jobs go
     through the PiQueue (bounded/distributed, no direct GPU hammering) WITHOUT
-    injecting unrelated memory. Returns {'content': text} like run_task_with_memory."""
-    import httpx
-    resp = httpx.post(
-        f"{ollama_url.rstrip('/')}/api/generate",
-        json={
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.0, "num_predict": num_predict},
-            "think": False,
-        },
+    injecting unrelated memory. Returns {'content': text}.
+
+    Routes via ollama_client.generate so it inherits the cloud-split
+    (OLLAMA_CLOUD_PRIMARY_RATIO → % of generate jobs to ollama.com) + fallback —
+    judge/categorize get distributed like every other generate job, not pinned
+    to one host. Embeddings stay local (they never go through generate())."""
+    from mayring_core.ollama_client import generate as _ollama_generate
+    text = _ollama_generate(
+        url=ollama_url,
+        model=model,
+        prompt=prompt,
+        stream=False,
         timeout=timeout,
+        num_predict=num_predict,
+        think=False,
+        options={"temperature": 0.0},
+        label="pi-queue-job",
     )
-    resp.raise_for_status()
-    return {"content": (resp.json().get("response") or "").strip()}
+    return {"content": (text or "").strip()}
 
 
 @app.on_event("startup")
