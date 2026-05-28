@@ -41,6 +41,25 @@ jobs:
           # (startup migrations, includes etc.). Give it room.
           sleep 30
 
+      - name: Re-embed codebook categories (BEFORE ingest so deductive links land)
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::warning::MCP_SERVICE_TOKEN not in $ENV_FILE — skipping category re-embed"
+            exit 0
+          fi
+          # WHY(2026-05-28): codebook_categories vectors vanish from the Chroma
+          # collection on a chroma-service restart (they persist in SQLite, not
+          # the vector store). MUST run BEFORE /populate: the ingest's Phase-3.2
+          # deductive link needs the category embeddings present, else reingested
+          # chunks link to an EMPTY collection → 0 links → reranker-v3 cat_match
+          # coverage decays every deploy (root-caused 2026-05-28). Idempotent.
+          resp=$(curl -sS -m 180 -X POST https://mcp.linn.games/stats/admin/reembed-categories \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN" || echo '{"error":"curl failed"}')
+          echo "::notice::reembed-categories: $resp"
+
       - name: Trigger /populate for MayringCoder repo
         run: |
           set -uo pipefail
@@ -82,23 +101,29 @@ jobs:
           fi
           echo "::notice::ingest job_id=$job_id queued; check /jobs/$job_id for progress"
 
-      - name: Re-embed codebook categories (repair Chroma cat_match)
+      - name: Backfill chunk→category links (deductive, idempotent)
         run: |
           set -uo pipefail
           ENV_FILE="$HOME/app.linn.games/.env"
           MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
           if [ -z "$MCP_SERVICE_TOKEN" ]; then
-            echo "::warning::MCP_SERVICE_TOKEN not in $ENV_FILE — skipping category re-embed"
+            echo "::warning::MCP_SERVICE_TOKEN missing — skipping chunk-category backfill"
             exit 0
           fi
-          # WHY(2026-05-28): codebook_categories vectors vanish from the Chroma
-          # collection on a chroma-service restart (they persist in SQLite, not
-          # the vector store) → query→category derivation returns empty →
-          # reranker-v3 cat_match goes SILENTLY inert and category-themed
-          # searches stop surfacing matches (post-deploy smoke went red). The
-          # codebook import is a host-side tool, not auto-run, so this used to
-          # need a manual docker exec. Re-embed after every deploy so it
-          # self-heals. Idempotent upsert; warn-but-don't-fail the workflow.
-          resp=$(curl -sS -m 180 -X POST https://mcp.linn.games/stats/admin/reembed-categories \
-            -H "Authorization: Bearer $MCP_SERVICE_TOKEN" || echo '{"error":"curl failed"}')
-          echo "::notice::reembed-categories: $resp"
+          # WHY(2026-05-28): the per-ingest deductive link only touches NEWLY
+          # ingested chunks; the existing corpus (ingested pre-Phase-3.2 or while
+          # the category Chroma was cold) stayed unlinked → reranker-v3 cat_match
+          # had near-zero coverage on the retrieved set (verified: 8/10 search
+          # candidates uncategorised → reranker_cat_match_fires red). This links
+          # the whole corpus (LLM-free cosine, idempotent). Cursor-paginated;
+          # loop until has_more=false. Warn-but-don't-fail.
+          after=0
+          for i in $(seq 1 80); do
+            resp=$(curl -sS -m 150 -X POST \
+              "https://mcp.linn.games/stats/admin/chunk-categories-backfill?after=${after}&limit=500" \
+              -H "Authorization: Bearer $MCP_SERVICE_TOKEN" || echo '{}')
+            echo "[backfill $i] $resp"
+            after=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("next_after",0))' 2>/dev/null || echo 0)
+            more=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("has_more",False))' 2>/dev/null || echo False)
+            [ "$more" = "True" ] || break
+          done

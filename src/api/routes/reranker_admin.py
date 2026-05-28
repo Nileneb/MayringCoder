@@ -35,6 +35,7 @@ from typing import Any
 _PROGRESS_RE = re.compile(r"^PROGRESS\s+(\d+)/(\d+)")
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 
 from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_conn as _conn
@@ -511,6 +512,66 @@ async def cat_match_debug(
     except Exception as e:  # noqa: BLE001 — diagnostic, surface the error
         out["search_err"] = f"{type(e).__name__}: {e}"
     return out
+
+
+def _backfill_chunk_categories(after_rowid: int, limit: int) -> dict[str, Any]:
+    """One cursor-paginated window of the deductive chunk→category backfill.
+
+    Phase 3.2 links chunks to codebook categories per-ingest, but the existing
+    corpus (and chunks ingested while the codebook_categories Chroma collection
+    was empty post-cutover) were never linked → reranker-v3 cat_match had almost
+    no coverage on the retrieved set (verified: 8/10 candidates uncategorised).
+    LLM-free (cosine vs the 108 cached category embeddings); idempotent
+    (chunk_categories PK upsert), so re-running over the whole table is safe."""
+    import os as _os
+    from mayring_core.memory.store import get_chroma_collection
+    from mayring_core.memory.ingestion.mayring_process import link_chunks_deductive
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT rowid, chunk_id FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT ?",
+        (after_rowid, limit),
+    ).fetchall()
+    if not rows:
+        return {"processed": 0, "linked": 0, "next_after": after_rowid, "has_more": False}
+    chunk_ids = [r[1] for r in rows]
+    max_rowid = rows[-1][0]
+    chunks_col = get_chroma_collection("memory_chunks")
+    got = chunks_col.get(ids=chunk_ids, include=["embeddings"])
+    got_ids = got.get("ids") or []
+    got_embs = got.get("embeddings")
+    got_embs = list(got_embs) if got_embs is not None else []
+    pairs = [
+        (cid, emb) for cid, emb in zip(got_ids, got_embs)
+        if emb is not None and len(emb)
+    ]
+    linked = 0
+    if pairs:
+        linked = link_chunks_deductive(
+            conn, get_chroma_collection("codebook_categories"), pairs)
+        conn.commit()
+    return {
+        "processed": len(rows),
+        "embeddings_found": len(pairs),
+        "linked": linked,
+        "next_after": max_rowid,
+        "has_more": len(rows) == limit,
+    }
+
+
+@router.post("/stats/admin/chunk-categories-backfill")
+async def chunk_categories_backfill(
+    after: int = 0,
+    limit: int = 500,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Deductive chunk→category backfill (one window per call; loop with
+    ``next_after`` until ``has_more`` is false). Restores reranker-v3 cat_match
+    coverage on chunks ingested before Phase 3.2 or while the category Chroma
+    was cold. LLM-free + idempotent. Admin-only; runs in the threadpool so the
+    cosine loop doesn't stall the event loop."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    return await run_in_threadpool(_backfill_chunk_categories, after, max(1, min(limit, 2000)))
 
 
 @router.post("/stats/admin/reranker-rollout-decision")
