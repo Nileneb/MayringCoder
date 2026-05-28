@@ -292,3 +292,117 @@ def test_legacy_positive_signal_maps_to_rating_4(tmp_path):
     # positive → rating-equiv 4 → weak positive (label=1, weight=0.5)
     assert rows[0]["label"] == 1
     assert rows[0]["sample_weight"] == pytest.approx(0.5)
+
+
+# ── Tests für Span-Judge Offline-Teacher (SSA) ───────────────────────
+# Der Judge wird als fake span_judge_fn injiziert (kein echtes Ollama):
+#   span_judge_fn(conn, query, chunk_ids) -> {chunk_id: score 0..1}
+
+def _fake_judge(score_by_chunk: dict[str, float]):
+    def _fn(conn, query, chunk_ids):
+        return {cid: score_by_chunk[cid]
+                for cid in chunk_ids if cid in score_by_chunk}
+    return _fn
+
+
+def _run_export(tmp_path, db_path, span_judge_fn, negative_mode="unlabeled"):
+    from tools.export_retrieval_dataset import export
+    out = tmp_path / "ds.jsonl"
+    export(db_path, out, days=30, negative_mode=negative_mode,
+           span_judge_fn=span_judge_fn)
+    return [json.loads(line) for line in out.read_text().splitlines()]
+
+
+def test_span_judge_downweights_false_positive(tmp_path):
+    """was_referenced=1 aber Judge sagt irrelevant → Label bleibt 1,
+    Sample-Weight wird auf 0.3 gedrückt (vermutlicher False-Positive)."""
+    db_path = tmp_path / "memory.db"
+    conn = _build_db(db_path)
+    _insert_event(conn, "real query", ["chk_fp"],
+                  {"chk_fp": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}},
+                  was_referenced=1)
+    conn.commit(); conn.close()
+
+    rows = _run_export(tmp_path, db_path, _fake_judge({"chk_fp": 0.1}))
+    assert rows[0]["label"] == 1
+    assert rows[0]["sample_weight"] == pytest.approx(0.3)
+
+
+def test_span_judge_promotes_false_negative(tmp_path):
+    """was_referenced=0 aber Judge sagt hoch-relevant → Label auf 1
+    angehoben mit moderatem Gewicht 0.5 (vermutlicher False-Negative)."""
+    db_path = tmp_path / "memory.db"
+    conn = _build_db(db_path)
+    _insert_event(conn, "real query", ["chk_fn"],
+                  {"chk_fn": {"v": 0.6, "s": 0.4, "r": 0.7, "a": 0.0}},
+                  was_referenced=0)
+    conn.commit(); conn.close()
+
+    rows = _run_export(tmp_path, db_path, _fake_judge({"chk_fn": 0.9}))
+    assert rows[0]["label"] == 1
+    assert rows[0]["sample_weight"] == pytest.approx(0.5)
+
+
+def test_span_judge_mid_score_keeps_label(tmp_path):
+    """Score zwischen den Schwellen (0.25..0.75) → keine Änderung."""
+    db_path = tmp_path / "memory.db"
+    conn = _build_db(db_path)
+    _insert_event(conn, "real query", ["chk_mid"],
+                  {"chk_mid": {"v": 0.5, "s": 0.5, "r": 0.5, "a": 0.0}},
+                  was_referenced=1)
+    conn.commit(); conn.close()
+
+    rows = _run_export(tmp_path, db_path, _fake_judge({"chk_mid": 0.5}))
+    assert rows[0]["label"] == 1
+    assert rows[0]["sample_weight"] == pytest.approx(1.0)
+
+
+def test_explicit_rating_overrides_span_judge(tmp_path):
+    """Human-Rating bleibt Ground-Truth: 5★ überstimmt einen niedrigen
+    Judge-Score — kein Down-Weight."""
+    db_path = tmp_path / "memory.db"
+    conn = _build_db(db_path)
+    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')",
+                 ("chk_rated",))
+    _insert_event(conn, "real query", ["chk_rated"],
+                  {"chk_rated": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}},
+                  was_referenced=1)
+    _insert_rating(conn, "chk_rated", "5")
+    conn.commit(); conn.close()
+
+    rows = _run_export(tmp_path, db_path, _fake_judge({"chk_rated": 0.1}))
+    # Rating gewinnt: label 1, weight 1.0 (NICHT 0.3 vom Judge)
+    assert rows[0]["label"] == 1
+    assert rows[0]["sample_weight"] == pytest.approx(1.0)
+
+
+def test_span_judge_unavailable_falls_back(tmp_path):
+    """Judge nicht erreichbar (leeres Dict) → reines was_referenced,
+    keine Refinement, kein Crash."""
+    db_path = tmp_path / "memory.db"
+    conn = _build_db(db_path)
+    _insert_event(conn, "real query", ["chk_x"],
+                  {"chk_x": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}},
+                  was_referenced=1)
+    conn.commit(); conn.close()
+
+    rows = _run_export(tmp_path, db_path, _fake_judge({}))  # nichts gescort
+    assert rows[0]["label"] == 1
+    assert rows[0]["sample_weight"] == pytest.approx(1.0)
+    assert rows[0]["span_score"] is None
+
+
+def test_span_score_never_leaks_into_features(tmp_path):
+    """span_score ist Top-Level (Analyse), NIE in features — sonst würde
+    der Trainer ein Gewicht lernen, das die Laufzeit nie liefern kann."""
+    db_path = tmp_path / "memory.db"
+    conn = _build_db(db_path)
+    _insert_event(conn, "real query", ["chk_x"],
+                  {"chk_x": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}},
+                  was_referenced=1)
+    conn.commit(); conn.close()
+
+    rows = _run_export(tmp_path, db_path, _fake_judge({"chk_x": 0.9}))
+    assert "span_score" in rows[0]
+    assert rows[0]["span_score"] == pytest.approx(0.9)
+    assert "span_score" not in rows[0]["features"]

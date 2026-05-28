@@ -130,7 +130,9 @@ async def training_data_counts(
     }
 
 
-async def _run_train_subprocess(job_id: str, days: int) -> None:
+async def _run_train_subprocess(
+    job_id: str, days: int, span_judge: bool = False
+) -> None:
     """Spawn export → train as a subprocess so the API stays responsive."""
     state = _TRAIN_JOBS[job_id]
     state.update(status="running", started_at=time.time())
@@ -144,6 +146,10 @@ async def _run_train_subprocess(job_id: str, days: int) -> None:
             "--days", str(days),
             "--out", str(out_jsonl),
         ]
+        if span_judge:
+            # Offline-LLM-Judge verfeinert Labels (tools/span_judge.py).
+            # Läuft IM Container; Ollama via three.linn.games.
+            export_cmd.append("--span-judge")
         proc = await asyncio.create_subprocess_exec(
             *export_cmd, cwd=str(_ROOT),
             stdout=asyncio.subprocess.PIPE,
@@ -210,6 +216,7 @@ async def _run_train_subprocess(job_id: str, days: int) -> None:
 async def trigger_train_reranker(
     info: TokenInfo = Depends(get_token_info),
     days: int = 30,
+    span_judge: bool = False,
 ) -> dict:
     """Kick off the export + train pipeline. Admin scope only.
 
@@ -219,6 +226,10 @@ async def trigger_train_reranker(
 
     Each step uses the SAME script the CLI uses, so behaviour cannot
     drift between local-dev runs and production runs.
+
+    span_judge: when true, the export refines noisy labels with the
+    offline Ollama relevance judge (tools/span_judge.py). Adds Ollama
+    latency to the export step only — never the retrieval hot path.
     """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
@@ -226,10 +237,12 @@ async def trigger_train_reranker(
     _TRAIN_JOBS[job_id] = {
         "status": "queued",
         "days": days,
+        "span_judge": span_judge,
         "queued_at": time.time(),
     }
-    asyncio.create_task(_run_train_subprocess(job_id, days))
-    return {"job_id": job_id, "status": "queued", "days": days}
+    asyncio.create_task(_run_train_subprocess(job_id, days, span_judge))
+    return {"job_id": job_id, "status": "queued", "days": days,
+            "span_judge": span_judge}
 
 
 @router.get("/stats/admin/train-reranker/{job_id}")

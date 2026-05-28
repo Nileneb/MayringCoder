@@ -40,6 +40,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from mayring_core.config import CACHE_DIR
 
@@ -140,6 +141,18 @@ IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # train_reranker.py-Run sie als Eingabe sieht und ein Gewicht lernt.
 FEATURES_OUT = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
 
+# Span-Judge-Schwellen (Offline-Teacher, #SSA): nur Rows OHNE explizites
+# Human-Rating werden anhand des LLM-Relevanz-Scores korrigiert. Der
+# Score ist KEIN Modell-Feature (Trainer liest nur row["features"]) —
+# er verfeinert Label/Sample-Weight, damit der günstige Linear-Reranker
+# auf saubererem Signal lernt. Siehe tools/span_judge.py.
+SPAN_LOW = 0.25
+SPAN_HIGH = 0.75
+
+# span_judge_fn: (conn, query, chunk_ids) -> {chunk_id: score 0..1}.
+# Injizierbar für Tests; in der CLI gebunden an span_judge.scores_for_query.
+SpanJudgeFn = Callable[[sqlite3.Connection, str, "list[str]"], "dict[str, float]"]
+
 
 def _normalize_features(
     feats: dict,
@@ -180,6 +193,7 @@ def _normalize_features(
 
 def export(
     db_path: Path, out: Path, days: int, negative_mode: str,
+    span_judge_fn: "SpanJudgeFn | None" = None,
 ) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -226,8 +240,16 @@ def export(
                 except (TypeError, ValueError):
                     continue
                 ev_label = int(row["was_referenced"] or 0)
-                if ev_label == 0 and negative_mode == "explicit":
+                # span_judge darf False-Negatives (was_referenced=0)
+                # promoten, daher im Judge-Modus nicht vorab skippen.
+                if (ev_label == 0 and negative_mode == "explicit"
+                        and span_judge_fn is None):
                     continue
+                span_scores: dict[str, float] = {}
+                if span_judge_fn is not None:
+                    span_scores = span_judge_fn(
+                        conn, row["query"], list(chunks)
+                    ) or {}
                 for cid in chunks:
                     feats = _normalize_features(stage.get(cid), cid, igio_map)
                     if feats is None:
@@ -240,13 +262,26 @@ def export(
                     # rating überstimmt label, weil der user die ground
                     # truth ist (was_referenced ist nur ein proxy).
                     rating_info = rating_weights.get(cid)
+                    span_score = span_scores.get(cid)
                     final_label = ev_label
                     final_weight = 1.0
                     if rating_info is not None:
                         rating_label, rating_weight = rating_info
                         final_label = rating_label
                         final_weight = rating_weight
-                    f.write(json.dumps({
+                    elif span_score is not None:
+                        # Span-Judge verfeinert NUR Rows ohne explizites
+                        # Rating (Human-Rating bleibt Ground-Truth).
+                        # False-Positive (referenziert, Judge sagt
+                        # irrelevant) → down-weight. False-Negative (nicht
+                        # referenziert, Judge sagt hoch-relevant) → als
+                        # positiv mit moderatem Gewicht aufnehmen.
+                        if ev_label == 1 and span_score < SPAN_LOW:
+                            final_weight = 0.3
+                        elif ev_label == 0 and span_score > SPAN_HIGH:
+                            final_label = 1
+                            final_weight = 0.5
+                    record = {
                         "query":         row["query"],
                         "chunk_id":      cid,
                         "features":      feats,
@@ -254,7 +289,13 @@ def export(
                         "sample_weight": final_weight,
                         "captured_at":   row["captured_at"],
                         "workspace_id":  row["workspace_id"] or "",
-                    }) + "\n")
+                    }
+                    if span_judge_fn is not None:
+                        # Top-Level-Key, NICHT in features: der Trainer
+                        # liest row["features"] und ignoriert das hier.
+                        # Nur für Analyse/Debug der Refinement-Wirkung.
+                        record["span_score"] = span_score
+                    f.write(json.dumps(record) + "\n")
                     written += 1
         return written
     finally:
@@ -270,16 +311,30 @@ def main() -> int:
         "--negative-mode", choices=["unlabeled", "explicit"],
         default="unlabeled",
     )
+    ap.add_argument(
+        "--span-judge", action="store_true",
+        help="use the offline LLM relevance judge (Ollama) to refine "
+             "noisy was_referenced labels — see tools/span_judge.py",
+    )
     args = ap.parse_args()
     db_path = Path(args.db)
     out_path = Path(args.out)
     if not db_path.exists():
         print(f"db not found: {db_path}")
         return 2
-    n = export(db_path, out_path, args.days, args.negative_mode)
+    span_judge_fn = None
+    if args.span_judge:
+        try:
+            import span_judge as _span_judge
+        except ImportError:
+            from tools import span_judge as _span_judge
+        span_judge_fn = _span_judge.scores_for_query
+    n = export(db_path, out_path, args.days, args.negative_mode,
+               span_judge_fn=span_judge_fn)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] wrote {n} rows → {out_path} "
-          f"(window={args.days}d, neg_mode={args.negative_mode})")
+          f"(window={args.days}d, neg_mode={args.negative_mode}, "
+          f"span_judge={'on' if args.span_judge else 'off'})")
     return 0
 
 
