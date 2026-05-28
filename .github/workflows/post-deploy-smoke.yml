@@ -115,6 +115,17 @@ jobs:
           ENV_FILE="$HOME/app.linn.games/.env"
           TOK="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
           WS="${SMOKE_RAG_WORKSPACE:-019e14d6-0489-7348-bca8-e29c11293cb7}"
+          # WHY(2026-05-28 cat_match-determinism): the codebook_categories Chroma
+          # collection is empty right after the deploy cutover, and
+          # reranker_cat_match_fires asserts query→category derivation, which
+          # needs it populated. The post-deploy-ingest workflow reembeds too but
+          # RACES this smoke → flaky red. Reembed HERE (idempotent) so the smoke
+          # owns its own precondition. Paired with the no-negative-cache fix
+          # (mayring_process._active_category_pairs) so it takes effect at once.
+          echo "reembed codebook categories (pre-assert):"
+          curl -sS -m 180 -X POST https://mcp.linn.games/stats/admin/reembed-categories \
+            -H "Authorization: Bearer $TOK" || echo "  (reembed call failed — non-fatal)"
+          echo
           # WHY(smoke-warmup-resilience 2026-05-24): the FIRST search after a
           # container restart can exceed the 20s curl budget while Chroma's HNSW
           # index loads — curl exits 28, python gets empty stdin and json.load
