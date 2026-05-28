@@ -36,7 +36,7 @@ _PROGRESS_RE = re.compile(r"^PROGRESS\s+(\d+)/(\d+)")
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.auth import get_token_info
+from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
 
@@ -426,6 +426,7 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
 async def cat_match_debug(
     query: str = "user authentication login session token oauth jwt password",
     info: TokenInfo = Depends(get_token_info),
+    workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Pinpoint a red reranker_cat_match_fires: report BOTH sides — does the
     query derive category_ids (query side), and does the corpus have any
@@ -484,6 +485,31 @@ async def cat_match_debug(
                 out["chunks_linked_to_query_ids"] = chunk_ids_with_derived
     except Exception as e:  # noqa: BLE001 — diagnostic, surface the error
         out["derive_err"] = f"{type(e).__name__}: {e}"
+    # The smoke's exact path: run the workspace-scoped search and inspect whether
+    # the RETRIEVED candidates are linked to the query-derived ids. If not, the
+    # query/chunk overlap exists globally but the searched workspace's retrieved
+    # chunks aren't linked → cat_match 0 (workspace coverage, not a global gap).
+    try:
+        from src.api.memory_service import run_search
+        from src.api.dependencies import get_chroma as _get_chroma
+        sres = run_search(query, conn, _get_chroma(),
+                          os.getenv("OLLAMA_URL", "http://localhost:11434"),
+                          {"top_k": 10, "workspace_id": workspace_id, "llm_prefilter": False})
+        results = sres.get("results", []) or []
+        cand_ids = [r.get("chunk_id") for r in results if r.get("chunk_id")]
+        out["search_workspace"] = workspace_id
+        out["search_n"] = len(results)
+        out["search_cat_match_hits"] = sum(
+            1 for r in results if (r.get("score_cat_match") or 0) > 0)
+        if cand_ids:
+            ph = ",".join("?" for _ in cand_ids)
+            rows = conn.execute(
+                f"SELECT chunk_id, category_id FROM chunk_categories WHERE chunk_id IN ({ph})",
+                tuple(cand_ids)).fetchall()
+            out["candidates_with_any_category"] = len({r[0] for r in rows})
+            out["candidate_category_ids"] = sorted({r[1] for r in rows})
+    except Exception as e:  # noqa: BLE001 — diagnostic, surface the error
+        out["search_err"] = f"{type(e).__name__}: {e}"
     return out
 
 
