@@ -77,6 +77,33 @@ def test_scores_for_query_caches(monkeypatch):
     assert len(calls) == 1  # second call served from span_judge_cache
 
 
+def test_loads_lenient_raw_fenced_prose_and_broken():
+    import json as _json
+    assert span_judge._loads_lenient('{"scores":{"a":1}}') == {"scores": {"a": 1}}
+    assert span_judge._loads_lenient('```json\n{"scores":{"a":1}}\n```') == {"scores": {"a": 1}}
+    assert span_judge._loads_lenient('note: {"scores":{}} end') == {"scores": {}}
+    with pytest.raises(_json.JSONDecodeError):
+        span_judge._loads_lenient("not json")
+
+
+def test_judge_relevance_parses_fenced_response(monkeypatch):
+    """Defensive: a backend that wraps the JSON in ```json fences must still
+    parse (the raw num_predict=600 truncation that silently skipped the whole
+    retrain refinement is fixed separately by the higher num_predict)."""
+    import httpx
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"response": '```json\n{"scores":{"chk_a":0.6}}\n```'}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    out = span_judge.judge_relevance("q", [("chk_a", "t")], model="m")
+    assert out["chk_a"] == pytest.approx(0.6)
+
+
 def test_scores_for_query_empty_inputs():
     conn = _chunks_db()
     assert span_judge.scores_for_query(conn, "", ["chk_a"]) == {}

@@ -31,6 +31,29 @@ MAX_CHUNKS_PER_CALL = 20
 CHUNK_TEXT_LIMIT = 600
 
 
+def _loads_lenient(raw: str):
+    """json.loads tolerant of markdown fences / leading prose that some Ollama
+    backends emit even under format:json. Genuinely broken JSON still raises →
+    judge_relevance's caller falls back to was_referenced (no silent swallow)."""
+    s = (raw or "").strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    if s.startswith("```"):
+        s = s.split("\n", 1)[-1]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+        s = s.strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        i, j = s.find("{"), s.rfind("}")
+        if i >= 0 and j > i:
+            return json.loads(s[i:j + 1])
+        raise
+
+
 def _ollama_url() -> str:
     return os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
@@ -147,13 +170,18 @@ def judge_relevance(
                 "prompt": prompt,
                 "format": "json",
                 "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 600},
+                # WHY(2026-05-28): 600 truncated the format:json scores object
+                # mid-structure for ≤20-chunk batches → incomplete (invalid)
+                # JSON → parse fail → span_judge silently skipped the retrain's
+                # whole refinement. 2048 gives ample headroom; format:json keeps
+                # it valid once it completes.
+                "options": {"temperature": 0.1, "num_predict": 2048},
             },
             timeout=timeout,
         )
         resp.raise_for_status()
         raw = resp.json().get("response", "").strip()
-        data = json.loads(raw)
+        data = _loads_lenient(raw)
         return {
             str(k): max(0.0, min(1.0, float(v)))
             for k, v in (data.get("scores") or {}).items()
