@@ -142,7 +142,25 @@ async def training_data_counts(
     except Exception:
         pass
 
-    new_rows_since_train = max(0, log_count - n_rows_last_train) if last_trained_at else log_count
+    if last_trained_at:
+        # WHY(2026-05-28): count rows actually logged SINCE the model trained —
+        # NOT (windowed_count − all_time_trainset_size). The old
+        # `max(0, log_count − n_rows_last_train)` subtracted the model's all-time
+        # train size (n_train+n_test, here 18336) from a `days`-window count
+        # (6718); once the trainset exceeds the window the delta goes negative →
+        # clamped 0 FOREVER → ready_to_retrain never fired → the reranker never
+        # retrained despite ~749 new injections/day (the stalled-loop bug).
+        # datetime() normalizes the ISO model-ts (…+00:00) vs the no-tz
+        # captured_at (utcnow().isoformat()) so the same-day compare is correct
+        # (a raw string compare breaks on the 'T' vs ' ' separator).
+        new_rows_since_train = conn.execute(
+            "SELECT COUNT(*) FROM context_feedback_log "
+            "WHERE datetime(captured_at) > datetime(?) "
+            "AND query != '' AND stage_scores != '{}'",
+            (last_trained_at,),
+        ).fetchone()[0]
+    else:
+        new_rows_since_train = log_count
     cold_start_ready = log_count >= 50 and fb_pos >= 10
     retrain_ready = (
         last_trained_at is not None
