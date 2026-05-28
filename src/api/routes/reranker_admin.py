@@ -24,10 +24,15 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
 from typing import Any
+
+# Export prints `PROGRESS <done>/<total>` per batch of events; the subprocess
+# runner parses these into job-state.progress for the live frontend bar.
+_PROGRESS_RE = re.compile(r"^PROGRESS\s+(\d+)/(\d+)")
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -217,8 +222,25 @@ async def _run_train_subprocess(
             stderr=asyncio.subprocess.STDOUT,
             env=env,
         )
-        export_out, _ = await proc.communicate()
-        export_log = (export_out or b"").decode(errors="replace")
+        # Stream stdout line-by-line so the frontend sees LIVE progress
+        # (PROGRESS x/y markers from the export) instead of only the final log
+        # via communicate(). PROGRESS lines update job-state.progress (persisted
+        # to the shared file, returned by the status GET) and are filtered out
+        # of the stored export_log to keep it readable.
+        export_lines: list[str] = []
+        _upd(progress={"phase": "export", "current": 0, "total": 0, "pct": 0})
+        assert proc.stdout is not None
+        async for _raw in proc.stdout:
+            line = _raw.decode(errors="replace")
+            m = _PROGRESS_RE.match(line.strip())
+            if m:
+                cur, tot = int(m.group(1)), int(m.group(2))
+                _upd(progress={"phase": "export", "current": cur, "total": tot,
+                               "pct": (round(100 * cur / tot) if tot else 0)})
+            else:
+                export_lines.append(line)
+        await proc.wait()
+        export_log = "".join(export_lines)
         _upd(export_returncode=proc.returncode,
              export_log=export_log[-1500:])
         if proc.returncode != 0:
@@ -241,6 +263,7 @@ async def _run_train_subprocess(
                 ended_at=time.time(),
             )
             return
+        _upd(progress={"phase": "train", "current": 0, "total": 0, "pct": 0})
         train_cmd = [
             _python_exe(), "tools/train_reranker.py",
             "--in", str(out_jsonl),
@@ -266,6 +289,7 @@ async def _run_train_subprocess(
             status="done" if proc2.returncode == 0 else "error",
             model=model_data,
             model_path=str(out_model.relative_to(_ROOT)) if out_model.exists() else None,
+            progress={"phase": "done", "current": 0, "total": 0, "pct": 100},
             ended_at=time.time(),
         )
     except Exception as e:

@@ -232,8 +232,15 @@ def export(
             (f"-{days} days", *NOISE_QUERY_PATTERNS),
         ).fetchall()
         written = 0
+        total = len(rows)
+        # Emit ~25 PROGRESS markers — the API runner parses them into the live
+        # frontend bar. Per-event granularity matters most with --span-judge
+        # (one Ollama call/event = the slow part).
+        progress_every = max(1, total // 25)
         with out.open("w", encoding="utf-8") as f:
-            for row in rows:
+            for ei, row in enumerate(rows):
+                if ei % progress_every == 0 or ei == total - 1:
+                    print(f"PROGRESS {ei + 1}/{total}", flush=True)
                 try:
                     chunks = json.loads(row["trigger_ids"])
                     stage = json.loads(row["stage_scores"])
