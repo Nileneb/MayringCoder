@@ -422,6 +422,53 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
             "collection_count": col.count()}
 
 
+@router.get("/stats/admin/cat-match-debug")
+async def cat_match_debug(
+    query: str = "user authentication login session token oauth jwt password",
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Pinpoint a red reranker_cat_match_fires: report BOTH sides — does the
+    query derive category_ids (query side), and does the corpus have any
+    chunk_categories FK rows (chunk side) — instead of guessing. Read-only."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    import os
+    conn = _conn()
+    out: dict[str, Any] = {"query": query}
+    for label, sql in (
+        ("codebook_active", "SELECT COUNT(*) FROM codebook_categories WHERE status='active' AND embedding_id != ''"),
+        ("chunk_categories_total", "SELECT COUNT(*) FROM chunk_categories"),
+        ("chunks_with_categories", "SELECT COUNT(DISTINCT chunk_id) FROM chunk_categories"),
+    ):
+        try:
+            out[label] = conn.execute(sql).fetchone()[0]
+        except Exception as e:  # noqa: BLE001 — diagnostic, surface the error
+            out[label] = f"ERR {type(e).__name__}: {e}"
+    try:
+        from mayring_core.ollama_client import embed_batch
+        from mayring_core.memory.store import get_chroma_collection
+        from mayring_core.memory.ingestion.mayring_process import derive_query_category_ids
+        url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        model = os.getenv("MAYRING_EMBED_MODEL", "nomic-embed-text")
+        col = get_chroma_collection("codebook_categories")
+        out["chroma_codebook_count"] = col.count()
+        qemb = (embed_batch(url, model, [query], timeout=60) or [None])[0]
+        out["query_embedded"] = qemb is not None
+        if qemb is not None:
+            ids = derive_query_category_ids(conn, col, qemb)
+            out["query_category_ids"] = sorted(ids)
+            if ids:
+                ph = ",".join("?" for _ in ids)
+                out["query_category_names"] = [
+                    r[0] for r in conn.execute(
+                        f"SELECT name FROM codebook_categories WHERE id IN ({ph})",
+                        tuple(ids)).fetchall()
+                ]
+    except Exception as e:  # noqa: BLE001 — diagnostic, surface the error
+        out["derive_err"] = f"{type(e).__name__}: {e}"
+    return out
+
+
 @router.post("/stats/admin/reranker-rollout-decision")
 async def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),
