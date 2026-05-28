@@ -929,6 +929,105 @@ def register_agent_tools(mcp: FastMCP) -> None:
             return {"error": str(exc), "workspace_id": ws}
 
     @mcp.tool()
+    def train_reranker(
+        span_judge: bool = False,
+        days: int = 30,
+        wait: bool = True,
+        timeout: float = 600.0,
+    ) -> dict:
+        """Trigger a PRODUCTION reranker-v2 retrain (export feedback → train → write model).
+
+        First-class replacement for the curl-to-/stats/admin/train-reranker workflow.
+        Needs an admin-scoped JWT in the process identity (hook.jwt with scope 'admin').
+        The trainer clamps loader-gated weak features (pt/re) so the written model is
+        always loadable — guards against the silent v1-fallback that kept v2 dead.
+
+        Args:
+            span_judge: refine noisy labels with the offline Ollama relevance judge
+                (slower first run, cached after). False = fast baseline retrain.
+            days: feedback window in days.
+            wait: poll the job to completion and return the final model.
+            timeout: max seconds to wait when wait=True.
+
+        Returns:
+            {job_id, status, model:{weights,metrics,trained_at}, train_log} or {error}.
+        """
+        jwt = _current_raw_jwt()
+        if not jwt:
+            return {"error": "no admin JWT in process identity (need hook.jwt, scope 'admin')"}
+        api = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
+        import httpx
+        import time as _t
+        headers = {"Authorization": f"Bearer {jwt}"}
+        try:
+            r = httpx.post(
+                f"{api}/stats/admin/train-reranker",
+                params={"span_judge": str(bool(span_judge)).lower(), "days": days},
+                headers=headers, timeout=30.0,
+            )
+            r.raise_for_status()
+            job = r.json()
+            job_id = job.get("job_id")
+            if not wait or not job_id:
+                return job
+            deadline = _t.time() + timeout
+            while _t.time() < deadline:
+                s = httpx.get(
+                    f"{api}/stats/admin/train-reranker/{job_id}",
+                    headers=headers, timeout=15.0,
+                )
+                s.raise_for_status()
+                st = s.json()
+                if st.get("status") in ("done", "error"):
+                    m = st.get("model") or {}
+                    return {
+                        "job_id": job_id, "status": st.get("status"),
+                        "span_judge": bool(span_judge),
+                        "rows_exported": st.get("rows_exported"),
+                        "model": {"weights": m.get("weights"), "metrics": m.get("metrics"),
+                                  "trained_at": m.get("trained_at")},
+                        "train_log": (st.get("train_log") or "")[-400:],
+                        "error": st.get("error"),
+                    }
+                _t.sleep(4)
+            return {"job_id": job_id, "status": "timeout",
+                    "hint": "still running — re-check via reranker_status / job endpoint"}
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"HTTP {exc.response.status_code}",
+                    "detail": exc.response.text[:200]}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    @mcp.tool()
+    def reranker_status() -> dict:
+        """Live reranker state: which version actually serves + last training + v1/v2 precision@K.
+
+        Surfaces the silent-fallback footgun: if default is 'v2' but no loadable model
+        exists, the runtime serves v1. last_trained_at + the A/B split make that visible
+        instead of hidden. Needs an admin-scoped JWT in the process identity.
+        """
+        jwt = _current_raw_jwt()
+        if not jwt:
+            return {"error": "no admin JWT in process identity (need hook.jwt, scope 'admin')"}
+        api = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
+        import httpx
+        headers = {"Authorization": f"Bearer {jwt}"}
+        out: dict = {}
+        try:
+            out["default_version"] = httpx.get(
+                f"{api}/stats/admin/reranker-default", headers=headers, timeout=15.0
+            ).json().get("default_version")
+            out["training"] = httpx.get(
+                f"{api}/stats/admin/training-data-counts", headers=headers, timeout=15.0
+            ).json()
+            out["ab"] = httpx.get(
+                f"{api}/stats/retrieval-ab?days=7&k=5", headers=headers, timeout=15.0
+            ).json()
+            return out
+        except Exception as exc:
+            return {"error": str(exc), "partial": out}
+
+    @mcp.tool()
     def pi_summarize_for_memory(
         content: str,
         style: str = "paraphrase_generalize_reduce",
