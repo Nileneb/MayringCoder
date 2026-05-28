@@ -64,6 +64,26 @@ FEATURES = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AX
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
+# Loader (reranker_v2._load_model) REJECTS models with negative pt/re weights
+# (retrieval-positive by design, #187). A logistic fit can learn pt/re slightly
+# negative on noisy data — the trainer would then write a model the runtime
+# SILENTLY rejects → permanent v1-fallback. That is exactly why v2 never went
+# live in prod (found 2026-05-28: default=v2 but 0 v2 traffic, re=-0.67). We
+# neutralize negative pt/re to 0.0 ('no signal', which the loader tolerates)
+# so every written model is loadable. v/s stay HARD-rejected below — their
+# negative is a real label leak (#180), not a weak-feature wobble. r and igio_*
+# are NOT loader-gated, so their learned sign is left untouched.
+_LOADER_GATED_WEAK = ("pt", "re")
+
+
+def _neutralize_weak_negatives(weights: dict[str, float]) -> dict[str, float]:
+    out = dict(weights)
+    for f in _LOADER_GATED_WEAK:
+        if out.get(f, 0.0) < 0:
+            print(f"clamp {f}={out[f]:+.4f} → 0.0 (loader-gated retrieval-positive)")
+            out[f] = 0.0
+    return out
+
 
 def _load(
     path: Path,
@@ -143,6 +163,9 @@ def train(in_path: Path, out_path: Path) -> int:
     ndcg_5 = _ndcg_at_k(sorted_labels, 5)
 
     weights = {f: round(float(w), 4) for f, w in zip(FEATURES, clf.coef_[0])}
+    # Negative pt/re würden vom Loader abgelehnt → neutralisieren, damit
+    # das geschriebene Modell garantiert ladbar ist (siehe Konstante oben).
+    weights = _neutralize_weak_negatives(weights)
 
     # Trainer-side Sanity-Gate: lehne degenerierte Modelle SCHON HIER ab,
     # nicht erst beim Loader. Vector + Symbolic sind by-design retrieval-
