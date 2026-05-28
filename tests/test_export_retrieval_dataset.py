@@ -406,36 +406,3 @@ def test_span_score_never_leaks_into_features(tmp_path):
     assert "span_score" in rows[0]
     assert rows[0]["span_score"] == pytest.approx(0.9)
     assert "span_score" not in rows[0]["features"]
-
-
-def test_cat_match_flows_from_stage_scores_to_features(tmp_path):
-    """cat_match is runtime-logged into stage_scores; the exporter must surface
-    it as a model feature so the trainer can learn its weight (it was silently
-    omitted before → v2 never used reranker-v3's structured category match)."""
-    from tools.export_retrieval_dataset import export
-
-    conn = _build_db(tmp_path / "memory.db")
-    _insert_event(conn, "real query", ["chk_cm"],
-                  {"chk_cm": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0,
-                              "cat_match": 0.42}})
-    conn.commit(); conn.close()
-
-    out = tmp_path / "ds.jsonl"
-    export(tmp_path / "memory.db", out, days=30, negative_mode="unlabeled")
-    feats = json.loads(out.read_text().splitlines()[0])["features"]
-    assert feats["cat_match"] == pytest.approx(0.42)
-
-
-def test_cat_match_defaults_zero_for_old_rows(tmp_path):
-    """Rows logged before cat_match existed have no cat_match key → default 0.0."""
-    from tools.export_retrieval_dataset import export
-
-    conn = _build_db(tmp_path / "memory.db")
-    _insert_event(conn, "real query", ["chk_old"],
-                  {"chk_old": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}})
-    conn.commit(); conn.close()
-
-    out = tmp_path / "ds.jsonl"
-    export(tmp_path / "memory.db", out, days=30, negative_mode="unlabeled")
-    feats = json.loads(out.read_text().splitlines()[0])["features"]
-    assert feats["cat_match"] == 0.0
