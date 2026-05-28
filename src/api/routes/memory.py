@@ -179,6 +179,7 @@ class PiRunRequest(_BaseModel):
     model: str = ""
     job_class: str = "standard"
     timeout: float = 60.0
+    response_format: str = ""  # "json" → Ollama JSON-mode for structured pi_* tools
 
 
 @router.post("/pi/run")
@@ -209,6 +210,7 @@ async def pi_run(
         job_class=request.job_class or "standard",
         model=request.model or "",
         timeout_s=request.timeout or 60.0,
+        response_format=request.response_format or "",
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     try:

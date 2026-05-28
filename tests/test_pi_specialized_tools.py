@@ -29,31 +29,35 @@ class _FakeMcp:
 def tools():
     from src.api.mcp_agent_tools import register_agent_tools
     mcp = _FakeMcp()
-    # Patch tenant helpers so they don't need a real JWT context.
+    # Patch tenant helpers + JWT so they don't need a real request/MCP context.
+    # The pi_* tools now route through POST /pi/run (central queue) which reads
+    # _current_raw_jwt() — give it a token so the mocked httpx.post path runs.
     with patch("src.api.mcp_agent_tools._enforce_tenant", return_value="bene"), \
-         patch("src.api.mcp_agent_tools._effective_workspace_id", return_value="bene"):
+         patch("src.api.mcp_agent_tools._effective_workspace_id", return_value="bene"), \
+         patch("src.api.mcp_agent_tools._current_raw_jwt", return_value="test-jwt"):
         register_agent_tools(mcp)
         yield mcp.tools
 
 
 def _mock_ollama_response(payload: dict):
-    """Build a httpx.post mock returning {"response": json.dumps(payload)}.
+    """Build a httpx.post mock for the /pi/run queue reply {"content": json.dumps(payload)}.
 
-    Used by pi_judge_relevance + pi_summarize_for_memory (both JSON-mode).
-    pi_categorize uses _mock_ollama_text() because the canonical mayring
-    prompts return a comma-separated list, not JSON.
+    The pi_* tools route llama jobs through POST /pi/run (central PiQueue), which
+    returns {"content": <text>}. JSON-mode tools (judge/summarize/mark) then
+    json.loads that content. pi_categorize uses _mock_ollama_text() because the
+    canonical mayring prompts return a comma-separated list, not JSON.
     """
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"response": json.dumps(payload)}
+    resp.json.return_value = {"content": json.dumps(payload)}
     return resp
 
 
 def _mock_ollama_text(text: str):
-    """httpx.post mock returning a raw text {"response": "..."} — for pi_categorize."""
+    """httpx.post mock returning the /pi/run {"content": "..."} text — for pi_categorize."""
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"response": text}
+    resp.json.return_value = {"content": text}
     return resp
 
 
@@ -260,7 +264,7 @@ def test_pi_mark_categories_handles_json_parse_fail(tools):
     fn = tools["pi_mark_categories"]
     bad = MagicMock()
     bad.raise_for_status = MagicMock()
-    bad.json.return_value = {"response": "not json {{{"}
+    bad.json.return_value = {"content": "not json {{{"}
     with patch("httpx.post", return_value=bad), patch("src.api.mcp_agent_tools._model", return_value="m"):
         result = fn(text="some chunk content", task="t")
     assert "error" in result and "JSON parse fail" in result["error"]
@@ -330,3 +334,62 @@ def test_pi_category_evidence_reads_persisted(tools, tmp_path, monkeypatch):
     assert result["count"] == 1
     assert result["evidence"][0]["category"] == "demo-cat"
     assert result["evidence"][0]["task"] == "demo task"
+
+
+# ── central-queue routing (2026-05-28) ───────────────────────────
+# Proof the pi_* tools enqueue via POST /pi/run (bounded/distributed) instead
+# of POSTing Ollama directly. Without these, the wiring could silently regress
+# back to direct GPU hammering — exactly the bypass this batch removed.
+
+def _capture_pi_run():
+    captured: dict = {}
+
+    def post(url, **kw):
+        captured["url"] = url
+        captured["json"] = kw.get("json", {})
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"content": '{"scores":{}}'}
+        return resp
+
+    return captured, post
+
+
+def test_pi_judge_relevance_routes_through_pi_run_json(tools):
+    captured, post = _capture_pi_run()
+    with patch("httpx.post", side_effect=post), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        tools["pi_judge_relevance"](query="q", chunks=[{"chunk_id": "c", "text": "t"}])
+    assert captured["url"].endswith("/pi/run")  # NOT {_OLLAMA_URL}/api/generate
+    assert captured["json"]["kind"] == "judge-relevance"
+    assert captured["json"]["response_format"] == "json"
+
+
+def test_pi_categorize_routes_through_pi_run_freetext(tools):
+    captured, post = _capture_pi_run()
+    with patch("httpx.post", side_effect=post), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        tools["pi_categorize"](text="some longer text content here")
+    assert captured["url"].endswith("/pi/run")
+    assert captured["json"]["kind"] == "categorize"
+    assert captured["json"]["response_format"] == ""  # comma-list, not JSON-mode
+
+
+def test_pi_summarize_routes_through_pi_run_json(tools):
+    captured, post = _capture_pi_run()
+    with patch("httpx.post", side_effect=post), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        tools["pi_summarize_for_memory"](content="a" * 60)
+    assert captured["url"].endswith("/pi/run")
+    assert captured["json"]["kind"] == "summarize"
+    assert captured["json"]["response_format"] == "json"
+
+
+def test_pi_mark_categories_routes_through_pi_run_json(tools):
+    captured, post = _capture_pi_run()
+    with patch("httpx.post", side_effect=post), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        tools["pi_mark_categories"](text="some chunk content here", task="t")
+    assert captured["url"].endswith("/pi/run")
+    assert captured["json"]["kind"] == "mark-categories"
+    assert captured["json"]["response_format"] == "json"

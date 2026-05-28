@@ -71,6 +71,49 @@ def _new_pij_id() -> str:
     return f"pij_{uuid.uuid4().hex[:12]}"
 
 
+def _pi_run(
+    prompt: str,
+    *,
+    kind: str = "categorize",
+    model: str = "",
+    job_class: str = "standard",
+    timeout: float = 60.0,
+    response_format: str = "",
+    workspace_id: str = "",
+) -> str:
+    """Route a plain llama-generate job through the central PiQueue (POST
+    /pi/run) instead of POSTing Ollama directly. Returns the raw generated text.
+
+    WHY(2026-05-28, central-queue): the pi_* tools used to hit
+    {_OLLAMA_URL}/api/generate directly, bypassing the queue → no distribution /
+    bounded concurrency, hammered the personal GPU. They now enqueue here so ALL
+    llama jobs are distributed + cloud-split from one place. Raises on transport/
+    HTTP failure so the caller surfaces a VISIBLE error — never silently falls
+    back to a direct GPU call (that would re-introduce the bypass + mask queue
+    breakage)."""
+    import httpx
+    api = os.getenv("MAYRING_API_URL", "https://mcp.linn.games").rstrip("/")
+    jwt = _current_raw_jwt()
+    headers = {"Authorization": f"Bearer {jwt}"} if jwt else {}
+    if workspace_id:
+        headers["X-Workspace-Id"] = workspace_id
+    resp = httpx.post(
+        f"{api}/pi/run",
+        json={
+            "prompt": prompt,
+            "kind": kind,
+            "model": model,
+            "job_class": job_class,
+            "timeout": timeout,
+            "response_format": response_format,
+        },
+        headers=headers,
+        timeout=timeout + 30.0,
+    )
+    resp.raise_for_status()
+    return (resp.json().get("content") or "").strip()
+
+
 def register_agent_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
@@ -653,20 +696,11 @@ def register_agent_tools(mcp: FastMCP) -> None:
             + "\n\nText:\n" + text[:4000]
         )
 
-        import httpx
         try:
-            resp = httpx.post(
-                f"{_OLLAMA_URL}/api/generate",
-                json={
-                    "model": _model("text"),
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 200},
-                },
-                timeout=timeout,
+            raw = _pi_run(
+                prompt, kind="categorize", model=_model("text"),
+                timeout=timeout, workspace_id=ws,
             )
-            resp.raise_for_status()
-            raw = resp.json().get("response", "").strip()
             # mayring templates return a comma-separated list, not JSON.
             labels = [
                 lbl.strip().lower()
@@ -746,22 +780,13 @@ def register_agent_tools(mcp: FastMCP) -> None:
             "vorkommen (wir berechnen die char-offsets selbst)."
         )
 
-        import httpx
         import json as _json
         try:
-            resp = httpx.post(
-                f"{_OLLAMA_URL}/api/generate",
-                json={
-                    "model": _model("text"),
-                    "prompt": sys_prompt + "\n\nText:\n" + text[:4000],
-                    "format": "json",
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 800},
-                },
-                timeout=timeout,
+            raw = _pi_run(
+                sys_prompt + "\n\nText:\n" + text[:4000],
+                kind="mark-categories", model=_model("text"),
+                timeout=timeout, response_format="json", workspace_id=ws,
             )
-            resp.raise_for_status()
-            raw = resp.json().get("response", "").strip()
             data = _json.loads(raw)
             markings_in = data.get("markings", []) or []
             markings_out = []
@@ -902,21 +927,11 @@ def register_agent_tools(mcp: FastMCP) -> None:
         )
         prompt = sys_prompt + f"\n\nQuery: {query}\n\nChunks:\n{chunks_text}"
 
-        import httpx
         try:
-            resp = httpx.post(
-                f"{_OLLAMA_URL}/api/generate",
-                json={
-                    "model": _model("text"),
-                    "prompt": prompt,
-                    "format": "json",
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 600},
-                },
-                timeout=timeout,
+            raw = _pi_run(
+                prompt, kind="judge-relevance", model=_model("text"),
+                timeout=timeout, response_format="json", workspace_id=ws,
             )
-            resp.raise_for_status()
-            raw = resp.json().get("response", "").strip()
             data = _json.loads(raw)
             scores = {
                 str(k): max(0.0, min(1.0, float(v)))
@@ -1070,26 +1085,16 @@ def register_agent_tools(mcp: FastMCP) -> None:
             "No prose, no markdown."
         )
 
-        import httpx
         import json as _json
         from datetime import datetime as _dt
         date_str = _dt.utcnow().strftime("%Y-%m-%d")
         prompt = sys_prompt + f"\n\nDate (for source_id): {date_str}\n\nContent:\n{content[:6000]}"
 
         try:
-            resp = httpx.post(
-                f"{_OLLAMA_URL}/api/generate",
-                json={
-                    "model": _model("text"),
-                    "prompt": prompt,
-                    "format": "json",
-                    "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 400},
-                },
-                timeout=timeout,
+            raw = _pi_run(
+                prompt, kind="summarize", model=_model("text"),
+                timeout=timeout, response_format="json", workspace_id=ws,
             )
-            resp.raise_for_status()
-            raw = resp.json().get("response", "").strip()
             data = _json.loads(raw)
             return {
                 "paraphrase": data.get("paraphrase", ""),

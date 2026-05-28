@@ -140,7 +140,8 @@ def _run_pending_schema_migrations() -> None:
 
 def _plain_ollama_generate(
     prompt: str, model: str, ollama_url: str, timeout: float,
-    num_predict: int = 512,
+    num_predict: int = 1024,
+    response_format: str | None = None,
 ) -> dict:
     """Pure Ollama /api/generate — NO memory augmentation. Used for every
     non-'pi-task' kind (judge/categorize/summarize/…) so all those jobs go
@@ -150,7 +151,12 @@ def _plain_ollama_generate(
     Routes via ollama_client.generate so it inherits the cloud-split
     (OLLAMA_CLOUD_PRIMARY_RATIO → % of generate jobs to ollama.com) + fallback —
     judge/categorize get distributed like every other generate job, not pinned
-    to one host. Embeddings stay local (they never go through generate())."""
+    to one host. Embeddings stay local (they never go through generate()).
+
+    ``response_format`` ("json") forwards Ollama's top-level format field so the
+    JSON-mode pi_* tools (judge/mark/summarize) get structured output through
+    the queue. num_predict default is 1024 (a cap, not a target) — covers the
+    longest queue job (pi_mark_categories' 800) so JSON doesn't truncate."""
     from mayring_core.ollama_client import generate as _ollama_generate
     text = _ollama_generate(
         url=ollama_url,
@@ -161,6 +167,7 @@ def _plain_ollama_generate(
         num_predict=num_predict,
         think=False,
         options={"temperature": 0.0},
+        response_format=response_format,
         label="pi-queue-job",
     )
     return {"content": (text or "").strip()}
@@ -206,6 +213,7 @@ async def _start_pi_queue() -> None:
                 )
             return _plain_ollama_generate(
                 job.task_text, resolved_model, _ollama, resolved_timeout,
+                response_format=job.response_format or None,
             )
 
         try:

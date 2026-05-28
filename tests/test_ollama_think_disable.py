@@ -133,3 +133,31 @@ def test_generate_non_stream_also_includes_options():
     assert out == "xx"
     assert captured["body"]["options"]["num_predict"] == 4096
     assert "think" not in captured["body"]
+
+
+def test_generate_omits_format_by_default():
+    captured: dict = {}
+
+    def fake_stream(method, url, json=None, **kw):
+        captured["body"] = json
+        return _FakeStream([b'{"response":"x","done":true}'])
+
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
+        generate("http://x", "qwen3", "prompt")
+
+    assert "format" not in captured["body"]
+
+
+def test_generate_forwards_response_format_json():
+    """response_format threads Ollama's top-level `format` field — the
+    prerequisite for queue-routed JSON-mode pi_* tools (central-queue, 2026-05-28)."""
+    captured: dict = {}
+
+    def fake_stream(method, url, json=None, **kw):
+        captured["body"] = json
+        return _FakeStream([b'{"response":"{}","done":true}'])
+
+    with patch("mayring_core.ollama_client.httpx.stream", side_effect=fake_stream):
+        generate("http://x", "qwen3", "prompt", response_format="json")
+
+    assert captured["body"]["format"] == "json"
