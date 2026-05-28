@@ -527,8 +527,14 @@ def _backfill_chunk_categories(after_rowid: int, limit: int) -> dict[str, Any]:
     from mayring_core.memory.store import get_chroma_collection
     from mayring_core.memory.ingestion.mayring_process import link_chunks_deductive
     conn = _conn()
+    # Only UNLINKED chunks (rowid-cursor advances past already-linked + the
+    # unmatchable so it always terminates). Keeps the recurring post-deploy run
+    # cheap once the one-time full backfill is done — re-linking the whole corpus
+    # every deploy would load the box + flake the smoke.
     rows = conn.execute(
-        "SELECT rowid, chunk_id FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT ?",
+        "SELECT rowid, chunk_id FROM chunks "
+        "WHERE rowid > ? AND chunk_id NOT IN (SELECT chunk_id FROM chunk_categories) "
+        "ORDER BY rowid LIMIT ?",
         (after_rowid, limit),
     ).fetchall()
     if not rows:

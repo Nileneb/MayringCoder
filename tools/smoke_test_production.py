@@ -419,15 +419,15 @@ def check_feedback_slug_resolution(api: str, token: str) -> CheckResult:
 
 
 def check_feedback_count_moves(api: str, token: str) -> CheckResult:
-    """POST one positive feedback, verify the count actually increased."""
-    # WHY(2026-05-10 no-legacy): /stats/summary feedback hat KEIN positive
-    # mehr — nur stars{1..5}+total+avg. Smoke prüft total (kein bucket-mapping).
-    pre_code, pre, _ = _http("GET", f"{api}/stats/summary", token)
-    if pre_code != 200:
-        return CheckResult("feedback_count_delta", False,
-                           f"pre /stats/summary http={pre_code}")
-    pre_total = (pre or {}).get("feedback", {}).get("total", 0)
+    """Feedback POST is accepted AND the stats aggregate stays live + positive.
 
+    WHY(2026-05-28): the old `post.total > pre.total` assertion was wrong and
+    flaked. ``feedback.total`` is DISTINCT-counted and the POST busts the stats
+    cache (→ fresh recompute), so when a concurrent reingest deletes chunks (+
+    their cascaded chunk_feedback) the global total legitimately drops between
+    the two reads — verified live: post=1668 < pre=1673 right after a deploy's
+    post-deploy-ingest. The faithful, churn-stable property is: the write is
+    recorded AND the aggregate pipeline still returns a live positive total."""
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "stop hook", "top_k": 1, "include_text": False,
@@ -441,18 +441,19 @@ def check_feedback_count_moves(api: str, token: str) -> CheckResult:
         "POST", f"{api}/memory/feedback", token,
         body={"chunk_id": cid, "signal": "5"},
     )
-    if fb_code != 200:
+    recorded = (fb_body or {}).get("recorded") is True
+    if fb_code != 200 or not recorded:
         return CheckResult("feedback_count_delta", False,
-                           f"feedback POST http={fb_code} body={fb_body}")
+                           f"feedback POST http={fb_code} recorded={recorded} body={fb_body}")
 
-    time.sleep(1)
+    # POST busts the stats cache → this is a fresh recompute, not stale.
     post_code, post, _ = _http("GET", f"{api}/stats/summary", token)
     post_total = (post or {}).get("feedback", {}).get("total", 0)
-    delta = post_total - pre_total
     return CheckResult(
         "feedback_count_delta",
-        delta >= 1,
-        f"pre.total={pre_total}  post.total={post_total}  delta={delta}",
+        post_code == 200 and isinstance(post_total, int) and post_total >= 1,
+        f"recorded={recorded}  post.total={post_total} (aggregate live; global "
+        f"total is non-monotonic under reingest, so not asserting pre<post)",
     )
 
 

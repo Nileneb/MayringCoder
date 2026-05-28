@@ -18,6 +18,7 @@ class _FakeChunkCol:
 def test_backfill_paginates_and_links(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE chunks (chunk_id TEXT)")
+    conn.execute("CREATE TABLE chunk_categories (chunk_id TEXT, category_id INTEGER)")
     for i in range(3):
         conn.execute("INSERT INTO chunks VALUES (?)", (f"chk_{i}",))
     conn.commit()
@@ -49,6 +50,7 @@ def test_backfill_paginates_and_links(monkeypatch):
 def test_backfill_empty_when_cursor_past_end(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE chunks (chunk_id TEXT)")
+    conn.execute("CREATE TABLE chunk_categories (chunk_id TEXT, category_id INTEGER)")
     conn.execute("INSERT INTO chunks VALUES ('chk_0')")
     conn.commit()
     monkeypatch.setattr(ra, "_conn", lambda: conn)
