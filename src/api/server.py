@@ -138,11 +138,14 @@ def _run_pending_schema_migrations() -> None:
         logger.exception("server.startup: schema migration failed (non-fatal)")
 
 
-def _plain_ollama_generate(prompt: str, model: str, ollama_url: str, timeout: float) -> dict:
-    """Pure Ollama /api/generate — NO memory augmentation. Used for kind='judge'
-    so relevance-scoring goes through the PiQueue (bounded/distributed, no direct
-    GPU hammering) WITHOUT injecting unrelated memory into the judge's context.
-    Returns {'content': <model text>} to match run_task_with_memory's shape."""
+def _plain_ollama_generate(
+    prompt: str, model: str, ollama_url: str, timeout: float,
+    num_predict: int = 512,
+) -> dict:
+    """Pure Ollama /api/generate — NO memory augmentation. Used for every
+    non-'pi-task' kind (judge/categorize/summarize/…) so all those jobs go
+    through the PiQueue (bounded/distributed, no direct GPU hammering) WITHOUT
+    injecting unrelated memory. Returns {'content': text} like run_task_with_memory."""
     import httpx
     resp = httpx.post(
         f"{ollama_url.rstrip('/')}/api/generate",
@@ -150,7 +153,7 @@ def _plain_ollama_generate(prompt: str, model: str, ollama_url: str, timeout: fl
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.0, "num_predict": 64},
+            "options": {"temperature": 0.0, "num_predict": num_predict},
             "think": False,
         },
         timeout=timeout,
@@ -183,21 +186,22 @@ async def _start_pi_queue() -> None:
         start = _time.monotonic()
 
         def _run() -> dict:
-            # kind='judge' → queue-routed relevance scoring, NO memory aug.
-            # WHY(2026-05-28): the stop-hook + reranker judge used to POST Ollama
-            # directly, bypassing the PiQueue → no bounded concurrency, hammered
-            # the personal GPU. Routing judge through the queue distributes it.
-            if job.kind == "judge":
-                return _plain_ollama_generate(
-                    job.task_text, resolved_model, _ollama, resolved_timeout,
+            # Central routing (2026-05-28): ONLY 'pi-task' gets memory
+            # augmentation. Every other kind (judge, categorize, summarize,
+            # second-opinion, derivation, …) is a pure-prompt job routed
+            # through the SAME bounded PiQueue — so NO caller hits Ollama
+            # directly anymore; all llama jobs are distributed from here.
+            if job.kind == "pi-task":
+                return run_task_with_memory(
+                    task=job.task_text,
+                    ollama_url=_ollama,
+                    model=resolved_model,
+                    repo_slug=job.repo_slug,
+                    system_prompt=job.system_prompt,
+                    timeout=resolved_timeout,
                 )
-            return run_task_with_memory(
-                task=job.task_text,
-                ollama_url=_ollama,
-                model=resolved_model,
-                repo_slug=job.repo_slug,
-                system_prompt=job.system_prompt,
-                timeout=resolved_timeout,
+            return _plain_ollama_generate(
+                job.task_text, resolved_model, _ollama, resolved_timeout,
             )
 
         try:

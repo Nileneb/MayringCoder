@@ -173,6 +173,52 @@ async def pi_judge_feedback(
     return {"scores": scores, "workspace_id": workspace_id}
 
 
+class PiRunRequest(_BaseModel):
+    prompt: str
+    kind: str = "categorize"  # non-'pi-task' → no memory aug (plain generate)
+    model: str = ""
+    job_class: str = "standard"
+    timeout: float = 60.0
+
+
+@router.post("/pi/run")
+async def pi_run(
+    request: PiRunRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Central llama-job entry: enqueue ANY prompt job to the PiQueue so it is
+    bounded + distributed from ONE place. kind routes the handler (only
+    'pi-task' is memory-augmented; everything else is a pure prompt).
+
+    WHY(2026-05-28): the pi_* MCP tools + hooks each POSTed Ollama DIRECTLY,
+    bypassing the queue → no distribution/throttling, hammered the GPU. They
+    now go through here. Returns {content}.
+    """
+    if not (request.prompt or "").strip():
+        raise HTTPException(status_code=422, detail="prompt required")
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from mayring_pi_agent.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob
+
+    job = PiJob(
+        job_id=_uuid.uuid4().hex[:16],
+        task_text=request.prompt,
+        workspace_id=workspace_id,
+        kind=request.kind or "categorize",
+        job_class=request.job_class or "standard",
+        model=request.model or "",
+        timeout_s=request.timeout or 60.0,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    try:
+        result = await get_pi_queue().enqueue(job)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    content = result.get("content") if isinstance(result, dict) else str(result)
+    return {"content": content or "", "workspace_id": workspace_id}
+
+
 @router.post("/memory/search")
 async def memory_search(
     request: MemorySearchRequest,
