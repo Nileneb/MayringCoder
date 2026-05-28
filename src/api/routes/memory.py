@@ -90,6 +90,89 @@ async def pi_task(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class JudgeFeedbackRequest(_BaseModel):
+    user_prompt: str = ""
+    assistant_text: str = ""
+    chunks: list[dict] = []  # [{chunk_id, text}]
+
+
+_JUDGE_RUBRIC = (
+    "Score each chunk by whether the ANSWER demonstrably uses INFORMATION from "
+    "that chunk — not topic similarity, not how 'important' it looks. If the "
+    "answer would be IDENTICAL without the chunk → low score.\n"
+    "1 = no evidence the chunk shaped the answer (default for unused)\n"
+    "2 = vague topic overlap, no specific borrowed content\n"
+    "3 = answer mentions something also in chunk, maybe coincidence\n"
+    "4 = answer clearly uses specific content from this chunk\n"
+    "5 = chunk is THE primary source; answer fails without it\n"
+    "Most chunks score 1 or 2. 5 is RARE. Be strict.\n"
+)
+
+
+@router.post("/pi/judge-feedback")
+async def pi_judge_feedback(
+    request: JudgeFeedbackRequest,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Queue-routed feedback judge: rate how much the assistant's answer used
+    each injected chunk (1-5), for reranker auto-feedback.
+
+    WHY(2026-05-28): the Stop hook judged chunks by POSTing Ollama DIRECTLY,
+    bypassing the PiQueue → no bounded concurrency, hammered the personal GPU.
+    This routes the judge through the queue (kind='judge' → no memory aug,
+    bounded by PI_CONCURRENCY). Returns {scores: {chunk_id: '1'..'5'}}.
+    """
+    import re
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from mayring_pi_agent.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob
+
+    chunks = [
+        c for c in (request.chunks or [])
+        if c.get("chunk_id") and c.get("text")
+    ][:8]
+    if not chunks or not (request.assistant_text or "").strip():
+        return {"scores": {}}
+    numbered = "\n".join(
+        f"[{i + 1}] {(c.get('text') or '')[:500].replace(chr(10), ' ')}"
+        for i, c in enumerate(chunks)
+    )
+    prompt = (
+        f"User asked:\n{(request.user_prompt or '(unknown)')[:500]}\n\n"
+        f"Assistant answered:\n{request.assistant_text[:1500]}\n\n"
+        f"Memory chunks (numbered):\n{numbered}\n\n{_JUDGE_RUBRIC}\n"
+        f"Respond with EXACTLY {len(chunks)} comma-separated ratings (1-5), in "
+        "order. Example: 1,2,1,4,1\n\nAnswer:"
+    )
+    job = PiJob(
+        job_id=_uuid.uuid4().hex[:16],
+        task_text=prompt,
+        workspace_id=workspace_id,
+        kind="judge",
+        job_class="standard",
+        model="mistral:7b-instruct",
+        timeout_s=30.0,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    try:
+        result = await get_pi_queue().enqueue(job)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    raw = (result.get("content") if isinstance(result, dict) else str(result)) or ""
+    tokens = [t.strip() for t in re.split(r"[,\s]+", raw) if t.strip()]
+    scores: dict[str, str] = {}
+    for i, c in enumerate(chunks):
+        if i < len(tokens):
+            m = re.search(r"[1-5]", tokens[i])
+            if m:
+                scores[c["chunk_id"]] = m.group(0)
+    return {"scores": scores, "workspace_id": workspace_id}
+
+
 @router.post("/memory/search")
 async def memory_search(
     request: MemorySearchRequest,

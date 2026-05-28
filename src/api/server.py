@@ -138,6 +138,27 @@ def _run_pending_schema_migrations() -> None:
         logger.exception("server.startup: schema migration failed (non-fatal)")
 
 
+def _plain_ollama_generate(prompt: str, model: str, ollama_url: str, timeout: float) -> dict:
+    """Pure Ollama /api/generate — NO memory augmentation. Used for kind='judge'
+    so relevance-scoring goes through the PiQueue (bounded/distributed, no direct
+    GPU hammering) WITHOUT injecting unrelated memory into the judge's context.
+    Returns {'content': <model text>} to match run_task_with_memory's shape."""
+    import httpx
+    resp = httpx.post(
+        f"{ollama_url.rstrip('/')}/api/generate",
+        json={
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.0, "num_predict": 64},
+            "think": False,
+        },
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return {"content": (resp.json().get("response") or "").strip()}
+
+
 @app.on_event("startup")
 async def _start_pi_queue() -> None:
     import asyncio
@@ -157,20 +178,30 @@ async def _start_pi_queue() -> None:
             float(job.timeout_s) if job.timeout_s
             else _timeout_for_job_class(job.job_class, fallback=240.0)
         )
+        _ollama = os.getenv("OLLAMA_URL", "http://localhost:11434")
         loop = asyncio.get_event_loop()
         start = _time.monotonic()
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: run_task_with_memory(
-                    task=job.task_text,
-                    ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-                    model=resolved_model,
-                    repo_slug=job.repo_slug,
-                    system_prompt=job.system_prompt,
-                    timeout=resolved_timeout,
-                ),
+
+        def _run() -> dict:
+            # kind='judge' → queue-routed relevance scoring, NO memory aug.
+            # WHY(2026-05-28): the stop-hook + reranker judge used to POST Ollama
+            # directly, bypassing the PiQueue → no bounded concurrency, hammered
+            # the personal GPU. Routing judge through the queue distributes it.
+            if job.kind == "judge":
+                return _plain_ollama_generate(
+                    job.task_text, resolved_model, _ollama, resolved_timeout,
+                )
+            return run_task_with_memory(
+                task=job.task_text,
+                ollama_url=_ollama,
+                model=resolved_model,
+                repo_slug=job.repo_slug,
+                system_prompt=job.system_prompt,
+                timeout=resolved_timeout,
             )
+
+        try:
+            result = await loop.run_in_executor(None, _run)
             job.latency_ms = int((_time.monotonic() - start) * 1000)
             job.model_used = resolved_model
             return result
