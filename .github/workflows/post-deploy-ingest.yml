@@ -81,3 +81,24 @@ jobs:
             exit 1
           fi
           echo "::notice::ingest job_id=$job_id queued; check /jobs/$job_id for progress"
+
+      - name: Re-embed codebook categories (repair Chroma cat_match)
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::warning::MCP_SERVICE_TOKEN not in $ENV_FILE — skipping category re-embed"
+            exit 0
+          fi
+          # WHY(2026-05-28): codebook_categories vectors vanish from the Chroma
+          # collection on a chroma-service restart (they persist in SQLite, not
+          # the vector store) → query→category derivation returns empty →
+          # reranker-v3 cat_match goes SILENTLY inert and category-themed
+          # searches stop surfacing matches (post-deploy smoke went red). The
+          # codebook import is a host-side tool, not auto-run, so this used to
+          # need a manual docker exec. Re-embed after every deploy so it
+          # self-heals. Idempotent upsert; warn-but-don't-fail the workflow.
+          resp=$(curl -sS -m 180 -X POST https://mcp.linn.games/stats/admin/reembed-categories \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN" || echo '{"error":"curl failed"}')
+          echo "::notice::reembed-categories: $resp"

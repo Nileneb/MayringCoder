@@ -289,6 +289,51 @@ async def set_reranker_default(
     return {"default_version": written}
 
 
+@router.post("/stats/admin/reembed-categories")
+def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
+    """Re-embed active codebook_categories into the Chroma 'codebook_categories'
+    collection. Admin scope only.
+
+    Repairs the silent reranker-v3 cat_match death after a Chroma cutover: the
+    categories persist in SQLite (with embedding_id), but their vectors vanish
+    from the Chroma collection when the chroma service restarts → query→category
+    derivation returns empty → cat_match goes inert and category-themed searches
+    stop surfacing matches. There was NO repair path (the codebook import is a
+    host-side tool, not auto-run on deploy), so this had to be fixed by hand each
+    time. Idempotent upsert; safe to run any time. Sync def → FastAPI threadpool
+    so the blocking Ollama embed calls don't stall the event loop.
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    import os
+    from mayring_core.ollama_client import embed_batch
+    from mayring_core.memory.store import get_chroma_collection
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT embedding_id, name, COALESCE(description, name) "
+        "FROM codebook_categories WHERE status='active' AND embedding_id != ''"
+    ).fetchall()
+    if not rows:
+        return {"categories": 0, "embedded": 0,
+                "detail": "no active categories with embedding_id"}
+    url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    model = os.getenv("MAYRING_EMBED_MODEL", "nomic-embed-text")
+    col = get_chroma_collection("codebook_categories")
+    ids = [r[0] for r in rows]
+    texts = [f"{r[1]}: {r[2]}" for r in rows]
+    embedded = 0
+    for i in range(0, len(ids), 64):
+        embs = embed_batch(url, model, texts[i:i + 64], timeout=120)
+        if embs:
+            col.upsert(ids=ids[i:i + 64], embeddings=embs,
+                       documents=texts[i:i + 64])
+            embedded += len(embs)
+    _log.info("reembed-categories: %d/%d embedded by workspace=%s",
+              embedded, len(rows), info.workspace_id)
+    return {"categories": len(rows), "embedded": embedded,
+            "collection_count": col.count()}
+
+
 @router.post("/stats/admin/reranker-rollout-decision")
 async def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),
