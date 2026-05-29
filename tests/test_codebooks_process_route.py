@@ -43,7 +43,10 @@ def client(tmp_path, monkeypatch):
     import mayring_core.memory.store as store
     monkeypatch.setattr(providers, "embed_texts",
                         lambda texts, url: [[1.0, 0.0, 0.0] if "api" in texts[0] else [0.0, 0.0, 1.0]])
-    monkeypatch.setattr(providers, "generate_text", lambda **kw: "derived_label")
+    # canonical flow reduces FIRST: the LLM-derived label is what gets embedded + matched.
+    # Mirror a goal-anchored reduction → a label that reflects the input topic.
+    monkeypatch.setattr(providers, "generate_text",
+                        lambda **kw: "api_category" if "api" in kw.get("prompt", "") else "novel_concept")
     monkeypatch.setattr(store, "get_chroma_collection", lambda name: _FakeChroma())
 
     prev = app.dependency_overrides.get(get_workspace)
