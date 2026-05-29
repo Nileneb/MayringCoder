@@ -180,6 +180,7 @@ class PiRunRequest(_BaseModel):
     job_class: str = "standard"
     timeout: float = 60.0
     response_format: str = ""  # "json" → Ollama JSON-mode for structured pi_* tools
+    options: dict | None = None  # Ollama generate-options (temperature/seed) — erhält Determinismus
 
 
 @router.post("/pi/run")
@@ -211,6 +212,7 @@ async def pi_run(
         model=request.model or "",
         timeout_s=request.timeout or 60.0,
         response_format=request.response_format or "",
+        options=request.options,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     try:

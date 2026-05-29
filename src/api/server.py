@@ -142,6 +142,7 @@ def _plain_ollama_generate(
     prompt: str, model: str, ollama_url: str, timeout: float,
     num_predict: int = 1024,
     response_format: str | None = None,
+    options: dict | None = None,
 ) -> dict:
     """Pure Ollama /api/generate — NO memory augmentation. Used for every
     non-'pi-task' kind (judge/categorize/summarize/…) so all those jobs go
@@ -166,7 +167,9 @@ def _plain_ollama_generate(
         timeout=timeout,
         num_predict=num_predict,
         think=False,
-        options={"temperature": 0.0},
+        # Caller-options (z.B. temperature=0 + fixer seed der Mayring-Reduktion) erhalten;
+        # ohne explizite options bleibt der bisherige Default temperature=0.
+        options=options if options is not None else {"temperature": 0.0},
         response_format=response_format,
         label="pi-queue-job",
     )
@@ -214,6 +217,7 @@ async def _start_pi_queue() -> None:
             return _plain_ollama_generate(
                 job.task_text, resolved_model, _ollama, resolved_timeout,
                 response_format=job.response_format or None,
+                options=job.options,
             )
 
         try:
