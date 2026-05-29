@@ -45,20 +45,22 @@ def _resolve_workspace(conn, repo: str) -> str:
     user-gescopten Dashboard UNSICHTBAR (alle Repo-Events landeten in 'system'). Jetzt:
     Default = einziger kind='user'-Workspace, damit die Events dort sichtbar werden.
     """
+    from src.api.routes.projects import canonical_repo_ref
+    canon = canonical_repo_ref(repo)  # EINE kanonische Form wie /projects/route → keine Dubletten
     row = conn.execute(
         "SELECT workspace_id FROM projects WHERE source_type='github' AND source_ref=?",
-        (repo,),
+        (canon,),
     ).fetchone()
     if row is not None:
         return row[0]
     ws = _default_repo_workspace(conn, repo)
     now = datetime.now(timezone.utc).isoformat()
     pid = str(uuid.uuid4())
-    name = repo.rsplit("/", 1)[-1]
+    name = canon.rsplit("/", 1)[-1]
     conn.execute(
         "INSERT INTO projects (id, workspace_id, name, source_type, source_ref, created_at, updated_at) "
         "VALUES (?, ?, ?, 'github', ?, ?, ?)",
-        (pid, ws, name, repo, now, now),
+        (pid, ws, name, canon, now, now),
     )
     conn.commit()
     return ws

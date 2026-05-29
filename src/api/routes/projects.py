@@ -49,6 +49,15 @@ def _normalize_remote(remote: str) -> str | None:
     return f"{m.group('owner')}/{m.group('name')}".lower()
 
 
+def canonical_repo_ref(ref: str) -> str:
+    """DIE kanonische source_ref-Form für ein Repo, damit dasselbe Repo NIE als Dublette
+    angelegt wird ('nileneb/x' via /projects/route vs 'https://github.com/Nileneb/x' via
+    /repo-events). github → 'owner/name'-Slug, sonst canonicalize_url. EINE Funktion für
+    beide Anlage-Stellen — uneinheitliche Keys spalten sonst die Daten (#4-Dublette 2026-05-29)."""
+    from mayring_core.memory.schema import canonicalize_url
+    return _normalize_remote(ref) or canonicalize_url(ref or "")
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(x * x for x in b))
@@ -228,3 +237,35 @@ async def claim_system_repos(
     conn.commit()
     return {"workspace_id": ws, "claimed_projects": len(repos), "claimed_events": ev_n,
             "repo_event_chunks": len(sids), "unsmoked_back_to_system": unsmoked, "repos": repos}
+
+
+@router.post("/projects/dedup")
+async def dedup_projects(
+    info: TokenInfo = Depends(get_token_info),
+    ws: str = Depends(get_workspace),
+) -> dict:
+    """Führt github-Projekt-Dubletten desselben Repos zusammen (nileneb/x vs
+    https://github.com/Nileneb/x → eine kanonische source_ref). Behält das älteste,
+    setzt dessen source_ref auf die kanonische Form, löscht die Dubletten. Idempotent +
+    admin-gated. Behebt den Datenmüll, der sonst Routing/Anzeige spaltet (#4 2026-05-29)."""
+    if not _is_privileged(info):
+        raise HTTPException(status_code=403, detail="admin/service token required")
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, source_ref FROM projects WHERE workspace_id=? AND source_type='github' "
+        "ORDER BY created_at", (ws,),
+    ).fetchall()
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for pid, ref in rows:
+        groups.setdefault(canonical_repo_ref(ref), []).append((pid, ref))
+    merged = 0
+    for canon, items in groups.items():
+        keep_id = items[0][0]
+        # Kept-Projekt auf die kanonische source_ref normalisieren (auch bei Singles,
+        # damit künftige /repo-events matchen statt eine neue Dublette anzulegen).
+        conn.execute("UPDATE projects SET source_ref=? WHERE id=?", (canon, keep_id))
+        for pid, _ref in items[1:]:
+            conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+            merged += 1
+    conn.commit()
+    return {"workspace_id": ws, "merged": merged, "canonical_groups": len(groups)}

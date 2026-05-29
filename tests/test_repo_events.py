@@ -103,13 +103,14 @@ def test_repo_events_push_enqueues_populate(monkeypatch, tmp_path):
         assert body["action"] == "populate"
         assert body["job_id"] == "job-1"
         assert body["workspace_id"] == "system"
-        # verify match-or-create persisted a projects row in the isolated DB
+        # match-or-create persistiert die KANONISCHE source_ref (slug 'a/b'), nicht die
+        # rohe URL — so matcht eine spätere URL/SSH-Variante dasselbe Projekt (Dedup-Fix).
         row = _deps._conn.execute(
             "SELECT workspace_id FROM projects WHERE source_type='github' AND source_ref=?",
-            ("https://github.com/a/b",),
+            ("a/b",),
         ).fetchone()
         assert row is not None and row[0] == "system", \
-            "unknown repo must be match-or-created under 'system'"
+            "unknown repo → canonical-slug project under 'system' (no user ws in test)"
     finally:
         from src.api import server as srv
         srv.app.dependency_overrides.clear()
@@ -260,4 +261,32 @@ def test_resolve_workspace_smoke_repo_stays_system(tmp_path):
     conn.commit()
     assert _resolve_workspace(conn, "https://github.com/smoke/repo-1780000000") == "system"
     assert _resolve_workspace(conn, "https://github.com/Nileneb/app.linn.games") == "ws-bene"
+    conn.close()
+
+
+def test_canonical_repo_ref_collapses_url_slug_ssh():
+    """URL, Slug und SSH-Form desselben Repos → EINE kanonische source_ref, sonst legen
+    /projects/route + /repo-events Dubletten an (Datenmüll-Fix 2026-05-29)."""
+    from src.api.routes.projects import canonical_repo_ref
+    a = canonical_repo_ref("https://github.com/Nileneb/app.linn.games")
+    b = canonical_repo_ref("nileneb/app.linn.games")
+    c = canonical_repo_ref("git@github.com:Nileneb/app.linn.games.git")
+    assert a == b == c == "nileneb/app.linn.games"
+
+
+def test_resolve_workspace_stores_canonical_ref(tmp_path):
+    """/repo-events legt das Projekt unter der kanonischen Slug-Form an — eine spätere
+    URL-Variante desselben Repos findet dasselbe Projekt (keine zweite Dublette)."""
+    from mayring_core.memory.store import init_memory_db
+    from src.api.routes.repo_events import _resolve_workspace
+    conn = init_memory_db(tmp_path / "m.db")
+    now = "2026-05-29T00:00:00Z"
+    conn.execute("INSERT INTO workspaces(id,kind,display_name,created_at,updated_at) "
+                 "VALUES ('ws-bene','user','Bene',?,?)", (now, now))
+    conn.commit()
+    _resolve_workspace(conn, "https://github.com/Nileneb/app.linn.games")
+    # zweite Variante (slug) desselben Repos → KEIN zweites Projekt
+    _resolve_workspace(conn, "nileneb/app.linn.games")
+    n = conn.execute("SELECT COUNT(*) FROM projects WHERE source_type='github'").fetchone()[0]
+    assert n == 1, "URL + Slug desselben Repos dürfen nur EIN Projekt sein"
     conn.close()
