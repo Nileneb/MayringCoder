@@ -96,6 +96,13 @@ class MemorySearchRequest(BaseModel):
     # auf einen IGIO-Axis zu fokussieren ohne alle Chunks zu laden.
     # "goal" → zeigt was der User anstrebt; "issue" → offene Probleme etc.
     igio_intent: str | None = None
+    # WHY(recency-lane 2026-05-29, "nie wieder out of context"): die session_id
+    # des laufenden UserPromptSubmit-Hooks. Aktiviert die Recency-Lane — die
+    # rollierende conversation_summary dieser Session wird als garantierter
+    # Kandidat geführt + auf einen score_final-Boden gehoben, der das Hook-Gate
+    # überlebt. So bleibt "was ich gerade tat" sichtbar, auch bei schwacher
+    # semantischer Ähnlichkeit. None = keine Recency-Lane (unveränderte Suche).
+    session_id: str | None = None
 
 
 class MemoryPutRequest(BaseModel):

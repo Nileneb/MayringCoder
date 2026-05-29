@@ -284,6 +284,9 @@ def _memory_search_sync(
             ]
         if request.igio_intent:
             opts["igio_intent"] = request.igio_intent.lower().strip()
+        if request.session_id:
+            # Recency-Lane: Session-Thread garantiert sichtbar (siehe retrieval._session_recency_ids)
+            opts["session_id"] = request.session_id.strip()
 
         # WHY(2026-05-11, task-categorization + perf-fix): nur der schnelle
         # embedding-sim-check inline (~50-150ms) — KEIN mistral im hot path
