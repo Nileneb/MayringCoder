@@ -14,10 +14,11 @@ from __future__ import annotations
 from unittest.mock import patch, MagicMock
 
 
-def test_conversation_micro_batch_rejects_mismatched_workspace_slug():
-    """User authenticated as 'bene' MUST NOT be able to ingest into
-    'alice' workspace by setting body.workspace_slug='alice'."""
-    from fastapi import HTTPException
+def test_conversation_micro_batch_ignores_mismatched_slug_uses_authed_workspace():
+    """A mismatched body slug must NOT cause a cross-tenant write — but it must
+    also NOT drop the turn. The old 403 broke EVERY CLI capture (the hook sends
+    the cwd-basename, which never equals the workspace UUID). Correct behaviour:
+    ignore the attacker slug, ingest under the AUTHENTICATED workspace."""
     from src.api.routes.memory import conversation_micro_batch
     from src.api.routes.models import ConversationMicroBatchRequest, ConversationTurnModel
     import asyncio
@@ -25,16 +26,30 @@ def test_conversation_micro_batch_rejects_mismatched_workspace_slug():
     request = ConversationMicroBatchRequest(
         turns=[ConversationTurnModel(role="user", content="hi", timestamp="2026-05-09T10:00:00Z")],
         session_id="sess123",
-        workspace_slug="alice",  # Angreifer-Wert
+        workspace_slug="alice",  # Angreifer-Wert — muss ignoriert werden
         presumarized="test summary",
     )
 
-    try:
-        asyncio.run(conversation_micro_batch(request, workspace_id="bene"))
-        raise AssertionError("expected HTTPException for slug mismatch")
-    except HTTPException as exc:
-        assert exc.status_code == 403
-        assert "workspace" in exc.detail.lower()
+    captured: dict = {}
+
+    def _fake_run_ingest(source_dict, content, conn, chroma, ollama, model, opts, ws):
+        captured["source_dict"] = source_dict
+        captured["ws"] = ws
+        return {"status": "ok", "chunk_ids": [], "indexed": True,
+                "deduped": 0, "filtered": 0, "superseded": 0}
+
+    with patch("src.api.routes.memory._run_ingest", side_effect=_fake_run_ingest), \
+         patch("src.api.routes.memory._get_conn", return_value=MagicMock()), \
+         patch("src.api.routes.memory._get_chroma", return_value=MagicMock()):
+        result = asyncio.run(conversation_micro_batch(request, workspace_id="bene"))
+
+    # NO cross-tenant write: the attacker slug 'alice' must NOT appear anywhere
+    assert "alice" not in result["source_id"]
+    assert captured["source_dict"]["repo"] != "alice"
+    assert captured["source_dict"]["path"] != "alice/incremental"
+    # Bound to the AUTHENTICATED workspace + turn NOT dropped
+    assert "bene" in result["source_id"]
+    assert captured["ws"] == "bene"
 
 
 def test_conversation_micro_batch_default_slug_is_overwritten_by_jwt():

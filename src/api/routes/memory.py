@@ -582,12 +582,18 @@ async def conversation_micro_batch(
         # workspace_id (JWT). Default-slug 'default' wird auch overwritten —
         # Watcher braucht keinen body-slug mehr.
         body_slug = (request.workspace_slug or "").strip().lower()
-        # 'default' war der pydantic-default — den droppen wir silent.
+        # WHY(write-leak 2026-05-29): the CLI stop_hook sends the cwd-basename as
+        # workspace_slug ('mayringcoder'), which NEVER equals the workspace UUID →
+        # the old 403 silently dropped EVERY conversation capture from the CLI
+        # (the recency-lane then had nothing fresh to surface). The slug is
+        # user-controlled + purely cosmetic; we IGNORE a mismatching one and bind
+        # to the authoritative JWT workspace_id below. No cross-tenant write is
+        # possible (slug never reaches source_id/repo/topic_transitions), and the
+        # turn is no longer dropped. Security property preserved, data preserved.
         if body_slug and body_slug != "default" and body_slug != workspace_id.lower():
-            raise HTTPException(
-                status_code=403,
-                detail=f"workspace_slug={body_slug!r} mismatch with "
-                       f"authenticated workspace={workspace_id!r}",
+            _log.warning(
+                "micro-batch: ignoring body workspace_slug=%r (≠ authenticated "
+                "workspace %r); binding to JWT workspace", body_slug, workspace_id,
             )
         # Ab hier: server-derived slug, nicht user-controlled
         slug = workspace_id
