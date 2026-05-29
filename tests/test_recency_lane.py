@@ -130,6 +130,41 @@ def test_rerank_no_session_ids_is_noop(tmp_path):
     assert "session-recency" not in records[0].reasons
 
 
+def test_session_chunk_guaranteed_in_topk_despite_noise(tmp_path):
+    """REGRESSION (live-found): nomic gives ~0.55-0.7 to *everything*, so a
+    session chunk merely floored to 0.5 gets buried below noise and truncated by
+    top_k. The lane must GUARANTEE the session thread is in the returned top_k,
+    not just floor its score — otherwise "nie wieder out of context" fails."""
+    conn = init_memory_db(tmp_path / "m.db")
+    src = _conv_source("bene", "sess-noise")
+    upsert_source(conn, src)
+    other_src = _repo_source("repo:owner/r:file.py")
+    upsert_source(conn, other_src)
+
+    sess = _chunk(src.source_id, 0, text="what I just did")
+    insert_chunk(conn, sess)
+    # 5 noisy non-session chunks that all out-score the 0.5 floor
+    noise = []
+    for i in range(5):
+        ns = _repo_source(f"repo:owner/r:n{i}.py")
+        upsert_source(conn, ns)
+        c = _chunk(ns.source_id, 0, text=f"noise {i}")
+        insert_chunk(conn, c)
+        noise.append(c)
+
+    vec = {n.chunk_id: 0.65 for n in noise}     # all noise ranks ~0.65
+    vec[sess.chunk_id] = 0.1                     # session chunk weak semantically
+    sym = {c.chunk_id: 0.0 for c in noise + [sess]}
+
+    records = _rerank(
+        noise + [sess], vec, sym, top_k=3, conn=conn,
+        session_chunk_ids={sess.chunk_id},
+    )
+    ids = [r.chunk_id for r in records]
+    assert sess.chunk_id in ids                  # guaranteed despite top_k=3 + noise
+    assert len(records) <= 3                      # still respects top_k
+
+
 def test_session_chunk_already_strong_not_lowered(tmp_path):
     """The floor lifts, never caps — a strong session chunk keeps its score."""
     conn = init_memory_db(tmp_path / "m.db")
