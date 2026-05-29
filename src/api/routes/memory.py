@@ -509,6 +509,28 @@ async def memory_put(
                              _OLLAMA_URL, _model("text"),
                              {"categorize": request.categorize, "task": request.task},
                              workspace_id)
+
+        # WHY(session→IGIO #2, 2026-05-29): honor igio_hint on /memory/put. The stop_hook
+        # captures Claude's native /goal and ingests it here with igio_hint='goal' so it lands
+        # on the goal axis (/memory/goals + IGIO-lens) DIRECTLY, instead of being guessed by
+        # the async classifier. This block was MISSING from /memory/put (it only existed in
+        # /conversation/micro-batch) → igio_hint was silently ignored, the chunk got no axis.
+        # NOT wrapped in a swallowing try/except: a tagging failure must surface (→ outer 500),
+        # the hook then retries next turn. An empty match is warned loudly, never silent.
+        _VALID_IGIO = ("goal", "issue", "intervention", "outcome")
+        if request.igio_hint and request.igio_hint.lower() in _VALID_IGIO and request.source_id:
+            from mayring_core.memory.store import get_chunks_by_source, update_chunk_igio_axis
+            tagged = 0
+            for chunk in get_chunks_by_source(_get_conn(), request.source_id, active_only=True):
+                update_chunk_igio_axis(_get_conn(), chunk.chunk_id, request.igio_hint.lower())
+                tagged += 1
+            if not tagged:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "igio_hint=%s set but no active chunks for source_id=%s (axis NOT applied)",
+                    request.igio_hint, request.source_id)
+            result["igio_axis"] = request.igio_hint.lower()
+
         if source_dict.get("source_type") == "paper":
             _threading.Thread(
                 target=_bg_wiki_rebuild,

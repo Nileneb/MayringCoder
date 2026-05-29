@@ -177,3 +177,44 @@ def test_memory_reindex_empty_db(client):
     data = r.json()
     assert data["reindexed_count"] == 0
     assert data["errors"] == 0
+
+
+# ---------------------------------------------------------------------------
+# POST /memory/put — igio_hint tagging (session→IGIO #2)
+# ---------------------------------------------------------------------------
+
+def test_memory_put_applies_igio_hint(client, _reset_conn, monkeypatch):
+    """/memory/put with igio_hint='goal' MUST set igio_axis='goal' on the new chunk.
+
+    Regression: the igio_hint tagging block existed only in /conversation/micro-batch,
+    so the stop_hook's native-/goal capture POST to /memory/put was silently ignored
+    (chunk got no axis → never appeared in /memory/goals or the IGIO-lens)."""
+    import src.api.routes.memory as mem
+    from src.api.auth import TokenInfo, get_token_info
+    from mayring_core.memory.schema import Chunk, Source
+    from mayring_core.memory.store import insert_chunk, upsert_source
+    conn = _reset_conn
+
+    app.dependency_overrides[get_token_info] = lambda: TokenInfo(workspace_id="test-ws", scopes=("*",))
+
+    def _fake_ingest(source_dict, content, *a, **k):
+        sid = source_dict["source_id"]
+        upsert_source(conn, Source(source_id=sid, source_type=source_dict.get("source_type", "note"),
+                                   repo="", path="", content_hash="h:" + sid))
+        insert_chunk(conn, Chunk(chunk_id="chk_goalcap", source_id=sid, text=content,
+                                 text_hash=Chunk.compute_text_hash(content)))
+        return {"source_id": sid, "state": "new", "chunk_ids": ["chk_goalcap"]}
+
+    monkeypatch.setattr(mem, "_run_ingest", _fake_ingest)
+    try:
+        r = client.post("/memory/put", json={
+            "content": "make IGIO reflect the real session",
+            "source_id": "session_goal:t1",
+            "source_type": "session_goal",
+            "igio_hint": "goal",
+        })
+        assert r.status_code == 200, r.text
+        axis = conn.execute("SELECT igio_axis FROM chunks WHERE chunk_id='chk_goalcap'").fetchone()[0]
+        assert axis == "goal"
+    finally:
+        app.dependency_overrides.pop(get_token_info, None)

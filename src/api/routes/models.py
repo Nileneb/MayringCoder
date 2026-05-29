@@ -120,6 +120,10 @@ class MemoryPutRequest(BaseModel):
     # it (no silent default). Optional/None for other source_types
     # (= workspace-global). Always type-prefixed: "<type>:<id>".
     scope: str | None = None
+    # WHY(session→IGIO #2, 2026-05-29): direkt-getaggte IGIO-Achse. Der stop_hook
+    # erfasst Claudes natives /goal und ingestet es hier mit igio_hint='goal' →
+    # memory_put setzt igio_axis direkt (bypassed den async Classifier).
+    igio_hint: str | None = None  # "goal" | "issue" | "intervention" | "outcome"
 
 
 class LogEvent(BaseModel):
