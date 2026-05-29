@@ -11,7 +11,10 @@ from src.api.jwt_auth import TokenInfo
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run() each call: robust to import side-effects that close the
+    # default loop (a2a-sdk does this on import). Python 3.13 also raises from
+    # get_event_loop() outside a running loop. Same pattern as test_dashboard_endpoints.
+    return asyncio.run(coro)
 
 
 def _creds(tok="svc"):
