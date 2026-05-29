@@ -406,6 +406,13 @@ def main() -> None:
     load_dotenv()
     args = parse_args()
 
+    # WHY(#1): der Ingest läuft als Subprozess (`python -m src.pipeline`) — ohne dies
+    # nutzt er die bare core-Provider und umgeht die zentrale PiQueue. setup_providers()
+    # verdrahtet die Host-Seam, sodass `_generate` (env MAYRING_GENERATE_VIA_QUEUE=1)
+    # generate-Jobs über /pi/run sammeln kann. Embeddings bleiben three.linn.games.
+    from src.provider_setup import setup_providers
+    setup_providers()
+
     repo_url = args.repo or os.getenv("GITHUB_REPO", "")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     _is_non_llm_path = (

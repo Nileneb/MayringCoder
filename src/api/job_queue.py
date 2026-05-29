@@ -130,10 +130,19 @@ def _parse_progress_line(line: str) -> dict | None:
 
 async def run_checker_job(job_id: str, checker_args: list[str], workspace_id: str) -> None:
     try:
+        # WHY(#1): route the ingest subprocess' generate-load through the central
+        # PiQueue (/pi/run) instead of direct Ollama. The subprocess runs in the same
+        # container as the API, so localhost:8090 reaches it; MCP_SERVICE_TOKEN auths.
+        sub_env = {
+            **os.environ,
+            "MAYRING_GENERATE_VIA_QUEUE": "1",
+            "MAYRING_API_URL": os.getenv("MAYRING_API_URL", "http://localhost:8090"),
+        }
         proc = await asyncio.create_subprocess_exec(
             python_exe(), "-m", "src.pipeline", *checker_args,
             "--workspace-id", workspace_id,
             cwd=str(_ROOT),
+            env=sub_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
