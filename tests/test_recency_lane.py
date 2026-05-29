@@ -54,6 +54,28 @@ def test_session_recency_ids_resolves_conversation_source(tmp_path):
     assert c.chunk_id in ids
 
 
+def test_session_recency_ids_matches_slug_not_uuid(tmp_path):
+    """REGRESSION (live-found): conversation source_ids use the repo/workspace
+    SLUG as the middle segment ('conversation:mayringcoder:<sess>'), NOT the
+    workspace UUID. The lane must match by session-suffix within the workspace,
+    or it finds nothing in prod (chunk.workspace_id is the UUID)."""
+    conn = init_memory_db(tmp_path / "m.db")
+    uuid_ws = "019e14d6-0489-7348-bca8-e29c11293cb7"
+    # source middle = slug 'mayringcoder', but the chunk lives under the UUID ws
+    src = Source(
+        source_id="conversation:mayringcoder:33abee6e-ff1c-42",
+        source_type="conversation_summary", repo="mayringcoder",
+        path="mayringcoder/incremental", branch="local", commit="",
+        content_hash="sha256:abc",
+    )
+    upsert_source(conn, src)
+    c = _chunk(src.source_id, 0, workspace_id=uuid_ws)
+    insert_chunk(conn, c)
+
+    ids = _session_recency_ids(conn, uuid_ws, "33abee6e-ff1c-42xxxxx")
+    assert c.chunk_id in ids                  # found despite slug != uuid
+
+
 def test_session_recency_ids_empty_without_session(tmp_path):
     conn = init_memory_db(tmp_path / "m.db")
     assert _session_recency_ids(conn, "bene", None) == []
