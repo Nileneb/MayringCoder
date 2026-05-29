@@ -186,8 +186,16 @@ def _ollama_generate(
     *,
     system_prompt: str | None = None,
     keep_alive: str | None = None,
+    options: dict | None = None,
+    response_format: str | None = None,
+    num_predict: int = 4096,
 ) -> str:
-    """Send a prompt to Ollama and collect the streamed response."""
+    """Send a prompt to Ollama and collect the streamed response.
+
+    options/response_format/num_predict werden an ollama_client.generate durchgereicht —
+    die Mayring-Reduktion nutzt options={'temperature':0.0}+response_format='json' für
+    deterministische, parsebare Labels. MUSS die _default_generate-Signatur spiegeln, da
+    diese Funktion in Prod via register_generator die Default-Impl ersetzt (sonst TypeError)."""
     from mayring_core.ollama_client import generate as _oc_generate
     return _oc_generate(
         ollama_url, model, prompt,
@@ -198,6 +206,9 @@ def _ollama_generate(
         retry_delays=_RETRY_DELAYS,
         label=label,
         keep_alive=keep_alive,
+        options=options,
+        response_format=response_format,
+        num_predict=num_predict,
     )
 
 

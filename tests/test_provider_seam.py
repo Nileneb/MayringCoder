@@ -39,3 +39,23 @@ def test_generate_seam_is_patchable_at_analyzer():
         "test patch seams (see #267)."
     )
     m.assert_called_once()
+
+
+def test_generate_forwards_reduction_options_to_ollama_client():
+    """Die Mayring-Reduktion ruft generate_text mit options/response_format. Die in Prod via
+    register_generator registrierte _ollama_generate MUSS diese kwargs akzeptieren UND an
+    ollama_client.generate durchreichen — sonst TypeError → 500 (genau das, was der
+    generate_text-Mock anderswo verdeckt). Regressions-Guard für die echte Signatur."""
+    captured: dict = {}
+
+    def _fake_oc_generate(url, model, prompt, **kw):
+        captured.update(kw)
+        return "reduced_label"
+
+    with patch("mayring_core.ollama_client.generate", side_effect=_fake_oc_generate):
+        out = providers.generate_text(
+            "prompt", "http://localhost:11434", "model", "mayring_process",
+            options={"temperature": 0.0}, response_format="json")
+    assert out == "reduced_label"
+    assert captured.get("options") == {"temperature": 0.0}, "options nicht durchgereicht"
+    assert captured.get("response_format") == "json", "response_format nicht durchgereicht"
