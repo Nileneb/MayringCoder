@@ -584,7 +584,7 @@ async def chunk_categories_backfill(
 async def label_advisor(
     after: int = 0,
     limit: int = 15,
-    confidence_threshold: float = 0.62,
+    confidence_threshold: float = 0.75,
     info: TokenInfo = Depends(get_token_info),
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
