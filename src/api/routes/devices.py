@@ -184,6 +184,12 @@ async def pi_task_claim_cloud(
         conn, device_id, workspace_id, req.capabilities,
     )
     device_store.touch_last_seen(conn, device_id, workspace_id)
+    # Cheap piggy-backed TTL sweep: fail cloud jobs no worker claimed in time so
+    # an A2A client does not poll forever. No cron needed.
+    pi_jobs.fail_stale_cloud_jobs(
+        max_age_s=float(os.getenv("MAYRING_CLOUD_JOB_TTL_S", "1800")),
+        db_path=_job_db_path(),
+    )
     job = pi_jobs.claim_cloud_next(
         device_id,
         capabilities=caps,

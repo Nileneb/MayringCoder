@@ -99,6 +99,21 @@ app.include_router(_projects.router)
 from src.api.routes import repo_events as _repo_events  # Repo-watching Task 2
 app.include_router(_repo_events.router)
 
+# A2A research-relay (Langdock → cloud queue → laptop worker). Mounts the
+# agent-card + JSON-RPC (/a2a) onto this app. db_path + workspace_id MUST match
+# what the worker's claim reads (devices.py claim_cloud_next), or the job is
+# never claimed — see the relay spec.
+if os.getenv("MAYRING_A2A_RELAY_ENABLED", "1") == "1":
+    from src.api.a2a_relay import register_a2a_relay
+    from src.api.routes.devices import _job_db_path
+    register_a2a_relay(
+        app,
+        base_url=os.getenv("MAYRING_A2A_BASE_URL", "https://mcp.linn.games"),
+        model=os.getenv("MAYRING_A2A_MODEL", "qwen3.5:9b"),
+        workspace_id=os.getenv("MAYRING_A2A_WORKSPACE_ID", "019e14d6"),
+        db_path=_job_db_path(),
+    )
+
 
 @app.on_event("startup")
 def _run_pending_schema_migrations() -> None:
