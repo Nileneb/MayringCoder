@@ -115,18 +115,11 @@ def run_search(
                 }
                 for r in results
             })
-            conn.execute(
-                "INSERT INTO context_feedback_log"
-                " (trigger_ids,context_text,was_referenced,led_to_retrieval,"
-                "  relevance_score,captured_at,query,stage_scores,workspace_id,"
-                "  reranker_version)"
-                " VALUES (?,?,0,0,0.0,?,?,?,?,?)",
-                (_ids, response["prompt_context"][:2000],
-                 datetime.now(timezone.utc).isoformat(),
-                 query[:1000], _stage, workspace_id,
-                 opts.get("_reranker_used", "v1")),
-            )
-            conn.commit()
+            from mayring_core.memory.store import log_context_injection
+            log_context_injection(
+                conn, trigger_ids=_ids, context_text=response["prompt_context"],
+                query=query, stage_scores=_stage, workspace_id=workspace_id,
+                reranker_version=opts.get("_reranker_used", "v1"))
         except Exception:
             pass  # non-critical; never block the search result
 

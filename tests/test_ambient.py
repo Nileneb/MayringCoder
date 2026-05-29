@@ -555,3 +555,26 @@ def test_build_context_retrieval_respects_char_budget(tmp_path, monkeypatch):
         build_context("task", conn, "", "myrepo", chroma_collection=fake_chroma)
     mock_cfp.assert_called_once_with([fake_record], char_budget=2400)
     conn.close()
+
+
+def test_log_context_injection_writes_full_columns(tmp_path):
+    """Die EINE Logging-Funktion (store.log_context_injection) schreibt den VOLLEN
+    Spaltensatz inkl. workspace_id + query + stage_scores + reranker_version. Fix gegen
+    die 3 divergierten INSERTs: MCP + ambient ließen workspace_id/query/stage_scores weg →
+    workspace-gescopte Dashboards (Memory-Effizienz) unterzählten + Rows waren training-nutzlos."""
+    from mayring_core.memory.store import init_memory_db, log_context_injection
+    conn = init_memory_db(tmp_path / "m.db")
+    log_context_injection(
+        conn, trigger_ids=["chk_a", "chk_b"], context_text="ctx",
+        workspace_id="bene", query="what is auth",
+        stage_scores={"chk_a": {"v": 0.9}}, reranker_version="v2")
+    row = conn.execute(
+        "SELECT trigger_ids, workspace_id, query, stage_scores, reranker_version "
+        "FROM context_feedback_log").fetchone()
+    conn.close()
+    assert row is not None
+    assert row[1] == "bene"            # workspace_id — der fehlende Teil bei MCP/ambient
+    assert row[2] == "what is auth"
+    assert '"chk_a"' in row[0]         # trigger_ids als JSON serialisiert
+    assert "0.9" in row[3]             # stage_scores als JSON serialisiert
+    assert row[4] == "v2"

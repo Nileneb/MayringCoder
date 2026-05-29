@@ -90,15 +90,14 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 import json as _json
                 from datetime import datetime, timezone
                 _ids = _json.dumps([r.get("chunk_id", "") for r in result.get("results", [])])
-                _conn = _get_conn()
-                _conn.execute(
-                    "INSERT INTO context_feedback_log"
-                    " (trigger_ids,context_text,was_referenced,led_to_retrieval,relevance_score,captured_at)"
-                    " VALUES (?,?,0,0,0.0,?)",
-                    (_ids, result.get("prompt_context", "")[:2000],
-                     datetime.now(timezone.utc).isoformat()),
-                )
-                _conn.commit()
+                # EINE Logging-Funktion (store.log_context_injection) — vorher loggte dieser
+                # MCP-Pfad OHNE workspace_id/query → Connector-Injektionen waren in den
+                # workspace-gescopten Dashboards (Memory-Effizienz) UNSICHTBAR. Jetzt voll.
+                from mayring_core.memory.store import log_context_injection
+                log_context_injection(
+                    _get_conn(), trigger_ids=_ids,
+                    context_text=result.get("prompt_context", ""),
+                    query=query, workspace_id=ws)
             except (sqlite3.OperationalError, sqlite3.IntegrityError) as log_exc:
                 # WHY(v2-stufe2.1): das ist Telemetrie-Insert für IGIO,
                 # niemals der hot-path. Schlucken nur konkreten DB-Klassen,
