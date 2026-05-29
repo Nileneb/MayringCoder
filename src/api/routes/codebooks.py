@@ -191,8 +191,11 @@ async def process_text(
         return (out[0] if out else []) or []
 
     def _llm(prompt: str) -> str:
+        # temperature=0: die Reduktion soll deterministisch sein (gleicher Text → gleiches
+        # Label), damit Dedup/Evidenz-Akkumulation greift statt bei jedem Lauf zu variieren.
         return providers.generate_text(prompt=prompt, ollama_url=ollama_url,
-                                       model=model, label="mayring_process")
+                                       model=model, label="mayring_process",
+                                       options={"temperature": 0.0})
 
     try:
         res = mayring_process(

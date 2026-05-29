@@ -88,11 +88,11 @@ def test_failclosed_empty_reduction_label(tmp_path):
                         embed_fn=_make_embed({"x": [1, 0, 0]}), llm_fn=lambda p: "   ")
 
 
-# ---- reduce-FIRST + deductive (>=0.75) -------------------------------------
+# ---- reduce-FIRST + deductive (>=0.70) -------------------------------------
 
 def test_reduce_first_then_deductive(tmp_path):
     """Kanonisch: ZIEL→Reduktion(LLM) ZUERST → die abgeleitete Kategorie cosine-matcht
-    >= 0.75 eine vorhandene → deduktiv zuordnen. Der LLM-Reduktionsschritt läuft IMMER
+    >= 0.70 eine vorhandene → deduktiv zuordnen. Der LLM-Reduktionsschritt läuft IMMER
     (nicht erst als induktiver Notnagel)."""
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
@@ -111,7 +111,7 @@ def test_reduce_first_then_deductive(tmp_path):
     assert out.decision == "deductive"
     assert out.category_name == "api"
     assert out.proposed is False
-    assert out.confidence >= 0.75
+    assert out.confidence >= 0.70
 
 
 def test_deductive_links_chunk(tmp_path):
@@ -125,7 +125,7 @@ def test_deductive_links_chunk(tmp_path):
     assert row[0] == "deductive"
 
 
-# ---- inductive (<0.75): create new ----------------------------------------
+# ---- inductive (<0.70): create new ----------------------------------------
 
 def test_inductive_new_category(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
@@ -147,7 +147,7 @@ def test_inductive_new_category(tmp_path):
 # ---- inductive dedup onto a PROPOSED category (accumulation) ---------------
 
 def test_inductive_dedup_onto_proposed(tmp_path):
-    """Kandidat matcht keine ACTIVE >= 0.75, aber >0.92 eine PROPOSED → Evidenz auf die
+    """Kandidat matcht keine ACTIVE >= 0.70, aber >0.92 eine PROPOSED → Evidenz auf die
     proposed (Akkumulation Richtung Promotion) statt ein paralleles Fragment."""
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
@@ -296,6 +296,42 @@ def test_numpy_embeddings_no_crash(tmp_path):
 def test_cosine_zero_safe():
     assert _cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
     assert _cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+
+
+# ---- batched reduction: determinism opts + parse + per-item fallback --------
+
+def test_batch_reduce_labels_happy_json(monkeypatch):
+    import mayring_core.providers as providers
+    from mayring_core.memory.ingestion.core import _batch_reduce_labels
+
+    seen = {}
+
+    def _gen(**kw):
+        seen.update(kw)
+        return '["api_call", "session_token"]'
+
+    monkeypatch.setattr(providers, "generate_text", _gen)
+    out = _batch_reduce_labels([("text a", "goal"), ("text b", "goal")], "url", "mistral")
+    assert out == ["api_call", "session_token"]
+    # determinism + JSON mode MUST be passed through
+    assert seen["options"] == {"temperature": 0.0}
+    assert seen["response_format"] == "json"
+
+
+def test_batch_reduce_labels_per_item_fallback(monkeypatch):
+    """Batch-JSON unparsbar → per-item fallback liefert trotzdem N Labels (Quelle nicht gedroppt)."""
+    import mayring_core.providers as providers
+    from mayring_core.memory.ingestion.core import _batch_reduce_labels
+
+    def _gen(**kw):
+        if kw.get("label") == "mayring_reduce_batch":
+            return "totally not json garbage"
+        return f"label_for::{kw['prompt'][:20]}"  # per-item
+
+    monkeypatch.setattr(providers, "generate_text", _gen)
+    out = _batch_reduce_labels([("alpha", "g"), ("beta", "g"), ("gamma", "g")], "url", "m")
+    assert len(out) == 3                       # never drops the whole source
+    assert all(o.startswith("label_for::") for o in out)
 
 
 # ---- link_chunks_deductive (unchanged cosine plumbing, query-side mirror) --
