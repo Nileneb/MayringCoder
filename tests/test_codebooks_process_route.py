@@ -80,3 +80,32 @@ def test_process_deductive_200(client):
     assert body["decision"] == "deductive"
     assert body["category_name"] == "api"
     assert body["proposed"] is False
+
+
+def test_reject_deletes_proposed_category(client):
+    c, cb = client
+    import src.api.dependencies as _deps
+    conn = _deps._conn
+    conn.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
+                 "source, evidence_count, embedding_id) VALUES (?,?,?, 'proposed','induced',1,?)",
+                 (cb, "junk_proposed", "x", "cb:proposed:junk"))
+    conn.commit()
+    cat_id = conn.execute("SELECT id FROM codebook_categories WHERE name='junk_proposed'").fetchone()[0]
+    conn.execute("INSERT INTO chunk_categories(chunk_id, category_id, codebook_version, confidence, source) "
+                 "VALUES ('ck1', ?, 1, 0.5, 'inductive')", (cat_id,))
+    conn.commit()
+
+    r = c.post(f"/codebooks/{cb}/proposals/{cat_id}/reject")
+    assert r.status_code == 200
+    assert r.json()["status"] == "rejected"
+    assert conn.execute("SELECT count(*) FROM codebook_categories WHERE id=?", (cat_id,)).fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM chunk_categories WHERE category_id=?", (cat_id,)).fetchone()[0] == 0
+
+
+def test_reject_refuses_active_category(client):
+    """Safety: aktive Kategorien (bedienen cat_match) dürfen NICHT gelöscht werden."""
+    c, cb = client
+    import src.api.dependencies as _deps
+    api_id = _deps._conn.execute("SELECT id FROM codebook_categories WHERE name='api'").fetchone()[0]
+    r = c.post(f"/codebooks/{cb}/proposals/{api_id}/reject")
+    assert r.status_code == 400

@@ -164,6 +164,38 @@ async def promote_category(
     return {"category_id": category_id, "status": "active"}
 
 
+@router.post("/codebooks/{codebook_id}/proposals/{category_id}/reject")
+async def reject_category(
+    codebook_id: int, category_id: int, _ws: str = Depends(get_workspace),
+) -> dict:
+    """Verwirft eine PROPOSED-Kategorie (Gegenstück zu promote): löscht ihre chunk_categories-
+    Links, die Kategorie selbst und ihr Chroma-Embedding; markiert offene Proposals 'reject'.
+    Safety: aktive Kategorien sind NICHT löschbar (400) — die bedienen cat_match."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT status, embedding_id FROM codebook_categories WHERE id=? AND codebook_id=?",
+        (category_id, codebook_id)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"category {category_id} not found")
+    if row[0] == "active":
+        raise HTTPException(status_code=400, detail="cannot reject an active category")
+    conn.execute("DELETE FROM codebook_proposals WHERE category_id=?", (category_id,))
+    conn.execute("DELETE FROM chunk_categories WHERE category_id=?", (category_id,))
+    conn.execute("DELETE FROM codebook_categories WHERE id=? AND codebook_id=?",
+                 (category_id, codebook_id))
+    conn.commit()
+    emb_id = row[1]
+    if emb_id:
+        try:
+            from mayring_core.memory.store import get_chroma_collection
+            get_chroma_collection("codebook_categories").delete(ids=[emb_id])
+        except Exception as exc:  # noqa: BLE001 — Embedding-Cleanup darf den Delete nicht versenken
+            import logging
+            logging.getLogger(__name__).warning(
+                "reject: chroma embedding %s nicht entfernt: %s", emb_id, exc)
+    return {"category_id": category_id, "status": "rejected"}
+
+
 @router.post("/codebooks/{codebook_id}/process")
 async def process_text(
     codebook_id: int, req: ProcessRequest, _ws: str = Depends(get_workspace),
@@ -191,11 +223,11 @@ async def process_text(
         return (out[0] if out else []) or []
 
     def _llm(prompt: str) -> str:
-        # temperature=0: die Reduktion soll deterministisch sein (gleicher Text → gleiches
-        # Label), damit Dedup/Evidenz-Akkumulation greift statt bei jedem Lauf zu variieren.
+        # temperature=0 + fixer seed: die Reduktion soll deterministisch sein (gleicher Text
+        # → gleiches Label), damit Dedup/Evidenz-Akkumulation greift statt zu variieren.
         return providers.generate_text(prompt=prompt, ollama_url=ollama_url,
                                        model=model, label="mayring_process",
-                                       options={"temperature": 0.0})
+                                       options={"temperature": 0.0, "seed": 7})
 
     try:
         res = mayring_process(

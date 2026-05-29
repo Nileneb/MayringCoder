@@ -313,8 +313,8 @@ def test_batch_reduce_labels_happy_json(monkeypatch):
     monkeypatch.setattr(providers, "generate_text", _gen)
     out = _batch_reduce_labels([("text a", "goal"), ("text b", "goal")], "url", "mistral")
     assert out == ["api_call", "session_token"]
-    # determinism + JSON mode MUST be passed through
-    assert seen["options"] == {"temperature": 0.0}
+    # determinism (temp 0 + fixer seed) + JSON mode MUST be passed through
+    assert seen["options"] == {"temperature": 0.0, "seed": 7}
     assert seen["response_format"] == "json"
 
 
