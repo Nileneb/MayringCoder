@@ -298,6 +298,19 @@ def test_cosine_zero_safe():
     assert _cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
 
 
+def test_clean_label_recovers_or_rejects_json():
+    """Wenn das LLM JSON statt eines bloßen Labels leakt: Value bergen, sonst verwerfen —
+    NIE einen JSON-Blob wie {"x":""} als Kategoriename speichern (Prod-Junk-Root-Cause)."""
+    from mayring_core.memory.ingestion.mayring_process import _clean_label
+    assert _clean_label("api_endpoint") == "api_endpoint"
+    assert _clean_label('{"category_0": "org_revocation"}') == "org_revocation"
+    assert _clean_label('{"multi_org_management": ""}') == "multi_org_management"
+    assert _clean_label('["first_label", "second"]') == "first_label"
+    assert _clean_label('user_authentication", "oauth_flow", "jwt_auth"') == "user_authentication"
+    for junk in ('{}', '[]', '{"x":{"y":1}}', '{"a": ""}'):
+        assert not any(ch in _clean_label(junk) for ch in '{}[]"'), f"JSON-Blob durchgelassen: {junk}"
+
+
 # ---- batched reduction: determinism opts + parse + per-item fallback --------
 
 def test_batch_reduce_labels_happy_json(monkeypatch):
