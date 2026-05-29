@@ -21,10 +21,18 @@ from src.api.dependencies import get_conn as _get_conn
 router = APIRouter()
 
 
-def _default_repo_workspace(conn) -> str:
-    """Default-Workspace für ein unbekanntes Repo. Pre-launch single-user: der EINZIGE
-    kind='user'-Workspace (alle Repos gehören dem einzigen MayringCoder-User). Bei mehreren
-    Usern → 'system' (dann braucht es ein repo-owner→workspace-Mapping, kein Raten)."""
+def _is_smoke_repo(repo: str) -> bool:
+    """Smoke-Suite-Wegwerf-Repos (github.com/smoke/repo-<ts>) — gehören NIE in einen
+    User-Workspace, sonst pollutet jeder Smoke-Lauf die Projekt-Sicht. → immer 'system'."""
+    return "/smoke/repo-" in (repo or "").lower()
+
+
+def _default_repo_workspace(conn, repo: str = "") -> str:
+    """Default-Workspace für ein unbekanntes Repo. Smoke-Test-Repos → 'system' (Wegwerf).
+    Sonst pre-launch single-user: der EINZIGE kind='user'-Workspace (alle echten Repos
+    gehören dem einzigen MayringCoder-User). Mehrere User → 'system' (kein Raten)."""
+    if _is_smoke_repo(repo):
+        return "system"
     rows = conn.execute("SELECT id FROM workspaces WHERE kind='user'").fetchall()
     return rows[0][0] if len(rows) == 1 else "system"
 
@@ -43,7 +51,7 @@ def _resolve_workspace(conn, repo: str) -> str:
     ).fetchone()
     if row is not None:
         return row[0]
-    ws = _default_repo_workspace(conn)
+    ws = _default_repo_workspace(conn, repo)
     now = datetime.now(timezone.utc).isoformat()
     pid = str(uuid.uuid4())
     name = repo.rsplit("/", 1)[-1]

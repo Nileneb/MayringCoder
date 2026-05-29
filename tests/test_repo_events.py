@@ -246,3 +246,18 @@ def test_resolve_workspace_multi_user_falls_back_to_system(tmp_path):
     conn.commit()
     assert _resolve_workspace(conn, "https://github.com/x/repo") == "system"
     conn.close()
+
+
+def test_resolve_workspace_smoke_repo_stays_system(tmp_path):
+    """Smoke-Suite-Wegwerf-Repos → IMMER 'system', auch bei single-user, sonst pollutet
+    jeder Smoke-Lauf die Projekt-Sicht des Users (Über-Claim-Fix 2026-05-29)."""
+    from mayring_core.memory.store import init_memory_db
+    from src.api.routes.repo_events import _resolve_workspace
+    conn = init_memory_db(tmp_path / "m.db")
+    now = "2026-05-29T00:00:00Z"
+    conn.execute("INSERT INTO workspaces(id,kind,display_name,created_at,updated_at) "
+                 "VALUES ('ws-bene','user','Bene',?,?)", (now, now))
+    conn.commit()
+    assert _resolve_workspace(conn, "https://github.com/smoke/repo-1780000000") == "system"
+    assert _resolve_workspace(conn, "https://github.com/Nileneb/app.linn.games") == "ws-bene"
+    conn.close()

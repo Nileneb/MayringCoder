@@ -197,16 +197,15 @@ async def claim_system_repos(
     if not _is_privileged(info):
         raise HTTPException(status_code=403, detail="admin/service token required")
     conn = _get_conn()
+    # Smoke-Suite-Wegwerf-Repos (github.com/smoke/repo-*) NIE in den User-Workspace
+    # (sonst pollutet jeder Smoke-Lauf die Projekt-Sicht).
+    NOT_SMOKE = "lower(source_ref) NOT LIKE '%/smoke/repo-%'"
     repos = [r[0] for r in conn.execute(
-        "SELECT source_ref FROM projects WHERE workspace_id='system' AND source_type='github'"
-    ).fetchall()]
-    proj_n = conn.execute(
-        "SELECT COUNT(*) FROM projects WHERE workspace_id='system' AND source_type='github'"
-    ).fetchone()[0]
+        f"SELECT source_ref FROM projects WHERE workspace_id='system' AND source_type='github' "
+        f"AND {NOT_SMOKE}").fetchall()]
     ev_n = conn.execute(
         "SELECT COUNT(*) FROM hook_events WHERE workspace_id='system' "
-        "AND hook_type IN ('repo_ci','repo_security')"
-    ).fetchone()[0]
+        "AND hook_type IN ('repo_ci','repo_security')").fetchone()[0]
     # repo_event-Chunks zuerst (über ihre 'system'-sources), DANN die sources umhängen.
     sids = [r[0] for r in conn.execute(
         "SELECT source_id FROM sources WHERE workspace_id='system' AND source_type='repo_event'"
@@ -216,10 +215,16 @@ async def claim_system_repos(
         conn.execute(f"UPDATE chunks SET workspace_id=? WHERE source_id IN ({ph})", (ws, *sids))
         conn.execute("UPDATE sources SET workspace_id=? WHERE workspace_id='system' "
                      "AND source_type='repo_event'", (ws,))
-    conn.execute("UPDATE projects SET workspace_id=? WHERE workspace_id='system' "
-                 "AND source_type='github'", (ws,))
+    conn.execute(f"UPDATE projects SET workspace_id=? WHERE workspace_id='system' "
+                 f"AND source_type='github' AND {NOT_SMOKE}", (ws,))
     conn.execute("UPDATE hook_events SET workspace_id=? WHERE workspace_id='system' "
                  "AND hook_type IN ('repo_ci','repo_security')", (ws,))
+    # Korrektur: bereits (über-)geclaimte Smoke-Projekte zurück nach 'system'.
+    unsmoked = conn.execute(
+        f"SELECT COUNT(*) FROM projects WHERE workspace_id=? AND source_type='github' "
+        f"AND NOT ({NOT_SMOKE})", (ws,)).fetchone()[0]
+    conn.execute(f"UPDATE projects SET workspace_id='system' WHERE workspace_id=? "
+                 f"AND source_type='github' AND NOT ({NOT_SMOKE})", (ws,))
     conn.commit()
-    return {"workspace_id": ws, "claimed_projects": proj_n, "claimed_events": ev_n,
-            "repo_event_chunks": len(sids), "repos": repos}
+    return {"workspace_id": ws, "claimed_projects": len(repos), "claimed_events": ev_n,
+            "repo_event_chunks": len(sids), "unsmoked_back_to_system": unsmoked, "repos": repos}
