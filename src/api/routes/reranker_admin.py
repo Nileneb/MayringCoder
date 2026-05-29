@@ -580,6 +580,107 @@ async def chunk_categories_backfill(
     return await run_in_threadpool(_backfill_chunk_categories, after, max(1, min(limit, 2000)))
 
 
+@router.post("/stats/admin/label-advisor")
+async def label_advisor(
+    after: int = 0,
+    limit: int = 15,
+    confidence_threshold: float = 0.62,
+    info: TokenInfo = Depends(get_token_info),
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """LLM label refinement for LOW-cosine-confidence chunks (SubQ/SSA-style).
+
+    The category-consolidation derives category_labels from the cosine
+    chunk_categories FK; where the cosine match was weak (best link confidence <
+    threshold) the labels can be imprecise. This re-labels ONLY those chunks via
+    an LLM CONSTRAINED to the active codebook (picks names from the fixed list —
+    no free-derive, so labels stay aligned with the codebook/FK SoT). One batched
+    LLM call routed through the central PiQueue (cloud-split aware). Cursor-
+    paginated (loop next_after until has_more=false). Admin-only; NOT on the hot
+    ingest path — meant for post-deploy-ingest / manual runs."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    lim = max(1, min(limit, 40))
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT c.rowid, c.chunk_id, COALESCE(c.summary, c.text, '') "
+        "FROM chunks c WHERE c.is_active = 1 AND c.category_source = 'deductive-link' "
+        "AND c.rowid > ? "
+        "AND (SELECT MAX(cc.confidence) FROM chunk_categories cc WHERE cc.chunk_id = c.chunk_id) < ? "
+        "ORDER BY c.rowid LIMIT ?",
+        (after, confidence_threshold, lim),
+    ).fetchall()
+    if not rows:
+        return {"processed": 0, "advised": 0, "next_after": after, "has_more": False}
+    max_rowid = rows[-1][0]
+    cats = [r[0] for r in conn.execute(
+        "SELECT name FROM codebook_categories WHERE status='active' AND name != '' ORDER BY name"
+    ).fetchall()]
+    if not cats:
+        return {"processed": len(rows), "advised": 0, "next_after": max_rowid,
+                "has_more": len(rows) == lim, "detail": "no active codebook categories"}
+    cat_set = {c.lower() for c in cats}
+    items = [(r[1], (r[2] or "")[:500]) for r in rows]
+    prompt = (
+        "You are a Mayring category labeler. For each chunk, assign the 1-3 "
+        "categories from THIS fixed list that its content most supports (judge by "
+        "the actual content, not surface keywords). Use ONLY names from the list, "
+        "verbatim.\n"
+        f"Categories: {', '.join(cats)}\n\n"
+        'Output STRICT JSON only: {"<chunk_id>": ["<name>", ...], ...}. No prose. '
+        "Every chunk_id MUST appear.\n\nChunks:\n"
+        + "\n\n".join(f"[{cid}]\n{txt}" for cid, txt in items)
+    )
+    import os as _os
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from mayring_pi_agent.pi_queue import get_pi_queue
+    from mayring_pi_agent.pi_jobs import PiJob
+    from mayring_core.model_router import ModelRouter
+    from mayring_core.memory.store import kv_get, kv_put
+    from src.api.mcp_agent_tools import _loads_json_lenient
+    _ollama = _os.getenv("OLLAMA_URL", "http://localhost:11434")
+    model = ModelRouter(_ollama).resolve("text") or "mistral:7b-instruct"
+    job = PiJob(
+        job_id=_uuid.uuid4().hex[:16], task_text=prompt, workspace_id=workspace_id,
+        kind="label-advise", job_class="standard", model=model,
+        response_format="json", timeout_s=90.0,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    try:
+        result = await get_pi_queue().enqueue(job)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"label-advise queue failed: {exc}")
+    content = (result.get("content") if isinstance(result, dict) else str(result)) or ""
+    try:
+        data = _loads_json_lenient(content)
+    except Exception:
+        data = {}
+    advised = 0
+    for cid, _txt in items:
+        labels = data.get(cid) if isinstance(data, dict) else None
+        if not isinstance(labels, list):
+            continue
+        # CONSTRAINED: keep only labels that exist verbatim in the codebook.
+        valid = [s for s in (str(x).strip() for x in labels) if s.lower() in cat_set][:3]
+        if not valid:
+            continue
+        conn.execute(
+            "UPDATE chunks SET category_labels = ?, category_source = 'llm-advised' "
+            "WHERE chunk_id = ? AND is_active = 1",
+            (",".join(valid), cid),
+        )
+        cached = kv_get(cid)
+        if cached is not None:
+            cached["category_labels"] = valid
+            cached["category_source"] = "llm-advised"
+            kv_put(cid, cached)
+        advised += 1
+    conn.commit()
+    return {"processed": len(rows), "advised": advised,
+            "next_after": max_rowid, "has_more": len(rows) == lim}
+
+
 @router.post("/stats/admin/reranker-rollout-decision")
 async def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),

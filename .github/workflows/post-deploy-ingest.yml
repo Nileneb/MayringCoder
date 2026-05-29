@@ -127,3 +127,31 @@ jobs:
             more=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("has_more",False))' 2>/dev/null || echo False)
             [ "$more" = "True" ] || break
           done
+
+      - name: LLM label-advisor (refine low-confidence category_labels)
+        run: |
+          set -uo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::warning::MCP_SERVICE_TOKEN missing — skipping label-advisor"
+            exit 0
+          fi
+          # WHY(2026-05-29): the consolidation derives category_labels from the
+          # cosine FK; where cosine was weak (best link confidence < threshold)
+          # the labels can be imprecise. This LLM step — CONSTRAINED to the active
+          # codebook, routed through the central PiQueue — re-labels ONLY those
+          # low-confidence chunks (after the backfill set the FK). Self-limiting:
+          # advised chunks flip category_source to 'llm-advised' and drop out of
+          # the 'deductive-link' filter, so later runs only touch fresh ones.
+          # Cursor-paginated, bounded, warn-don't-fail.
+          after=0
+          for i in $(seq 1 40); do
+            resp=$(curl -sS -m 150 -X POST \
+              "https://mcp.linn.games/stats/admin/label-advisor?after=${after}&limit=15" \
+              -H "Authorization: Bearer $MCP_SERVICE_TOKEN" || echo '{}')
+            echo "[label-advisor $i] $resp"
+            after=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("next_after",0))' 2>/dev/null || echo 0)
+            more=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("has_more",False))' 2>/dev/null || echo False)
+            [ "$more" = "True" ] || break
+          done
