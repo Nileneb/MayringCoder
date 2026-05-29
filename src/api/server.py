@@ -110,7 +110,11 @@ if os.getenv("MAYRING_A2A_RELAY_ENABLED", "1") == "1":
         app,
         base_url=os.getenv("MAYRING_A2A_BASE_URL", "https://mcp.linn.games"),
         model=os.getenv("MAYRING_A2A_MODEL", "qwen3.5:9b"),
-        workspace_id=os.getenv("MAYRING_A2A_WORKSPACE_ID", "019e14d6"),
+        # Full UUID — MUST equal what get_workspace resolves the worker's JWT to
+        # (claim_cloud_next filters by exact string). The short "019e14d6" would
+        # never match → job enqueued but never claimed. Single-user MVP pin;
+        # per-request workspace derivation = multi-tenant follow-up.
+        workspace_id=os.getenv("MAYRING_A2A_WORKSPACE_ID", "019e14d6-0489-7348-bca8-e29c11293cb7"),
         db_path=_job_db_path(),
     )
 
