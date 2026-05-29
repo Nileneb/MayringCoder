@@ -99,15 +99,20 @@ class RelayAgentExecutor(AgentExecutor):
 
     async def execute(self, context, event_queue) -> None:
         text = context.get_user_input()
-        job = pi_jobs.insert_cloud_job(
+        # The handler assigns the A2A task_id; the executor must use it (it cannot
+        # override). Pin the cloud job_id to it so the worker's completion and the
+        # client's tasks/get(task_id) both resolve to the same job.
+        task_id = context.task_id
+        context_id = context.context_id
+        pi_jobs.insert_cloud_job(
             text, workspace_id=self._ws, model=self._model,
             capability_required=self._cap, timeout_s=self._timeout_s,
-            db_path=self._db_path,
+            job_id=task_id, db_path=self._db_path,
         )
         await event_queue.enqueue_event(
-            new_task(job.job_id, job.job_id, TaskState.TASK_STATE_SUBMITTED)
+            new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED)
         )
-        updater = TaskUpdater(event_queue, job.job_id, job.job_id)
+        updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
 
     async def cancel(self, context, event_queue) -> None:

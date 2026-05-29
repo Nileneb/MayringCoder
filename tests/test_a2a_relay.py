@@ -43,7 +43,7 @@ def test_relay_executor_enqueues_cloud_job(db):
             self.events.append(e)
 
     class _Ctx:
-        task_id = "ignored"
+        task_id = "a2a-task-xyz"
         context_id = "ctx"
         current_task = None
 
@@ -54,8 +54,10 @@ def test_relay_executor_enqueues_cloud_job(db):
                             capability="research", db_path=db)
     asyncio.run(ex.execute(_Ctx(), _Q()))
     recent = pi_jobs.list_recent(db_path=db)
-    assert any(j.scope == "cloud" and j.capability_required == "research"
-               and "Quantencomputing" in j.task_text for j in recent)
+    job = next((j for j in recent if j.job_id == "a2a-task-xyz"), None)
+    assert job is not None, "job_id must equal the A2A task_id"
+    assert job.scope == "cloud" and job.capability_required == "research"
+    assert "Quantencomputing" in job.task_text
 
 
 def test_agent_card_served_with_research_skill(db):
