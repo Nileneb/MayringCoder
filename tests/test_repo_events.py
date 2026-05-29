@@ -217,3 +217,32 @@ def test_repo_events_rejects_non_privileged(monkeypatch, tmp_path):
         assert r.status_code == 403
     finally:
         srv.app.dependency_overrides.clear()
+
+
+def test_resolve_workspace_defaults_to_sole_user_ws(tmp_path):
+    """Unbekanntes Repo → einziger kind='user'-Workspace (NICHT 'system'), damit Repo-CI/
+    Security-Events im user-gescopten Dashboard sichtbar werden (Blackbox-Fix #4 2026-05-29)."""
+    from mayring_core.memory.store import init_memory_db
+    from src.api.routes.repo_events import _resolve_workspace
+    conn = init_memory_db(tmp_path / "m.db")
+    now = "2026-05-29T00:00:00Z"
+    conn.execute("INSERT INTO workspaces(id,kind,display_name,created_at,updated_at) "
+                 "VALUES ('ws-bene','user','Bene',?,?)", (now, now))
+    conn.commit()
+    assert _resolve_workspace(conn, "https://github.com/x/new-repo") == "ws-bene"
+    assert _resolve_workspace(conn, "https://github.com/x/new-repo") == "ws-bene"  # idempotent
+    conn.close()
+
+
+def test_resolve_workspace_multi_user_falls_back_to_system(tmp_path):
+    """Mehrere User → kein Raten, Fallback 'system' (dann braucht es repo-owner→ws-Mapping)."""
+    from mayring_core.memory.store import init_memory_db
+    from src.api.routes.repo_events import _resolve_workspace
+    conn = init_memory_db(tmp_path / "m.db")
+    now = "2026-05-29T00:00:00Z"
+    for wid in ("ws-a", "ws-b"):
+        conn.execute("INSERT INTO workspaces(id,kind,display_name,created_at,updated_at) "
+                     "VALUES (?,'user','x',?,?)", (wid, now, now))
+    conn.commit()
+    assert _resolve_workspace(conn, "https://github.com/x/repo") == "system"
+    conn.close()

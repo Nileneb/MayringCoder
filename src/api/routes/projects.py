@@ -13,11 +13,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from src.api.auth import get_workspace
+from src.api.auth import _is_privileged, get_token_info, get_workspace
 from src.api.dependencies import get_conn as _get_conn
+from src.api.jwt_auth import TokenInfo
 
 router = APIRouter(tags=["projects"])
 
@@ -167,3 +168,58 @@ async def route_project(req: RouteRequest, ws: str = Depends(get_workspace)) -> 
     chroma = get_chroma_collection("projects")
     return route(conn, chroma, ws, cwd_remote=req.cwd_remote,
                  prompt=req.prompt, embed_fn=_embed_one)
+
+
+@router.get("/projects")
+async def list_projects(ws: str = Depends(get_workspace)) -> dict:
+    """Projekte des Workspace (id, name, repo, source_type) — die bisher fehlende Sicht auf
+    die projects-Tabelle (Projekte→Repos). Read-only. Behebt die 'blackbox'-Lücke #4."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, name, source_type, source_ref, created_at, updated_at "
+        "FROM projects WHERE workspace_id=? ORDER BY updated_at DESC",
+        (ws,),
+    ).fetchall()
+    return {"workspace_id": ws, "count": len(rows), "projects": [
+        {"id": r[0], "name": r[1], "source_type": r[2], "repo": r[3],
+         "created_at": r[4], "updated_at": r[5]} for r in rows]}
+
+
+@router.post("/projects/claim-system")
+async def claim_system_repos(
+    info: TokenInfo = Depends(get_token_info),
+    ws: str = Depends(get_workspace),
+) -> dict:
+    """Beansprucht alle 'system'-github-Projekte + ihre Repo-CI/Security-Events + repo_event-
+    Chunks für DIESEN Workspace. Pre-launch single-user: alle Repos gehören dem einzigen User.
+    Behebt die Blackbox (Repo-Events landeten in 'system' → user-gescoptes Dashboard zeigte 0).
+    Idempotent + admin-gated."""
+    if not _is_privileged(info):
+        raise HTTPException(status_code=403, detail="admin/service token required")
+    conn = _get_conn()
+    repos = [r[0] for r in conn.execute(
+        "SELECT source_ref FROM projects WHERE workspace_id='system' AND source_type='github'"
+    ).fetchall()]
+    proj_n = conn.execute(
+        "SELECT COUNT(*) FROM projects WHERE workspace_id='system' AND source_type='github'"
+    ).fetchone()[0]
+    ev_n = conn.execute(
+        "SELECT COUNT(*) FROM hook_events WHERE workspace_id='system' "
+        "AND hook_type IN ('repo_ci','repo_security')"
+    ).fetchone()[0]
+    # repo_event-Chunks zuerst (über ihre 'system'-sources), DANN die sources umhängen.
+    sids = [r[0] for r in conn.execute(
+        "SELECT source_id FROM sources WHERE workspace_id='system' AND source_type='repo_event'"
+    ).fetchall()]
+    if sids:
+        ph = ",".join("?" for _ in sids)
+        conn.execute(f"UPDATE chunks SET workspace_id=? WHERE source_id IN ({ph})", (ws, *sids))
+        conn.execute("UPDATE sources SET workspace_id=? WHERE workspace_id='system' "
+                     "AND source_type='repo_event'", (ws,))
+    conn.execute("UPDATE projects SET workspace_id=? WHERE workspace_id='system' "
+                 "AND source_type='github'", (ws,))
+    conn.execute("UPDATE hook_events SET workspace_id=? WHERE workspace_id='system' "
+                 "AND hook_type IN ('repo_ci','repo_security')", (ws,))
+    conn.commit()
+    return {"workspace_id": ws, "claimed_projects": proj_n, "claimed_events": ev_n,
+            "repo_event_chunks": len(sids), "repos": repos}

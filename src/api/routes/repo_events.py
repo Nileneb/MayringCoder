@@ -21,11 +21,21 @@ from src.api.dependencies import get_conn as _get_conn
 router = APIRouter()
 
 
-def _resolve_workspace(conn, repo: str) -> str:
-    """repo-url → projects.workspace_id; match-or-create under 'system' if unknown.
+def _default_repo_workspace(conn) -> str:
+    """Default-Workspace für ein unbekanntes Repo. Pre-launch single-user: der EINZIGE
+    kind='user'-Workspace (alle Repos gehören dem einzigen MayringCoder-User). Bei mehreren
+    Usern → 'system' (dann braucht es ein repo-owner→workspace-Mapping, kein Raten)."""
+    rows = conn.execute("SELECT id FROM workspaces WHERE kind='user'").fetchall()
+    return rows[0][0] if len(rows) == 1 else "system"
 
-    WHY(repo-watching): mirrors src/api/routes/projects.py match-or-create so an
-    unknown repo is never rejected — it gets a 'system' project on first sight.
+
+def _resolve_workspace(conn, repo: str) -> str:
+    """repo-url → projects.workspace_id; match-or-create unter dem Default-User-Workspace.
+
+    WHY(repo-watching, blackbox-fix 2026-05-29): mirrors projects.py match-or-create.
+    Vorher defaultete ein unbekanntes Repo auf 'system' → seine CI/Security-Events waren im
+    user-gescopten Dashboard UNSICHTBAR (alle Repo-Events landeten in 'system'). Jetzt:
+    Default = einziger kind='user'-Workspace, damit die Events dort sichtbar werden.
     """
     row = conn.execute(
         "SELECT workspace_id FROM projects WHERE source_type='github' AND source_ref=?",
@@ -33,16 +43,17 @@ def _resolve_workspace(conn, repo: str) -> str:
     ).fetchone()
     if row is not None:
         return row[0]
+    ws = _default_repo_workspace(conn)
     now = datetime.now(timezone.utc).isoformat()
     pid = str(uuid.uuid4())
     name = repo.rsplit("/", 1)[-1]
     conn.execute(
         "INSERT INTO projects (id, workspace_id, name, source_type, source_ref, created_at, updated_at) "
-        "VALUES (?, 'system', ?, 'github', ?, ?, ?)",
-        (pid, name, repo, now, now),
+        "VALUES (?, ?, ?, 'github', ?, ?, ?)",
+        (pid, ws, name, repo, now, now),
     )
     conn.commit()
-    return "system"
+    return ws
 
 
 _AXIS = {
