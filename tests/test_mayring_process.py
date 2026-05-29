@@ -250,6 +250,31 @@ def test_categorize_chunks_intra_batch_dedup(tmp_path):
                         ).fetchone()[0] == 1               # only ONE new category
 
 
+def test_categorize_chunks_rolls_back_on_error(tmp_path, monkeypatch):
+    """Bricht ein Chunk mitten in der Categorize ab, MUSS die offene Transaktion
+    zurückgerollt werden — sonst leakt sie und lockt die DB für alle Writer dauerhaft
+    (Incident 2026-05-29 'database is locked')."""
+    from mayring_core.memory.ingestion import mayring_process as mp
+    init_memory_db(tmp_path / "m.db").close()
+    conn, cb = _seed(tmp_path / "m.db")
+    ev_before = conn.execute("SELECT evidence_count FROM codebook_categories WHERE name='api'").fetchone()[0]
+
+    def _boom(conn_, *a, **k):
+        conn_.execute("UPDATE codebook_categories SET evidence_count = evidence_count + 1 "
+                      "WHERE name='api'")  # ein Write startet die Transaktion
+        raise RuntimeError("boom mid-categorize")
+
+    monkeypatch.setattr(mp, "_assign_or_create", _boom)
+    with pytest.raises(RuntimeError):
+        mp.categorize_chunks([("c1", "x")], "ziel", cb, conn=conn,
+                             chroma_categories=_FakeChroma(CHROMA),
+                             batch_embed_fn=lambda labels: [[1.0, 0.0, 0.0] for _ in labels],
+                             batch_reduce_fn=lambda pairs: ["lbl"], match_codebook_id=None)
+    assert conn.in_transaction is False  # rolled back → keine offene Transaktion
+    ev_after = conn.execute("SELECT evidence_count FROM codebook_categories WHERE name='api'").fetchone()[0]
+    assert ev_after == ev_before          # Teil-Write rückgängig
+
+
 def test_categorize_chunks_requires_task(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
