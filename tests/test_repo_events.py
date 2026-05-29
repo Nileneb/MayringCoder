@@ -79,11 +79,10 @@ def _make_repo_events_client(monkeypatch, tmp_path):
     jq._JOBS.clear()
     from fastapi.testclient import TestClient
     from src.api import server as srv
-    from src.api import auth as auth_module
-    from src.api.jwt_auth import TokenInfo
+    from src.api.routes import repo_events as repo_events_module
     async def _svc():
-        return TokenInfo(workspace_id="system", scopes=("*",))
-    srv.app.dependency_overrides[auth_module.get_token_info] = _svc
+        return "service"
+    srv.app.dependency_overrides[repo_events_module.repo_event_principal] = _svc
     return TestClient(srv.app)
 
 

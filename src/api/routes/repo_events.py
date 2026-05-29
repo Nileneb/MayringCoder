@@ -10,15 +10,43 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import hmac
 
-from src.api.auth import get_token_info, _is_privileged
-from src.api.jwt_auth import TokenInfo
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+
+from src.api.auth import _bearer, _is_privileged, _SERVICE_TOKEN
+from src.api.github_oidc import verify_github_oidc
+from src.api.jwt_auth import validate_jwt_token
 from src.api.routes.jobs import enqueue_populate
 from src.api.routes.models import RepoEventRequest
 from src.api.dependencies import get_conn as _get_conn
 
 router = APIRouter()
+
+
+async def repo_event_principal(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    """Authorize a repo-event POST. Accepts (1) a GitHub Actions OIDC token from the
+    allowed owner (secretless, preferred) or (2) the service/admin token (back-compat).
+    Returns a short principal label for logging. OIDC grants ONLY repo-events — it is
+    deliberately verified here, not in the global get_token_info (no admin elsewhere)."""
+    if not creds:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing Bearer token")
+    token = creds.credentials
+    oidc = verify_github_oidc(token)
+    if oidc is not None:
+        return f"oidc:{oidc.get('repository', '?')}"
+    if _SERVICE_TOKEN and hmac.compare_digest(token.encode(), _SERVICE_TOKEN.encode()):
+        return "service"
+    info = validate_jwt_token(token)
+    if info and _is_privileged(info):
+        return "admin"
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "repo-events requires GitHub OIDC (owner-gated) or a service/admin token",
+    )
 
 
 def _is_smoke_repo(repo: str) -> bool:
@@ -131,12 +159,10 @@ def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str)
 
 
 @router.post("/repo-events")
-async def repo_events(req: RepoEventRequest, info: TokenInfo = Depends(get_token_info)) -> dict:
-    if not _is_privileged(info):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="repo-events requires a service/admin token",
-        )
+async def repo_events(
+    req: RepoEventRequest,
+    principal: str = Depends(repo_event_principal),
+) -> dict:
     conn = _get_conn()
     workspace_id = _resolve_workspace(conn, req.repo)
 
