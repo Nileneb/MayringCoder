@@ -81,3 +81,8 @@ def test_agent_card_served_with_research_skill(db):
     assert r.status_code == 200
     body = r.json()
     assert any(s["id"] == "deep-research" for s in body["skills"])
+    # Card MUST declare HTTP Bearer so A2A clients (Langdock) attach the token to
+    # RPC calls — else the /a2a JWT gate 401s while card discovery looks fine.
+    schemes = body.get("securitySchemes") or body.get("security_schemes") or {}
+    assert "bearer" in schemes, "agent-card must declare a bearer security scheme"
+    assert body.get("security") or body.get("securityRequirements"), "card must require auth"

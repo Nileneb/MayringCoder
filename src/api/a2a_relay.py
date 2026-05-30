@@ -124,7 +124,7 @@ class RelayAgentExecutor(AgentExecutor):
 
 def _research_card(base_url: str, model: str) -> AgentCard:
     url = base_url.rstrip("/") + _RPC_URL
-    return AgentCard(
+    card = AgentCard(
         name="MayringCoder Research Worker",
         description=(
             f"Deep-research agent ({model}) — web search (SearXNG) + cloud memory, "
@@ -141,6 +141,16 @@ def _research_card(base_url: str, model: str) -> AgentCard:
             tags=["research", "web", "memory"],
         )],
     )
+    # WHY(2026-05-30): the /a2a JSON-RPC endpoint is JWT-gated (nginx auth_request),
+    # but the agent-card is public. A2A clients (Langdock) only attach their stored
+    # credential to RPC calls if the card DECLARES a security scheme — otherwise they
+    # fetch the public card ("connection ok") yet send message/send WITHOUT the Bearer
+    # → 401. Declare HTTP Bearer (JWT) so the client passes the token through.
+    card.security_schemes["bearer"].http_auth_security_scheme.scheme = "bearer"
+    card.security_schemes["bearer"].http_auth_security_scheme.bearer_format = "JWT"
+    req = card.security_requirements.add()
+    req.schemes["bearer"].list.extend([])  # bearer required, no scopes
+    return card
 
 
 def register_a2a_relay(app, *, base_url: str, model: str, workspace_id: str = "default",
