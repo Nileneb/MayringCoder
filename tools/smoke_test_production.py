@@ -233,8 +233,13 @@ def _http(method: str, url: str, token: str, body: dict | None = None,
                 continue
             return e.code, err_json, time.time() - t0
         except Exception as e:
+            # WHY(2026-05-30 smoke-hang): socket TIMEOUTs land here. Retrying a
+            # slow-but-alive endpoint 4× with backoff turns a 30s timeout into
+            # ~130s per check and the whole smoke into a 25min runner-hang under
+            # saturation. One retry is enough for a genuine blip; beyond that the
+            # search-warmth gate (wait_for_search_ready) is the real guard.
             last_body = {"_error": f"{type(e).__name__}: {e}"}
-            if attempt < 3:
+            if attempt < 1:
                 time.sleep(backoff)
                 backoff *= 2
                 continue
@@ -288,6 +293,48 @@ def wait_for_api_ready(api: str, token: str, max_wait: float = 60.0) -> bool:
         time.sleep(3.0)
     print(f"# WARNING: API not ready after {max_wait:.0f}s — running checks anyway "
           "(api_health will FAIL if it's a real outage, which is correct).")
+    return False
+
+
+def _quick_search_ok(api: str, token: str, timeout: float = 8.0) -> bool:
+    """One-shot tiny /memory/search — no retries. True iff it answers 200 fast."""
+    req = urllib.request.Request(
+        f"{api}/memory/search",
+        data=json.dumps({"query": "warmup", "top_k": 1}).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def wait_for_search_ready(api: str, token: str, max_wait: float = 90.0) -> bool:
+    """Poll /memory/search until the SEARCH pipeline is warm (not just /health).
+
+    WHY(2026-05-30 smoke-hang): /health stays ~0.1s even when the Chroma/embedding
+    search pipeline is saturated/cold (verified: /health 200 while /memory/search
+    times out at 30s). The heavy checks (rag, multi_org act-as) then each hit the
+    slow path and _http retries amplify 30s→~130s per check → the whole smoke runs
+    until the job timeout (~25min) and ties up the runner. Gating on actual search
+    warmth before the heavy checks keeps the run bounded.
+
+    Non-fatal: a real >max_wait search outage returns False + a loud warning; the
+    rag/memory checks then fail as they should.
+    """
+    deadline = time.time() + max_wait
+    n = 0
+    while time.time() < deadline:
+        n += 1
+        if _quick_search_ok(api, token):
+            if n > 1:
+                print(f"# search pipeline warm after {n} probe(s)")
+            return True
+        time.sleep(4.0)
+    print(f"# WARNING: search pipeline not warm after {max_wait:.0f}s — running checks "
+          "anyway (rag/memory checks will FAIL if it's a real outage).")
     return False
 
 
@@ -2658,6 +2705,10 @@ def main() -> int:
     # Wait the post-deploy restart window out before running anything (#250) —
     # so a cold-start doesn't red-flag api_health and open a false-positive issue.
     wait_for_api_ready(api, token, max_wait=args.ready_timeout)
+    # Then gate on SEARCH warmth — /health alone is not enough (the search
+    # pipeline can be saturated while /health stays fast). Prevents the
+    # retry-amplified 25min hang after a cutover (2026-05-30).
+    wait_for_search_ready(api, token, max_wait=args.ready_timeout)
     print()
 
     results: list[CheckResult] = []
