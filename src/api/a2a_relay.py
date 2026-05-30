@@ -165,6 +165,10 @@ def register_a2a_relay(app, *, base_url: str, model: str, workspace_id: str = "d
     add_a2a_routes_to_fastapi(
         app,
         agent_card_routes=create_agent_card_routes(card),
-        jsonrpc_routes=create_jsonrpc_routes(handler, _RPC_URL),
+        # WHY(2026-05-30): a2a-sdk 1.1.0 defaults to v1 method names; standard A2A
+        # clients (Langdock) send the v0.3 spec methods (`message/send`, `tasks/get`).
+        # Without compat the dispatcher returns -32601 "Method not found" for ALL of
+        # them → connection test fails. Enabling v0.3 compat serves both on /a2a.
+        jsonrpc_routes=create_jsonrpc_routes(handler, _RPC_URL, enable_v0_3_compat=True),
     )
     return card

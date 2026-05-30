@@ -86,3 +86,33 @@ def test_agent_card_served_with_research_skill(db):
     schemes = body.get("securitySchemes") or body.get("security_schemes") or {}
     assert "bearer" in schemes, "agent-card must declare a bearer security scheme"
     assert body.get("security") or body.get("securityRequirements"), "card must require auth"
+
+
+def test_rpc_dispatches_v0_3_message_send(db):
+    """Standard A2A clients (Langdock) send v0.3 method names. a2a-sdk 1.1.0 defaults
+    to v1 names → every classic method 404s as -32601 unless v0.3 compat is enabled.
+    Regression guard for the silent 'Method not found' that broke Langdock connect."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    register_a2a_relay(app, base_url="http://testserver", model="qwen3.5:9b", db_path=db)
+    r = TestClient(app).post(
+        "/a2a",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "parts": [{"kind": "text", "text": "ping"}],
+                    "messageId": "m1",
+                    "kind": "message",
+                }
+            },
+        },
+    )
+    body = r.json()
+    # The method must be FOUND (dispatched). -32601 = "Method not found" = compat off.
+    assert body.get("error", {}).get("code") != -32601, f"v0.3 message/send not routed: {body}"
