@@ -1,0 +1,54 @@
+name: Ambient snapshot refresh (cloud memory.db)
+
+# Daily regeneration of the ambient memory snapshot. Before this, the snapshot
+# was only ever generated from the CLI → build_context() returned "" in prod and
+# the whole ambient layer was a no-op (audit 2026-05-30). Self-hosted u-server
+# runner so MCP_SERVICE_TOKEN comes straight from the production .env.
+
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+    inputs:
+      repo_slug:
+        description: "Repo slug to snapshot (empty = workspace-global)"
+        required: false
+        default: ""
+      workspace_id:
+        description: "Optional workspace filter (empty = token default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: [self-hosted, u-server]
+    timeout-minutes: 15
+    steps:
+      - name: POST /stats/ambient-refresh
+        env:
+          REPO: ${{ github.event.inputs.repo_slug || '' }}
+          WS: ${{ github.event.inputs.workspace_id || '' }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="$HOME/app.linn.games/.env"
+          MCP_SERVICE_TOKEN="$(grep '^MCP_SERVICE_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+          if [ -z "$MCP_SERVICE_TOKEN" ]; then
+            echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
+            exit 1
+          fi
+          QS="repo_slug=${REPO}"
+          if [ -n "${WS}" ]; then QS="${QS}&workspace_id=${WS}"; fi
+          # Synchronous (one LLM call, ~10-40s). Long timeout for the generate step.
+          response=$(curl -sS -m 120 -X POST \
+            "https://mcp.linn.games/stats/ambient-refresh?${QS}" \
+            -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+          echo "result: $response"
+          chars=$(echo "$response" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("chars",0))')
+          echo "::notice::ambient snapshot chars=${chars}"
+          if [ "${chars}" = "0" ]; then
+            echo "::warning::snapshot empty — no recent conversations/issues for this repo, or model unavailable"
+          fi
