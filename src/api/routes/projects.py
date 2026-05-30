@@ -24,8 +24,13 @@ router = APIRouter(tags=["projects"])
 
 # WHY(py/polynomial-redos): single separator after host (git remotes have exactly
 # one ':' or '/'); the prior `[:/]+` backtracked polynomially on '::' repetitions.
+# WHY(2026-05-30, code-scanning py/polynomial-redos): the old pattern
+# `(?P<name>[^/]+?)(?:\.git)?/?$` combined a lazy quantifier with an optional
+# suffix + end-anchor under .search() → polynomial backtracking on crafted input.
+# `name` is now a single greedy non-slash run (linear, bounded by '/'); the
+# optional `.git` suffix + trailing slash are stripped in _normalize_remote.
 _REMOTE_RE = re.compile(
-    r"github\.com[:/](?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$",
+    r"github\.com[:/](?P<owner>[^/]+)/(?P<name>[^/]+)",
     re.IGNORECASE,
 )
 _SEMANTIC_MIN = 0.55
@@ -46,7 +51,8 @@ def _normalize_remote(remote: str) -> str | None:
     m = _REMOTE_RE.search(remote.strip())
     if not m:
         return None
-    return f"{m.group('owner')}/{m.group('name')}".lower()
+    name = m.group("name").rstrip("/").removesuffix(".git")
+    return f"{m.group('owner')}/{name}".lower()
 
 
 def canonical_repo_ref(ref: str) -> str:

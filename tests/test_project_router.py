@@ -28,12 +28,24 @@ def test_projects_source_index_exists(tmp_path: Path) -> None:
     ("git@github.com:Nileneb/MayringCoder.git", "nileneb/mayringcoder"),
     ("https://github.com/Nileneb/MayringCoder.git", "nileneb/mayringcoder"),
     ("https://github.com/Nileneb/MayringCoder", "nileneb/mayringcoder"),
+    ("https://github.com/Nileneb/MayringCoder/", "nileneb/mayringcoder"),  # trailing slash
     ("ssh://git@github.com/Nileneb/app.linn.games.git", "nileneb/app.linn.games"),
     ("", None),
     ("not-a-remote", None),
 ])
 def test_normalize_remote(url, expected):
     assert _normalize_remote(url) == expected
+
+
+def test_normalize_remote_no_redos():
+    # py/polynomial-redos guard: a crafted long input must resolve in linear time,
+    # not hang. Old lazy+optional+anchor pattern backtracked polynomially.
+    import time
+    evil = "git@github.com:owner/" + ("a" * 50000)
+    t0 = time.time()
+    out = _normalize_remote(evil)
+    assert time.time() - t0 < 1.0, "regex backtracking — ReDoS not fixed"
+    assert out == "owner/" + ("a" * 50000)
 
 
 # ---- Task 3: _cosine + project_embed_text ---------------------------------
