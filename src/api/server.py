@@ -37,7 +37,7 @@ except ImportError:
 
 from src.api.dependencies import get_conn as _get_conn
 from src.api.training import router as _training_router
-from fastapi import Depends
+from fastapi import Depends, Header
 from src.api.auth import get_workspace, get_token_info
 from src.api.routes import memory, wiki, jobs, duel, reports, integrations
 from src.api.routes.sync import router as _sync_router
@@ -102,6 +102,8 @@ from src.api.routes import ambient_admin as _ambient_admin  # ambient snapshot r
 app.include_router(_ambient_admin.router)
 from src.api.routes import watch_repos as _watch_repos  # dashboard-managed repo-watch list
 app.include_router(_watch_repos.router)
+from src.api.routes import agent_keys as _agent_keys  # per-agent A2A API keys (X-API-Key)
+app.include_router(_agent_keys.router)
 
 # A2A research-relay (Langdock → cloud queue → laptop worker). Mounts the
 # agent-card + JSON-RPC (/a2a) onto this app. db_path + workspace_id MUST match
@@ -124,10 +126,26 @@ if os.getenv("MAYRING_A2A_RELAY_ENABLED", "1") == "1":
 
 
 @app.get("/auth/verify")
-async def _auth_verify(_: object = Depends(get_token_info)) -> dict:
-    """Lightweight JWT check for nginx auth_request (gates /a2a + /searxng).
-    Returns 200 on a valid Bearer, 401 otherwise (via get_token_info)."""
-    return {"ok": True}
+async def _auth_verify(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Auth gate for nginx auth_request (/a2a + /searxng). Accepts EITHER a
+    per-agent API key (X-API-Key, for external A2A clients like Langdock) OR a
+    Bearer JWT. 200 on valid, 401 otherwise."""
+    from fastapi import HTTPException
+    if x_api_key:
+        from src.api import agent_keys
+        res = agent_keys.verify(x_api_key)
+        if res:
+            return {"ok": True, "auth": "api_key", "workspace_id": res["workspace_id"]}
+        raise HTTPException(status_code=401, detail="invalid api key")
+    if authorization and authorization.lower().startswith("bearer "):
+        from src.api.jwt_auth import validate_jwt_token
+        if validate_jwt_token(authorization.split(" ", 1)[1].strip()) is not None:
+            return {"ok": True, "auth": "jwt"}
+        raise HTTPException(status_code=401, detail="invalid token")
+    raise HTTPException(status_code=401, detail="no credentials")
 
 
 @app.on_event("startup")
