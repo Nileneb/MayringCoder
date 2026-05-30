@@ -205,7 +205,14 @@ async def _run_train_subprocess(
     _upd(status="running", started_at=time.time())
     from mayring_core.config import CACHE_DIR
     out_jsonl = CACHE_DIR / "finetuning" / "retrieval_dataset.jsonl"
-    out_model = CACHE_DIR / "rerank_v2.json"
+    # WHY(reranker-version-table 2026-05-30): write the NEXT accumulating version
+    # (v3, v4 …) instead of overwriting rerank_v2.json, so the dashboard table
+    # gains a new row each retrain and you click-to-activate. Mirrors the CLI path.
+    try:
+        from tools.train_reranker import _next_version_path
+        out_model = _next_version_path()
+    except Exception:  # fallback: keep the legacy single-slot behaviour
+        out_model = CACHE_DIR / "rerank_v2.json"
     env = {**os.environ, "PYTHONPATH": str(_ROOT)}
     try:
         export_cmd = [
