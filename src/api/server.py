@@ -100,6 +100,8 @@ from src.api.routes import repo_events as _repo_events  # Repo-watching Task 2
 app.include_router(_repo_events.router)
 from src.api.routes import ambient_admin as _ambient_admin  # ambient snapshot refresh
 app.include_router(_ambient_admin.router)
+from src.api.routes import watch_repos as _watch_repos  # dashboard-managed repo-watch list
+app.include_router(_watch_repos.router)
 
 # A2A research-relay (Langdock → cloud queue → laptop worker). Mounts the
 # agent-card + JSON-RPC (/a2a) onto this app. db_path + workspace_id MUST match
