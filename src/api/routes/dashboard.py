@@ -18,9 +18,10 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from src.api.auth import get_workspace
+from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_conn as _conn
 from src.api import shared_state as _shared_state
+from src.api.jwt_auth import TokenInfo
 
 router = APIRouter()
 
@@ -560,14 +561,18 @@ async def record_pi_task(
 async def activations(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Last N memory searches across all workspaces (admins) or just the
     caller's workspace (tenants)."""
     from src.api.memory_service import _RECENT_ACTIVATIONS
-    from src.api.mcp_auth import _TOKEN_CTX
 
-    info = _TOKEN_CTX.get()
-    is_admin = bool(info and "admin" in (info.scopes or ()))
+    # WHY(tenancy-audit 2026-05-31): identity MUST come from the request
+    # dependency, NOT mcp_auth._TOKEN_CTX — that ContextVar is only set by the
+    # MCP ASGI sub-app's middleware, so on every REST route it is None → admins
+    # silently lost their cross-workspace view. get_token_info also carries the
+    # verified X-Act-As-* override.
+    is_admin = info.is_admin
     # Shared (Redis) activations span all workers; None → Redis down, use local deque.
     items = _shared_state.activations_redis()
     if items is None:
@@ -586,7 +591,10 @@ async def activations(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/workspaces")
-async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
+async def workspaces(
+    workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
     """Per-workspace activity.
 
     Admins see all workspaces in the DB. Tenants see every workspace they're
@@ -594,17 +602,18 @@ async def workspaces(workspace_id: str = Depends(get_workspace)) -> dict:
     backward-compat with old JWTs without memberships, falls back to the
     single active workspace_id.
     """
-    from src.api.mcp_auth import _TOKEN_CTX
-
-    info = _TOKEN_CTX.get()
-    is_admin = bool(info and "admin" in (info.scopes or ()))
+    # WHY(tenancy-audit 2026-05-31): identity from get_token_info, NOT
+    # mcp_auth._TOKEN_CTX (None on every REST route → admins lost the all-view,
+    # multi-membership users saw only their active ws → smoke stats_workspaces
+    # red). get_token_info also honours the X-Act-As-* override.
+    is_admin = info.is_admin
     # WHY(#195, v2): pre-V2 the non-admin branch listed exactly one row
     # (the active workspace). After V2 a user in N workspaces sees all N.
     # Source-of-truth is the JWT `memberships[]` claim from Laravel; falls
     # back to {workspace_id} for legacy JWTs without the field.
     member_ws_ids: set[str] = {workspace_id}
     member_ws_types: dict[str, str] = {}
-    if info and getattr(info, "memberships", None):
+    if info.memberships:
         for m in info.memberships:
             if m.id:
                 member_ws_ids.add(m.id)

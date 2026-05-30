@@ -204,17 +204,17 @@ def test_pi_tasks_no_pi_jobs_table_returns_empty(seeded_db):
 # ---------------------------------------------------------------------------
 
 def test_workspaces_tenant_sees_only_own(seeded_db, monkeypatch):
-    """Non-admin token without memberships: scoped to active workspace_id only."""
+    """Non-admin token without memberships: scoped to active workspace_id only.
+
+    WHY(tenancy-audit 2026-05-31): info is injected via Depends(get_token_info),
+    NOT mcp_auth._TOKEN_CTX — the old test set _TOKEN_CTX (a ContextVar only the
+    MCP sub-app populates), so it green-lit the broken REST path where info=None."""
     from src.api.jwt_auth import TokenInfo
-    from src.api import mcp_auth as mcp_mod
-    mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=()))
-    try:
-        res = _run(dashboard.workspaces(workspace_id="user-2"))
-        assert len(res["workspaces"]) == 1
-        assert res["workspaces"][0]["workspace_id"] == "user-2"
-        assert res["workspaces"][0]["chunks"] == 1
-    finally:
-        mcp_mod._TOKEN_CTX.set(None)
+    res = _run(dashboard.workspaces(
+        workspace_id="user-2", info=TokenInfo(workspace_id="user-2", scopes=())))
+    assert len(res["workspaces"]) == 1
+    assert res["workspaces"][0]["workspace_id"] == "user-2"
+    assert res["workspaces"][0]["chunks"] == 1
 
 
 def test_workspaces_tenant_with_memberships_sees_all(seeded_db, monkeypatch):
@@ -222,7 +222,6 @@ def test_workspaces_tenant_with_memberships_sees_all(seeded_db, monkeypatch):
     Regression for #195: pre-V2 the non-admin branch returned exactly 1 row,
     hiding org-workspaces from the dashboard even when chunks were ingested."""
     from src.api.jwt_auth import TokenInfo, Membership
-    from src.api import mcp_auth as mcp_mod
     # Seed: insert source FIRST (FK from chunks.source_id), then chunk.
     seeded_db.execute(
         "INSERT INTO sources (source_id, workspace_id, source_type, repo, path, captured_at) "
@@ -236,23 +235,20 @@ def test_workspaces_tenant_with_memberships_sees_all(seeded_db, monkeypatch):
     )
     seeded_db.commit()
 
-    mcp_mod._TOKEN_CTX.set(TokenInfo(
+    info = TokenInfo(
         workspace_id="user-2",
         scopes=(),
         memberships=(
             Membership(id="user-2", type="personal", role="owner"),
             Membership(id="ws-acme", type="organization", role="editor"),
         ),
-    ))
-    try:
-        res = _run(dashboard.workspaces(workspace_id="user-2"))
-        ws_ids = {w["workspace_id"] for w in res["workspaces"]}
-        assert ws_ids == {"user-2", "ws-acme"}
-        types = {w["workspace_id"]: w["type"] for w in res["workspaces"]}
-        assert types["user-2"] == "personal"
-        assert types["ws-acme"] == "organization"
-    finally:
-        mcp_mod._TOKEN_CTX.set(None)
+    )
+    res = _run(dashboard.workspaces(workspace_id="user-2", info=info))
+    ws_ids = {w["workspace_id"] for w in res["workspaces"]}
+    assert ws_ids == {"user-2", "ws-acme"}
+    types = {w["workspace_id"]: w["type"] for w in res["workspaces"]}
+    assert types["user-2"] == "personal"
+    assert types["ws-acme"] == "organization"
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +279,6 @@ def test_vector_trend_no_logs_returns_zeroes(tmp_path, monkeypatch):
 def test_activations_returns_recent_searches(monkeypatch):
     """RECENT_ACTIVATIONS deque populated by run_search; admin sees all."""
     from src.api import memory_service
-    from src.api import mcp_auth as mcp_mod
     from src.api.jwt_auth import TokenInfo
     memory_service._RECENT_ACTIVATIONS.clear()
     memory_service._RECENT_ACTIVATIONS.append(
@@ -292,17 +287,13 @@ def test_activations_returns_recent_searches(monkeypatch):
     memory_service._RECENT_ACTIVATIONS.append(
         {"workspace_id": "user-99", "query": "q2", "source_ids": ["s2"], "ts": 2}
     )
-    mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=("admin",)))
-    try:
-        res = asyncio.run(dashboard.activations(workspace_id="user-2"))
-        assert len(res["activations"]) == 2
-    finally:
-        mcp_mod._TOKEN_CTX.set(None)
+    res = asyncio.run(dashboard.activations(
+        workspace_id="user-2", info=TokenInfo(workspace_id="user-2", scopes=("admin",))))
+    assert len(res["activations"]) == 2
 
 
 def test_activations_tenant_filters_to_own_workspace(monkeypatch):
     from src.api import memory_service
-    from src.api import mcp_auth as mcp_mod
     from src.api.jwt_auth import TokenInfo
     memory_service._RECENT_ACTIVATIONS.clear()
     memory_service._RECENT_ACTIVATIONS.append(
@@ -311,13 +302,10 @@ def test_activations_tenant_filters_to_own_workspace(monkeypatch):
     memory_service._RECENT_ACTIVATIONS.append(
         {"workspace_id": "user-99", "query": "q2", "source_ids": [], "ts": 2}
     )
-    mcp_mod._TOKEN_CTX.set(TokenInfo(workspace_id="user-2", scopes=()))
-    try:
-        res = asyncio.run(dashboard.activations(workspace_id="user-2"))
-        assert len(res["activations"]) == 1
-        assert res["activations"][0]["query"] == "q1"
-    finally:
-        mcp_mod._TOKEN_CTX.set(None)
+    res = asyncio.run(dashboard.activations(
+        workspace_id="user-2", info=TokenInfo(workspace_id="user-2", scopes=())))
+    assert len(res["activations"]) == 1
+    assert res["activations"][0]["query"] == "q1"
 
 
 def test_jobs_history_reads_in_memory_dict():
