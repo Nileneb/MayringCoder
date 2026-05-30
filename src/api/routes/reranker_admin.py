@@ -361,19 +361,32 @@ async def get_reranker_default(
     return {"default_version": _read_runtime_default()}
 
 
+@router.get("/stats/admin/reranker-versions")
+async def list_reranker_versions_endpoint(
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """All selectable reranker versions for the dashboard table (v1 baseline +
+    every cache/rerank_v<N>.json) with metadata + active flag."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.memory.reranker_v2 import _read_runtime_default, list_reranker_versions
+    return {"active": _read_runtime_default(), "versions": list_reranker_versions()}
+
+
 @router.post("/stats/admin/reranker-default")
 async def set_reranker_default(
     info: TokenInfo = Depends(get_token_info),
     version: str = "auto",
 ) -> dict:
-    """Persist a new default reranker version. Auto-rollout cron writes
-    here when one version's NDCG@5 beats the other by ≥25%."""
+    """Set the active reranker version (manual click-to-activate from the table).
+    Accepts v1 / auto / any v<N> whose model file exists."""
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
-    if version not in ("v1", "v2", "auto"):
-        raise HTTPException(status_code=400, detail="version must be v1/v2/auto")
     from mayring_core.memory.reranker_v2 import write_runtime_default
-    written = write_runtime_default(version)
+    try:
+        written = write_runtime_default(version)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _log.info("reranker default set to %s by workspace=%s", written, info.workspace_id)
     return {"default_version": written}
 

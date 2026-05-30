@@ -186,9 +186,12 @@ def train(in_path: Path, out_path: Path) -> int:
         )
         return 3
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Derive the version label from the filename (rerank_v3.json → "v3") so an
+    # accumulating version file isn't stamped with a stale "v2" internally.
+    _version = out_path.stem.replace("rerank_", "") or "v2"
     with out_path.open("w", encoding="utf-8") as f:
         json.dump({
-            "version":     "v2",
+            "version":     _version,
             "estimator":   "logistic_regression",
             "trained_at":  datetime.now(timezone.utc).isoformat(),
             "n_train":     len(Xtr),
@@ -203,16 +206,36 @@ def train(in_path: Path, out_path: Path) -> int:
     return 0
 
 
+def _next_version_path() -> Path:
+    """Next accumulating version file: max existing rerank_v<N>.json + 1 (min v2).
+
+    WHY(reranker-version-table 2026-05-30): training used to OVERWRITE rerank_v2.json,
+    so only one learned model ever existed. Manual trainings now accumulate as
+    v2, v3, v4 … and the dashboard table lets you activate any of them. (Manual-only,
+    so no daily-cron version explosion.)
+    """
+    import re as _re
+    nums = []
+    for p in CACHE_DIR.glob("rerank_v*.json"):
+        m = _re.match(r"^v(\d+)$", p.stem.replace("rerank_", ""))
+        if m:
+            nums.append(int(m.group(1)))
+    nxt = (max(nums) + 1) if nums else 2
+    return CACHE_DIR / f"rerank_v{nxt}.json"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", default=str(DEFAULT_IN))
-    ap.add_argument("--out", default=str(DEFAULT_OUT))
+    # No --out → next accumulating version (v2, v3, v4 …). Explicit --out still wins.
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
     in_path = Path(args.inp)
     if not in_path.exists():
         print(f"input not found: {in_path} — run export_retrieval_dataset.py first")
         return 2
-    return train(in_path, Path(args.out))
+    out_path = Path(args.out) if args.out else _next_version_path()
+    return train(in_path, out_path)
 
 
 if __name__ == "__main__":
