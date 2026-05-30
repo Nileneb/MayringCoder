@@ -40,3 +40,15 @@ KEIN Modell-Fähigkeits-Uplift auf einem unverwandten Benchmark.
 **Caveats:** kleine N (7 Tasks), 1 Lauf/Arm (lokales Modell stochastisch), Keyword-Scoring
 ist grob. Für härtere Zahlen: `--repeats 3-5`. Die qualitative Richtung (Hilfe nur bei
 memory-Tasks, neutral/Rauschen sonst) ist robust, weil sie dem Mechanismus entspricht.
+
+## Update: repeats=5 (partial, 4/7 task-groups, A/B gestoppt wg. Cloud-Saturation)
+
+Mit Wiederholung schmilzt der Einzellauf-Effekt:
+- requires_memory=true: ON≈0.27 OFF≈0.25 (Δ≈+0.03, verrauscht: context_injection_01 5× tie weil
+  qwen search_memory NIE aufruft; context_injection_02 2× ON> / 2× OFF> / 1× tie).
+- requires_memory=false: ON≈0.88 OFF≈0.96 (Δ≈**−0.08** — Memory SCHADET: pico_02 OFF gewann 3×, ON nie;
+  die Suche lenkt ab + verbrennt einen Tool-Call).
+- **Ehrliches Fazit:** für qwen3.5:9b netto neutral bis leicht negativ; der Einzellauf-"+0.25" war Glück.
+- Lehre: Ambient war bei diesen Läufen tot (jetzt reaktiviert) → der Tool-Pull allein reicht nicht;
+  Tool-Invocation-Unzuverlässigkeit ist der Haupt-Limiter beim lokalen Modell.
+- NB: Cloud /memory/search saturierte unter A/B-Last (30s-Timeout → nach Stop 3,5s) — Lasttest-Nebenbefund.
