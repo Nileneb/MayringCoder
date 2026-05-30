@@ -10,7 +10,9 @@ See docs/superpowers/specs/2026-05-30-a2a-research-worker-relay-design.md.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 
 from a2a.helpers import new_task, new_text_artifact, new_text_part
@@ -52,6 +54,14 @@ def _agent_message(job_id: str, text: str) -> Message:
                    role=_AGENT_ROLE, parts=[new_text_part(text)])
 
 
+def _result_text(result_json: str) -> str:
+    """Worker stores the result as {"text": ...} JSON; tolerate a raw string."""
+    try:
+        return json.loads(result_json).get("text", result_json)
+    except (ValueError, AttributeError):
+        return result_json
+
+
 class PiJobsTaskStore(TaskStore):
     """Read-through TaskStore: pi_jobs is the authoritative state, so save/delete
     are no-ops and get() reconstructs the A2A Task from the job row."""
@@ -69,10 +79,7 @@ class PiJobsTaskStore(TaskStore):
         state = _STATE.get(job.status, TaskState.TASK_STATE_WORKING)
         task = new_task(job.job_id, job.job_id, state)
         if job.status == "completed" and job.result_json:
-            try:
-                text = json.loads(job.result_json).get("text", job.result_json)
-            except (ValueError, AttributeError):
-                text = job.result_json
+            text = _result_text(job.result_json)
             task.status.message.CopyFrom(_agent_message(job.job_id, text))
             # WHY(2026-05-31): A2A clients (Langdock) read the deliverable from
             # `task.artifacts`, NOT `status.message` (that's a status note). Without
@@ -102,12 +109,15 @@ class RelayAgentExecutor(AgentExecutor):
     async A2A task whose id == the pi_jobs job_id."""
 
     def __init__(self, workspace_id: str, model: str, capability: str = "research",
-                 timeout_s: float = 600.0, db_path: Path | None = None):
+                 timeout_s: float = 600.0, db_path: Path | None = None,
+                 poll_interval: float = 3.0, keepalive_s: float = 20.0):
         self._ws = workspace_id
         self._model = model
         self._cap = capability
         self._timeout_s = timeout_s
         self._db_path = db_path
+        self._poll_interval = poll_interval
+        self._keepalive_s = keepalive_s
 
     async def execute(self, context, event_queue) -> None:
         text = context.get_user_input()
@@ -126,6 +136,38 @@ class RelayAgentExecutor(AgentExecutor):
         )
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
+        await self._bridge(updater, task_id)
+
+    async def _bridge(self, updater: "TaskUpdater", task_id: str) -> None:
+        # WHY(2026-05-31): the result is produced out-of-process by the laptop
+        # worker (via /pi_task_complete_cloud), so streaming clients (Langdock,
+        # capabilities.streaming=true) would otherwise only ever see the initial
+        # "working" event. Poll the cloud job and bridge its terminal state into
+        # this event stream: emit the result as an artifact + complete, or fail.
+        # Periodic "working" keepalives keep the SSE connection under nginx's
+        # 300s read timeout alive for long (multi-minute) research runs.
+        start = time.monotonic()
+        last_beat = start
+        while True:
+            await asyncio.sleep(self._poll_interval)
+            job = pi_jobs.get_job(task_id, workspace_id=self._ws, db_path=self._db_path)
+            now = time.monotonic()
+            if job is not None and job.status == "completed":
+                text = _result_text(job.result_json or "")
+                await updater.add_artifact(
+                    [new_text_part(text)], name="research_result", artifact_id=task_id,
+                )
+                await updater.complete()
+                return
+            if job is not None and job.status == "failed":
+                await updater.failed(_agent_message(task_id, job.error or "job failed"))
+                return
+            if now - start > self._timeout_s:
+                await updater.failed(_agent_message(task_id, "timeout: worker did not complete in time"))
+                return
+            if now - last_beat >= self._keepalive_s:
+                await updater.update_status(TaskState.TASK_STATE_WORKING)
+                last_beat = now
 
     async def cancel(self, context, event_queue) -> None:
         return None
@@ -140,7 +182,10 @@ def _research_card(base_url: str, model: str) -> AgentCard:
             "laptop-powered, async. Long-running tasks welcome."
         ),
         version="0.1.0",
-        capabilities=AgentCapabilities(streaming=False, push_notifications=False),
+        # streaming=True: the result is produced async by the laptop worker, so we
+        # bridge its completion into an SSE stream (message/stream) — the client
+        # gets working keepalives → result artifact → completed without polling.
+        capabilities=AgentCapabilities(streaming=True, push_notifications=False),
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         supported_interfaces=[AgentInterface(url=url, protocol_binding=TransportProtocol.JSONRPC)],

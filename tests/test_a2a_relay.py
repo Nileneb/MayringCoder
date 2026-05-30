@@ -49,28 +49,54 @@ def test_taskstore_scopes_to_workspace(db):
     assert asyncio.run(store_own.get(job.job_id, None)) is not None
 
 
-def test_relay_executor_enqueues_cloud_job(db):
-    class _Q:
-        def __init__(self):
-            self.events = []
+class _Q:
+    def __init__(self):
+        self.events = []
 
-        async def enqueue_event(self, e):
-            self.events.append(e)
+    async def enqueue_event(self, e):
+        self.events.append(e)
 
-    class _Ctx:
-        task_id = "a2a-task-xyz"
-        context_id = "ctx"
-        current_task = None
 
-        def get_user_input(self, d="\n"):
-            return "recherchiere Quantencomputing"
+class _Ctx:
+    task_id = "a2a-task-xyz"
+    context_id = "ctx"
+    current_task = None
 
-    ex = RelayAgentExecutor(workspace_id="ws1", model="qwen3.5:9b",
-                            capability="research", db_path=db)
-    asyncio.run(ex.execute(_Ctx(), _Q()))
-    recent = pi_jobs.list_recent(db_path=db)
-    job = next((j for j in recent if j.job_id == "a2a-task-xyz"), None)
-    assert job is not None, "job_id must equal the A2A task_id"
+    def get_user_input(self, d="\n"):
+        return "recherchiere Quantencomputing"
+
+
+def test_relay_executor_streams_result_artifact(db):
+    """execute() must enqueue the cloud job AND bridge the out-of-process worker's
+    completion into the event stream as a result artifact (streaming=true) — else a
+    streaming client (Langdock) only ever sees the initial 'working' event."""
+    task_id = _Ctx.task_id
+
+    async def scenario():
+        ex = RelayAgentExecutor(workspace_id="ws1", model="qwen3.5:9b",
+                                capability="research", db_path=db,
+                                poll_interval=0.02, keepalive_s=0.05)
+        q = _Q()
+
+        async def completer():
+            for _ in range(200):
+                await asyncio.sleep(0.02)
+                if any(j.job_id == task_id for j in pi_jobs.list_recent(db_path=db)):
+                    pi_jobs.claim_cloud_next("wkr", capabilities=["research"],
+                                             workspace_id="ws1", db_path=db)
+                    pi_jobs.complete_job(task_id, {"text": "STREAM RESULT 77"}, db_path=db)
+                    return
+
+        await asyncio.wait_for(asyncio.gather(ex.execute(_Ctx(), q), completer()), timeout=10)
+        return q
+
+    q = asyncio.run(scenario())
+    # job was created with job_id == task_id
+    assert any(j.job_id == task_id for j in pi_jobs.list_recent(db_path=db))
+    # the result reached the stream as an artifact (not just a status note)
+    blob = " ".join(str(e) for e in q.events)
+    assert "STREAM RESULT 77" in blob, f"result not streamed as artifact: {blob[:400]}"
+    job = next(j for j in pi_jobs.list_recent(db_path=db) if j.job_id == task_id)
     assert job.scope == "cloud" and job.capability_required == "research"
     assert "Quantencomputing" in job.task_text
 
@@ -92,10 +118,11 @@ def test_agent_card_served_with_research_skill(db):
     assert body.get("security") or body.get("securityRequirements"), "card must require auth"
 
 
-def test_rpc_dispatches_v0_3_message_send(db):
+def test_rpc_dispatches_v0_3_methods(db):
     """Standard A2A clients (Langdock) send v0.3 method names. a2a-sdk 1.1.0 defaults
     to v1 names → every classic method 404s as -32601 unless v0.3 compat is enabled.
-    Regression guard for the silent 'Method not found' that broke Langdock connect."""
+    Regression guard for the silent 'Method not found' that broke Langdock connect.
+    Uses tasks/get (non-blocking) — message/send now blocks on the async worker."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -103,20 +130,9 @@ def test_rpc_dispatches_v0_3_message_send(db):
     register_a2a_relay(app, base_url="http://testserver", model="qwen3.5:9b", db_path=db)
     r = TestClient(app).post(
         "/a2a",
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "message/send",
-            "params": {
-                "message": {
-                    "role": "user",
-                    "parts": [{"kind": "text", "text": "ping"}],
-                    "messageId": "m1",
-                    "kind": "message",
-                }
-            },
-        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "tasks/get",
+              "params": {"id": "no-such-task"}},
     )
     body = r.json()
     # The method must be FOUND (dispatched). -32601 = "Method not found" = compat off.
-    assert body.get("error", {}).get("code") != -32601, f"v0.3 message/send not routed: {body}"
+    assert body.get("error", {}).get("code") != -32601, f"v0.3 tasks/get not routed: {body}"
