@@ -133,6 +133,15 @@ def test_memory_put_rejects_untyped_scope(client):
     assert "type-prefixed" in r.json()["detail"]
 
 
+def test_memory_put_rejects_unknown_visibility(client):
+    """Regression (tenancy-audit): visibility='workspace' was accepted on write
+    but the read scope_filter (private/org/public/user) dropped it → invisible to
+    everyone incl. the owner. /memory/put must reject unknown visibility loudly."""
+    r = _put(client, source_id="note:x", source_type="note", content="t", visibility="workspace")
+    assert r.status_code == 422
+    assert "visibility must be one of" in r.json()["detail"]
+
+
 def test_memory_put_accepts_paper_with_scope(client):
     with patch("src.api.routes.memory._run_ingest", return_value={"source_id": "paper:x", "state": "new",
                                                                   "chunk_ids": [], "indexed": 0}):

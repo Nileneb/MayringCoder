@@ -453,6 +453,20 @@ async def memory_put(
                        "research content into a workspace-global bucket",
             )
 
+        # WHY(tenancy-audit 2026-05-31): mirror the allow-list the PATCH endpoint
+        # already enforces. Without it /memory/put accepted ANY visibility string
+        # (e.g. 'workspace'), stored it, and the read scope_filter — which only
+        # knows private/org/public/user — silently dropped the chunk for EVERYONE
+        # incl. the owner (a write-accepted, read-invisible black hole). Reject
+        # unknown values loudly instead. Note: 'private' IS workspace-scoped.
+        _VALID_VISIBILITY = ("private", "org", "public", "user")
+        if request.visibility is not None and request.visibility not in _VALID_VISIBILITY:
+            raise HTTPException(
+                status_code=422,
+                detail=f"visibility must be one of {_VALID_VISIBILITY} "
+                       f"('private' = workspace-scoped) — got {request.visibility!r}",
+            )
+
         source_dict: dict[str, Any] = {
             "source_id": request.source_id,
             "source_type": request.source_type,
