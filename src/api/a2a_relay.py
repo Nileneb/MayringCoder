@@ -56,11 +56,14 @@ class PiJobsTaskStore(TaskStore):
     """Read-through TaskStore: pi_jobs is the authoritative state, so save/delete
     are no-ops and get() reconstructs the A2A Task from the job row."""
 
-    def __init__(self, db_path: Path | None = None):
+    def __init__(self, db_path: Path | None = None, workspace_id: str | None = None):
         self._db_path = db_path
+        self._ws = workspace_id
 
     async def get(self, task_id: str, context=None) -> Task | None:
-        job = pi_jobs.get_job(task_id, db_path=self._db_path)
+        # WHY(security): scope by workspace so a guessed task_id cannot leak
+        # another tenant's job result.
+        job = pi_jobs.get_job(task_id, workspace_id=self._ws, db_path=self._db_path)
         if job is None:
             return None
         state = _STATE.get(job.status, TaskState.TASK_STATE_WORKING)
@@ -146,7 +149,7 @@ def register_a2a_relay(app, *, base_url: str, model: str, workspace_id: str = "d
     executor = RelayAgentExecutor(workspace_id=workspace_id, model=model, db_path=db_path)
     handler = DefaultRequestHandler(
         agent_executor=executor,
-        task_store=PiJobsTaskStore(db_path=db_path),
+        task_store=PiJobsTaskStore(db_path=db_path, workspace_id=workspace_id),
         agent_card=card,
     )
     add_a2a_routes_to_fastapi(

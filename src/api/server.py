@@ -38,7 +38,7 @@ except ImportError:
 from src.api.dependencies import get_conn as _get_conn
 from src.api.training import router as _training_router
 from fastapi import Depends
-from src.api.auth import get_workspace
+from src.api.auth import get_workspace, get_token_info
 from src.api.routes import memory, wiki, jobs, duel, reports, integrations
 from src.api.routes.sync import router as _sync_router
 from src.api.job_queue import _JOBS, run_checker_job as _run_checker_job
@@ -117,6 +117,13 @@ if os.getenv("MAYRING_A2A_RELAY_ENABLED", "1") == "1":
         workspace_id=os.getenv("MAYRING_A2A_WORKSPACE_ID", "019e14d6-0489-7348-bca8-e29c11293cb7"),
         db_path=_job_db_path(),
     )
+
+
+@app.get("/auth/verify")
+async def _auth_verify(_: object = Depends(get_token_info)) -> dict:
+    """Lightweight JWT check for nginx auth_request (gates /a2a + /searxng).
+    Returns 200 on a valid Bearer, 401 otherwise (via get_token_info)."""
+    return {"ok": True}
 
 
 @app.on_event("startup")

@@ -34,6 +34,17 @@ def test_taskstore_unknown_returns_none(db):
     assert asyncio.run(store.get("nope", None)) is None
 
 
+def test_taskstore_scopes_to_workspace(db):
+    # A job in workspace ws1 must NOT be readable by a store pinned to ws2
+    # (else a guessed task_id leaks cross-tenant results).
+    job = pi_jobs.insert_cloud_job("geheim", workspace_id="ws1",
+                                   capability_required="research", db_path=db)
+    store_other = PiJobsTaskStore(db_path=db, workspace_id="ws2")
+    assert asyncio.run(store_other.get(job.job_id, None)) is None
+    store_own = PiJobsTaskStore(db_path=db, workspace_id="ws1")
+    assert asyncio.run(store_own.get(job.job_id, None)) is not None
+
+
 def test_relay_executor_enqueues_cloud_job(db):
     class _Q:
         def __init__(self):
