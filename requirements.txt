@@ -10,7 +10,7 @@ PyJWT
 anthropic
 fastapi
 uvicorn[standard]
-a2a-sdk>=1.1.0
+a2a-sdk[http-server]>=1.1.0
 psycopg2-binary
 gradio>=4.0
 plotly>=5.0
