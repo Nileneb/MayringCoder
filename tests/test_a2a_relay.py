@@ -27,6 +27,10 @@ def test_taskstore_maps_completed_job(db):
     from a2a.types import TaskState
     assert task.status.state == TaskState.TASK_STATE_COMPLETED
     assert "ERGEBNIS 42" in str(task)
+    # A2A clients (Langdock) read the deliverable from artifacts, not status.message.
+    # Without this the client sees "completed" but no research text.
+    assert task.artifacts, "completed task must carry the result as an artifact"
+    assert "ERGEBNIS 42" in task.artifacts[0].parts[0].text
 
 
 def test_taskstore_unknown_returns_none(db):

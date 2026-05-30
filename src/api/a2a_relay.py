@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from a2a.helpers import new_task, new_text_part
+from a2a.helpers import new_task, new_text_artifact, new_text_part
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
@@ -74,6 +74,15 @@ class PiJobsTaskStore(TaskStore):
             except (ValueError, AttributeError):
                 text = job.result_json
             task.status.message.CopyFrom(_agent_message(job.job_id, text))
+            # WHY(2026-05-31): A2A clients (Langdock) read the deliverable from
+            # `task.artifacts`, NOT `status.message` (that's a status note). Without
+            # an artifact the client sees "completed" but no research text. Carry the
+            # result as a text artifact so the payload is actually retrievable.
+            task.artifacts.append(new_text_artifact(
+                name="research_result", text=text,
+                description="Research result from the MayringCoder worker.",
+                artifact_id=job.job_id,
+            ))
         elif job.status == "failed" and job.error:
             task.status.message.CopyFrom(_agent_message(job.job_id, job.error))
         return task
