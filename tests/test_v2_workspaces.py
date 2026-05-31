@@ -323,7 +323,12 @@ class TestPatchVisibilityAuthorization:
 
     def test_patch_visibility_owner_ok(self):
         from fastapi.testclient import TestClient
-        ti = TokenInfo(workspace_id="ws-owner", sub="42", scopes=("mcp:memory",))
+        # WHY(tenancy phase B): owner-of-workspace carries the admin role in the
+        # membership → caller_can(share_public) for the promotion to public.
+        ti = TokenInfo(
+            workspace_id="ws-owner", sub="42", scopes=("mcp:memory",),
+            memberships=(Membership(id="ws-owner", type="personal", role="owner"),),
+        )
         db = _db()
         upsert_source(
             db, Source(source_id="s1", source_type="note", repo="", path="x"),
@@ -372,6 +377,8 @@ class TestPatchVisibilityAuthorization:
             db, Source(source_id="s3", source_type="note", repo="", path="x"),
             workspace_id="ws-someone", visibility="private",
         )
+        # WHY(tenancy phase B): the wildcard '*' scope (MCP_SERVICE_TOKEN) must
+        # still bypass the role gate via info.is_admin → caller_can(is_super_admin).
         ti = TokenInfo(workspace_id="system", sub="0", scopes=("*",))
         app = self._setup_app_with_token(ti, db)
         client = TestClient(app)
@@ -627,10 +634,12 @@ class TestIngestUserIdResolution:
         import src.api.routes.memory as _mod
 
         db = _db()
+        # WHY(tenancy phase B): exercises the user_id-stamp mechanism for
+        # visibility='public' → super-admin so caller_can(share_public) passes.
         ti = TokenInfo(
             workspace_id="ws-bene",
             sub="42",
-            scopes=("mcp:memory",),
+            scopes=("admin",),
         )
         app.dependency_overrides[get_token_info] = lambda: ti
         app.dependency_overrides[get_workspace] = lambda: "ws-bene"
