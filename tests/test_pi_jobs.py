@@ -274,11 +274,11 @@ def test_local_claim_ignores_cloud_jobs(db: Path) -> None:
 
 def test_claim_cloud_next_requires_capability(db: Path) -> None:
     pi_jobs.insert_cloud_job(
-        "needs-gpu", capability_required="local-gpu", db_path=db,
+        "needs-gpu", capability_required="local-gpu", workspace_id="ws-test", db_path=db,
     )
-    no_gpu = pi_jobs.claim_cloud_next("wkr_no", capabilities=["cpu"], db_path=db)
+    no_gpu = pi_jobs.claim_cloud_next("wkr_no", capabilities=["cpu"], workspace_id="ws-test", db_path=db)
     assert no_gpu is None
-    gpu = pi_jobs.claim_cloud_next("wkr_yes", capabilities=["local-gpu"], db_path=db)
+    gpu = pi_jobs.claim_cloud_next("wkr_yes", capabilities=["local-gpu"], workspace_id="ws-test", db_path=db)
     assert gpu is not None
     assert gpu.claimed_by == "wkr_yes"
     assert gpu.scope == "cloud"
@@ -286,18 +286,18 @@ def test_claim_cloud_next_requires_capability(db: Path) -> None:
 
 
 def test_claim_cloud_next_no_required_matches_any_worker(db: Path) -> None:
-    pi_jobs.insert_cloud_job("any", db_path=db)
-    j = pi_jobs.claim_cloud_next("wkr_any", capabilities=[], db_path=db)
+    pi_jobs.insert_cloud_job("any", workspace_id="ws-test", db_path=db)
+    j = pi_jobs.claim_cloud_next("wkr_any", capabilities=[], workspace_id="ws-test", db_path=db)
     assert j is not None and j.claimed_by == "wkr_any"
 
 
 def test_claim_cloud_next_returns_none_when_empty(db: Path) -> None:
-    assert pi_jobs.claim_cloud_next("wkr", db_path=db) is None
+    assert pi_jobs.claim_cloud_next("wkr", workspace_id="ws-test", db_path=db) is None
 
 
 def test_claim_cloud_next_atomic_under_concurrency(db: Path) -> None:
     pi_jobs.insert_cloud_job(
-        "only-one", capability_required="local-gpu", db_path=db,
+        "only-one", capability_required="local-gpu", workspace_id="ws-test", db_path=db,
     )
 
     import threading
@@ -307,7 +307,7 @@ def test_claim_cloud_next_atomic_under_concurrency(db: Path) -> None:
     def worker(wid: str) -> None:
         barrier.wait()
         results.append(
-            pi_jobs.claim_cloud_next(wid, capabilities=["local-gpu"], db_path=db)
+            pi_jobs.claim_cloud_next(wid, capabilities=["local-gpu"], workspace_id="ws-test", db_path=db)
         )
 
     threads = [
