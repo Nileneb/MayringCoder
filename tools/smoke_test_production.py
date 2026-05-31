@@ -2112,6 +2112,38 @@ def check_reranker_cat_match_fires(api: str, token: str) -> CheckResult:
     )
 
 
+def check_role_policy_roundtrip(api: str, token: str) -> CheckResult:
+    """PUT a per-workspace override then GET reflects it (owner==admin, manage_members)."""
+    ws = SMOKE_VECTOR_WORKSPACE
+    hdr = _act_as(SMOKE_VECTOR_OWNER, workspace=ws)
+    c1, b1, _ = _http("PUT", f"{api}/stats/workspaces/{ws}/role-permissions", token,
+                      body={"role": "editor", "permission": "share_public", "allowed": False},
+                      extra_headers=hdr)
+    if c1 != 200:
+        return CheckResult("role_policy_roundtrip", False, f"PUT http={c1}: {b1}")
+    c2, b2, _ = _http("GET", f"{api}/stats/workspaces/{ws}/role-permissions", token, extra_headers=hdr)
+    val = (b2 or {}).get("matrix", {}).get("editor", {}).get("share_public") if isinstance(b2, dict) else None
+    ok = c2 == 200 and val is False
+    # restore default → idempotent
+    _http("PUT", f"{api}/stats/workspaces/{ws}/role-permissions", token,
+          body={"role": "editor", "permission": "share_public", "allowed": True}, extra_headers=hdr)
+    return CheckResult("role_policy_roundtrip", ok, f"PUT={c1} GET={c2} editor.share_public={val}")
+
+
+def check_role_enforcement(api: str, token: str) -> CheckResult:
+    """A 'user'-role caller (act-as, no membership → role user) must be DENIED
+    share_public on /memory/put (403)."""
+    ws = SMOKE_VECTOR_WORKSPACE
+    hdr = _act_as("smoke-roleuser", workspace=ws)
+    suffix = int(time.time())
+    code, body, _ = _http("POST", f"{api}/memory/put", token,
+                          body={"source_id": f"smoke:role:{suffix}", "source_type": "note",
+                                "content": "role check", "visibility": "public"},
+                          extra_headers=hdr)
+    return CheckResult("role_enforcement", code == 403,
+                       f"user->share_public http={code} (must be 403) body={body}")
+
+
 def check_igio_lens_axes_present(api: str, token: str) -> CheckResult:
     """IGIO-Lens acceptance: GET /stats/igio-lens returns all four IGIO axes with
     integer counts + an unclassified bucket (workspace-scoped). Guards the
@@ -2459,6 +2491,8 @@ ALL_CHECKS = [
     ("mayring_process_fail_closed",   check_mayring_process_fail_closed),
     ("ingest_links_categories",       check_ingest_links_categories),
     ("reranker_cat_match_fires",      check_reranker_cat_match_fires),
+    ("role_policy_roundtrip",         check_role_policy_roundtrip),
+    ("role_enforcement",              check_role_enforcement),
     ("igio_lens_axes_present",        check_igio_lens_axes_present),
     ("intervention_todos_surface",    check_intervention_todos_surface),
     ("dashboard_endpoints",           check_dashboard_endpoints),
