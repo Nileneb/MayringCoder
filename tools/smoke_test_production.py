@@ -52,6 +52,10 @@ JWT_PATH = os.path.expanduser("~/.config/mayring/hook.jwt")
 # Alias-Resolver angewiesen sein).
 SMOKE_VECTOR_WORKSPACE = os.environ.get(
     "SMOKE_RAG_WORKSPACE", "019e14d6-0489-7348-bca8-e29c11293cb7")
+# WHY(tenancy phase A): owner JWT-sub of SMOKE_VECTOR_WORKSPACE's private chunks
+# (matches MAYRING_PERSONAL_OWNERS). The smoke acts as this user to retrieve
+# private/user_id-scoped repo-code chunks via the service token + X-Act-As.
+SMOKE_VECTOR_OWNER = os.environ.get("SMOKE_RAG_OWNER", "1")
 
 
 # ---------------------------------------------------------------------------
@@ -1165,8 +1169,14 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     """
     suffix = int(time.time())
     workspace_slug = "smoke-vis"
+    # WHY(tenancy phase A): 'private' is now user_id-scoped — the bare service
+    # token has no human sub and can neither OWN nor FIND private content. Act
+    # as a concrete user so the private source gets a user_id owner and the same
+    # identity retrieves it. Requires MAYRING_ALLOW_ACT_AS=1 on the server.
+    _vis_sub = f"smoke-vis-{suffix}"
+    _vis_hdr = _act_as(_vis_sub)
 
-    # 1) Ingest a PRIVATE source (default visibility)
+    # 1) Ingest a PRIVATE source (default visibility → private, owned by _vis_sub)
     priv_id = f"smoke:vis:private:{suffix}"
     code1, body1, _ = _http(
         "POST", f"{api}/memory/put", token,
@@ -1179,6 +1189,7 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
             "categorize": False,
         },
         timeout=15.0,
+        extra_headers=_vis_hdr,
     )
     if code1 != 200:
         return CheckResult("visibility_isolation", False,
@@ -1213,13 +1224,15 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     #    same user/workspace that ingested them.  Use _search_finds (retry)
     #    for the PRIVATE source to absorb multi-worker commit-propagation lag
     #    (WHY: chk_0aaf83324a0404c3 — one-shot search false-RED under 4 workers).
-    private_visible = _search_finds(api, token, f"marker token {suffix}", priv_id)
+    private_visible = _search_finds(api, token, f"marker token {suffix}", priv_id,
+                                    extra_headers=_vis_hdr)
     # Public source: one-shot is fine — public chunks are always visible.
     code4, body4, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": f"marker token {suffix}", "top_k": 5,
               "include_text": True, "llm_prefilter": False},
         timeout=12.0,
+        extra_headers=_vis_hdr,
     )
     if code4 != 200:
         return CheckResult("visibility_isolation", False,
@@ -1522,6 +1535,10 @@ def check_rag_function_search_finds_source(api: str, token: str) -> CheckResult:
     # Service-Token-Default ist 'system' (keine echten .py-source-Chunks) → der
     # populierte Tenant muss explizit mit. Siehe SMOKE_VECTOR_WORKSPACE.
     target_ws = SMOKE_VECTOR_WORKSPACE
+    # WHY(tenancy phase A): repo .py chunks migrated to visibility='private',
+    # user_id-scoped to the workspace owner. The bare service token (no sub)
+    # can't see them — act as the owner (SMOKE_VECTOR_OWNER) so the private
+    # code chunks are retrievable. Requires MAYRING_ALLOW_ACT_AS=1.
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": "_rerank candidates vector_scores top_k re-rank "
@@ -1529,6 +1546,7 @@ def check_rag_function_search_finds_source(api: str, token: str) -> CheckResult:
               "top_k": 5, "include_text": False, "llm_prefilter": False},
         timeout=15.0,
         workspace_id=target_ws,
+        extra_headers=_act_as(SMOKE_VECTOR_OWNER, workspace=target_ws),
     )
     if code != 200 or not isinstance(body, dict):
         return CheckResult("rag_function_search_finds_source", False,
