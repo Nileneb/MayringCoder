@@ -30,17 +30,14 @@ def client():
     async def _fake_ws():
         return "bene"
 
-    class _FakeInfo:
-        org_ids: list = []
-        sub = "1"
-        scopes: list = []
-        workspace_id = "bene"
-
-        def membership_name(self, _org_id):
-            return ""
+    # WHY(tenancy phase B): exercises allowlist + chroma-sync, not the role gate
+    # → super-admin so caller_can() never blocks. sub="1" also owns the patched
+    # source (src_user="1") so the manage_foreign branch is skipped anyway.
+    from src.api.jwt_auth import TokenInfo
+    info = TokenInfo(workspace_id="bene", scopes=("admin",), sub="1")
 
     async def _fake_info():
-        return _FakeInfo()
+        return info
 
     srv.app.dependency_overrides[auth_module.get_workspace] = _fake_ws
     srv.app.dependency_overrides[auth_module.get_token_info] = _fake_info

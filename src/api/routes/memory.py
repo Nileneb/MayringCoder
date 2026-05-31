@@ -544,6 +544,19 @@ async def memory_put(
                 display_name=info.membership_name(source_dict["org_id"]),
             )
 
+        # WHY(tenancy phase B): enforce the role→permission policy. 'write' gates
+        # any ingest; promoting to org/public additionally needs share_org/share_public.
+        from src.api.authz_helpers import caller_can
+        from mayring_core.memory.store import get_role_permissions
+        _ov = get_role_permissions(_get_conn(), workspace_id)
+        if not caller_can(info, workspace_id, "write", overrides=_ov):
+            raise HTTPException(status_code=403, detail="write permission required")
+        _eff_vis = source_dict.get("visibility")
+        if _eff_vis == "org" and not caller_can(info, workspace_id, "share_org", overrides=_ov):
+            raise HTTPException(status_code=403, detail="share_org permission required")
+        if _eff_vis == "public" and not caller_can(info, workspace_id, "share_public", overrides=_ov):
+            raise HTTPException(status_code=403, detail="share_public permission required")
+
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
                              _OLLAMA_URL, _model("text"),
                              {"categorize": request.categorize, "task": request.task},

@@ -10,6 +10,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from src.api.jwt_auth import TokenInfo
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — mirror pattern from test_scope_key.py
@@ -25,17 +27,12 @@ def client_personal_ws():
     async def _fake_ws():
         return "bene"
 
-    class _FakeInfo:
-        org_ids: list = []
-        sub = "1"
-        scopes: list = []
-        workspace_id = "bene"
-
-        def membership_name(self, _org_id):  # noqa: D102
-            return ""
+    # WHY(tenancy phase B): exercises the visibility-default mechanism, not the
+    # role gate → run as super-admin so caller_can() never blocks the ingest.
+    info = TokenInfo(workspace_id="bene", scopes=("admin",), sub="1")
 
     async def _fake_info():
-        return _FakeInfo()
+        return info
 
     srv.app.dependency_overrides[auth_module.get_workspace] = _fake_ws
     srv.app.dependency_overrides[auth_module.get_token_info] = _fake_info
@@ -55,17 +52,16 @@ def client_team_ws():
     async def _fake_ws():
         return _ORG_ID
 
-    class _FakeInfo:
-        org_ids: list = [_ORG_ID]
-        sub = "2"
-        scopes: list = []
-        workspace_id = _ORG_ID
-
-        def membership_name(self, _org_id):  # noqa: D102
-            return ""
+    from src.api.jwt_auth import Membership
+    # WHY(tenancy phase B): super-admin so caller_can(write/share_org) never
+    # blocks; the membership carries the org_id used by the org-default branch.
+    info = TokenInfo(
+        workspace_id=_ORG_ID, scopes=("admin",), sub="2",
+        memberships=(Membership(id=_ORG_ID, type="organization", role="owner"),),
+    )
 
     async def _fake_info():
-        return _FakeInfo()
+        return info
 
     srv.app.dependency_overrides[auth_module.get_workspace] = _fake_ws
     srv.app.dependency_overrides[auth_module.get_token_info] = _fake_info
@@ -150,17 +146,11 @@ def client_service_token_personal_ws():
     async def _fake_ws():
         return "bene"
 
-    class _FakeInfoNoSub:
-        org_ids: list = []
-        sub = None  # Service-Token: no user subject
-        scopes: list = ["*"]
-        workspace_id = "bene"
-
-        def membership_name(self, _org_id):  # noqa: D102
-            return ""
+    # Service-Token: no user subject, super-admin scope (info.is_admin → bypass).
+    info = TokenInfo(workspace_id="bene", scopes=("admin",), sub=None)
 
     async def _fake_info():
-        return _FakeInfoNoSub()
+        return info
 
     srv.app.dependency_overrides[auth_module.get_workspace] = _fake_ws
     srv.app.dependency_overrides[auth_module.get_token_info] = _fake_info
