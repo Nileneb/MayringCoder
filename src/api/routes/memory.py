@@ -835,6 +835,16 @@ async def memory_reindex(
                         "SELECT workspace_id FROM chunks WHERE chunk_id = ?", (chunk.chunk_id,)
                     ).fetchone()
                     _ws_id = _ws_row[0] if _ws_row else "default"
+                    # WHY(tenancy phase A): reindex MUST carry the visibility axis
+                    # too, else re-embedding strips visibility/org_id/user_id from
+                    # Chroma and the vector `where` clause drops the chunk again.
+                    _vis_row = conn.execute(
+                        "SELECT visibility, org_id, user_id FROM sources WHERE source_id = ?",
+                        (chunk.source_id,),
+                    ).fetchone()
+                    _vis = (_vis_row[0] if _vis_row else None) or "private"
+                    _org = (_vis_row[1] if _vis_row else None) or ""
+                    _uid = (_vis_row[2] if _vis_row else None) or ""
                     chroma.upsert(
                         ids=[chunk.chunk_id],
                         documents=[chunk.text[:500]],
@@ -845,6 +855,9 @@ async def memory_reindex(
                             "chunk_level": chunk.chunk_level,
                             "category_labels": ",".join(chunk.category_labels),
                             "is_active": 1,
+                            "visibility": _vis,
+                            "org_id": _org,
+                            "user_id": _uid,
                         }],
                     )
                 reindexed += 1

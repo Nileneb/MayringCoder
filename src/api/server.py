@@ -100,6 +100,8 @@ from src.api.routes import repo_events as _repo_events  # Repo-watching Task 2
 app.include_router(_repo_events.router)
 from src.api.routes import ambient_admin as _ambient_admin  # ambient snapshot refresh
 app.include_router(_ambient_admin.router)
+from src.api.routes import backfill_admin as _backfill_admin  # tenancy phase A: chroma visibility backfill
+app.include_router(_backfill_admin.router)
 from src.api.routes import watch_repos as _watch_repos  # dashboard-managed repo-watch list
 app.include_router(_watch_repos.router)
 from src.api.routes import agent_keys as _agent_keys  # per-agent A2A API keys (X-API-Key)
