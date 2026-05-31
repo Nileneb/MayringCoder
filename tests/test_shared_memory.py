@@ -175,7 +175,13 @@ def test_share_source_makes_public():
     from src.api.jwt_auth import TokenInfo
     import src.api.dependencies as _deps
 
-    owner_info = TokenInfo(workspace_id="ws-share", sub="7", scopes=())
+    # WHY(tenancy phase B): sharing public additionally requires share_public —
+    # the owning user carries the 'owner' (→admin) role in the membership.
+    from src.api.jwt_auth import Membership
+    owner_info = TokenInfo(
+        workspace_id="ws-share", sub="7", scopes=("mcp:memory",),
+        memberships=(Membership(id="ws-share", type="personal", role="owner"),),
+    )
     app.dependency_overrides[get_workspace] = lambda: "ws-share"
     app.dependency_overrides[get_token_info] = lambda: owner_info
     db = _db()

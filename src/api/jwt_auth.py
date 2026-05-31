@@ -64,7 +64,11 @@ class TokenInfo:
 
     @property
     def is_admin(self) -> bool:
-        return "admin" in self.scopes
+        # WHY(tenancy phase B): super-admin is the JWT 'admin' scope OR the
+        # wildcard '*' that the MCP_SERVICE_TOKEN path stamps (auth.py). Without
+        # '*' the role gate (caller_can → is_super_admin) would 403 every system
+        # ingest (repo-events/ambient/watcher) that the service token drives.
+        return "admin" in self.scopes or "*" in self.scopes
 
     @property
     def uses_custom_provider(self) -> bool:

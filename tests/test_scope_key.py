@@ -116,12 +116,13 @@ def client():
     async def _fake_ws():
         return "bene"
 
-    class _FakeInfo:
-        org_ids: list = []
-        sub = "1"
+    # WHY(tenancy phase B): these tests exercise scope_key validation, not the
+    # role gate → run as super-admin so caller_can() never blocks the ingest.
+    from src.api.jwt_auth import TokenInfo
+    info = TokenInfo(workspace_id="bene", scopes=("admin",), sub="1")
 
     async def _fake_info():
-        return _FakeInfo()
+        return info
 
     srv.app.dependency_overrides[auth_module.get_workspace] = _fake_ws
     srv.app.dependency_overrides[auth_module.get_token_info] = _fake_info

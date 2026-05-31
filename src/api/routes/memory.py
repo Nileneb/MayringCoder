@@ -544,6 +544,19 @@ async def memory_put(
                 display_name=info.membership_name(source_dict["org_id"]),
             )
 
+        # WHY(tenancy phase B): enforce the role→permission policy. 'write' gates
+        # any ingest; promoting to org/public additionally needs share_org/share_public.
+        from src.api.authz_helpers import caller_can
+        from mayring_core.memory.store import get_role_permissions
+        _ov = get_role_permissions(_get_conn(), workspace_id)
+        if not caller_can(info, workspace_id, "write", overrides=_ov):
+            raise HTTPException(status_code=403, detail="write permission required")
+        _eff_vis = source_dict.get("visibility")
+        if _eff_vis == "org" and not caller_can(info, workspace_id, "share_org", overrides=_ov):
+            raise HTTPException(status_code=403, detail="share_org permission required")
+        if _eff_vis == "public" and not caller_can(info, workspace_id, "share_public", overrides=_ov):
+            raise HTTPException(status_code=403, detail="share_public permission required")
+
         result = _run_ingest(source_dict, request.content, _get_conn(), _get_chroma(),
                              _OLLAMA_URL, _model("text"),
                              {"categorize": request.categorize, "task": request.task},
@@ -1013,16 +1026,22 @@ async def patch_source_visibility(
     src_ws = row["workspace_id"] if hasattr(row, "keys") else row[0]
     src_user = row["user_id"] if hasattr(row, "keys") else row[1]
 
-    is_admin = "*" in info.scopes or "admin" in info.scopes
+    # WHY(tenancy phase B): super-admin (scope=admin) is honored implicitly by
+    # caller_can(is_super_admin); only the workspace/sub owner skips manage_foreign.
     is_owner = (
         src_ws == workspace_id
         or (src_user is not None and info.sub is not None and src_user == info.sub)
     )
-    if not (is_admin or is_owner):
-        raise HTTPException(
-            status_code=403,
-            detail="not authorized to change visibility of this source",
-        )
+    from src.api.authz_helpers import caller_can
+    from mayring_core.memory.store import get_role_permissions
+    _ov = get_role_permissions(conn, workspace_id)
+    if not is_owner and not caller_can(info, workspace_id, "manage_foreign", overrides=_ov):
+        raise HTTPException(status_code=403, detail="manage_foreign permission required")
+    _target_vis = request.visibility
+    if _target_vis == "org" and not caller_can(info, workspace_id, "share_org", overrides=_ov):
+        raise HTTPException(status_code=403, detail="share_org permission required")
+    if _target_vis == "public" and not caller_can(info, workspace_id, "share_public", overrides=_ov):
+        raise HTTPException(status_code=403, detail="share_public permission required")
 
     conn.execute(
         "UPDATE sources SET visibility = ?, org_id = ? WHERE source_id = ?",
@@ -1079,13 +1098,22 @@ async def share_source(
     src_ws = row["workspace_id"] if hasattr(row, "keys") else row[0]
     src_user = row["user_id"] if hasattr(row, "keys") else row[1]
 
-    is_admin = "*" in info.scopes or "admin" in info.scopes
+    # WHY(tenancy phase B): super-admin (scope=admin) is honored implicitly by
+    # caller_can(is_super_admin); only the workspace/sub owner skips manage_foreign.
     is_owner = (
         src_ws == workspace_id
         or (src_user is not None and info.sub is not None and src_user == info.sub)
     )
-    if not (is_admin or is_owner):
-        raise HTTPException(status_code=403, detail="not authorized to share this source")
+    from src.api.authz_helpers import caller_can
+    from mayring_core.memory.store import get_role_permissions
+    _ov = get_role_permissions(conn, workspace_id)
+    if not is_owner and not caller_can(info, workspace_id, "manage_foreign", overrides=_ov):
+        raise HTTPException(status_code=403, detail="manage_foreign permission required")
+    _target_vis = "org" if req.org_id else "public"
+    if _target_vis == "org" and not caller_can(info, workspace_id, "share_org", overrides=_ov):
+        raise HTTPException(status_code=403, detail="share_org permission required")
+    if _target_vis == "public" and not caller_can(info, workspace_id, "share_public", overrides=_ov):
+        raise HTTPException(status_code=403, detail="share_public permission required")
 
     if req.org_id:
         if req.org_id not in set(info.org_ids):
