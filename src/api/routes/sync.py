@@ -63,11 +63,12 @@ def get_changes(
 ) -> MemorySyncResponse:
     """Stream chunks created after `since`, scoped by V2 visibility rules.
 
-    WHY(L6, v2-workspaces): the previous query dropped 'org' and 'user'
+    WHY(L6, v2-workspaces): the previous query dropped 'org' and 'private'
     visibility silently — Laravel + Hook clients re-syncing missed every
     chunk shared cross-workspace via membership or same-user. The filter
-    must mirror retrieval._scope_filter: public + own private + own user
-    + chunks of orgs the caller is a member of.
+    mirrors retrieval._scope_filter: public + private (user_id-scoped, any
+    workspace) + chunks of orgs the caller is a member of.
+    'user' (old name) is gone; 'private' is the canonical 3-value model value.
     """
     db = _get_conn()
     _ensure_visibility_column(db)
@@ -92,14 +93,13 @@ def get_changes(
         WHERE c.created_at > ?
           AND (
               s.visibility = 'public'
-              OR (s.visibility = 'private' AND c.workspace_id = ?)
-              OR (s.visibility = 'user' AND s.user_id = ?)
+              OR (s.visibility = 'private' AND s.user_id = ?)
               {org_clause}
           )
         ORDER BY c.created_at ASC
         LIMIT ?
     """
-    params = [since, workspace_id, info.sub, *org_params, limit]
+    params = [since, info.sub, *org_params, limit]
 
     try:
         rows = db.execute(sql, tuple(params)).fetchall()

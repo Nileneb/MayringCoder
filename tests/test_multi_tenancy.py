@@ -151,12 +151,21 @@ class TestWorkspaceScopedDedup:
 # ---------------------------------------------------------------------------
 
 class TestScopeFilterWorkspaceIsolation:
+    # WHY(tenancy-T7 migration): 3-value visibility model — isolation is
+    # user_id-scoped for private chunks.  Each workspace-owner gets a distinct
+    # user_id so _scope_filter isolates correctly.  The isolation assertion is
+    # unchanged: user A cannot see user B's private chunks.
+    _USER_A = "u-ws-a"
+    _USER_B = "u-ws-b"
+
     def _setup_two_workspaces(self, conn):
-        """Insert one chunk in ws_a and one in ws_b, same repo."""
+        """Insert one private chunk per workspace, each owned by a distinct user."""
         src_a = _make_source("repo:owner/shared:a.py", repo="owner/shared")
         src_b = _make_source("repo:owner/shared:b.py", repo="owner/shared")
-        upsert_source(conn, src_a, workspace_id="ws_a")
-        upsert_source(conn, src_b, workspace_id="ws_b")
+        upsert_source(conn, src_a, workspace_id="ws_a",
+                      visibility="private", user_id=self._USER_A)
+        upsert_source(conn, src_b, workspace_id="ws_b",
+                      visibility="private", user_id=self._USER_B)
         insert_chunk(conn, _make_chunk(src_a.source_id, 0, text="workspace a content"), workspace_id="ws_a")
         insert_chunk(conn, _make_chunk(src_b.source_id, 0, text="workspace b content"), workspace_id="ws_b")
         return src_a, src_b
@@ -165,7 +174,7 @@ class TestScopeFilterWorkspaceIsolation:
         conn = init_memory_db(tmp_path / "m.db")
         src_a, src_b = self._setup_two_workspaces(conn)
 
-        ids_a = _scope_filter(conn, workspace_id="ws_a")
+        ids_a = _scope_filter(conn, workspace_id="ws_a", user_id=self._USER_A)
         chunk_a = Chunk.make_id(src_a.source_id, 0, "function")
         chunk_b = Chunk.make_id(src_b.source_id, 0, "function")
 
@@ -176,7 +185,7 @@ class TestScopeFilterWorkspaceIsolation:
         conn = init_memory_db(tmp_path / "m.db")
         src_a, src_b = self._setup_two_workspaces(conn)
 
-        ids_b = _scope_filter(conn, workspace_id="ws_b")
+        ids_b = _scope_filter(conn, workspace_id="ws_b", user_id=self._USER_B)
         chunk_a = Chunk.make_id(src_a.source_id, 0, "function")
         chunk_b = Chunk.make_id(src_b.source_id, 0, "function")
 
@@ -187,13 +196,14 @@ class TestScopeFilterWorkspaceIsolation:
         conn = init_memory_db(tmp_path / "m.db")
         self._setup_two_workspaces(conn)
 
-        all_ids = _scope_filter(conn)  # no workspace_id
+        all_ids = _scope_filter(conn)  # no workspace_id → no visibility filter
         assert len(all_ids) == 2
 
     def test_unknown_workspace_returns_empty(self, tmp_path: Path) -> None:
         conn = init_memory_db(tmp_path / "m.db")
         self._setup_two_workspaces(conn)
 
+        # workspace_id="ws_unknown" with no matching user_id → nothing visible
         ids = _scope_filter(conn, workspace_id="ws_unknown")
         assert ids == []
 

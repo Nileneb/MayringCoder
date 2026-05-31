@@ -61,9 +61,15 @@ def test_upsert_source_roundtrips_scope_key(tmp_path: Path):
 # retrieval isolation
 # ---------------------------------------------------------------------------
 
-def _seed_paper(conn, *, source_id, scope_key, chunk_id, text, ws="bene"):
+def _seed_paper(conn, *, source_id, scope_key, chunk_id, text, ws="bene",
+               user_id: str | None = None):
+    # WHY(tenancy-T7 migration): 3-value visibility model — seeds use 'private'
+    # with an explicit user_id so scope_filter can match them.  'public' is used
+    # when user_id is absent (scope_key-isolation test; no visibility assertion).
+    vis = "private" if user_id else "public"
     upsert_source(conn, Source(source_id=source_id, source_type="agent_result",
                                repo="", path="", scope_key=scope_key,
+                               visibility=vis, user_id=user_id,
                                content_hash="h:" + chunk_id), workspace_id=ws)
     from mayring_core.memory.schema import Chunk
     insert_chunk(conn, Chunk(chunk_id=chunk_id, source_id=source_id, text=text,
@@ -71,20 +77,26 @@ def _seed_paper(conn, *, source_id, scope_key, chunk_id, text, ws="bene"):
 
 
 def test_scope_filter_isolates_projects(tmp_path: Path):
+    """scope_key restricts results to the matching logical sub-bucket.
+
+    Chunks are seeded as public (no user_id needed) so _scope_filter returns them
+    regardless of caller identity — the assertion under test is scope_key isolation,
+    not visibility isolation (which is covered by test_scope_filter_visibility.py).
+    """
     c = init_memory_db(tmp_path / "m.db")
     _seed_paper(c, source_id="paper:a", scope_key="project:p1", chunk_id="ck_a", text="alpha")
     _seed_paper(c, source_id="paper:b", scope_key="project:p2", chunk_id="ck_b", text="beta")
-    _seed_paper(c, source_id="conv:x", scope_key=None,           chunk_id="ck_x", text="global")  # workspace-global
-    # ↑ conv:x is agent_result here for brevity but scope_key=None — fine for the filter test
+    _seed_paper(c, source_id="conv:x", scope_key=None,           chunk_id="ck_x", text="global")
     c.commit()
 
+    # scope_key="project:p1" → only ck_a; user_id=None is fine for public chunks
     only_p1 = set(_scope_filter(c, workspace_id="bene", user_id=None, scope_key="project:p1"))
     assert only_p1 == {"ck_a"}, only_p1
 
     only_p2 = set(_scope_filter(c, workspace_id="bene", user_id=None, scope_key="project:p2"))
     assert only_p2 == {"ck_b"}, only_p2
 
-    # no scope_key → whole workspace
+    # no scope_key → all public chunks in workspace
     all_ws = set(_scope_filter(c, workspace_id="bene", user_id=None))
     assert all_ws == {"ck_a", "ck_b", "ck_x"}, all_ws
     c.close()

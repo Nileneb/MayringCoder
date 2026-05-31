@@ -459,7 +459,10 @@ async def memory_put(
         # knows private/org/public/user — silently dropped the chunk for EVERYONE
         # incl. the owner (a write-accepted, read-invisible black hole). Reject
         # unknown values loudly instead. Note: 'private' IS workspace-scoped.
-        _VALID_VISIBILITY = ("private", "org", "public", "user")
+        # WHY(tenancy phase A T6): 'user' was a legacy value — scope_filter only
+        # handles private/org/public so 'user' wrote-accepted but read-invisible.
+        # Shrink to the 3 canonical values so the allowlists on write and read match.
+        _VALID_VISIBILITY = ("private", "org", "public")
         if request.visibility is not None and request.visibility not in _VALID_VISIBILITY:
             raise HTTPException(
                 status_code=422,
@@ -477,6 +480,31 @@ async def memory_put(
             source_dict["scope_key"] = scope
         if request.visibility:
             source_dict["visibility"] = request.visibility
+        else:
+            # WHY(tenancy phase A): when caller omits visibility, derive the
+            # sensible default from workspace kind rather than relying on the
+            # DB-level default (NULL), which causes chunks to be invisible to
+            # the scope_filter on reads.  personal → private (user_id-scoped),
+            # org-artig → org (org_id=workspace_id).
+            from mayring_core.identity.workspace_resolver import workspace_kind, workspace_owner
+            _kind = workspace_kind(_get_conn(), workspace_id)
+            if _kind in ("team", "project", "organization"):
+                source_dict["visibility"] = "org"
+                source_dict["org_id"] = workspace_id
+            else:  # 'user' / 'system' / unknown → personal default
+                source_dict["visibility"] = "private"
+                # WHY(tenancy-T7, owner-fallback): user-agnostic service ingests
+                # (Service-Token, info.sub=None — repo-events, ambient, watcher)
+                # would write private+user_id=NULL → invisible to everyone.  Fall
+                # back to the workspace owner so the chunk is retrievable.
+                source_dict["user_id"] = info.sub or workspace_owner(_get_conn(), workspace_id)
+        if request.visibility == "private":
+            # WHY(tenancy phase A): explicit visibility='private' must stamp
+            # user_id so _scope_filter's `s.visibility='private' AND s.user_id=?`
+            # can match on cross-device reads.  Without this stamp the chunk is
+            # visible to nobody.  Fall back to workspace owner for service tokens.
+            from mayring_core.identity.workspace_resolver import workspace_owner
+            source_dict["user_id"] = info.sub or workspace_owner(_get_conn(), workspace_id)
         if request.visibility == "org":
             org_member_ids = set(info.org_ids)
             if request.org_id:
@@ -501,14 +529,6 @@ async def memory_put(
                     first_org, info.sub,
                 )
                 source_dict["org_id"] = first_org
-        elif request.visibility == "user":
-            # WHY(fix-user-visibility-rest): _scope_filter matches
-            # `s.visibility='user' AND s.user_id=?` — without stamping
-            # user_id here the column stays NULL and the filter never
-            # matches, so 'user' cross-device visibility is fully broken
-            # for REST callers. MCP path handles this via
-            # resolve_write_visibility; mirror it here.
-            source_dict["user_id"] = info.sub
         elif request.org_id:
             # Honor explicit org_id even outside visibility=org (e.g. when
             # caller wants to stamp the source for later promotion).
@@ -961,12 +981,14 @@ async def patch_source_visibility(
     WHY(L8, v2-workspaces): without ownership-check this endpoint allowed
     cross-tenant vandalism — any authed caller could flip visibility on
     another user's sources. V2 enforces: owner (same workspace OR same sub)
-    or admin (scope * / admin). 'user' added to the visibility whitelist.
+    or admin (scope * / admin).
+    WHY(tenancy phase A T6): allowlist shrunk to 3 canonical values matching
+    what scope_filter reads — 'user' was write-accepted but read-invisible.
     """
-    if request.visibility not in ("private", "org", "public", "user"):
+    if request.visibility not in ("private", "org", "public"):
         raise HTTPException(
             status_code=400,
-            detail="visibility must be private|org|public|user",
+            detail="visibility must be private|org|public",
         )
     conn = _get_conn()
     row = conn.execute(
@@ -994,6 +1016,28 @@ async def patch_source_visibility(
         (request.visibility, request.org_id, source_id),
     )
     conn.commit()
+
+    # WHY(tenancy phase A): SQLite is SoT for visibility, but vector search
+    # filters in Chroma — without this sync a freshly patched source stays
+    # invisible on the vector path until the next full reindex.
+    try:
+        _cids = [
+            (rr["chunk_id"] if hasattr(rr, "keys") else rr[0])
+            for rr in conn.execute(
+                "SELECT chunk_id FROM chunks WHERE source_id = ?", (source_id,)
+            ).fetchall()
+        ]
+        if _cids:
+            _get_chroma().update(
+                ids=_cids,
+                metadatas=[
+                    {"visibility": request.visibility, "org_id": request.org_id or ""}
+                    for _ in _cids
+                ],
+            )
+    except Exception as _e:
+        _log.warning("chroma visibility-sync failed for %s: %s", source_id, _e)
+
     return {"source_id": source_id, "visibility": request.visibility, "org_id": request.org_id}
 
 
@@ -1045,6 +1089,27 @@ async def share_source(
         (new_vis, new_org, source_id),
     )
     conn.commit()
+
+    # WHY(tenancy phase A): keep Chroma metadata in sync so vector searches
+    # immediately reflect the new visibility without a full reindex.
+    try:
+        _cids = [
+            (rr["chunk_id"] if hasattr(rr, "keys") else rr[0])
+            for rr in conn.execute(
+                "SELECT chunk_id FROM chunks WHERE source_id = ?", (source_id,)
+            ).fetchall()
+        ]
+        if _cids:
+            _get_chroma().update(
+                ids=_cids,
+                metadatas=[
+                    {"visibility": new_vis, "org_id": new_org or ""}
+                    for _ in _cids
+                ],
+            )
+    except Exception as _e:
+        _log.warning("chroma visibility-sync failed for %s: %s", source_id, _e)
+
     return {"source_id": source_id, "visibility": new_vis, "org_id": new_org, "shared": True}
 
 

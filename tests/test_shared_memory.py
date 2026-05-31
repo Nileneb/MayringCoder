@@ -75,10 +75,11 @@ def test_token_info_org_id_defaults_to_none():
 # ---------------------------------------------------------------------------
 
 def _insert_chunk(db: DBAdapter, source_id: str, workspace_id: str,
-                  visibility: str = "private", org_id: str | None = None) -> str:
+                  visibility: str = "private", org_id: str | None = None,
+                  user_id: str | None = None) -> str:
     src = Source(source_id=source_id, source_type="note", repo="r", path="p")
     upsert_source(db, src, workspace_id=workspace_id,
-                  visibility=visibility, org_id=org_id)
+                  visibility=visibility, org_id=org_id, user_id=user_id)
     chunk_id = f"chk-{source_id}"
     now = datetime.datetime.utcnow().isoformat()
     chunk = Chunk(
@@ -114,13 +115,16 @@ def test_org_chunk_hidden_when_org_differs():
     assert cid not in results
 
 
-def test_private_chunk_workspace_isolated():
+def test_private_chunk_user_isolated():
+    # private = user_id-scoped (same human, all workspaces); NOT workspace-scoped.
     from mayring_core.memory.retrieval import _scope_filter
     db = _db()
-    cid = _insert_chunk(db, "priv-src", "ws-owner", visibility="private")
-    results = _scope_filter(db, workspace_id="ws-other", org_id=None)
+    cid = _insert_chunk(db, "priv-src", "ws-owner", visibility="private", user_id="u-owner")
+    # different user cannot see it, even from the same workspace
+    results = _scope_filter(db, workspace_id="ws-owner", org_id=None, user_id="u-other")
     assert cid not in results
-    results_own = _scope_filter(db, workspace_id="ws-owner", org_id=None)
+    # owner sees it across workspaces
+    results_own = _scope_filter(db, workspace_id="ws-other", org_id=None, user_id="u-owner")
     assert cid in results_own
 
 

@@ -52,8 +52,12 @@ def _seed_chunk(conn, chunk_id: str, source_id: str, workspace_id: str,
                 is_active: int = 1) -> None:
     from mayring_core.memory.store import upsert_source, insert_chunk
     from mayring_core.memory.schema import Source, Chunk
+    # WHY(tenancy phase A): visibility='private' is now user_id-scoped (not
+    # workspace-scoped). The /memory/changes caller stub has sub="0", so seed the
+    # source with user_id="0" — otherwise the private arm (s.user_id = caller_sub)
+    # never matches and the cross-device sync test sees nothing.
     upsert_source(conn, Source(source_id=source_id, source_type="note", repo="r", path="p"),
-                  workspace_id=workspace_id, visibility=visibility)
+                  workspace_id=workspace_id, visibility=visibility, user_id="0")
     conn.execute(
         """INSERT OR IGNORE INTO chunks
            (chunk_id, source_id, text, workspace_id, created_at, is_active, text_hash, dedup_key)
