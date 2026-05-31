@@ -1210,7 +1210,11 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
                            f"PATCH visibility failed http={code3}: {body3}")
 
     # 3) Search for the marker token — both should surface for the
-    #    same user/workspace that ingested them.
+    #    same user/workspace that ingested them.  Use _search_finds (retry)
+    #    for the PRIVATE source to absorb multi-worker commit-propagation lag
+    #    (WHY: chk_0aaf83324a0404c3 — one-shot search false-RED under 4 workers).
+    private_visible = _search_finds(api, token, f"marker token {suffix}", priv_id)
+    # Public source: one-shot is fine — public chunks are always visible.
     code4, body4, _ = _http(
         "POST", f"{api}/memory/search", token,
         body={"query": f"marker token {suffix}", "top_k": 5,
@@ -1221,7 +1225,6 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
         return CheckResult("visibility_isolation", False,
                            f"search failed http={code4}")
     src_ids_seen = {r["source_id"] for r in (body4 or {}).get("results", [])}
-    private_visible = priv_id in src_ids_seen
     public_visible = pub_id in src_ids_seen
 
     return CheckResult(
@@ -2160,16 +2163,21 @@ def check_public_visibility(api: str, token: str) -> CheckResult:
 
 
 def check_user_cross_device(api: str, token: str) -> CheckResult:
-    """Same human (same sub) on two devices/workspaces: ingest visibility='user'
+    """Same human (same sub) on two devices/workspaces: ingest visibility='private'
     as sub=S in WA → search as sub=S in WB MUST see it; a different sub must
-    NOT. Proves 'user' visibility = cross-device-of-same-human."""
+    NOT. Proves 'private' visibility = user_id-scoped = cross-device-of-same-human.
+
+    WHY(tenancy-T7 migration): 'user' was a legacy value rejected by the 3-value
+    allowlist since T6.  'private' is the canonical replacement — same semantics
+    (user_id-scoped), correct vocabulary.
+    """
     suffix = int(time.time())
     sub_s = f"cd-{suffix}"
     wa, wb = f"cda-{suffix}", f"cdb-{suffix}"
     sid = f"smoke:user-xd:{suffix}"
     code1, _, _ = _http("POST", f"{api}/memory/put", token,
         body={"source_id": sid, "source_type": "note", "repo": "smoke-xd",
-              "path": "p", "content": f"USER-XD {suffix}", "visibility": "user", "categorize": False},
+              "path": "p", "content": f"USER-XD {suffix}", "visibility": "private", "categorize": False},
         extra_headers=_act_as(sub_s, workspace=wa), timeout=15.0)
     if code1 != 200:
         return CheckResult("user_cross_device", False, f"ingest failed http={code1}")

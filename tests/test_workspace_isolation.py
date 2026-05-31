@@ -14,10 +14,17 @@ from mayring_core.memory.store import init_memory_db, insert_chunk, upsert_sourc
 
 @pytest.fixture
 def memory_db(tmp_path):
-    """Isolated DB with seed chunks for two workspaces."""
+    """Isolated DB with seed chunks for two workspaces.
+
+    WHY(tenancy-T7 migration): 3-value visibility model — private chunks need
+    user_id to be visible.  Each tenant gets its own user_id so _scope_filter
+    can enforce isolation.  The map TENANT_USER is used by the tests that call
+    _scope_filter so they pass the matching user_id.
+    """
     conn = init_memory_db(tmp_path / "memory.db")
 
     for ws in ("tenant-a", "tenant-b"):
+        user_id = f"u-{ws}"  # deterministic; tests reference via TENANT_USER
         src = Source(
             source_id=f"repo-file:{ws}.py",
             source_type="repo_file",
@@ -25,6 +32,8 @@ def memory_db(tmp_path):
             path=f"{ws}.py",
             content_hash=f"sha256:{ws}",
             captured_at=datetime.now(timezone.utc).isoformat(),
+            visibility="private",
+            user_id=user_id,
         )
         upsert_source(conn, src, workspace_id=ws)
 
@@ -46,25 +55,37 @@ def memory_db(tmp_path):
     return conn
 
 
+# user_id for each tenant workspace — callers must pass these to _scope_filter
+_TENANT_USER = {"tenant-a": "u-tenant-a", "tenant-b": "u-tenant-b"}
+
+
 # ---------------------------------------------------------------------------
 # Retrieval-layer: _scope_filter enforces workspace_id
 # ---------------------------------------------------------------------------
 
 def test_tenant_a_sees_only_own_chunks(memory_db):
-    ids = _scope_filter(memory_db, workspace_id="tenant-a")
+    ids = _scope_filter(memory_db, workspace_id="tenant-a",
+                        user_id=_TENANT_USER["tenant-a"])
     assert ids == ["chk_tenant-a_1"]
 
 
 def test_tenant_b_sees_only_own_chunks(memory_db):
-    ids = _scope_filter(memory_db, workspace_id="tenant-b")
+    ids = _scope_filter(memory_db, workspace_id="tenant-b",
+                        user_id=_TENANT_USER["tenant-b"])
     assert ids == ["chk_tenant-b_1"]
 
 
-def test_visibility_user_crosses_workspaces_for_same_user(tmp_path):
+def test_visibility_private_crosses_workspaces_for_same_user(tmp_path):
     """Issue: claude.ai (workspace-A) and claude-cli (workspace-B) belong to the
     same human user (JWT.sub='42'). A source ingested in workspace-A with
-    visibility='user' must surface in a search from workspace-B with the same
-    user_id — without falling back to 'public'."""
+    visibility='private' must surface in a search from workspace-B with the same
+    user_id — without falling back to 'public'.
+
+    WHY(tenancy-T7 migration): 'user' was a legacy visibility value.  The 3-value
+    model replaces it with 'private' (user_id-scoped); the cross-workspace
+    cross-device property is identical — private=user_id-scoped means the same
+    human sees their chunks from any workspace, not just the ingesting one.
+    """
     conn = init_memory_db(tmp_path / "user_share.db")
 
     src = Source(
@@ -74,7 +95,7 @@ def test_visibility_user_crosses_workspaces_for_same_user(tmp_path):
         path="note",
         content_hash="sha256:abc",
         captured_at=datetime.now(timezone.utc).isoformat(),
-        visibility="user",
+        visibility="private",
         user_id="42",
     )
     upsert_source(conn, src, workspace_id="workspace-A")
@@ -187,7 +208,7 @@ def test_chroma_filter_failure_skips_vector_not_leaks(memory_db, monkeypatch):
         memory_db,
         chroma_collection=FilterFailingChroma(),
         ollama_url="http://fake",
-        opts={"workspace_id": "tenant-a", "top_k": 5},
+        opts={"workspace_id": "tenant-a", "user_id": _TENANT_USER["tenant-a"], "top_k": 5},
     )
     result_ids = {r.chunk_id for r in results}
     assert "chk_tenant-b_1" not in result_ids, "tenant-b data leaked via chroma fallback"
@@ -214,7 +235,7 @@ def test_chroma_workspace_a_cannot_see_workspace_b_data(memory_db, monkeypatch):
         memory_db,
         chroma_collection=LeakyChroma(),
         ollama_url="http://fake",
-        opts={"workspace_id": "tenant-a", "top_k": 5},
+        opts={"workspace_id": "tenant-a", "user_id": _TENANT_USER["tenant-a"], "top_k": 5},
     )
     result_ids = {r.chunk_id for r in results}
     assert "chk_tenant-b_1" not in result_ids, "tenant-b chunk leaked into tenant-a results"

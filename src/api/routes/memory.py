@@ -486,14 +486,18 @@ async def memory_put(
             # DB-level default (NULL), which causes chunks to be invisible to
             # the scope_filter on reads.  personal → private (user_id-scoped),
             # org-artig → org (org_id=workspace_id).
-            from mayring_core.identity.workspace_resolver import workspace_kind
+            from mayring_core.identity.workspace_resolver import workspace_kind, workspace_owner
             _kind = workspace_kind(_get_conn(), workspace_id)
             if _kind in ("team", "project", "organization"):
                 source_dict["visibility"] = "org"
                 source_dict["org_id"] = workspace_id
             else:  # 'user' / 'system' / unknown → personal default
                 source_dict["visibility"] = "private"
-                source_dict["user_id"] = info.sub
+                # WHY(tenancy-T7, owner-fallback): user-agnostic service ingests
+                # (Service-Token, info.sub=None — repo-events, ambient, watcher)
+                # would write private+user_id=NULL → invisible to everyone.  Fall
+                # back to the workspace owner so the chunk is retrievable.
+                source_dict["user_id"] = info.sub or workspace_owner(_get_conn(), workspace_id)
         if request.visibility == "org":
             org_member_ids = set(info.org_ids)
             if request.org_id:
