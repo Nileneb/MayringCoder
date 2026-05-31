@@ -157,7 +157,12 @@ class RelayAgentExecutor(AgentExecutor):
                 await updater.add_artifact(
                     [new_text_part(text)], name="research_result", artifact_id=task_id,
                 )
-                await updater.complete()
+                # WHY(2026-05-31): carry the result in the terminal completed event's
+                # message too — not just the artifact. Langdock (and clients that only
+                # render the final status-update) showed "task done" with no text
+                # because complete() emitted an empty terminal message; the artifact
+                # event was ignored. Belt-and-suspenders: artifact + status message.
+                await updater.complete(_agent_message(task_id, text))
                 return
             if job is not None and job.status == "failed":
                 await updater.failed(_agent_message(task_id, job.error or "job failed"))

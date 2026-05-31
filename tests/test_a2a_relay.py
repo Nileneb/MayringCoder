@@ -96,6 +96,13 @@ def test_relay_executor_streams_result_artifact(db):
     # the result reached the stream as an artifact (not just a status note)
     blob = " ".join(str(e) for e in q.events)
     assert "STREAM RESULT 77" in blob, f"result not streamed as artifact: {blob[:400]}"
+    # WHY(2026-05-31): the terminal completed status-update MUST also carry the
+    # result text (Langdock renders only the final status message, not the
+    # artifact event). Find the completed event and assert its message has the text.
+    completed = [e for e in q.events if "COMPLETED" in str(e) or "completed" in str(e)]
+    assert completed, "no completed event emitted"
+    assert any("STREAM RESULT 77" in str(e) for e in completed), \
+        "completed event must carry the result in its status message, not just the artifact"
     job = next(j for j in pi_jobs.list_recent(db_path=db) if j.job_id == task_id)
     assert job.scope == "cloud" and job.capability_required == "research"
     assert "Quantencomputing" in job.task_text
