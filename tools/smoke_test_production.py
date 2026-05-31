@@ -402,6 +402,10 @@ def check_memory_search_returns_vector_hits(api: str, token: str) -> CheckResult
                   "top_k": 5, "include_text": False, "llm_prefilter": False},
             timeout=15.0,
             workspace_id=SMOKE_VECTOR_WORKSPACE,
+            # WHY(tenancy phase A): workspace content is now private/user_id-scoped;
+            # the bare service token (no sub) only sees public → vector candidates
+            # are sparse/far. Act as the owner so private chunks are searchable.
+            extra_headers=_act_as(SMOKE_VECTOR_OWNER, workspace=SMOKE_VECTOR_WORKSPACE),
         )
         if code != 200:
             time.sleep(2)
@@ -2088,9 +2092,13 @@ def check_reranker_cat_match_fires(api: str, token: str) -> CheckResult:
     fired = 0
     n = 0
     for q in themes:
+        # WHY(tenancy phase A): categorized content lives in the owner's now
+        # user_id-scoped workspace; search as the owner so cat_match can fire.
         code, body, _ = _http("POST", f"{api}/memory/search", token,
                               body={"query": q, "top_k": 10, "include_text": False,
-                                    "llm_prefilter": False}, timeout=40.0)
+                                    "llm_prefilter": False}, timeout=40.0,
+                              workspace_id=SMOKE_VECTOR_WORKSPACE,
+                              extra_headers=_act_as(SMOKE_VECTOR_OWNER, workspace=SMOKE_VECTOR_WORKSPACE))
         if code != 200 or not isinstance(body, dict):
             return CheckResult("reranker_cat_match_fires", False, f"search http={code}")
         results = body.get("results", []) or []
