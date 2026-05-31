@@ -1132,15 +1132,20 @@ def _http_await_source(method: str, url: str, token: str, *, body=None,
     return code, body_r, hdrs
 
 
-def _act_as(sub: str, *, orgs: tuple[str, ...] = (), workspace: str | None = None) -> dict:
+def _act_as(sub: str, *, orgs: tuple[str, ...] = (), workspace: str | None = None,
+            role: str | None = None) -> dict:
     """Build X-Act-As-* headers so a privileged smoke token simulates another
     caller. Requires MAYRING_ALLOW_ACT_AS=1 on the server (set in the smoke
-    job env). workspace defaults to the caller's home if omitted."""
+    job env). workspace defaults to the caller's home if omitted. role (tenancy
+    phase B) gives the simulated member a role in `workspace` so role-gated
+    setup writes (write/share_org/share_public) are exercisable."""
     h = {"X-Act-As-Sub": sub}
     if orgs:
         h["X-Act-As-Orgs"] = ",".join(orgs)
     if workspace:
         h["X-Act-As-Workspace"] = workspace
+    if role:
+        h["X-Act-As-Role"] = role
     return h
 
 
@@ -2180,13 +2185,13 @@ def check_private_isolation(api: str, token: str) -> CheckResult:
     code1, body1, _ = _http("POST", f"{api}/memory/put", token,
         body={"source_id": sid, "source_type": "note", "repo": "smoke-iso",
               "path": "p", "content": f"PRIV-ISO {suffix}", "categorize": False},
-        extra_headers=_act_as("A", workspace=wa), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",workspace=wa), timeout=15.0)
     if code1 != 200:
         return CheckResult("private_isolation", False, f"ingest A failed http={code1}: {body1}")
     # WHY(fix4-isolation): confirm owner sees it first (proves propagation),
     # then check B cannot — so not-found is real isolation, not commit lag.
     owner_sees = _search_finds(api, token, f"PRIV-ISO {suffix}", sid,
-                               extra_headers=_act_as("A", workspace=wa))
+                               extra_headers=_act_as("A", role="admin",workspace=wa))
     if not owner_sees:
         return CheckResult("private_isolation", False,
             f"INCONCLUSIVE: owner A could not find the source — "
@@ -2206,12 +2211,12 @@ def check_public_visibility(api: str, token: str) -> CheckResult:
     code1, _, _ = _http("POST", f"{api}/memory/put", token,
         body={"source_id": sid, "source_type": "note", "repo": "smoke-pub",
               "path": "p", "content": f"PUB-VIS {suffix}", "categorize": False},
-        extra_headers=_act_as("A", workspace=wa), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",workspace=wa), timeout=15.0)
     if code1 != 200:
         return CheckResult("public_visibility", False, f"ingest A failed http={code1}")
     code2, body2, _ = _http_await_source("POST",
         f"{api}/sources/{urllib.parse.quote(sid, safe='')}/share", token, body={},
-        extra_headers=_act_as("A", workspace=wa))
+        extra_headers=_act_as("A", role="admin",workspace=wa))
     if code2 != 200 or (body2 or {}).get("visibility") != "public":
         return CheckResult("public_visibility", False, f"share failed http={code2}: {body2}")
     found = _search_finds(api, token, f"PUB-VIS {suffix}", sid,
@@ -2266,7 +2271,7 @@ def check_org_member_visibility(api: str, token: str) -> CheckResult:
         body={"source_id": sid, "source_type": "note", "repo": "smoke-org",
               "path": "p", "content": f"ORG-VIS {suffix}",
               "visibility": "org", "org_id": org, "categorize": False},
-        extra_headers=_act_as("A", orgs=(org,), workspace=f"oa-{suffix}"), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",orgs=(org,), workspace=f"oa-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("org_member_visibility", False, f"ingest failed http={code1}: {body1}")
     found = _search_finds(api, token, f"ORG-VIS {suffix}", sid,
@@ -2285,13 +2290,13 @@ def check_org_non_member_blocked(api: str, token: str) -> CheckResult:
         body={"source_id": sid, "source_type": "note", "repo": "smoke-orgb",
               "path": "p", "content": f"ORG-BLOCK {suffix}",
               "visibility": "org", "org_id": org, "categorize": False},
-        extra_headers=_act_as("A", orgs=(org,), workspace=f"oba-{suffix}"), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",orgs=(org,), workspace=f"oba-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("org_non_member_blocked", False, f"ingest failed http={code1}")
     # WHY(fix4-isolation): prove owner (A, member of org) sees the source before
     # asserting non-member C cannot — rules out commit-lag false-PASS.
     owner_sees = _search_finds(api, token, f"ORG-BLOCK {suffix}", sid,
-                               extra_headers=_act_as("A", orgs=(org,), workspace=f"oba-{suffix}"))
+                               extra_headers=_act_as("A", role="admin",orgs=(org,), workspace=f"oba-{suffix}"))
     if not owner_sees:
         return CheckResult("org_non_member_blocked", False,
             f"INCONCLUSIVE: owner A could not find source — "
@@ -2315,12 +2320,12 @@ def check_org_revoke_isolation(api: str, token: str) -> CheckResult:
         body={"source_id": sid, "source_type": "note", "repo": "smoke-orgr",
               "path": "p", "content": f"ORG-REVOKE {suffix}",
               "visibility": "org", "org_id": org, "categorize": False},
-        extra_headers=_act_as("A", orgs=(org,), workspace=f"ora-{suffix}"), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",orgs=(org,), workspace=f"ora-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("org_revoke_isolation", False, f"ingest failed http={code1}")
     # WHY(fix4-isolation): prove owner (A WITH org membership) sees source first.
     owner_sees = _search_finds(api, token, f"ORG-REVOKE {suffix}", sid,
-                               extra_headers=_act_as("A", orgs=(org,), workspace=f"ora-{suffix}"))
+                               extra_headers=_act_as("A", role="admin",orgs=(org,), workspace=f"ora-{suffix}"))
     if not owner_sees:
         return CheckResult("org_revoke_isolation", False,
             f"INCONCLUSIVE: owner A (with org) could not find source — "
@@ -2330,7 +2335,7 @@ def check_org_revoke_isolation(api: str, token: str) -> CheckResult:
     # workspace (ora-{suffix}) would allow a private-workspace fallback to mask
     # the org dimension — making the isolation check vacuous.
     still_sees = _search_finds(api, token, f"ORG-REVOKE {suffix}", sid,
-                               extra_headers=_act_as("A", workspace=f"orr-{suffix}"), tries=2)
+                               extra_headers=_act_as("A", role="admin",workspace=f"orr-{suffix}"), tries=2)
     return CheckResult("org_revoke_isolation", not still_sees,
         f"sees_after_revoke={still_sees} (must be False)  marker={suffix}")
 
@@ -2344,7 +2349,7 @@ def check_patch_visibility_authz(api: str, token: str) -> CheckResult:
     code1, _, _ = _http("POST", f"{api}/memory/put", token,
         body={"source_id": sid, "source_type": "note", "repo": "smoke-authz",
               "path": "p", "content": f"AUTHZ {suffix}", "categorize": False},
-        extra_headers=_act_as("A", workspace=f"aza-{suffix}"), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",workspace=f"aza-{suffix}"), timeout=15.0)
     if code1 != 200:
         return CheckResult("patch_visibility_authz", False, f"ingest failed http={code1}")
     code2, body2, _ = _http_await_source("PATCH",
@@ -2369,13 +2374,13 @@ def check_multi_org_membership(api: str, token: str) -> CheckResult:
             body={"source_id": sid, "source_type": "note", "repo": "smoke-multi",
                   "path": "p", "content": f"MULTI-ORG {suffix} {org}",
                   "visibility": "org", "org_id": org, "categorize": False},
-            extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=15.0)
+            extra_headers=_act_as("A", role="admin",orgs=(ox, oy), workspace=ws), timeout=15.0)
         if code != 200:
             return CheckResult("multi_org_membership", False, f"ingest {org} failed http={code}")
     found_x = _search_finds(api, token, f"MULTI-ORG {suffix}", sx,
-                            extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws))
+                            extra_headers=_act_as("A", role="admin",orgs=(ox, oy), workspace=ws))
     found_y = _search_finds(api, token, f"MULTI-ORG {suffix}", sy,
-                            extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws))
+                            extra_headers=_act_as("A", role="admin",orgs=(ox, oy), workspace=ws))
     both = found_x and found_y
     return CheckResult("multi_org_membership", both,
         f"sees_org_x={found_x}  sees_org_y={found_y} (both must be True)  marker={suffix}")
@@ -2390,12 +2395,12 @@ def check_intervention_todos_surface(api: str, token: str) -> CheckResult:
     code1, body1, _ = _http("POST", f"{api}/tasks", token,
         body={"title": title, "created_by": "agent", "tags": "agent",
               "external_id": f"smoke-{suffix}"},
-        extra_headers=_act_as("A", workspace=ws), timeout=12.0)
+        extra_headers=_act_as("A", role="admin",workspace=ws), timeout=12.0)
     if code1 != 200:
         return CheckResult("intervention_todos_surface", False,
                            f"create failed http={code1}: {body1}")
     code2, body2, _ = _http("GET", f"{api}/stats/igio-lens?limit=20", token,
-        extra_headers=_act_as("A", workspace=ws), timeout=12.0)
+        extra_headers=_act_as("A", role="admin",workspace=ws), timeout=12.0)
     todos = ((((body2 or {}).get("axes") or {}).get("intervention") or {}).get("todos")) or []
     found = any(t.get("title") == title for t in todos)
     return CheckResult("intervention_todos_surface", found,
@@ -2424,9 +2429,9 @@ def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
         body={"source_id": f"smoke:stats-ws:{suffix}", "source_type": "note",
               "repo": "smoke-stats-ws", "path": "p",
               "content": f"STATS-WS {suffix}", "categorize": False},
-        extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=15.0)
+        extra_headers=_act_as("A", role="admin",orgs=(ox, oy), workspace=ws), timeout=15.0)
     code, body, _ = _http("GET", f"{api}/stats/workspaces", token,
-        extra_headers=_act_as("A", orgs=(ox, oy), workspace=ws), timeout=12.0)
+        extra_headers=_act_as("A", role="admin",orgs=(ox, oy), workspace=ws), timeout=12.0)
     if code != 200 or not isinstance(body, dict):
         return CheckResult("stats_workspaces_lists_all", False, f"http={code} body={body}")
     ids = {w.get("workspace_id") for w in body.get("workspaces", [])}

@@ -36,6 +36,7 @@ def _maybe_act_as(
     sub: object,
     orgs: object,
     workspace: object,
+    role: object = None,
 ) -> TokenInfo:
     """Admin/service-only test harness: simulate another caller so the prod
     smoke can prove cross-tenant isolation.
@@ -51,7 +52,8 @@ def _maybe_act_as(
     sub = _coerce_header(sub)
     orgs = _coerce_header(orgs)
     workspace = _coerce_header(workspace)
-    if not (sub or orgs or workspace):
+    role = _coerce_header(role)
+    if not (sub or orgs or workspace or role):
         return info
     if os.getenv("MAYRING_ALLOW_ACT_AS", "").lower() not in ("1", "true", "yes"):
         return info
@@ -62,6 +64,12 @@ def _maybe_act_as(
         Membership(id=o, type="organization", role="viewer") for o in org_tuple
     )
     ws = workspace or info.workspace_id
+    # WHY(tenancy phase B): let the harness simulate a member with a ROLE for its
+    # active workspace, so role-gated paths (write/share/manage_*) are testable.
+    # Still on the privilege-dropped synthetic identity — no escalation (the gate
+    # above already requires a privileged caller + MAYRING_ALLOW_ACT_AS).
+    if role:
+        memberships = (Membership(id=ws, type="organization", role=role),) + memberships
     return TokenInfo(
         workspace_id=ws,
         scopes=("mcp:memory",),
@@ -76,6 +84,7 @@ async def get_token_info(
     x_act_as_sub: str | None = Header(default=None, alias="X-Act-As-Sub"),
     x_act_as_orgs: str | None = Header(default=None, alias="X-Act-As-Orgs"),
     x_act_as_workspace: str | None = Header(default=None, alias="X-Act-As-Workspace"),
+    x_act_as_role: str | None = Header(default=None, alias="X-Act-As-Role"),
 ) -> TokenInfo:
     """Validate Bearer token — accepts RS256 JWT (users) or MCP_SERVICE_TOKEN.
 
@@ -102,7 +111,7 @@ async def get_token_info(
                 detail="Invalid or expired token",
             )
         info = validated
-    return _maybe_act_as(info, x_act_as_sub, x_act_as_orgs, x_act_as_workspace)
+    return _maybe_act_as(info, x_act_as_sub, x_act_as_orgs, x_act_as_workspace, x_act_as_role)
 
 
 async def get_workspace(
