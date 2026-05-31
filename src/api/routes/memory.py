@@ -498,6 +498,13 @@ async def memory_put(
                 # would write private+user_id=NULL → invisible to everyone.  Fall
                 # back to the workspace owner so the chunk is retrievable.
                 source_dict["user_id"] = info.sub or workspace_owner(_get_conn(), workspace_id)
+        if request.visibility == "private":
+            # WHY(tenancy phase A): explicit visibility='private' must stamp
+            # user_id so _scope_filter's `s.visibility='private' AND s.user_id=?`
+            # can match on cross-device reads.  Without this stamp the chunk is
+            # visible to nobody.  Fall back to workspace owner for service tokens.
+            from mayring_core.identity.workspace_resolver import workspace_owner
+            source_dict["user_id"] = info.sub or workspace_owner(_get_conn(), workspace_id)
         if request.visibility == "org":
             org_member_ids = set(info.org_ids)
             if request.org_id:

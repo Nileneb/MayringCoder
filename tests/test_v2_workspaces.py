@@ -223,18 +223,23 @@ class TestScopeFilterOrgIds:
         assert cid not in results
 
     def test_scope_filter_backward_compat_no_memberships(self):
-        """Caller ohne org-memberships sieht nur public + own private."""
+        """Caller ohne org-memberships sieht public + private mit passender user_id."""
         from mayring_core.memory.retrieval import _scope_filter
         db = _db()
         cid_pub = _insert_chunk(db, "pub", "ws-other", visibility="public")
-        cid_priv = _insert_chunk(db, "own", "ws-bene", visibility="private")
+        cid_priv = _insert_chunk(db, "own", "ws-bene", visibility="private", user_id="u1")
         cid_org = _insert_chunk(db, "org", "ws-other", visibility="org", org_id="org-x")
 
-        # No org_ids passed → only public + own private
-        results = _scope_filter(db, workspace_id="ws-bene")
+        # user_id provided → private chunk with matching user_id is visible
+        results = _scope_filter(db, workspace_id="ws-bene", user_id="u1")
         assert cid_pub in results
         assert cid_priv in results
         assert cid_org not in results
+
+        # No user_id → private chunks never match (new 3-value model)
+        results_no_user = _scope_filter(db, workspace_id="ws-bene")
+        assert cid_pub in results_no_user
+        assert cid_priv not in results_no_user
 
     def test_scope_filter_legacy_org_id_single_still_works(self):
         """Backward-Compat: single org_id-Argument bleibt akzeptiert."""
@@ -381,23 +386,23 @@ class TestPatchVisibilityAuthorization:
         _deps._conn = None
 
     def test_patch_visibility_user_value_accepted(self):
-        """V2: 'user' must be a valid visibility option."""
+        """V2: 'private' (cross-device-same-human) must be a valid visibility option."""
         from fastapi.testclient import TestClient
         db = _db()
         upsert_source(
             db, Source(source_id="s4", source_type="note", repo="", path="x"),
-            workspace_id="ws-owner", visibility="private",
+            workspace_id="ws-owner", visibility="public",
         )
         ti = TokenInfo(workspace_id="ws-owner", sub="42", scopes=("mcp:memory",))
         app = self._setup_app_with_token(ti, db)
         client = TestClient(app)
         resp = client.patch(
             "/sources/s4/visibility",
-            json={"visibility": "user", "org_id": None},
+            json={"visibility": "private", "org_id": None},
             headers={"Authorization": "Bearer test"},
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["visibility"] == "user"
+        assert resp.json()["visibility"] == "private"
         app.dependency_overrides.clear()
         import src.api.dependencies as _deps
         _deps._conn = None
@@ -417,12 +422,12 @@ class TestSyncRespectsOrgUserVisibility:
         import src.api.dependencies as _deps
 
         db = _db()
-        # 4 chunks: public, private-own, private-other, org-member, user-own
+        # 5 chunks: public, private-own-ws, private-other-ws, org-member, private-same-user-other-ws
         cid_pub = _insert_chunk(db, "pub", "ws-other", visibility="public")
-        cid_own = _insert_chunk(db, "own", "ws-bene", visibility="private")
-        cid_other = _insert_chunk(db, "other", "ws-other", visibility="private")
+        cid_own = _insert_chunk(db, "own", "ws-bene", visibility="private", user_id="42")
+        cid_other = _insert_chunk(db, "other", "ws-other", visibility="private", user_id="99")
         cid_org = _insert_chunk(db, "org", "ws-acme", visibility="org", org_id="org-acme")
-        cid_user = _insert_chunk(db, "user", "ws-other-of-bene", visibility="user", user_id="42")
+        cid_user = _insert_chunk(db, "user", "ws-other-of-bene", visibility="private", user_id="42")
 
         ti = TokenInfo(
             workspace_id="ws-bene",
@@ -451,7 +456,7 @@ class TestSyncRespectsOrgUserVisibility:
             assert cid_own in ids
             assert cid_other not in ids   # other-tenant private must not leak
             assert cid_org in ids          # member of org-acme
-            assert cid_user in ids         # same user across workspaces
+            assert cid_user in ids         # private+user_id=42 visible for same user across workspaces
 
         app.dependency_overrides.clear()
         _deps._conn = None
@@ -556,16 +561,16 @@ class TestIngestOrgIdResolution:
 
 
 class TestIngestUserIdResolution:
-    """L3 FIX1: visibility='user' bei /memory/put muss user_id aus TokenInfo.sub stempeln.
+    """L3 FIX1: visibility='private' bei /memory/put muss user_id aus TokenInfo.sub stempeln.
 
-    Ohne diesen Stamp: _scope_filter's `s.visibility='user' AND s.user_id=?`
-    findet nie einen Match → 'user'-Visibility (cross-device-of-same-human) ist
+    Ohne diesen Stamp: _scope_filter's `s.visibility='private' AND s.user_id=?`
+    findet nie einen Match → 'private'-Visibility (cross-device-of-same-human) ist
     für REST-Caller komplett gebrochen. MCP-Pfad tut dies korrekt via
     resolve_write_visibility; REST-Pfad war blind dafür.
     """
 
     def test_ingest_user_visibility_stamps_user_id(self, monkeypatch):
-        """visibility='user' → source_dict bekommt user_id == caller.sub."""
+        """visibility='private' → source_dict bekommt user_id == caller.sub."""
         from fastapi.testclient import TestClient
         from src.api.server import app
         from src.api.auth import get_token_info, get_workspace
@@ -599,22 +604,22 @@ class TestIngestUserIdResolution:
             json={
                 "source_id": "s-user-vis-1",
                 "content": "cross-device note",
-                "visibility": "user",
+                "visibility": "private",
             },
             headers={"Authorization": "Bearer test"},
         )
         assert resp.status_code == 200, resp.text
-        assert captured["source_dict"].get("visibility") == "user"
+        assert captured["source_dict"].get("visibility") == "private"
         assert captured["source_dict"].get("user_id") == "42", (
             "user_id must be stamped from TokenInfo.sub so _scope_filter "
-            "'s.visibility=user AND s.user_id=?' can match on cross-device reads"
+            "'s.visibility=private AND s.user_id=?' can match on cross-device reads"
         )
 
         app.dependency_overrides.clear()
         _deps._conn = None
 
-    def test_ingest_non_user_visibility_does_not_stamp_user_id(self, monkeypatch):
-        """visibility='private' (not 'user') must NOT add user_id to source_dict."""
+    def test_ingest_non_private_visibility_does_not_stamp_user_id(self, monkeypatch):
+        """visibility='public' must NOT auto-stamp user_id — only 'private' does."""
         from fastapi.testclient import TestClient
         from src.api.server import app
         from src.api.auth import get_token_info, get_workspace
@@ -643,15 +648,15 @@ class TestIngestUserIdResolution:
         resp = client.post(
             "/memory/put",
             json={
-                "source_id": "s-private-1",
-                "content": "private note",
-                "visibility": "private",
+                "source_id": "s-public-1",
+                "content": "public note",
+                "visibility": "public",
             },
             headers={"Authorization": "Bearer test"},
         )
         assert resp.status_code == 200, resp.text
         assert "user_id" not in captured["source_dict"], (
-            "visibility='private' must not add user_id (only 'user' needs it)"
+            "visibility='public' must not add user_id (only 'private' needs it)"
         )
 
         app.dependency_overrides.clear()

@@ -51,9 +51,9 @@ def seeded_db(tmp_path, monkeypatch) -> sqlite3.Connection:
     )
     conn.execute(
         "INSERT INTO sources (source_id, source_type, repo, path, captured_at, "
-        "                     workspace_id, visibility) "
-        "VALUES (?,?,?,?,?,?,?)",
-        ("repo:x:foo.py", "repo_file", "x", "foo.py", now, "user-2", "user"),
+        "                     workspace_id, visibility, user_id) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ("repo:x:foo.py", "repo_file", "x", "foo.py", now, "user-2", "private", "user-2"),
     )
     conn.execute(
         "INSERT INTO chunks (chunk_id, source_id, text, text_hash, created_at, "
