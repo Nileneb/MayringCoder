@@ -2749,6 +2749,35 @@ def _open_github_issue(failed: list[CheckResult], elapsed: float) -> bool:
     return False
 
 
+# WHY(#253): every smoke run created ephemeral `<prefix>-<ts>` workspaces (oa-,
+# aza-, moa-, swa-, …) and never cleaned them → 1856 junk workspaces in prod.
+# After the run we purge every smoke-shaped workspace via the admin endpoint so
+# the catalog stays clean. The shape can't match a real workspace (UUIDs start
+# with a digit) and a hard protected-set on the server refuses the real ones too.
+_SMOKE_WS_RE = re.compile(r"^[a-z][a-z0-9]*-\d{9,}$")
+_PROTECTED_WS = {"system", "public", "default", "bene:logs", "mayringcoder",
+                 "019d6933-002e-7153-a7df-f14e4c7d52b4",
+                 "019e14d6-0489-7348-bca8-e29c11293cb7"}
+
+
+def _teardown_smoke_workspaces(api: str, token: str) -> None:
+    code, body, _ = _http("GET", f"{api}/stats/workspaces", token)
+    if code != 200 or not isinstance(body, dict):
+        print(f"# teardown: /stats/workspaces {code}; skipping cleanup")
+        return
+    targets = [w["workspace_id"] for w in body.get("workspaces", [])
+               if _SMOKE_WS_RE.match(str(w.get("workspace_id", "")))
+               and w["workspace_id"] not in _PROTECTED_WS]
+    purged = 0
+    for ws in targets:
+        c, _, _ = _http("POST", f"{api}/stats/admin/purge-workspace", token,
+                        body={"workspace_id": ws})
+        if c == 200:
+            purged += 1
+    if targets:
+        print(f"# teardown: purged {purged}/{len(targets)} ephemeral smoke workspaces")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2807,6 +2836,9 @@ def main() -> int:
             break
         if args.pace > 0:
             time.sleep(args.pace)
+
+    # Self-clean ephemeral workspaces this run (and any prior runs) created (#253).
+    _teardown_smoke_workspaces(api, token)
 
     failed = [r for r in results if not r.passed]
     elapsed = time.time() - t_start
