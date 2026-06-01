@@ -187,10 +187,16 @@ def _research_card(base_url: str, model: str) -> AgentCard:
             "laptop-powered, async. Long-running tasks welcome."
         ),
         version="0.1.0",
-        # streaming=True: the result is produced async by the laptop worker, so we
-        # bridge its completion into an SSE stream (message/stream) — the client
-        # gets working keepalives → result artifact → completed without polling.
-        capabilities=AgentCapabilities(streaming=True, push_notifications=False),
+        # WHY(2026-06-01 langdock-block): streaming=False. Langdock's OWN reference
+        # A2A agent (github.com/Langdock/langdock-adk-a2a-agent agent_card.json)
+        # declares streaming:false → its client uses message/send (one blocking
+        # response), NOT message/stream (SSE). With streaming:true Langdock opened
+        # an SSE stream it then rejected with a generic "blocked by security
+        # measures" — even though our stream was spec-valid. execute() already
+        # blocks via _bridge until the laptop worker completes, so message/send
+        # returns the finished Task (artifact + status message) in one response,
+        # matching Langdock's synchronous-agent expectation.
+        capabilities=AgentCapabilities(streaming=False, push_notifications=False),
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         supported_interfaces=[AgentInterface(url=url, protocol_binding=TransportProtocol.JSONRPC)],
