@@ -23,7 +23,7 @@ from a2a.server.routes import (
     create_agent_card_routes,
     create_jsonrpc_routes,
 )
-from a2a.server.tasks import TaskStore, TaskUpdater
+from a2a.server.tasks import TaskStore
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -121,58 +121,40 @@ class RelayAgentExecutor(AgentExecutor):
 
     async def execute(self, context, event_queue) -> None:
         text = context.get_user_input()
-        # The handler assigns the A2A task_id; the executor must use it (it cannot
-        # override). Pin the cloud job_id to it so the worker's completion and the
-        # client's tasks/get(task_id) both resolve to the same job.
+        # The handler assigns the A2A task_id; pin the cloud job_id to it so the
+        # worker's completion and a client's tasks/get(task_id) resolve to the
+        # same job.
         task_id = context.task_id
-        context_id = context.context_id
         pi_jobs.insert_cloud_job(
             text, workspace_id=self._ws, model=self._model,
             capability_required=self._cap, timeout_s=self._timeout_s,
             job_id=task_id, db_path=self._db_path,
         )
-        await event_queue.enqueue_event(
-            new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED)
-        )
-        updater = TaskUpdater(event_queue, task_id, context_id)
-        await updater.start_work()
-        await self._bridge(updater, task_id)
+        # WHY(2026-06-01 langdock): Langdock uses message/send (card streaming=false)
+        # and renders the agent's MESSAGE result. When we returned a Task it only
+        # showed "completed the task successfully" with NO text (the artifact +
+        # status message were ignored) and long research even tripped a generic
+        # "blocked by security measures". The result is produced out-of-process by
+        # the laptop worker, so block here until it finishes, then return the result
+        # as a single agent text Message — which message/send surfaces as
+        # `result.kind=message` for the client to render. tasks/get still works:
+        # PiJobsTaskStore reconstructs the Task from the pi_jobs row.
+        result_text = await self._await_result(task_id)
+        await event_queue.enqueue_event(_agent_message(task_id, result_text))
 
-    async def _bridge(self, updater: "TaskUpdater", task_id: str) -> None:
-        # WHY(2026-05-31): the result is produced out-of-process by the laptop
-        # worker (via /pi_task_complete_cloud), so streaming clients (Langdock,
-        # capabilities.streaming=true) would otherwise only ever see the initial
-        # "working" event. Poll the cloud job and bridge its terminal state into
-        # this event stream: emit the result as an artifact + complete, or fail.
-        # Periodic "working" keepalives keep the SSE connection under nginx's
-        # 300s read timeout alive for long (multi-minute) research runs.
+    async def _await_result(self, task_id: str) -> str:
+        """Block until the out-of-process worker finishes; return its result text
+        (or a human-readable error/timeout note — never silent)."""
         start = time.monotonic()
-        last_beat = start
         while True:
             await asyncio.sleep(self._poll_interval)
             job = pi_jobs.get_job(task_id, workspace_id=self._ws, db_path=self._db_path)
-            now = time.monotonic()
             if job is not None and job.status == "completed":
-                text = _result_text(job.result_json or "")
-                await updater.add_artifact(
-                    [new_text_part(text)], name="research_result", artifact_id=task_id,
-                )
-                # WHY(2026-05-31): carry the result in the terminal completed event's
-                # message too — not just the artifact. Langdock (and clients that only
-                # render the final status-update) showed "task done" with no text
-                # because complete() emitted an empty terminal message; the artifact
-                # event was ignored. Belt-and-suspenders: artifact + status message.
-                await updater.complete(_agent_message(task_id, text))
-                return
+                return _result_text(job.result_json or "")
             if job is not None and job.status == "failed":
-                await updater.failed(_agent_message(task_id, job.error or "job failed"))
-                return
-            if now - start > self._timeout_s:
-                await updater.failed(_agent_message(task_id, "timeout: worker did not complete in time"))
-                return
-            if now - last_beat >= self._keepalive_s:
-                await updater.update_status(TaskState.TASK_STATE_WORKING)
-                last_beat = now
+                return job.error or "Recherche fehlgeschlagen."
+            if time.monotonic() - start > self._timeout_s:
+                return "Zeitüberschreitung: Der Worker hat die Recherche nicht rechtzeitig abgeschlossen."
 
     async def cancel(self, context, event_queue) -> None:
         return None

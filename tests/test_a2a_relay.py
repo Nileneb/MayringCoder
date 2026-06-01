@@ -66,16 +66,19 @@ class _Ctx:
         return "recherchiere Quantencomputing"
 
 
-def test_relay_executor_streams_result_artifact(db):
-    """execute() must enqueue the cloud job AND bridge the out-of-process worker's
-    completion into the event stream as a result artifact (streaming=true) — else a
-    streaming client (Langdock) only ever sees the initial 'working' event."""
+def test_relay_executor_returns_result_message(db):
+    """execute() must enqueue the cloud job, block until the out-of-process worker
+    completes, and return the result as a single agent MESSAGE (not a Task).
+
+    WHY(2026-06-01): Langdock uses message/send (card streaming=false) and renders
+    the agent's message result. A Task result only showed "completed" with no text.
+    """
     task_id = _Ctx.task_id
 
     async def scenario():
         ex = RelayAgentExecutor(workspace_id="ws1", model="qwen3.5:9b",
                                 capability="research", db_path=db,
-                                poll_interval=0.02, keepalive_s=0.05)
+                                poll_interval=0.02)
         q = _Q()
 
         async def completer():
@@ -84,7 +87,7 @@ def test_relay_executor_streams_result_artifact(db):
                 if any(j.job_id == task_id for j in pi_jobs.list_recent(db_path=db)):
                     pi_jobs.claim_cloud_next("wkr", capabilities=["research"],
                                              workspace_id="ws1", db_path=db)
-                    pi_jobs.complete_job(task_id, {"text": "STREAM RESULT 77"}, db_path=db)
+                    pi_jobs.complete_job(task_id, {"text": "SEND RESULT 77"}, db_path=db)
                     return
 
         await asyncio.wait_for(asyncio.gather(ex.execute(_Ctx(), q), completer()), timeout=10)
@@ -93,16 +96,12 @@ def test_relay_executor_streams_result_artifact(db):
     q = asyncio.run(scenario())
     # job was created with job_id == task_id
     assert any(j.job_id == task_id for j in pi_jobs.list_recent(db_path=db))
-    # the result reached the stream as an artifact (not just a status note)
-    blob = " ".join(str(e) for e in q.events)
-    assert "STREAM RESULT 77" in blob, f"result not streamed as artifact: {blob[:400]}"
-    # WHY(2026-05-31): the terminal completed status-update MUST also carry the
-    # result text (Langdock renders only the final status message, not the
-    # artifact event). Find the completed event and assert its message has the text.
-    completed = [e for e in q.events if "COMPLETED" in str(e) or "completed" in str(e)]
-    assert completed, "no completed event emitted"
-    assert any("STREAM RESULT 77" in str(e) for e in completed), \
-        "completed event must carry the result in its status message, not just the artifact"
+    # exactly one agent Message carrying the result text (no Task/status events)
+    assert len(q.events) == 1, f"expected one message event, got {len(q.events)}: {q.events}"
+    from a2a.types import Message
+    msg = q.events[0]
+    assert isinstance(msg, Message), f"executor must return a Message, got {type(msg)}"
+    assert "SEND RESULT 77" in str(msg), f"result text missing: {str(msg)[:300]}"
     job = next(j for j in pi_jobs.list_recent(db_path=db) if j.job_id == task_id)
     assert job.scope == "cloud" and job.capability_required == "research"
     assert "Quantencomputing" in job.task_text
