@@ -488,7 +488,17 @@ async def memory_put(
             # org-artig → org (org_id=workspace_id).
             from mayring_core.identity.workspace_resolver import workspace_kind, workspace_owner
             _kind = workspace_kind(_get_conn(), workspace_id)
-            if _kind in ("team", "project", "organization"):
+            # WHY(org chicken-egg 2026-06-01): on the FIRST write to an org
+            # workspace the local `workspaces` row doesn't exist yet, so
+            # workspace_kind()='unknown' → we'd default to private and never
+            # provision the team row (ensure_team_workspace below is gated on
+            # visibility=org) → the org workspace stays unrecognised forever and
+            # team memory never works. The JWT membership is authoritative for
+            # "this is an org workspace" (mirrors the MCP path's
+            # resolve_write_visibility, which already reads active_workspace_kind).
+            _jwt_org = any(m.id == workspace_id and m.type == "organization"
+                           for m in info.memberships)
+            if _kind in ("team", "project", "organization") or _jwt_org:
                 source_dict["visibility"] = "org"
                 source_dict["org_id"] = workspace_id
             else:  # 'user' / 'system' / unknown → personal default
