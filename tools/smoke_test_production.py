@@ -1177,13 +1177,22 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     asked for this domain to be tested as part of the live login flow.
     """
     suffix = int(time.time())
-    workspace_slug = "smoke-vis"
+    # WHY(#327 2026-06-01): route both markers into an EPHEMERAL `vis-<ts>`
+    # workspace so _teardown_smoke_workspaces purges them — earlier this check
+    # wrote into the real workspace and ~700 near-identical "marker token N"
+    # sources accumulated, out-ranking each run's fresh private marker in the
+    # top_k vector search (private_in_search=False, a false regression).
+    workspace_slug = f"vis-{suffix}"
+    # WHY(#327): a unique token per run so the new marker's embedding is
+    # distinctive and ranks #1 even if older markers linger — robust regardless
+    # of accumulation.
+    uniq = f"{suffix}-{os.urandom(3).hex()}"
     # WHY(tenancy phase A): 'private' is now user_id-scoped — the bare service
     # token has no human sub and can neither OWN nor FIND private content. Act
     # as a concrete user so the private source gets a user_id owner and the same
     # identity retrieves it. Requires MAYRING_ALLOW_ACT_AS=1 on the server.
     _vis_sub = f"smoke-vis-{suffix}"
-    _vis_hdr = _act_as(_vis_sub)
+    _vis_hdr = _act_as(_vis_sub, workspace=workspace_slug)
 
     # 1) Ingest a PRIVATE source (default visibility → private, owned by _vis_sub)
     priv_id = f"smoke:vis:private:{suffix}"
@@ -1194,7 +1203,7 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
             "source_type": "note",
             "repo": workspace_slug,
             "path": "private-marker",
-            "content": f"PRIVATE marker token {suffix}",
+            "content": f"PRIVATE marker {uniq}",
             "categorize": False,
         },
         timeout=15.0,
@@ -1213,10 +1222,11 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
             "source_type": "note",
             "repo": workspace_slug,
             "path": "public-marker",
-            "content": f"PUBLIC marker token {suffix}",
+            "content": f"PUBLIC marker {uniq}",
             "categorize": False,
         },
         timeout=15.0,
+        workspace_id=workspace_slug,
     )
     if code2 != 200:
         return CheckResult("visibility_isolation", False,
@@ -1233,12 +1243,12 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     #    same user/workspace that ingested them.  Use _search_finds (retry)
     #    for the PRIVATE source to absorb multi-worker commit-propagation lag
     #    (WHY: chk_0aaf83324a0404c3 — one-shot search false-RED under 4 workers).
-    private_visible = _search_finds(api, token, f"marker token {suffix}", priv_id,
+    private_visible = _search_finds(api, token, f"marker {uniq}", priv_id,
                                     extra_headers=_vis_hdr)
     # Public source: one-shot is fine — public chunks are always visible.
     code4, body4, _ = _http(
         "POST", f"{api}/memory/search", token,
-        body={"query": f"marker token {suffix}", "top_k": 5,
+        body={"query": f"marker {uniq}", "top_k": 5,
               "include_text": True, "llm_prefilter": False},
         timeout=12.0,
         extra_headers=_vis_hdr,
