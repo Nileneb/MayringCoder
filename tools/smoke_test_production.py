@@ -2068,13 +2068,19 @@ def check_ingest_links_categories(api: str, token: str) -> CheckResult:
     migration) — chunks would still ingest, but reranker-v3 cat_match would
     quietly never fire. Ingests a category-matching note, asserts
     category_links>=1, then invalidates the probe source (no prod pollution)."""
-    src = f"smoke:phase32-catlink:{int(time.time())}"
+    nonce = int(time.time())
+    src = f"smoke:phase32-catlink:{nonce}"
+    # WHY(#330 dedup): the content MUST be unique per run. Static probe text was
+    # content-deduped after the first-ever run → resolve_dedup skipped the chunk →
+    # chunks_to_categorize empty → the link path never ran → category_links=0
+    # forever (this check was red for that reason, NOT a broken linker). The nonce
+    # makes a genuinely new chunk each run so the deductive link actually fires.
     code, body, _ = _http(
         "POST", f"{api}/memory/put", token,
         body={
             "source_id": src, "source_type": "note", "categorize": False,
-            "content": ("User authentication and login: OAuth flow, JWT auth "
-                        "middleware, password hashing, session token validation. "
+            "content": (f"probe-{nonce}: User authentication and login: OAuth flow, "
+                        "JWT auth middleware, password hashing, session token validation. "
                         "Database access layer with SQL queries + connection pooling."),
         },
         timeout=40.0,
