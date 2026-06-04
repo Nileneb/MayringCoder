@@ -169,8 +169,12 @@ def test_stdio_mode_passes_through_requested():
 
 
 def test_effective_workspace_id_falls_back_on_stdio():
+    # No token → no longer the silent shared 'default' bucket (the per-device leak),
+    # but a clearly-marked, claimable unclaimed:<device> bucket (workspace-per-user A).
     mcp_mod._TOKEN_CTX.set(None)
-    assert mcp_mod._effective_workspace_id("default") == "default"
+    ws = mcp_mod._effective_workspace_id("default")
+    assert ws.startswith("unclaimed:")
+    assert ws != "default"
 
 
 def test_effective_workspace_id_uses_jwt_in_http():
