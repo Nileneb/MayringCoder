@@ -36,13 +36,31 @@ def _read_all() -> dict[str, Any]:
 
 
 def get_watched(workspace_id: str) -> list[dict[str, Any]]:
-    """All watched repos for the workspace (active + inactive), for the dashboard."""
+    """All watched repos for the workspace (active + inactive), for the dashboard.
+    NOTE: deliberately omits `secret` (would leak to the browser via Livewire's
+    public-property serialization); `hook_id` is returned because deactivation
+    needs it and it is not sensitive."""
     ws = _read_all().get(workspace_id, {})
     return [
         {"repo_slug": slug, "active": bool(v.get("active")),
-         "alerts": v.get("alerts", []), "ingested_at": v.get("ingested_at")}
+         "alerts": v.get("alerts", []), "ingested_at": v.get("ingested_at"),
+         "hook_id": v.get("hook_id"), "source": v.get("source")}
         for slug, v in sorted(ws.items())
     ]
+
+
+def find_active_by_repo(repo_slug: str) -> dict[str, Any] | None:
+    """Reverse lookup for incoming webhooks: find the ACTIVE watch-record for a repo
+    across all workspaces. Case-insensitive (GitHub preserves owner/name casing).
+    Returns {workspace_id, repo_slug, secret, hook_id, alerts} or None."""
+    target = (repo_slug or "").lower()
+    for ws_id, repos in _read_all().items():
+        for slug, v in repos.items():
+            if slug.lower() == target and v.get("active"):
+                return {"workspace_id": ws_id, "repo_slug": slug,
+                        "secret": v.get("secret"), "hook_id": v.get("hook_id"),
+                        "alerts": v.get("alerts", [])}
+    return None
 
 
 def active_watch_map(workspace_id: str) -> dict[str, list[str]]:
@@ -52,7 +70,9 @@ def active_watch_map(workspace_id: str) -> dict[str, list[str]]:
 
 
 def set_watched(workspace_id: str, repo_slug: str, *, active: bool,
-                alerts: list[str], ingested_at: str | None = None) -> dict[str, Any]:
+                alerts: list[str], ingested_at: str | None = None,
+                hook_id: int | None = None, secret: str | None = None,
+                source: str | None = None) -> dict[str, Any]:
     """Upsert one repo's watch state. flock-guarded read-modify-write (multi-worker)."""
     alerts = [a for a in (alerts or []) if a in _VALID_ALERTS] or ["ci"]
     p = _store_path()
@@ -71,11 +91,18 @@ def set_watched(workspace_id: str, repo_slug: str, *, active: bool,
             entry["alerts"] = alerts
             if ingested_at is not None:
                 entry["ingested_at"] = ingested_at
+            if hook_id is not None:
+                entry["hook_id"] = hook_id
+            if secret is not None:
+                entry["secret"] = secret
+            if source is not None:
+                entry["source"] = source
             f.seek(0)
             f.truncate()
             json.dump(data, f, indent=2, sort_keys=True)
         return {"repo_slug": repo_slug, "active": bool(active), "alerts": alerts,
-                "ingested_at": entry.get("ingested_at")}
+                "ingested_at": entry.get("ingested_at"), "hook_id": entry.get("hook_id"),
+                "source": entry.get("source")}
     except Exception:
         try:
             os.close(fd)
