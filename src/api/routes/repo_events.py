@@ -218,8 +218,18 @@ async def repo_events_webhook(request: Request) -> dict:
     watch-record's workspace (fixes the old 'events land in system' blackbox)."""
     body = await request.body()
     event = request.headers.get("X-GitHub-Event", "")
+    # GitHub sends either content_type=json (raw JSON body) or content_type=form
+    # (application/x-www-form-urlencoded with the JSON in a `payload=` field). Support
+    # both so a form-configured hook gets a clean response, not a 400. NOTE: the HMAC
+    # is always computed over the RAW body below, independent of this parsing.
+    ctype = request.headers.get("Content-Type", "")
+    if ctype.startswith("application/x-www-form-urlencoded"):
+        from urllib.parse import parse_qs
+        raw_json = (parse_qs(body.decode("utf-8", "replace")).get("payload") or ["{}"])[0]
+    else:
+        raw_json = body.decode("utf-8", "replace") or "{}"
     try:
-        payload = json.loads(body or b"{}")
+        payload = json.loads(raw_json)
     except json.JSONDecodeError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON")
 

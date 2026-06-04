@@ -40,6 +40,19 @@ def test_push_webhook_valid_signature(monkeypatch):
     assert calls["call"] == ("wsZ", "push")
 
 
+def test_push_webhook_form_content_type(monkeypatch):
+    from urllib.parse import urlencode
+    client, calls = _client(monkeypatch)
+    inner = json.dumps({"repository": {"full_name": "Nileneb/Foo"},
+                        "after": "abc123", "ref": "refs/heads/main"})
+    body = urlencode({"payload": inner}).encode()   # GitHub content_type=form
+    r = client.post("/repo-events/webhook", content=body, headers={
+        "X-GitHub-Event": "push", "Content-Type": "application/x-www-form-urlencoded",
+        "X-Hub-Signature-256": _sig("topsecret", body)})   # HMAC over the RAW form body
+    assert r.status_code == 200, r.text
+    assert calls["call"] == ("wsZ", "push")
+
+
 def test_webhook_bad_signature_401(monkeypatch):
     client, _ = _client(monkeypatch)
     body = json.dumps({"repository": {"full_name": "Nileneb/Foo"}}).encode()
