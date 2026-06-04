@@ -154,6 +154,32 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     _do_categorize = getattr(args, "memory_categorize", True) is not False
     _codebook_profile = getattr(args, "codebook_profile", None)
 
+    # WHY(C3 project-link producer-A populate): resolve project_id once before
+    # the loop — same for every file in this populate run (1 repo → 1 project).
+    # Fail-soft: if no project exists, _project_id stays None and linking is skipped.
+    _canon_url = repo_url  # already canonicalized above
+    _project_id: str | None = None
+    try:
+        from mayring_core.memory.schema import canonicalize_url as _canon_fn
+        from mayring_core.memory.store import init_memory_db as _idb_proj
+        _pconn = _idb_proj()
+        try:
+            _canon_ref = _canon_fn(_canon_url)
+            _proj_row = _pconn.execute(
+                "SELECT id FROM projects WHERE source_type='github' AND source_ref=?",
+                (_canon_ref,),
+            ).fetchone()
+            if _proj_row:
+                _project_id = _proj_row[0]
+                print(f"[populate-memory] Project-Link: project_id={_project_id} ({_canon_ref})")
+            else:
+                print(f"[populate-memory] Project-Link: no project for {_canon_ref!r} — links skipped")
+        finally:
+            _pconn.close()
+    except Exception as _proj_exc:
+        import logging as _pl
+        _pl.getLogger(__name__).warning("populate: project_id lookup failed: %s", _proj_exc)
+
     def _ingest_one(f: dict) -> dict:
         """Verarbeitet eine Datei — thread-safe (eigene DB-Connection pro Worker)."""
         from mayring_core.memory.store import init_memory_db
@@ -177,6 +203,25 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
                 _opts["force"] = True
             r = ingest(_src, f["content"], _conn, chroma, ollama_url, _ingest_model,
                        opts=_opts or None, workspace_id=_workspace)
+            # WHY(C3 project-link producer-A): link every newly ingested chunk to
+            # the project that owns this repo. Idempotent (INSERT OR IGNORE). Fail-soft.
+            if _project_id:
+                try:
+                    from mayring_core.memory.store import get_chunks_by_source, link_chunk_to_project
+                    from mayring_core.memory.schema import canonicalize_url as _cu
+                    _src_id = Source.make_id(repo_url, f['filename'])
+                    for _ch in get_chunks_by_source(_conn, _src_id, active_only=True):
+                        link_chunk_to_project(
+                            _conn, _ch.chunk_id, _project_id,
+                            origin_ref=_cu(repo_url),
+                            source="repo-analyze",
+                            workspace_id=_workspace,
+                        )
+                except Exception as _le:
+                    import logging as _ll
+                    _ll.getLogger(__name__).warning(
+                        "populate: chunk→project link failed for %r: %s", f["filename"], _le
+                    )
             return {"ok": True, "deduped": r.get("deduped", 0)}
         except Exception as exc:
             return {"ok": False, "error": str(exc), "file": f["filename"]}

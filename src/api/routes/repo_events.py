@@ -67,6 +67,24 @@ def _default_repo_workspace(conn, repo: str = "") -> str:
     return rows[0][0] if len(rows) == 1 else "system"
 
 
+def _resolve_project(conn, repo: str) -> tuple[str, str | None]:
+    """repo-url → (workspace_id, project_id | None).
+
+    Reuses _resolve_workspace to get/create the workspace + project row (match-or-create),
+    then returns the project_id from that same row. project_id is None only when the repo
+    string is empty/unparseable and canonical_repo_ref returns nothing."""
+    from src.api.routes.projects import canonical_repo_ref
+    canon = canonical_repo_ref(repo)
+    ws = _resolve_workspace(conn, repo)
+    if not canon:
+        return ws, None
+    row = conn.execute(
+        "SELECT id FROM projects WHERE source_type='github' AND source_ref=?",
+        (canon,),
+    ).fetchone()
+    return ws, (row[0] if row else None)
+
+
 def _resolve_workspace(conn, repo: str) -> str:
     """repo-url → projects.workspace_id; match-or-create unter dem Default-User-Workspace.
 
@@ -135,9 +153,14 @@ def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str)
 
     WHY(repo-watching): gives every watched repo's CI/security a memory presence
     (recall + IGIO-Lens). igio_axis is written via update_chunk_igio_axis because
-    insert_chunk does not persist igio columns."""
+    insert_chunk does not persist igio columns.
+    WHY(C3 project-link): after insert, links the chunk to the matching project so
+    project_match boost fires in retrieval. Fail-soft: a missing project or DB error
+    is logged and skipped — the chunk is always created regardless."""
+    import logging as _log_re
     from mayring_core.memory.store import upsert_source, insert_chunk, update_chunk_igio_axis
     from mayring_core.memory.schema import Source, Chunk
+    from src.api.routes.projects import canonical_repo_ref
     now = datetime.now(timezone.utc).isoformat()
     if req.event_type == "workflow_run":
         text = f"CI {req.workflow or ''} {req.conclusion or ''} on {req.repo}@{(req.sha or '')[:8]}".strip()
@@ -158,6 +181,25 @@ def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str)
     insert_chunk(conn, chunk, workspace_id=workspace_id)
     if axis:
         update_chunk_igio_axis(conn, chunk.chunk_id, axis, confidence=0.9)
+
+    # Link chunk → project (C3 producer A)
+    try:
+        canon = canonical_repo_ref(req.repo)
+        proj_row = conn.execute(
+            "SELECT id FROM projects WHERE source_type='github' AND source_ref=?",
+            (canon,),
+        ).fetchone()
+        if proj_row:
+            from mayring_core.memory.store import link_chunk_to_project
+            link_chunk_to_project(
+                conn, chunk.chunk_id, proj_row[0],
+                origin_ref=canon, source="repo-analyze",
+                workspace_id=workspace_id,
+            )
+    except Exception as _exc:
+        _log_re.getLogger(__name__).warning(
+            "repo_event_chunk: project linking failed for %r: %s", req.repo, _exc
+        )
 
 
 def _handle_event(conn, workspace_id: str, req: RepoEventRequest) -> dict:
