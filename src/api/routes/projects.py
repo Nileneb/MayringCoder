@@ -16,6 +16,7 @@ from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from mayring_core.memory.store import PROJECT_GROUP_PALETTE
 from src.api.auth import _is_privileged, get_token_info, get_workspace
 from src.api.dependencies import get_conn as _get_conn
 from src.api.jwt_auth import TokenInfo
@@ -62,6 +63,17 @@ def canonical_repo_ref(ref: str) -> str:
     beide Anlage-Stellen — uneinheitliche Keys spalten sonst die Daten (#4-Dublette 2026-05-29)."""
     from mayring_core.memory.schema import canonicalize_url
     return _normalize_remote(ref) or canonicalize_url(ref or "")
+
+
+def _next_palette_color(conn, ws: str) -> str:
+    used = {r[0] for r in conn.execute(
+        "SELECT color FROM project_groups WHERE workspace_id=?", (ws,)).fetchall()}
+    for c in PROJECT_GROUP_PALETTE:
+        if c not in used:
+            return c
+    n = conn.execute("SELECT COUNT(*) FROM project_groups WHERE workspace_id=?",
+                     (ws,)).fetchone()[0]
+    return PROJECT_GROUP_PALETTE[n % len(PROJECT_GROUP_PALETTE)]
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -166,6 +178,21 @@ class RouteRequest(BaseModel):
     prompt: str = ""
 
 
+class GroupCreate(BaseModel):
+    name: str
+    color: str | None = None
+
+
+class GroupUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
+class GroupAssign(BaseModel):
+    repo_slug: str
+    group_id: str | None = None
+
+
 def _embed_one(text: str) -> list[float]:
     from mayring_core.config import EMBEDDING_MODEL, OLLAMA_TIMEOUT
     from mayring_core.ollama_client import embed_single
@@ -191,13 +218,16 @@ async def list_projects(ws: str = Depends(get_workspace)) -> dict:
     die projects-Tabelle (Projekte→Repos). Read-only. Behebt die 'blackbox'-Lücke #4."""
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT id, name, source_type, source_ref, created_at, updated_at "
-        "FROM projects WHERE workspace_id=? ORDER BY updated_at DESC",
+        "SELECT p.id, p.name, p.source_type, p.source_ref, p.created_at, p.updated_at, "
+        "       p.group_id, g.name, g.color "
+        "FROM projects p LEFT JOIN project_groups g ON g.id = p.group_id "
+        "WHERE p.workspace_id=? ORDER BY p.updated_at DESC",
         (ws,),
     ).fetchall()
     return {"workspace_id": ws, "count": len(rows), "projects": [
         {"id": r[0], "name": r[1], "source_type": r[2], "repo": r[3],
-         "created_at": r[4], "updated_at": r[5]} for r in rows]}
+         "created_at": r[4], "updated_at": r[5],
+         "group_id": r[6], "group_name": r[7], "group_color": r[8]} for r in rows]}
 
 
 @router.post("/projects/claim-system")
@@ -275,3 +305,115 @@ async def dedup_projects(
             merged += 1
     conn.commit()
     return {"workspace_id": ws, "merged": merged, "canonical_groups": len(groups)}
+
+
+@router.get("/project-groups")
+async def list_project_groups(ws: str = Depends(get_workspace)) -> dict:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT g.id, g.name, g.color, "
+        "  (SELECT COUNT(*) FROM projects p WHERE p.group_id=g.id) "
+        "FROM project_groups g WHERE g.workspace_id=? ORDER BY g.name",
+        (ws,),
+    ).fetchall()
+    return {"workspace_id": ws, "groups": [
+        {"id": r[0], "name": r[1], "color": r[2], "member_count": r[3]} for r in rows]}
+
+
+@router.post("/project-groups")
+async def create_project_group(req: GroupCreate, ws: str = Depends(get_workspace)) -> dict:
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=409, detail="name must not be empty")
+    conn = _get_conn()
+    dupe = conn.execute(
+        "SELECT 1 FROM project_groups WHERE workspace_id=? AND lower(name)=lower(?)",
+        (ws, name)).fetchone()
+    if dupe:
+        raise HTTPException(status_code=409, detail=f"group '{name}' already exists")
+    color = req.color or _next_palette_color(conn, ws)
+    if color not in PROJECT_GROUP_PALETTE:
+        raise HTTPException(status_code=422, detail="color not in palette")
+    gid = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO project_groups(id,workspace_id,name,color,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?)", (gid, ws, name, color, now, now))
+    conn.commit()
+    return {"id": gid, "name": name, "color": color, "member_count": 0}
+
+
+@router.patch("/project-groups/{group_id}")
+async def update_project_group(group_id: str, req: GroupUpdate,
+                               ws: str = Depends(get_workspace)) -> dict:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT name, color FROM project_groups WHERE id=? AND workspace_id=?",
+        (group_id, ws)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="group not found")
+    name = row[0] if req.name is None else (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=409, detail="name must not be empty")
+    if req.name is not None:
+        dupe = conn.execute(
+            "SELECT 1 FROM project_groups WHERE workspace_id=? AND lower(name)=lower(?) "
+            "AND id<>?", (ws, name, group_id)).fetchone()
+        if dupe:
+            raise HTTPException(status_code=409, detail=f"group '{name}' already exists")
+    color = row[1] if req.color is None else req.color
+    if color not in PROJECT_GROUP_PALETTE:
+        raise HTTPException(status_code=422, detail="color not in palette")
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE project_groups SET name=?, color=?, updated_at=? WHERE id=? AND workspace_id=?",
+        (name, color, now, group_id, ws))
+    conn.commit()
+    return {"id": group_id, "name": name, "color": color}
+
+
+@router.delete("/project-groups/{group_id}")
+async def delete_project_group(group_id: str, ws: str = Depends(get_workspace)) -> dict:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM project_groups WHERE id=? AND workspace_id=?",
+        (group_id, ws)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="group not found")
+    conn.execute("UPDATE projects SET group_id=NULL WHERE group_id=? AND workspace_id=?",
+                 (group_id, ws))
+    conn.execute("DELETE FROM project_groups WHERE id=? AND workspace_id=?",
+                 (group_id, ws))
+    conn.commit()
+    return {"ok": True, "id": group_id}
+
+
+@router.post("/project-groups/assign")
+async def assign_repo_group(req: GroupAssign, ws: str = Depends(get_workspace)) -> dict:
+    """Ordnet ein Repo einer Gruppe zu. Legt das Projekt an, falls es noch keins gibt
+    (canonical source_ref — gleiche Anlage-Logik wie /repo-events). group_id=None löst."""
+    conn = _get_conn()
+    if req.group_id is not None:
+        grp = conn.execute(
+            "SELECT 1 FROM project_groups WHERE id=? AND workspace_id=?",
+            (req.group_id, ws)).fetchone()
+        if not grp:
+            raise HTTPException(status_code=404, detail="group not found")
+    ref = canonical_repo_ref(req.repo_slug)
+    now = datetime.now(timezone.utc).isoformat()
+    row = conn.execute(
+        "SELECT id FROM projects WHERE workspace_id=? AND source_type='github' "
+        "AND lower(source_ref)=lower(?)", (ws, ref)).fetchone()
+    if row:
+        pid = row[0]
+        conn.execute("UPDATE projects SET group_id=?, updated_at=? WHERE id=?",
+                     (req.group_id, now, pid))
+    else:
+        pid = uuid.uuid4().hex
+        name = ref.split("/")[-1] if "/" in ref else ref
+        conn.execute(
+            "INSERT INTO projects(id,workspace_id,name,source_type,source_ref,"
+            "group_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (pid, ws, name, "github", ref, req.group_id, now, now))
+    conn.commit()
+    return {"ok": True, "project_id": pid, "repo": ref, "group_id": req.group_id}
