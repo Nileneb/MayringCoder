@@ -66,7 +66,7 @@ def test_failclosed_empty_text(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     with pytest.raises(ValueError):
-        mayring_process("", "do a thing", cb, conn=conn, chroma_categories=_FakeChroma(CHROMA),
+        mayring_process("", "do a thing", conn=conn, chroma_categories=_FakeChroma(CHROMA),
                         embed_fn=_make_embed({}), llm_fn=_raises_llm)
 
 
@@ -75,7 +75,7 @@ def test_failclosed_empty_task(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     with pytest.raises(ValueError):
-        mayring_process("some text", "", cb, conn=conn, chroma_categories=_FakeChroma(CHROMA),
+        mayring_process("some text", "", conn=conn, chroma_categories=_FakeChroma(CHROMA),
                         embed_fn=_make_embed({}), llm_fn=_raises_llm)
 
 
@@ -84,7 +84,7 @@ def test_failclosed_empty_reduction_label(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     with pytest.raises(ValueError):
-        mayring_process("text", "task", cb, conn=conn, chroma_categories=_FakeChroma(CHROMA),
+        mayring_process("text", "task", conn=conn, chroma_categories=_FakeChroma(CHROMA),
                         embed_fn=_make_embed({"x": [1, 0, 0]}), llm_fn=lambda p: "   ")
 
 
@@ -104,7 +104,7 @@ def test_reduce_first_then_deductive(tmp_path):
         return "api_endpoint"
 
     embed = _make_embed({"api": [1.0, 0.0, 0.0]})  # candidate 'api_endpoint' → [1,0,0]
-    out = mayring_process("implement the endpoint", "build api", cb, conn=conn,
+    out = mayring_process("implement the endpoint", "build api", conn=conn,
                           chroma_categories=_FakeChroma(CHROMA), embed_fn=embed,
                           llm_fn=_llm, chunk_id="c1")
     assert called["n"] == 1                 # reduction ran first, always
@@ -118,7 +118,7 @@ def test_deductive_links_chunk(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     embed = _make_embed({"api": [1.0, 0.0, 0.0]})
-    mayring_process("implement endpoint", "build api", cb, conn=conn,
+    mayring_process("implement endpoint", "build api", conn=conn,
                     chroma_categories=_FakeChroma(CHROMA), embed_fn=embed,
                     llm_fn=lambda p: "api_call", chunk_id="c1")
     row = conn.execute("SELECT source FROM chunk_categories WHERE chunk_id='c1'").fetchone()
@@ -131,7 +131,7 @@ def test_inductive_new_category(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     embed = _make_embed({"fresh": [0.0, 0.0, 1.0]})  # orthogonal to api/domain
-    out = mayring_process("zzz unrelated rambling", "classify", cb, conn=conn,
+    out = mayring_process("zzz unrelated rambling", "classify", conn=conn,
                           chroma_categories=_FakeChroma(CHROMA),
                           embed_fn=embed, llm_fn=lambda p: "fresh_topic", chunk_id="c3")
     assert out.decision == "inductive"
@@ -158,7 +158,7 @@ def test_inductive_dedup_onto_proposed(tmp_path):
     chroma = _FakeChroma({**CHROMA, "cb:proposed:emerging": [0.0, 0.0, 1.0]})
     embed = _make_embed({"emerging": [0.0, 0.0, 1.0]})
     n_before = conn.execute("SELECT count(*) FROM codebook_categories").fetchone()[0]
-    out = mayring_process("zzz", "classify", cb, conn=conn, chroma_categories=chroma,
+    out = mayring_process("zzz", "classify", conn=conn, chroma_categories=chroma,
                           embed_fn=embed, llm_fn=lambda p: "emerging_variant", chunk_id="c4")
     assert out.decision == "inductive-dedup"
     assert out.category_name == "emerging"
@@ -181,7 +181,7 @@ def test_auto_promotion_at_threshold(tmp_path):
     conn.commit()
     chroma = _FakeChroma({**CHROMA, "cb:proposed:emerging": [0.0, 0.0, 1.0]})
     embed = _make_embed({"emerging": [0.0, 0.0, 1.0]})
-    out = mayring_process("zzz", "classify", cb, conn=conn, chroma_categories=chroma,
+    out = mayring_process("zzz", "classify", conn=conn, chroma_categories=chroma,
                           embed_fn=embed, llm_fn=lambda p: "emerging_again", chunk_id="c5")
     assert out.decision == "inductive-dedup"
     assert out.proposed is False                  # promoted in this very call
@@ -203,7 +203,7 @@ def test_empty_codebook_bootstraps_inductive(tmp_path):
                  "created_at, updated_at) VALUES ('empty','',1,3,?,?)", (now, now))
     cb = conn.execute("SELECT id FROM codebooks WHERE slug='empty'").fetchone()[0]
     conn.commit()
-    out = mayring_process("first ever text", "bootstrap", cb, conn=conn,
+    out = mayring_process("first ever text", "bootstrap", conn=conn,
                           chroma_categories=_FakeChroma({}),
                           embed_fn=_make_embed({"first": [1, 0, 0]}),
                           llm_fn=lambda p: "first_category")
@@ -221,11 +221,10 @@ def test_categorize_chunks_batched(tmp_path):
     items = [("c1", "implement the api endpoint"), ("c2", "totally unrelated rambling")]
 
     res = categorize_chunks(
-        items, "build the service", cb, conn=conn,
+        items, "build the service", conn=conn,
         chroma_categories=_FakeChroma(CHROMA),
         batch_embed_fn=lambda labels: [embed(x) for x in labels],
-        batch_reduce_fn=lambda pairs: ["api_handler", "fresh_concept"],
-        match_codebook_id=None)
+        batch_reduce_fn=lambda pairs: ["api_handler", "fresh_concept"])
     assert [r.decision for r in res] == ["deductive", "inductive"]
     assert res[0].category_name == "api"
     assert conn.execute("SELECT source FROM chunk_categories WHERE chunk_id='c1'").fetchone()[0] == "deductive"
@@ -240,10 +239,9 @@ def test_categorize_chunks_intra_batch_dedup(tmp_path):
     embed = _make_embed({"novel": [0.0, 0.0, 1.0]})
     items = [("c1", "x"), ("c2", "y")]
     res = categorize_chunks(
-        items, "ziel", cb, conn=conn, chroma_categories=_FakeChroma(CHROMA),
+        items, "ziel", conn=conn, chroma_categories=_FakeChroma(CHROMA),
         batch_embed_fn=lambda labels: [embed(x) for x in labels],
-        batch_reduce_fn=lambda pairs: ["novel_thing", "novel_thing_two"],
-        match_codebook_id=None)
+        batch_reduce_fn=lambda pairs: ["novel_thing", "novel_thing_two"])
     assert res[0].decision == "inductive"
     assert res[1].decision == "inductive-dedup"          # second deduped onto the first
     assert conn.execute("SELECT count(*) FROM codebook_categories WHERE source='induced'"
@@ -266,10 +264,10 @@ def test_categorize_chunks_rolls_back_on_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mp, "_assign_or_create", _boom)
     with pytest.raises(RuntimeError):
-        mp.categorize_chunks([("c1", "x")], "ziel", cb, conn=conn,
+        mp.categorize_chunks([("c1", "x")], "ziel", conn=conn,
                              chroma_categories=_FakeChroma(CHROMA),
                              batch_embed_fn=lambda labels: [[1.0, 0.0, 0.0] for _ in labels],
-                             batch_reduce_fn=lambda pairs: ["lbl"], match_codebook_id=None)
+                             batch_reduce_fn=lambda pairs: ["lbl"])
     assert conn.in_transaction is False  # rolled back → keine offene Transaktion
     ev_after = conn.execute("SELECT evidence_count FROM codebook_categories WHERE name='api'").fetchone()[0]
     assert ev_after == ev_before          # Teil-Write rückgängig
@@ -279,7 +277,7 @@ def test_categorize_chunks_requires_task(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     with pytest.raises(ValueError):
-        categorize_chunks([("c1", "text")], "", cb, conn=conn,
+        categorize_chunks([("c1", "text")], "", conn=conn,
                           chroma_categories=_FakeChroma(CHROMA),
                           batch_embed_fn=lambda x: [], batch_reduce_fn=lambda x: [])
 
@@ -289,7 +287,7 @@ def test_categorize_chunks_count_mismatch_raises(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     with pytest.raises(ValueError):
-        categorize_chunks([("c1", "a"), ("c2", "b")], "ziel", cb, conn=conn,
+        categorize_chunks([("c1", "a"), ("c2", "b")], "ziel", conn=conn,
                           chroma_categories=_FakeChroma(CHROMA),
                           batch_embed_fn=lambda x: [[1, 0, 0]],
                           batch_reduce_fn=lambda pairs: ["only_one_label"])
@@ -312,7 +310,7 @@ def test_numpy_embeddings_no_crash(tmp_path):
             pass
 
     embed = _make_embed({"api": [1.0, 0.0, 0.0]})
-    out = mayring_process("api work", "task", cb, conn=conn, chroma_categories=_NumpyChroma(),
+    out = mayring_process("api work", "task", conn=conn, chroma_categories=_NumpyChroma(),
                           embed_fn=embed, llm_fn=lambda p: "api_thing")
     assert out.decision == "deductive"
     assert out.category_name == "api"
@@ -419,7 +417,7 @@ def test_inductive_tags_active_project(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
     embed = _make_embed({"fresh": [0.0, 0.0, 1.0]})
-    out = mayring_process("zzz unrelated rambling", "classify", cb, conn=conn,
+    out = mayring_process("zzz unrelated rambling", "classify", conn=conn,
                           chroma_categories=_FakeChroma(CHROMA), embed_fn=embed,
                           llm_fn=lambda p: "fresh_proj_cat", active_project_id="proj-Z")
     assert out.decision == "inductive"

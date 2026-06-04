@@ -213,9 +213,9 @@ def _plain_ollama_generate(
     to one host. Embeddings stay local (they never go through generate()).
 
     ``response_format`` ("json") forwards Ollama's top-level format field so the
-    JSON-mode pi_* tools (judge/mark/summarize) get structured output through
-    the queue. num_predict default is 1024 (a cap, not a target) — covers the
-    longest queue job (pi_mark_categories' 800) so JSON doesn't truncate."""
+    JSON-mode pi_* tools (judge-relevance) get structured output through
+    the queue. num_predict default is 1024 (a cap, not a target) — conservative
+    cap that covers the longest remaining queue jobs without truncation."""
     from mayring_core.ollama_client import generate as _ollama_generate
     text = _ollama_generate(
         url=ollama_url,

@@ -662,242 +662,31 @@ def register_agent_tools(mcp: FastMCP) -> None:
     def pi_categorize(
         text: str,
         task: str = "",
-        codebook: list[str] | None = None,
-        mode: str = "hybrid",
-        max_labels: int = 5,
         workspace_id: str | None = None,
-        timeout: float = 60.0,
     ) -> dict:
-        """Mayring-categorize a piece of text via local Pi-Agent.
+        """Mayring-kategorisiere Text — die EINE Methode (immer mixed, ein Codebook,
+        domänenunabhängig): Ziel→Paraphrase→Generalisierung→Reduktion→Embedding-Match
+        gegen ALLE Bestandskategorien (deduktiv treffen ODER induktiv neu). Intrinsischer
+        Embedding-Vergleich → trifft Bestand statt Duplikate.
 
-        Nutzt die kanonischen prompts/mayring_{deduktiv,induktiv,hybrid}.md
-        templates — gleiche source-of-truth wie die inline-ingest-pipeline.
-        {{task}} = das Thema worauf untersucht wird (Mayring Selektions-
-        kriterium); {{categories}} = anchor-codebook (deductive/hybrid).
-
-        Args:
-            text: The text to categorize (chunk content, max ~4000 chars).
-            task: Topic(s) to look for. Empty → derive from text.
-            codebook: anchor categories (deductive/hybrid). None + deductive/
-                      hybrid → fallback auf universal_v1.yaml.
-            mode: 'inductive' | 'deductive' | 'hybrid' (default).
-            max_labels: Cap on returned labels (default 5).
-            workspace_id: Tenant scope. Optional.
-            timeout: Pi-Agent call timeout in seconds.
-
-        Returns:
-            {labels: [str], mode, model} oder {error}.
-        """
+        Returns: {label, match (deductive|dedup|inductive), paraphrase, generalize,
+                  model, workspace_id} oder {error}."""
         ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
         if not text or len(text.strip()) < 10:
             return {"error": "text too short (<10 chars)", "workspace_id": ws}
-
-        mode = mode if mode in ("inductive", "deductive", "hybrid") else "hybrid"
-
-        # Codebook only needed for deductive/hybrid. Fall back to universal.
-        if mode != "inductive" and not codebook:
-            try:
-                import yaml
-                from pathlib import Path
-                cb_path = Path("config/codebooks/universal_v1.yaml")
-                if cb_path.exists():
-                    cb_data = yaml.safe_load(cb_path.read_text())
-                    codebook = list((cb_data or {}).get("categories", {}).keys())
-            except Exception:
-                codebook = None
-
-        # Load the CANONICAL mayring template — single source of truth.
-        try:
-            from mayring_core.memory.ingestion.categorization import _load_mayring_template
-            template = _load_mayring_template(mode)
-        except Exception:
-            template = ("Categorize this text chunk for topic {{task}} using "
-                        "these categories if applicable: {{categories}}. "
-                        "Respond with ONLY a comma-separated list of labels.")
-        cats_str = ", ".join(codebook) if codebook else "(none — derive inductively)"
         task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
-        prompt = (
-            template
-            .replace("{{categories}}", cats_str)
-            .replace("{{task}}", task_str)
-            + "\n\nText:\n" + text[:4000]
-        )
-
         try:
-            raw = _pi_run(
-                prompt, kind="categorize", model=_model("text"),
-                timeout=timeout, workspace_id=ws,
-            )
-            # mayring templates return a comma-separated list, not JSON.
-            labels = [
-                lbl.strip().lower()
-                for lbl in raw.split(",")
-                if lbl.strip() and len(lbl.strip()) <= 50
-            ][:max_labels]
+            from src.api.routes.codebooks import reduce_text_server
+            res = reduce_text_server(text, task_str)
+            cand = res.candidates[0] if res.candidates else None
             return {
-                "labels": labels,
-                "mode": mode,
+                "label": cand.label if cand else "",
+                "match": cand.match if cand else "",
+                "paraphrase": res.paraphrase,
+                "generalize": res.generalization,
                 "model": _model("text"),
                 "workspace_id": ws,
             }
-        except Exception as exc:
-            return {"error": str(exc), "workspace_id": ws}
-
-    @mcp.tool()
-    def pi_mark_categories(
-        text: str,
-        task: str = "",
-        codebook: list[str] | None = None,
-        source_id: str | None = None,
-        chunk_id: str = "",
-        persist: bool = False,
-        workspace_id: str | None = None,
-        timeout: float = 90.0,
-    ) -> dict:
-        """Textmarker — Mayring-categorize a chunk with SPAN-LEVEL evidence.
-
-        Anders als pi_categorize (gibt nur labels für den ganzen chunk):
-        dieses tool markiert konkrete Textabschnitte und ordnet jedem
-        Abschnitt eine Kategorie zu, MIT der paraphrase-begründung. So ist
-        jede Kategorie LOGISCH am Text nachvollziehbar — der "Beweis" für
-        die Kategorie ist der markierte Abschnitt.
-
-        Wenn `persist=True` und `source_id` gesetzt: die markings landen in
-        wiki_category_evidence (vorhandene evidence für source_id wird
-        zuerst gelöscht — clean re-mark). Abrufbar via pi_category_evidence.
-
-        Args:
-            text: The chunk text (max ~4000 chars).
-            task: Topic(s) to look for — Mayring Selektionskriterium.
-                  Empty → derive from text.
-            codebook: optional anchor categories (hybrid mode); None → induktiv.
-            source_id: which source/chunk this came from (für persist).
-            chunk_id: optional chunk-id (für persist).
-            persist: True + source_id → schreibt markings ins wiki.
-            workspace_id: tenant scope.
-            timeout: Pi-Agent call timeout.
-
-        Returns:
-            {markings: [{span: [start, end], excerpt, category, reasoning}],
-             model, persisted: int} oder {error}. span = char offsets into `text`.
-        """
-        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        if not text or len(text.strip()) < 10:
-            return {"error": "text too short (<10 chars)", "workspace_id": ws}
-
-        task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
-        anchors = ", ".join(codebook) if codebook else "(keine — bilde induktiv)"
-
-        sys_prompt = (
-            "Du bist ein qualitativer Inhaltsanalytiker (Mayring). Aus dem "
-            f"Thema bekommst du, worauf du den Text untersuchen sollst.\n"
-            f"Thema: {task_str}\n"
-            f"Anker-Kategorien (nutze wenn passend, sonst induktiv neu bilden): {anchors}\n\n"
-            "Markiere konkrete Textabschnitte, paraphrasiere jeden bezogen "
-            "aufs Thema, generalisiere, reduziere zu einer Kategorie. Jede "
-            "Kategorie MUSS sich logisch am markierten Abschnitt nachvollziehen "
-            "lassen — keine Kategorie ohne Beleg. Ein Abschnitt kann mehrere "
-            "Kategorien haben; Kategorien können sich überlappen. Wenn der Text "
-            "nichts zum Thema beiträgt: leeres markings-array.\n\n"
-            "Output STRICT JSON: "
-            '{"markings":[{"excerpt":"<wortwörtliches textstück>",'
-            '"category":"<lowercase-label>","reasoning":"<paraphrase: was sagt '
-            'der abschnitt bzgl. des themas, warum diese kategorie>"}]}\n'
-            "Kein prosa, kein markdown. excerpt MUSS wortwörtlich im Text "
-            "vorkommen (wir berechnen die char-offsets selbst)."
-        )
-
-        import json as _json
-        try:
-            raw = _pi_run(
-                sys_prompt + "\n\nText:\n" + text[:4000],
-                kind="mark-categories", model=_model("text"),
-                timeout=timeout, response_format="json", workspace_id=ws,
-            )
-            data = _loads_json_lenient(raw)
-            markings_in = data.get("markings", []) or []
-            markings_out = []
-            for m in markings_in[:20]:
-                if not isinstance(m, dict):
-                    continue
-                excerpt = str(m.get("excerpt", "")).strip()
-                category = str(m.get("category", "")).strip().lower()
-                reasoning = str(m.get("reasoning", "")).strip()
-                if not excerpt or not category:
-                    continue
-                # Resolve char-offsets ourselves — don't trust LLM-reported spans.
-                idx = text.find(excerpt)
-                span = [idx, idx + len(excerpt)] if idx >= 0 else None
-                markings_out.append({
-                    "span": span,  # None = excerpt not found verbatim (LLM paraphrased it)
-                    "excerpt": excerpt[:300],
-                    "category": category[:50],
-                    "reasoning": reasoning[:400],
-                })
-            persisted = 0
-            if persist and source_id and markings_out:
-                try:
-                    from src.wiki_v2.store import init_wiki_db, persist_category_evidence, delete_category_evidence
-                    from mayring_core.memory.store import MEMORY_DB_PATH
-                    wdb = init_wiki_db(MEMORY_DB_PATH.parent / "wiki_v2.db")
-                    try:
-                        delete_category_evidence(wdb, ws, source_id)
-                        persisted = persist_category_evidence(
-                            wdb, ws, source_id, markings_out,
-                            task=task_str if task_str != "(kein Task angegeben)" else "",
-                            chunk_id=chunk_id,
-                        )
-                    finally:
-                        wdb.close()
-                except Exception as exc:
-                    import logging as _logging
-                    _logging.getLogger(__name__).warning("category-evidence persist failed: %s", exc)
-
-            return {
-                "markings": markings_out,
-                "model": _model("text"),
-                "persisted": persisted,
-                "workspace_id": ws,
-            }
-        except _json.JSONDecodeError as exc:
-            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
-        except Exception as exc:
-            return {"error": str(exc), "workspace_id": ws}
-
-    @mcp.tool()
-    def pi_category_evidence(
-        category: str | None = None,
-        source_id: str | None = None,
-        limit: int = 100,
-        workspace_id: str | None = None,
-    ) -> dict:
-        """Read Mayring category-evidence (from pi_mark_categories persist).
-
-        Beantwortet "zeig mir alle Belege für Kategorie X" oder "welche
-        Kategorien wurden in Source Y gefunden, mit welchem Beleg".
-
-        Args:
-            category: filter by category label (lowercase). None = all.
-            source_id: filter by source. None = all.
-            limit: max rows.
-            workspace_id: tenant scope.
-
-        Returns:
-            {evidence: [{source_id, chunk_id, category, span, excerpt,
-             reasoning, task, created_at}], count} oder {error}.
-        """
-        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        try:
-            from src.wiki_v2.store import init_wiki_db, get_category_evidence
-            from mayring_core.memory.store import MEMORY_DB_PATH
-            wdb = init_wiki_db(MEMORY_DB_PATH.parent / "wiki_v2.db")
-            try:
-                rows = get_category_evidence(
-                    wdb, ws, category=category, source_id=source_id, limit=limit,
-                )
-            finally:
-                wdb.close()
-            return {"evidence": rows, "count": len(rows), "workspace_id": ws}
         except Exception as exc:
             return {"error": str(exc), "workspace_id": ws}
 
@@ -1069,69 +858,3 @@ def register_agent_tools(mcp: FastMCP) -> None:
         except Exception as exc:
             return {"error": str(exc), "partial": out}
 
-    @mcp.tool()
-    def pi_summarize_for_memory(
-        content: str,
-        style: str = "paraphrase_generalize_reduce",
-        workspace_id: str | None = None,
-        timeout: float = 60.0,
-    ) -> dict:
-        """Mayring-style summarization for memory-ingestion.
-
-        Three reductions in one call:
-          1. Paraphrase — core statement without filler
-          2. Generalize — meta-category (architecture / debug / config / ...)
-          3. Reduce — one-sentence essence
-
-        Suitable as the pre-ingest step for `mcp__claude_ai_Memory__ingest`.
-
-        Args:
-            content: Raw text to summarize (transcript, file content, etc).
-            style: Reserved for future variants. Currently always uses the
-                   3-step Mayring pipeline.
-            workspace_id: Tenant scope.
-            timeout: Pi-Agent call timeout.
-
-        Returns:
-            {paraphrase, generalize, reduce, suggested_source_id, model} oder
-            {error}.
-        """
-        ws = _enforce_tenant(workspace_id) or _effective_workspace_id()
-        if not content or len(content.strip()) < 30:
-            return {"error": "content too short (<30 chars)", "workspace_id": ws}
-
-        sys_prompt = (
-            "You are a Mayring-style summarizer. Reduce the input to three forms:\n"
-            "1. paraphrase — core statement without filler (≤2 sentences)\n"
-            "2. generalize — pick ONE meta-category from: "
-            "[architecture, debug, config, decision, session-memory, context]\n"
-            "3. reduce — one-sentence essence (≤120 chars)\n\n"
-            "Also propose suggested_source_id: <generalize>:<yyyy-mm-dd>-<short-slug>\n\n"
-            "Output STRICT JSON only:\n"
-            '{"paraphrase":"...","generalize":"...","reduce":"...","suggested_source_id":"..."}\n'
-            "No prose, no markdown."
-        )
-
-        import json as _json
-        from datetime import datetime as _dt
-        date_str = _dt.utcnow().strftime("%Y-%m-%d")
-        prompt = sys_prompt + f"\n\nDate (for source_id): {date_str}\n\nContent:\n{content[:6000]}"
-
-        try:
-            raw = _pi_run(
-                prompt, kind="summarize", model=_model("text"),
-                timeout=timeout, response_format="json", workspace_id=ws,
-            )
-            data = _loads_json_lenient(raw)
-            return {
-                "paraphrase": data.get("paraphrase", ""),
-                "generalize": data.get("generalize", ""),
-                "reduce": data.get("reduce", ""),
-                "suggested_source_id": data.get("suggested_source_id", ""),
-                "model": _model("text"),
-                "workspace_id": ws,
-            }
-        except _json.JSONDecodeError as exc:
-            return {"error": f"JSON parse fail: {exc}", "raw": raw[:200], "workspace_id": ws}
-        except Exception as exc:
-            return {"error": str(exc), "workspace_id": ws}

@@ -196,6 +196,32 @@ async def reject_category(
     return {"category_id": category_id, "status": "rejected"}
 
 
+def reduce_text_server(text: str, theme: str, *, project_id: str | None = None):
+    """Verdrahtet die EINE Mayring-Methode (mayring_reduce) mit den echten Server-Providern.
+    EIN Codebook, domänenunabhängig — kein source_type/codebook-Routing."""
+    import os
+    from mayring_core import providers
+    from mayring_core.memory.ingestion.mayring_process import mayring_reduce
+    from mayring_core.memory.store import get_chroma_collection
+    from mayring_core.model_router import ModelRouter
+    conn = _get_conn()
+    ollama_url = os.environ.get("OLLAMA_URL", "https://three.linn.games")
+    model = ModelRouter(ollama_url=ollama_url).resolve("text") or "mistral:7b-instruct"
+
+    def _embed_one(t: str) -> list[float]:
+        out = providers.embed_texts([t], ollama_url)
+        return (out[0] if out else []) or []
+
+    def _llm(prompt: str) -> str:
+        return providers.generate_text(prompt=prompt, ollama_url=ollama_url, model=model,
+                                       label="pi:reduce", options={"temperature": 0.0, "seed": 7})
+
+    return mayring_reduce(
+        text, theme, conn=conn,
+        chroma_categories=get_chroma_collection("codebook_categories"),
+        embed_fn=_embed_one, llm_fn=_llm, project_id=project_id)
+
+
 @router.post("/codebooks/{codebook_id}/process")
 async def process_text(
     codebook_id: int, req: ProcessRequest, _ws: str = Depends(get_workspace),
@@ -231,7 +257,7 @@ async def process_text(
 
     try:
         res = mayring_process(
-            req.text, req.task, codebook_id, conn=conn,
+            req.text, req.task, conn=conn,
             chroma_categories=get_chroma_collection("codebook_categories"),
             embed_fn=_embed_one, llm_fn=_llm, chunk_id=req.chunk_id,
             pi_job_id=req.pi_job_id, codebook_version=req.codebook_version,

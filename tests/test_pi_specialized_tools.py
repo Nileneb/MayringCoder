@@ -1,7 +1,10 @@
 """Tests for the specialized Pi-Sub-Tools (#211).
 
-These wrap the local Pi-Agent / Ollama backend with focused schemas:
-pi_categorize, pi_judge_relevance, pi_summarize_for_memory.
+pi_mark_categories, pi_category_evidence, pi_summarize_for_memory DELETED —
+callers removed (tools collapsed into the ONE Mayring method).
+
+Remaining: pi_categorize (now uses reduce_text_server / mayring_reduce),
+pi_judge_relevance (unchanged).
 """
 
 from __future__ import annotations
@@ -29,9 +32,6 @@ class _FakeMcp:
 def tools():
     from src.api.mcp_agent_tools import register_agent_tools
     mcp = _FakeMcp()
-    # Patch tenant helpers + JWT so they don't need a real request/MCP context.
-    # The pi_* tools now route through POST /pi/run (central queue) which reads
-    # _current_raw_jwt() — give it a token so the mocked httpx.post path runs.
     with patch("src.api.mcp_agent_tools._enforce_tenant", return_value="bene"), \
          patch("src.api.mcp_agent_tools._effective_workspace_id", return_value="bene"), \
          patch("src.api.mcp_agent_tools._current_raw_jwt", return_value="test-jwt"):
@@ -39,53 +39,40 @@ def tools():
         yield mcp.tools
 
 
-def _mock_ollama_response(payload: dict):
-    """Build a httpx.post mock for the /pi/run queue reply {"content": json.dumps(payload)}.
+# ── pi_categorize (ONE method: reduce_text_server → ReduceResult) ──────────
 
-    The pi_* tools route llama jobs through POST /pi/run (central PiQueue), which
-    returns {"content": <text>}. JSON-mode tools (judge/summarize/mark) then
-    json.loads that content. pi_categorize uses _mock_ollama_text() because the
-    canonical mayring prompts return a comma-separated list, not JSON.
-    """
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"content": json.dumps(payload)}
-    return resp
-
-
-def _mock_ollama_text(text: str):
-    """httpx.post mock returning the /pi/run {"content": "..."} text — for pi_categorize."""
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"content": text}
-    return resp
+def _fake_reduce_result(label="auth", match="deductive"):
+    from unittest.mock import MagicMock
+    cand = MagicMock()
+    cand.label = label
+    cand.match = match
+    res = MagicMock()
+    res.candidates = [cand]
+    res.paraphrase = "validates a JWT token"
+    res.generalization = "security"
+    return res
 
 
-# ── pi_categorize (canonical mayring prompts, comma-separated output) ─────
-
-def test_pi_categorize_returns_labels(tools):
+def test_pi_categorize_returns_label_and_match(tools):
     fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_text("auth, middleware")), \
+    with patch("src.api.routes.codebooks.reduce_text_server",
+               return_value=_fake_reduce_result("auth", "deductive")), \
          patch("src.api.mcp_agent_tools._model", return_value="mistral:7b-instruct"):
-        result = fn(text="def validate_jwt(token): ...", codebook=["auth", "middleware", "data_access"], mode="deductive")
-    assert result["labels"] == ["auth", "middleware"]
-    assert result["mode"] == "deductive"
+        result = fn(text="def validate_jwt(token): ...", task="authentication")
+    assert result["label"] == "auth"
+    assert result["match"] == "deductive"
+    assert result["paraphrase"] == "validates a JWT token"
+    assert result["generalize"] == "security"
 
 
-def test_pi_categorize_defaults_to_hybrid_mode(tools):
+def test_pi_categorize_inductive_match(tools):
     fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_text("api, error_handling")), \
+    with patch("src.api.routes.codebooks.reduce_text_server",
+               return_value=_fake_reduce_result("new_topic", "inductive")), \
          patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some longer text content here")
-    assert result["mode"] == "hybrid"
-
-
-def test_pi_categorize_invalid_mode_falls_back_to_hybrid(tools):
-    fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_text("x, y")), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some text content", mode="nonsense")
-    assert result["mode"] == "hybrid"
+        result = fn(text="some longer text content here about a novel concept")
+    assert result["match"] == "inductive"
+    assert result["label"] == "new_topic"
 
 
 def test_pi_categorize_rejects_short_text(tools):
@@ -95,33 +82,45 @@ def test_pi_categorize_rejects_short_text(tools):
     assert "too short" in result["error"]
 
 
-def test_pi_categorize_caps_max_labels(tools):
+def test_pi_categorize_handles_error(tools):
     fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_text("l0, l1, l2, l3, l4, l5, l6")), \
+    with patch("src.api.routes.codebooks.reduce_text_server",
+               side_effect=Exception("connection refused")), \
          patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some longer text content here", max_labels=3)
-    assert len(result["labels"]) == 3
-    assert result["labels"] == ["l0", "l1", "l2"]
-
-
-def test_pi_categorize_lowercases_and_strips_labels(tools):
-    fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_text("  Auth ,  Data-Access  ")), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some longer text content here")
-    assert result["labels"] == ["auth", "data-access"]
-
-
-def test_pi_categorize_handles_ollama_error(tools):
-    fn = tools["pi_categorize"]
-    with patch("httpx.post", side_effect=Exception("connection refused")), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some text content")
+        result = fn(text="some text content here")
     assert "error" in result
     assert "connection refused" in result["error"]
 
 
-# ── pi_judge_relevance ───────────────────────────────────────────
+def test_pi_categorize_empty_candidates(tools):
+    """reduce_text_server returns ReduceResult with no candidates → label/match empty."""
+    fn = tools["pi_categorize"]
+    res = MagicMock()
+    res.candidates = []
+    res.paraphrase = "p"
+    res.generalization = "g"
+    with patch("src.api.routes.codebooks.reduce_text_server", return_value=res), \
+         patch("src.api.mcp_agent_tools._model", return_value="m"):
+        result = fn(text="some text content here")
+    assert result["label"] == ""
+    assert result["match"] == ""
+
+
+def test_pi_categorize_deleted_tools_absent(tools):
+    """Confirm the deleted tools are gone from the registry."""
+    assert "pi_mark_categories" not in tools
+    assert "pi_category_evidence" not in tools
+    assert "pi_summarize_for_memory" not in tools
+
+
+# ── pi_judge_relevance ────────────────────────────────────────────
+
+def _mock_ollama_response(payload: dict):
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"content": json.dumps(payload)}
+    return resp
+
 
 def test_pi_judge_relevance_scores_chunks(tools):
     fn = tools["pi_judge_relevance"]
@@ -139,7 +138,7 @@ def test_pi_judge_relevance_scores_chunks(tools):
 def test_pi_judge_relevance_clamps_out_of_range(tools):
     fn = tools["pi_judge_relevance"]
     with patch("httpx.post", return_value=_mock_ollama_response(
-        {"scores": {"chk_a": 1.5, "chk_b": -0.3}}  # out of [0,1]
+        {"scores": {"chk_a": 1.5, "chk_b": -0.3}}
     )), patch("src.api.mcp_agent_tools._model", return_value="m"):
         result = fn(query="q", chunks=[
             {"chunk_id": "chk_a", "text": "text a"},
@@ -165,185 +164,12 @@ def test_pi_judge_relevance_caps_at_20_chunks(tools):
     with patch("httpx.post", side_effect=capture_post), \
          patch("src.api.mcp_agent_tools._model", return_value="m"):
         result = fn(query="q", chunks=big)
-    # chk_20..chk_29 should not be in the prompt (capped at 20)
     assert "chk_20" not in captured["prompt"]
     assert "chk_19" in captured["prompt"]
 
 
-# ── pi_summarize_for_memory ──────────────────────────────────────
-
-def test_pi_summarize_returns_three_reductions(tools):
-    fn = tools["pi_summarize_for_memory"]
-    with patch("httpx.post", return_value=_mock_ollama_response({
-        "paraphrase": "Fixed the deploy by adding postgresql-client.",
-        "generalize": "debug",
-        "reduce": "Deploy crashed on missing psql; fixed via dockerfile.",
-        "suggested_source_id": "debug:2026-05-11-deploy-psql-fix",
-    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(content="Today the deploy crashed because the production image lacked postgresql-client. We added it to the dockerfile production stage. " * 3)
-    assert result["generalize"] == "debug"
-    assert result["suggested_source_id"].startswith("debug:")
-    assert "paraphrase" in result
-
-
-def test_pi_summarize_rejects_short_content(tools):
-    fn = tools["pi_summarize_for_memory"]
-    result = fn(content="too short")
-    assert "error" in result
-    assert "too short" in result["error"]
-
-
-def test_pi_summarize_handles_ollama_error(tools):
-    fn = tools["pi_summarize_for_memory"]
-    with patch("httpx.post", side_effect=Exception("connection refused")), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(content="a" * 50)
-    assert "error" in result
-    assert "connection refused" in result["error"]
-
-
-# ── pi_mark_categories (textmarker — span-level evidence) ────────
-
-def test_pi_mark_categories_returns_span_markings(tools):
-    fn = tools["pi_mark_categories"]
-    text = "The study used a randomized controlled design. Participants were nurses in ICU settings."
-    with patch("httpx.post", return_value=_mock_ollama_response({
-        "markings": [
-            {"excerpt": "randomized controlled design", "category": "study-design", "reasoning": "names the trial design"},
-            {"excerpt": "nurses in ICU settings", "category": "population", "reasoning": "describes the sample"},
-        ],
-    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text=text, task="welches studiendesign + welche population?")
-    assert len(result["markings"]) == 2
-    m0 = result["markings"][0]
-    assert m0["category"] == "study-design"
-    assert m0["span"] == [text.find("randomized controlled design"),
-                          text.find("randomized controlled design") + len("randomized controlled design")]
-    assert "trial design" in m0["reasoning"]
-
-
-def test_pi_mark_categories_span_none_when_excerpt_not_verbatim(tools):
-    """If the LLM paraphrased the excerpt instead of quoting verbatim, span=None."""
-    fn = tools["pi_mark_categories"]
-    with patch("httpx.post", return_value=_mock_ollama_response({
-        "markings": [{"excerpt": "this text does not appear", "category": "x", "reasoning": "r"}],
-    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some actual chunk content here", task="t")
-    assert result["markings"][0]["span"] is None
-
-
-def test_pi_mark_categories_drops_markings_without_category(tools):
-    fn = tools["pi_mark_categories"]
-    with patch("httpx.post", return_value=_mock_ollama_response({
-        "markings": [
-            {"excerpt": "valid", "category": "good-cat", "reasoning": "r"},
-            {"excerpt": "no category", "category": "", "reasoning": "r"},
-            {"excerpt": "", "category": "no-excerpt", "reasoning": "r"},
-        ],
-    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="valid no category content", task="t")
-    assert len(result["markings"]) == 1
-    assert result["markings"][0]["category"] == "good-cat"
-
-
-def test_pi_mark_categories_empty_markings_when_off_topic(tools):
-    fn = tools["pi_mark_categories"]
-    with patch("httpx.post", return_value=_mock_ollama_response({"markings": []})), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="unrelated content here entirely", task="something else")
-    assert result["markings"] == []
-
-
-def test_pi_mark_categories_rejects_short_text(tools):
-    fn = tools["pi_mark_categories"]
-    result = fn(text="hi", task="t")
-    assert "error" in result
-
-
-def test_pi_mark_categories_handles_json_parse_fail(tools):
-    fn = tools["pi_mark_categories"]
-    bad = MagicMock()
-    bad.raise_for_status = MagicMock()
-    bad.json.return_value = {"content": "not json {{{"}
-    with patch("httpx.post", return_value=bad), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some chunk content", task="t")
-    assert "error" in result and "JSON parse fail" in result["error"]
-
-
-def test_pi_categorize_accepts_task_arg(tools):
-    """pi_categorize now takes a `task` — it should not error and the call goes through."""
-    fn = tools["pi_categorize"]
-    with patch("httpx.post", return_value=_mock_ollama_text("study-design, population")), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="some chunk content here about a trial", task="welches studiendesign?", mode="inductive")
-    assert result["labels"] == ["study-design", "population"]
-
-
-def test_pi_mark_categories_persists_to_wiki(tools, tmp_path, monkeypatch):
-    """persist=True + source_id → markings land in wiki_category_evidence."""
-    # Point MEMORY_DB_PATH to a tmp dir so wiki_v2.db is created there.
-    import mayring_core.memory.store as _store
-    monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
-
-    fn = tools["pi_mark_categories"]
-    text = "def validate_jwt(token): return decode(token)"
-    with patch("httpx.post", return_value=_mock_ollama_response({
-        "markings": [{"excerpt": "def validate_jwt", "category": "auth", "reasoning": "validates a jwt"}],
-    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text=text, task="wie wird auth gemacht?", source_id="src:foo.py",
-                    chunk_id="chk_1", persist=True)
-    assert result["persisted"] == 1
-
-    # Read it back via get_category_evidence
-    from src.wiki_v2.store import init_wiki_db, get_category_evidence
-    wdb = init_wiki_db(tmp_path / "wiki_v2.db")
-    try:
-        ev = get_category_evidence(wdb, result["workspace_id"], category="auth")
-        assert len(ev) == 1
-        assert ev[0]["source_id"] == "src:foo.py"
-        assert ev[0]["task"] == "wie wird auth gemacht?"
-    finally:
-        wdb.close()
-
-
-def test_pi_mark_categories_no_persist_when_persist_false(tools, tmp_path, monkeypatch):
-    import mayring_core.memory.store as _store
-    monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
-    fn = tools["pi_mark_categories"]
-    with patch("httpx.post", return_value=_mock_ollama_response({
-        "markings": [{"excerpt": "abc", "category": "x", "reasoning": "r"}],
-    })), patch("src.api.mcp_agent_tools._model", return_value="m"):
-        result = fn(text="abc content here", task="t", source_id="src:y", persist=False)
-    assert result["persisted"] == 0
-
-
-def test_pi_category_evidence_reads_persisted(tools, tmp_path, monkeypatch):
-    import mayring_core.memory.store as _store
-    monkeypatch.setattr(_store, "MEMORY_DB_PATH", tmp_path / "memory.db")
-    from src.wiki_v2.store import init_wiki_db, persist_category_evidence
-    wdb = init_wiki_db(tmp_path / "wiki_v2.db")
-    persist_category_evidence(wdb, "bene", "src:z", [
-        {"span": [0, 3], "excerpt": "abc", "category": "demo-cat", "reasoning": "r"},
-    ], task="demo task")
-    wdb.close()
-
-    fn = tools["pi_category_evidence"]
-    with patch("src.api.mcp_agent_tools._enforce_tenant", return_value="bene"), \
-         patch("src.api.mcp_agent_tools._effective_workspace_id", return_value="bene"):
-        result = fn(category="demo-cat")
-    assert result["count"] == 1
-    assert result["evidence"][0]["category"] == "demo-cat"
-    assert result["evidence"][0]["task"] == "demo task"
-
-
-# ── central-queue routing (2026-05-28) ───────────────────────────
-# Proof the pi_* tools enqueue via POST /pi/run (bounded/distributed) instead
-# of POSTing Ollama directly. Without these, the wiring could silently regress
-# back to direct GPU hammering — exactly the bypass this batch removed.
-
-def _capture_pi_run():
+def test_pi_judge_relevance_routes_through_pi_run_json(tools):
     captured: dict = {}
-
     def post(url, **kw):
         captured["url"] = url
         captured["json"] = kw.get("json", {})
@@ -351,65 +177,27 @@ def _capture_pi_run():
         resp.raise_for_status = MagicMock()
         resp.json.return_value = {"content": '{"scores":{}}'}
         return resp
-
-    return captured, post
-
-
-def test_pi_judge_relevance_routes_through_pi_run_json(tools):
-    captured, post = _capture_pi_run()
     with patch("httpx.post", side_effect=post), \
          patch("src.api.mcp_agent_tools._model", return_value="m"):
         tools["pi_judge_relevance"](query="q", chunks=[{"chunk_id": "c", "text": "t"}])
-    assert captured["url"].endswith("/pi/run")  # NOT {_OLLAMA_URL}/api/generate
+    assert captured["url"].endswith("/pi/run")
     assert captured["json"]["kind"] == "judge-relevance"
     assert captured["json"]["response_format"] == "json"
 
 
-def test_pi_categorize_routes_through_pi_run_freetext(tools):
-    captured, post = _capture_pi_run()
-    with patch("httpx.post", side_effect=post), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        tools["pi_categorize"](text="some longer text content here")
-    assert captured["url"].endswith("/pi/run")
-    assert captured["json"]["kind"] == "categorize"
-    assert captured["json"]["response_format"] == ""  # comma-list, not JSON-mode
-
-
-def test_pi_summarize_routes_through_pi_run_json(tools):
-    captured, post = _capture_pi_run()
-    with patch("httpx.post", side_effect=post), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        tools["pi_summarize_for_memory"](content="a" * 60)
-    assert captured["url"].endswith("/pi/run")
-    assert captured["json"]["kind"] == "summarize"
-    assert captured["json"]["response_format"] == "json"
-
-
-def test_pi_mark_categories_routes_through_pi_run_json(tools):
-    captured, post = _capture_pi_run()
-    with patch("httpx.post", side_effect=post), \
-         patch("src.api.mcp_agent_tools._model", return_value="m"):
-        tools["pi_mark_categories"](text="some chunk content here", task="t")
-    assert captured["url"].endswith("/pi/run")
-    assert captured["json"]["kind"] == "mark-categories"
-    assert captured["json"]["response_format"] == "json"
-
-
-# ── lenient JSON parse: cloud (ollama.com) fences JSON even under format:json ──
+# ── lenient JSON parse ────────────────────────────────────────────
 
 def test_loads_json_lenient_handles_raw_fenced_and_prose():
     from src.api.mcp_agent_tools import _loads_json_lenient
     import json as _json
-    assert _loads_json_lenient('{"ok": true}') == {"ok": True}            # raw (local)
-    assert _loads_json_lenient('```json\n{"ok": true}\n```') == {"ok": True}  # fenced (cloud)
-    assert _loads_json_lenient('here: {"a": 1} done') == {"a": 1}          # leading/trailing prose
-    with pytest.raises(_json.JSONDecodeError):  # genuinely non-JSON still surfaces
+    assert _loads_json_lenient('{"ok": true}') == {"ok": True}
+    assert _loads_json_lenient('```json\n{"ok": true}\n```') == {"ok": True}
+    assert _loads_json_lenient('here: {"a": 1} done') == {"a": 1}
+    with pytest.raises(_json.JSONDecodeError):
         _loads_json_lenient("not json at all")
 
 
 def test_pi_judge_relevance_parses_fenced_cloud_output(tools):
-    """The cloud returns ```json … ``` even under format:json — the tool must
-    still parse it instead of failing (the regression caught in live verify)."""
     fenced = MagicMock()
     fenced.raise_for_status = MagicMock()
     fenced.json.return_value = {"content": '```json\n{"scores": {"chk_a": 0.8}}\n```'}
