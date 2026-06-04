@@ -30,6 +30,9 @@ class WatchRepoRequest(BaseModel):
     repo_slug: str
     active: bool = True
     alerts: list[str] = ["ci", "code_scanning", "dependabot"]
+    hook_id: int | None = None          # GitHub webhook id (for later deletion)
+    secret: str | None = None           # HMAC secret — server-only, verifies incoming hooks
+    source: str | None = None           # 'webhook' (new) vs legacy oidc/manual
 
 
 @router.post("/stats/watch-repos")
@@ -51,5 +54,6 @@ async def set_watch_repo(
     row = watch_store.set_watched(
         workspace_id, req.repo_slug, active=req.active,
         alerts=req.alerts, ingested_at=ingested_at,
+        hook_id=req.hook_id, secret=req.secret, source=req.source,
     )
     return {"ok": True, "repo": row}
