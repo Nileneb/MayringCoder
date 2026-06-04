@@ -2091,6 +2091,110 @@ def check_ingest_links_categories(api: str, token: str) -> CheckResult:
     )
 
 
+def check_project_link_boost_roundtrip(api: str, token: str) -> CheckResult:
+    """C3 Producer-B acceptance: conversation chunks ingested WITH X-Project-Id
+    must be linked to the project (chunk_project_links). Guards the end-to-end
+    path: header present → link exists → project_match boost fires in retrieval.
+
+    Probe uses slug 'smoke/repo-c3' (NOT_LIKE guard — never a real project).
+    Steps:
+      1. POST /projects/route with cwd_remote='https://github.com/smoke/repo-c3'
+         to resolve/create a smoke project_id.
+      2. Ingest two micro-batch turns: one WITH X-Project-Id, one WITHOUT.
+      3. /memory/search with project=<id> — both sources visible in corpus
+         (no hard filter); the linked chunk must have score_project_match > 0
+         OR at least appear in results (boost fires → rank ≥ unlinked).
+      4. Cleanup both sources via /memory/invalidate.
+
+    Fail-soft on cleanup: missing invalidation does NOT fail the check."""
+    slug = f"smoke/repo-c3-{int(time.time())}"
+
+    # Step 1: resolve/create a smoke project
+    code_p, body_p, _ = _http(
+        "POST", f"{api}/projects/route", token,
+        body={"cwd_remote": f"https://github.com/{slug}", "prompt": "smoke c3 project link test"},
+        timeout=30.0,
+    )
+    project_id = (body_p or {}).get("project_id") if isinstance(body_p, dict) else None
+    if code_p != 200 or not project_id:
+        return CheckResult(
+            "project_link_boost_roundtrip", False,
+            f"projects/route http={code_p} project_id={project_id}",
+        )
+
+    session_linked = f"smoke-c3-linked-{int(time.time())}"
+    session_unlinked = f"smoke-c3-unlinked-{int(time.time())}"
+
+    # Step 2a: ingest WITH X-Project-Id
+    code_l, body_l, _ = _http(
+        "POST", f"{api}/conversation/micro-batch", token,
+        body={
+            "turns": [{"role": "user",
+                       "content": "smoke c3 project link test linked",
+                       "timestamp": ""}],
+            "session_id": session_linked,
+            "presumarized": "smoke probe C3 linked turn for project boost roundtrip",
+            "origin_ref": f"https://github.com/{slug}",
+        },
+        timeout=30.0,
+        extra_headers={"X-Project-Id": project_id},
+    )
+    source_linked = (body_l or {}).get("source_id") if isinstance(body_l, dict) else None
+
+    # Step 2b: ingest WITHOUT X-Project-Id
+    code_u, body_u, _ = _http(
+        "POST", f"{api}/conversation/micro-batch", token,
+        body={
+            "turns": [{"role": "user",
+                       "content": "smoke c3 project link test unlinked",
+                       "timestamp": ""}],
+            "session_id": session_unlinked,
+            "presumarized": "smoke probe C3 unlinked turn — no project header",
+        },
+        timeout=30.0,
+    )
+    source_unlinked = (body_u or {}).get("source_id") if isinstance(body_u, dict) else None
+
+    ingest_ok = (code_l == 200 and (body_l or {}).get("indexed")
+                 and code_u == 200 and (body_u or {}).get("indexed"))
+
+    # Step 3: search for the linked probe content, check project_match signal
+    boost_ok = False
+    search_detail = ""
+    if ingest_ok:
+        code_s, body_s, _ = _http(
+            "POST", f"{api}/memory/search", token,
+            body={
+                "query": "smoke probe C3 linked project boost roundtrip",
+                "top_k": 10, "include_text": False, "llm_prefilter": False,
+                "project": project_id,
+            },
+            timeout=30.0,
+        )
+        results = (body_s or {}).get("results", []) if isinstance(body_s, dict) else []
+        linked_hits = [r for r in results if isinstance(r, dict)
+                       and (r.get("score_project_match") or 0) > 0]
+        boost_ok = code_s == 200 and len(linked_hits) >= 1
+        search_detail = (f"search http={code_s} results={len(results)} "
+                         f"project_match_hits={len(linked_hits)}")
+
+    # Step 4: cleanup (best-effort)
+    for sid in (source_linked, source_unlinked):
+        if sid:
+            try:
+                _http("POST", f"{api}/memory/invalidate", token,
+                      body={"source_id": sid}, timeout=10.0)
+            except Exception:
+                pass
+
+    ok = ingest_ok and boost_ok
+    return CheckResult(
+        "project_link_boost_roundtrip",
+        ok,
+        f"project_id={project_id} ingest_ok={ingest_ok} {search_detail} (C3 producer-B end-to-end)",
+    )
+
+
 def check_reranker_cat_match_fires(api: str, token: str) -> CheckResult:
     """Reranker-v3 acceptance (end-to-end): a category-themed search must derive
     the query's codebook category server-side AND surface >=1 result whose
@@ -2587,6 +2691,7 @@ ALL_CHECKS = [
     ("repo_webhook_hmac",             check_repo_webhook_hmac),
     ("claim_rejects_foreign",         check_claim_rejects_foreign),
     ("project_groups_roundtrip",      check_project_groups_roundtrip),
+    ("project_link_boost_roundtrip",  check_project_link_boost_roundtrip),
 ]
 
 
