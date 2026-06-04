@@ -1,7 +1,8 @@
 # Mayring-Kategorienbildung vereinheitlichen — Spec
 
-**Stand:** 2026-06-04
-**Status:** 📋 Approved (Design) — Umsetzung in Folge-Session
+**Stand:** 2026-06-04 (Review-augmentiert 2026-06-04: §2 `reduce`-Achse, §3.3 Framing,
+§5.1/5.5/5.6 Risiken, §6 Staging+Tests — Claims gegen Code verifiziert)
+**Status:** 📋 Approved (Design) + Review-gated — Umsetzung in **frischer** Folge-Session (Blast-Radius)
 **Auslöser:** User-Auftrag „Kategorienbildung VEREINHEITLICHEN" — eine hybride,
 universell einsetzbare Mayring-Codierung statt 4-fach duplizierter Ketten.
 **Verbunden mit:** `docs/superpowers/specs/2026-05-24-phase3-mayring-process.md`,
@@ -40,12 +41,15 @@ Die vom User beschriebene Methode —
 | 4× `prompts/mayring_{hybrid,induktiv,deduktiv,s7_reduktion}.md` | ✅ (Prosa, je verschieden) | ❌ | Komma-Liste | `pi_categorize` |
 | `pi_categorize` (`src/api/mcp_agent_tools.py:662`) | via Template | ❌ | Labels | goal-Skill, ingest-fallback |
 | `pi_summarize_for_memory` (`mcp_agent_tools.py:1073`) | ✅ eigene Prosa | ❌ + **hardcodierte** Meta-Liste `[architecture,debug,config,decision,session-memory,context]` | 3-Felder-JSON | goal-Skill |
-| `pi_mark_categories` (`mcp_agent_tools.py:747`) | ✅ eigene Prosa | ❌ | Span-Markierungen | **nirgends (tot)** |
+| `pi_mark_categories` (`mcp_agent_tools.py:747`) | ✅ eigene Prosa | ❌ | Span-Markierungen | **nur manuell (MCP), kein Auto-Caller** |
 
-**Unverbundene Funktionalität** (gebaut, nie verwendet):
-`pi_mark_categories`, `pi_category_evidence`, `pi_judge_relevance` (läuft parallel zum
-alten stop_hook-LLM-Judge), `cleanup_hallucinated_categories` + `reduce_categories`/S7
-(nur manuell via MCP, kein Auto-Trigger).
+**Nicht auto-verdrahtete Funktionalität** (NICHT toter Code — Präzisierung Review 2026-06-04):
+`pi_mark_categories` hat sehr wohl Persist-Infra (`wiki_v2/store.py` →
+`wiki_category_evidence`) + ist in der Plugin-CLAUDE.md als manuelles MCP-Tool
+dokumentiert — es fehlt nur der **automatische Caller** (ingest/goal). `pi_category_evidence`
+liest diese Belege. `pi_judge_relevance` läuft parallel zum alten stop_hook-LLM-Judge.
+`cleanup_hallucinated_categories` + `reduce_categories`/S7 nur manuell via MCP, kein
+Auto-Trigger. „Verdrahten" (§3.3) heißt: Auto-Caller ergänzen, nicht Code wiederbeleben.
 
 **Zielbild (User-Entscheidung):** *Code-Primitive + 1 Prompt-SoT + dünner Skill.*
 EINE Code-Methode mit **intrinsischem** Embedding-Vergleich + EINE parametrisierte
@@ -61,13 +65,23 @@ und *Persistenz* unterscheiden.
 Granularität. Eine einzige Primitive subsumiert sie:
 
 ```
-mayring_reduce(text, theme, existing_categories, mode) ->
+mayring_reduce(text, theme, existing_categories, mode, *, reduce=True) ->
     {
       paraphrase,
       generalization,
       candidates: [ { label, match: deductive | dedup | inductive, score } ]
     }
 ```
+
+**`reduce` ist eine ZWEITE, orthogonale Achse zu `mode`** (Review-Finding 2026-06-04,
+s. §5.1): es gibt heute **zwei** Embedding-Matcher, nicht einen —
+`_assign_or_create` (0.70/0.92, **mit** LLM-Reduktion) UND `link_chunks_deductive`
+(`_HYBRID_MIN=0.55`, **LLM-frei**, reiner Embedding-Match; seit #330/PR-core-20 der
+Bulk-Ingest-Pfad ohne Modell). `mode` steuert nur das Zuordnungsverhalten
+(induktiv/deduktiv/hybrid); `reduce=False` MUSS die teure LLM-Reduktion überspringen
+und rein deduktiv (Embedding gegen Bestand) matchen. Sonst koppelt die Unifizierung
+den Bulk-Ingest WIEDER ans LLM und macht den #330-Fix + die populate-Geschwindigkeit
+kaputt.
 
 Die Unterschiede sind **orthogonale Wrapper-Belange**, keine eigene Logik:
 
@@ -143,7 +157,7 @@ Prompt **nur** als Single-Source-of-Truth für die LLM-Reduktionsstufe.
 
 ## 4. Betroffene Dateien (Folge-Umsetzung)
 
-- `vendor/mayring-core/mayring_core/memory/ingestion/mayring_process.py` — `reduce_prompt` (mode/struct), Primitive
+- `vendor/mayring-core/mayring_core/memory/ingestion/mayring_process.py` — `reduce_prompt` (mode/struct), Primitive `mayring_reduce` mit `reduce`-Achse; **`link_chunks_deductive` (LLM-frei, 0.55) als no-LLM-Tier des Primitives integrieren, nicht parallel lassen** (Review-Finding §5.1, PR-core-20)
 - `vendor/mayring-core/mayring_core/memory/ingestion/categorization.py` — `_load_mayring_template` + `mayring_categorize` entfernen
 - `prompts/mayring_{hybrid,induktiv,deduktiv}.md` — löschen; `mayring_s7_reduktion.md` behalten
 - `src/api/mcp_agent_tools.py` — `pi_categorize` / `pi_summarize_for_memory` / `pi_mark_categories` / `pi_judge_relevance`
@@ -156,23 +170,49 @@ Prompt **nur** als Single-Source-of-Truth für die LLM-Reduktionsstufe.
 
 ## 5. Risiken / offene Punkte
 
-- **Multi-label vs. single-label:** `categorize_chunks` liefert heute 1 Label/Chunk;
+- **5.1 🔴 No-LLM-Tier nicht wieder ans LLM koppeln (Review 2026-06-04):** der Bulk-Ingest
+  nutzt seit #330/PR-core-20 `link_chunks_deductive` (LLM-frei, 0.55). Wenn die Unifizierung
+  alles durch den LLM-`reduce_prompt`-Pfad routet, wird populate wieder LLM-abhängig +
+  langsam + bricht bei fehlendem Modell (genau der #330-Bug). → `reduce=False`-Achse im
+  Primitive (s. §2) ist PFLICHT; ein Smoke/Test muss beweisen, dass der Bulk-Ingest
+  LLM-frei bleibt.
+- **5.2 Multi-label vs. single-label:** `categorize_chunks` liefert heute 1 Label/Chunk;
   `pi_categorize` braucht N. Die Primitive muss multi-label sauber durch `_assign_or_create`
   schleifen (N Kandidaten → je Embedding-Match).
-- **Prompt-Drift bei Migration:** beim Kollabieren der 4 Templates Regressionstests gegen
+- **5.3 Prompt-Drift bei Migration:** beim Kollabieren der 4 Templates Regressionstests gegen
   bekannte Beispieltexte, damit die Label-Granularität stabil bleibt.
-- **Client- vs. Server-Pfad:** `pi_*`-Tools laufen serverseitig (haben `conn`+`chroma`)
+- **5.4 Client- vs. Server-Pfad:** `pi_*`-Tools laufen serverseitig (haben `conn`+`chroma`)
   → die Embedding-Route ist verfügbar.
+- **5.5 Blast-Radius:** dieses Primitive trägt ingest / reranker-cat_match / IGIO-Classifier /
+  wiki-edges / Such-Anzeige / goal. Jede Verhaltensänderung wirkt breit → **staged** umsetzen
+  (§6), nicht Big-Bang. Lehre: Smoke-Probes brauchen UNIQUE content (sonst content-dedup →
+  leerer Link-Pfad, war #330-Smoke-Rotursache).
+- **5.6 Koordination geprüft:** `mayring-pi-agent` hat KEINE eigenen
+  Categorization-Prompts/Tools → keine Kollision mit parallel laufender pi-agent-Arbeit.
 
 ---
 
-## 6. Verification (Umsetzungs-Session)
+## 6. Verification (Umsetzungs-Session) — staged, nicht Big-Bang
+
+**Staging (Review 2026-06-04):** (1) Primitive in mayring-core bauen (mit `reduce`-Achse) +
+grün → PR. (2) Submodul-Bump. (3) Wrapper EINZELN umrouten (`pi_categorize` →
+`pi_summarize` → `pi_mark_categories` → goal-Skill), je mit eigenem Test + Smoke grün
+DAZWISCHEN. (4) ERST DANN Legacy (`mayring_categorize`, 3 Templates, `_load_mayring_template`)
+löschen. So bleibt nach jedem Schritt deploybar.
 
 ```bash
 cd MayringCoder
 pytest tests/test_mayring_process.py tests/test_pi_specialized_tools.py tests/test_cleanup_categories.py -q
 ```
 
+**Pflicht-Tests (Review-erweitert):**
+- **Label-Granularitäts-Regression:** fixer Beispiel-Korpus (≥10 Texte), Labels VOR vs NACH
+  dem 4→1-Template-Kollaps → identische/äquivalente Labels (kein Granularitäts-Drift).
+- **No-LLM-Tier (§5.1):** `mayring_reduce(..., reduce=False)` ruft KEIN LLM, linkt rein per
+  Embedding (mock LLM → muss ungenutzt bleiben); Bulk-Ingest-Smoke bleibt LLM-frei.
+- **Multi-Label (§5.2):** `pi_categorize` liefert N Labels, jedes embedding-gematcht.
+- **Smoke (UNIQUE content!):** `ingest_links_categories` + ein neuer
+  `pi_categorize_matches_existing` (Labels matchen Bestand statt Duplikate).
 - Manuell: `pi_categorize` auf Beispieltext → Labels müssen Bestands-Kategorien
   matchen statt neue Duplikate zu erzeugen.
 - `reduce_categories` dry-run: `unique_before ≈ unique_after` (Dedup greift jetzt
