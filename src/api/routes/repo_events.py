@@ -10,11 +10,13 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+import hashlib
 import hmac
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 
+from src.api import watch_store
 from src.api.auth import _bearer, _is_privileged, _SERVICE_TOKEN
 from src.api.github_oidc import verify_github_oidc
 from src.api.jwt_auth import validate_jwt_token
@@ -158,14 +160,9 @@ def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str)
         update_chunk_igio_axis(conn, chunk.chunk_id, axis, confidence=0.9)
 
 
-@router.post("/repo-events")
-async def repo_events(
-    req: RepoEventRequest,
-    principal: str = Depends(repo_event_principal),
-) -> dict:
-    conn = _get_conn()
-    workspace_id = _resolve_workspace(conn, req.repo)
-
+def _handle_event(conn, workspace_id: str, req: RepoEventRequest) -> dict:
+    """Shared event handling for both the OIDC /repo-events and the HMAC webhook.
+    Workspace is decided by the CALLER (OIDC: resolve-from-repo; webhook: watch-record)."""
     if req.event_type == "push":
         job_id = enqueue_populate(req.repo, workspace_id)
         return {"ok": True, "action": "populate", "job_id": job_id, "workspace_id": workspace_id}
@@ -175,3 +172,72 @@ async def repo_events(
     axis = _AXIS.get((req.event_type, req.conclusion)) or _AXIS.get((req.event_type, None)) or ""
     _repo_event_chunk(conn, workspace_id, req, axis)
     return {"ok": True, "action": hook_type, "workspace_id": workspace_id, "igio_axis": axis}
+
+
+@router.post("/repo-events")
+async def repo_events(
+    req: RepoEventRequest,
+    principal: str = Depends(repo_event_principal),
+) -> dict:
+    conn = _get_conn()
+    workspace_id = _resolve_workspace(conn, req.repo)
+    return _handle_event(conn, workspace_id, req)
+
+
+def _translate_github_webhook(event: str, p: dict) -> RepoEventRequest | None:
+    """Map a raw GitHub webhook payload to the internal RepoEventRequest. Returns
+    None for events we deliberately ignore (ping, non-completed workflow_run, etc.)."""
+    repo = (p.get("repository") or {}).get("full_name") or ""
+    if event == "push":
+        return RepoEventRequest(event_type="push", repo=repo,
+                                sha=p.get("after"), ref=p.get("ref"))
+    if event == "workflow_run":
+        wr = p.get("workflow_run") or {}
+        if (p.get("action") or "") != "completed":
+            return None
+        return RepoEventRequest(event_type="workflow_run", repo=repo,
+                                sha=wr.get("head_sha"), ref=wr.get("head_branch"),
+                                conclusion=wr.get("conclusion"), workflow=wr.get("name"),
+                                url=wr.get("html_url"))
+    if event in ("code_scanning_alert", "dependabot_alert"):
+        alert = p.get("alert") or {}
+        rule = alert.get("rule") or {}
+        adv = alert.get("security_advisory") or {}
+        sev = rule.get("severity") or adv.get("severity")
+        summ = rule.get("description") or adv.get("summary") or alert.get("state") or ""
+        return RepoEventRequest(event_type="security", repo=repo, severity=sev,
+                                summary=summ, url=alert.get("html_url"))
+    return None
+
+
+@router.post("/repo-events/webhook")
+async def repo_events_webhook(request: Request) -> dict:
+    """GitHub webhook intake (HMAC-authenticated). The webhook is installed server-side
+    by app.linn.games per active repo; its secret lives in the watch-record. We look up
+    the repo's record, verify X-Hub-Signature-256, then run the shared handler in the
+    watch-record's workspace (fixes the old 'events land in system' blackbox)."""
+    body = await request.body()
+    event = request.headers.get("X-GitHub-Event", "")
+    try:
+        payload = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON")
+
+    repo = (payload.get("repository") or {}).get("full_name") or ""
+    rec = watch_store.find_active_by_repo(repo)
+    if rec is None or not rec.get("secret"):
+        # Unknown/inactive repo, or no secret on file → cannot authenticate. Fail loud.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "repo not watched")
+
+    sig = request.headers.get("X-Hub-Signature-256", "")
+    expected = "sha256=" + hmac.new(rec["secret"].encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad signature")
+
+    if event == "ping":
+        return {"ok": True, "action": "ignored", "event": "ping"}
+    req = _translate_github_webhook(event, payload)
+    if req is None:
+        return {"ok": True, "action": "ignored", "event": event}
+    conn = _get_conn()
+    return _handle_event(conn, rec["workspace_id"], req)
