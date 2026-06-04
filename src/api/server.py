@@ -110,6 +110,8 @@ from src.api.routes import purge_admin as _purge_admin  # smoke self-clean (#253
 app.include_router(_purge_admin.router)
 from src.api.routes import watch_repos as _watch_repos  # dashboard-managed repo-watch list
 app.include_router(_watch_repos.router)
+from src.api.routes import workspace_claim as _workspace_claim  # claim unclaimed:<device> buckets
+app.include_router(_workspace_claim.router)
 from src.api.routes import agent_keys as _agent_keys  # per-agent A2A API keys (X-API-Key)
 app.include_router(_agent_keys.router)
 
