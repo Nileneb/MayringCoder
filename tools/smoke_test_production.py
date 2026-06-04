@@ -2468,6 +2468,21 @@ def check_repo_event_surfaces(api: str, token: str) -> CheckResult:
         f"(want repo_ci/issue) marker={suffix}")
 
 
+def check_repo_webhook_hmac(api: str, token: str) -> CheckResult:
+    """POST to /repo-events/webhook for an UNWATCHED repo → must be rejected 401
+    (the endpoint exists and authenticates via watch-record + HMAC). We don't post a
+    valid signature here — that needs a real watched-repo secret; the unit suite
+    covers the happy path. Proves the endpoint shipped and fails closed."""
+    code, body, _ = _http("POST", f"{api}/repo-events/webhook", token,
+        body={"repository": {"full_name": "smoke/repo-hmac"}, "after": "deadbeef"},
+        extra_headers={"X-GitHub-Event": "push", "X-Hub-Signature-256": "sha256=deadbeef"},
+        timeout=10.0)
+    ok = code == 401
+    return CheckResult("repo_webhook_hmac", ok,
+        f"unwatched webhook rejected http={code}" if ok
+        else f"expected 401, got http={code}: {body}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -2537,6 +2552,7 @@ ALL_CHECKS = [
     ("multi_org_membership",          check_multi_org_membership),
     ("stats_workspaces_lists_all",    check_stats_workspaces_lists_all),
     ("repo_event_surfaces",           check_repo_event_surfaces),
+    ("repo_webhook_hmac",             check_repo_webhook_hmac),
 ]
 
 
