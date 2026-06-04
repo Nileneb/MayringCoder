@@ -590,6 +590,22 @@ async def activations(
 # 9. workspace breakdown  →  GROUP BY chunks/sources
 # ---------------------------------------------------------------------------
 
+_INFRA_WS = {"system", "public", "bene:logs", "logs", "default"}
+
+
+def _workspace_kind(wid: str, caller_ws: str) -> str:
+    """Classify a workspace for the dashboard grouping: the caller's own workspace
+    (mine), legitimate infra buckets (infra), per-device unclaimed buckets (unclaimed),
+    or leftover legacy cruft (legacy)."""
+    if wid.startswith("unclaimed:"):
+        return "unclaimed"
+    if wid in _INFRA_WS:
+        return "infra"
+    if wid == caller_ws:
+        return "mine"
+    return "legacy"
+
+
 @router.get("/stats/workspaces")
 async def workspaces(
     workspace_id: str = Depends(get_workspace),
@@ -661,6 +677,7 @@ async def workspaces(
             {
                 "workspace_id": r[0],
                 "type": member_ws_types.get(r[0], "personal" if r[0] == workspace_id else "unknown"),
+                "kind": _workspace_kind(r[0], workspace_id),
                 "chunks": r[1],
                 "sources": r[2],
                 "last_activity": r[3],
