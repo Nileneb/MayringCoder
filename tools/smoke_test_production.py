@@ -2483,6 +2483,17 @@ def check_repo_webhook_hmac(api: str, token: str) -> CheckResult:
         else f"expected 401, got http={code}: {body}")
 
 
+def check_claim_rejects_foreign(api: str, token: str) -> CheckResult:
+    """POST /stats/workspaces/claim with a NON-unclaimed workspace_id must be refused
+    403 — only unclaimed:<device> buckets are claimable (no claiming infra/foreign WS)."""
+    code, body, _ = _http("POST", f"{api}/stats/workspaces/claim", token,
+                          body={"workspace_id": "system"}, timeout=10.0)
+    ok = code == 403
+    return CheckResult("claim_rejects_foreign", ok,
+        f"foreign claim rejected http={code}" if ok
+        else f"expected 403, got http={code}: {body}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -2553,6 +2564,7 @@ ALL_CHECKS = [
     ("stats_workspaces_lists_all",    check_stats_workspaces_lists_all),
     ("repo_event_surfaces",           check_repo_event_surfaces),
     ("repo_webhook_hmac",             check_repo_webhook_hmac),
+    ("claim_rejects_foreign",         check_claim_rejects_foreign),
 ]
 
 
