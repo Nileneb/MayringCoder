@@ -2494,6 +2494,27 @@ def check_claim_rejects_foreign(api: str, token: str) -> CheckResult:
         else f"expected 403, got http={code}: {body}")
 
 
+def check_project_groups_roundtrip(api: str, token: str) -> CheckResult:
+    """C1: create group → assign repo → GET /projects shows color → delete. Proves the
+    endpoint shipped end-to-end on the token's own workspace."""
+    code, body, _ = _http("POST", f"{api}/project-groups", token,
+                          body={"name": "smoke-c1-grp"}, timeout=10.0)
+    if code != 200:
+        return CheckResult("project_groups_roundtrip", False,
+                           f"create failed http={code}: {body}")
+    gid = (body or {}).get("id")
+    _http("POST", f"{api}/project-groups/assign", token,
+          body={"repo_slug": "smoke/repo-c1", "group_id": gid}, timeout=10.0)
+    pc, pbody, _ = _http("GET", f"{api}/projects", token, timeout=10.0)
+    colored = any((p.get("group_id") == gid and (p.get("group_color") or "").startswith("#"))
+                  for p in ((pbody or {}).get("projects") or []))
+    dc, _, _ = _http("DELETE", f"{api}/project-groups/{gid}", token, timeout=10.0)
+    ok = pc == 200 and colored and dc == 200
+    return CheckResult("project_groups_roundtrip", ok,
+        "create→assign→color→delete ok" if ok
+        else f"roundtrip failed: get={pc} colored={colored} del={dc}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -2565,6 +2586,7 @@ ALL_CHECKS = [
     ("repo_event_surfaces",           check_repo_event_surfaces),
     ("repo_webhook_hmac",             check_repo_webhook_hmac),
     ("claim_rejects_foreign",         check_claim_rejects_foreign),
+    ("project_groups_roundtrip",      check_project_groups_roundtrip),
 ]
 
 
