@@ -613,6 +613,7 @@ async def memory_put(
 async def conversation_micro_batch(
     request: ConversationMicroBatchRequest,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
     x_project_id: str | None = Header(default=None, alias="X-Project-Id"),
 ) -> dict:
     """Accept a batch of raw Claude turns from a remote conversation watcher,
@@ -669,6 +670,14 @@ async def conversation_micro_batch(
             f"# Session {first_ts or 'unbekannt'} | {slug}\n\n"
             f"{summary}\n"
         )
+        # WHY(conversation-orphan fix): conversation summaries default to the
+        # chunks-table NULL visibility → _scope_filter never returns them on
+        # cross-session reads (the recency-lane only masks this for the CURRENT
+        # session). Stamp private + an explicit owner (info.sub, falling back to
+        # the workspace owner for service-token captures) so they are actually
+        # recallable later — same pattern + reason as /memory/put (private+
+        # user_id=NULL → invisible to everyone).
+        from mayring_core.identity.workspace_resolver import workspace_owner
         source_dict = {
             "source_id": source_id,
             "source_type": "conversation_summary",
@@ -677,6 +686,8 @@ async def conversation_micro_batch(
             "branch": "local",
             "commit": "",
             "content_hash": content_hash,
+            "visibility": "private",
+            "user_id": info.sub or workspace_owner(_get_conn(), workspace_id),
         }
         result = _run_ingest(
             source_dict, content, _get_conn(), _get_chroma(),
