@@ -160,7 +160,12 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
     _canon_url = repo_url  # already canonicalized above
     _project_id: str | None = None
     try:
-        from mayring_core.memory.schema import canonicalize_url as _canon_fn
+        # WHY(C3 link-mismatch fix): projects.source_ref is keyed by
+        # canonical_repo_ref (github → 'owner/name' slug), NOT canonicalize_url
+        # (which keeps the full lowercased URL). A canonicalize_url lookup never
+        # matched a github project row → links silently skipped in prod. Use the
+        # SAME function the project rows were written with.
+        from src.api.routes.projects import canonical_repo_ref as _canon_fn
         from mayring_core.memory.store import init_memory_db as _idb_proj
         _pconn = _idb_proj()
         try:
@@ -208,7 +213,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
             if _project_id:
                 try:
                     from mayring_core.memory.store import get_chunks_by_source, link_chunk_to_project
-                    from mayring_core.memory.schema import canonicalize_url as _cu
+                    from src.api.routes.projects import canonical_repo_ref as _cu
                     _src_id = Source.make_id(repo_url, f['filename'])
                     for _ch in get_chunks_by_source(_conn, _src_id, active_only=True):
                         link_chunk_to_project(
