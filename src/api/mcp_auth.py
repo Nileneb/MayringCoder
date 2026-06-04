@@ -3,10 +3,34 @@
 from __future__ import annotations
 
 import contextvars
+import logging
 import os
+import uuid
 from typing import Any
 
 from src.api.jwt_auth import TokenInfo, validate_jwt_token
+
+_DEVICE_WARNED = False
+
+
+def _local_device_id() -> str:
+    """Stable per-device id (decoupled from hostname) for the unclaimed bucket of a
+    device that has no valid hook.jwt. Persisted to <config>/mayring/device_id."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    p = os.path.join(base, "mayring", "device_id")
+    try:
+        with open(p, encoding="utf-8") as fh:
+            v = fh.read().strip()
+            if v:
+                return v
+    except OSError:
+        pass
+    v = uuid.uuid4().hex[:12]
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(v)
+    os.chmod(p, 0o600)
+    return v
 
 # Default ON. Forgotten env var on a prod deploy must NOT silently expose
 # unauthenticated MCP. Local dev opts out via MCP_AUTH_ENABLED=false.
@@ -114,7 +138,17 @@ def _effective_workspace_id(caller_default: str = "default") -> str:
     """
     info = _current_token_info()
     if info is None:
-        return caller_default or "default"
+        # No valid local token → DON'T silently misfile into the shared 'default'
+        # bucket (the per-device leak). Write to a clearly-marked, claimable
+        # unclaimed:<device> bucket and warn loudly once (CLAUDE.md: no silent errors).
+        global _DEVICE_WARNED
+        dev = _local_device_id()
+        if not _DEVICE_WARNED:
+            logging.getLogger(__name__).warning(
+                "Kein gültiges hook.jwt — Memory landet in 'unclaimed:%s'. "
+                "oauth_install ausführen oder im Dashboard claimen.", dev)
+            _DEVICE_WARNED = True
+        return f"unclaimed:{dev}"
     from mayring_core.identity.workspace_resolver import resolve_workspace_from_token
     # conn → Alias-Auflösung (workspace-repoint): alte Tokens (019d6933 — z.B. der
     # claude.ai-Memory-Connector, der vor der Migration ausgestellt wurde) lösen
