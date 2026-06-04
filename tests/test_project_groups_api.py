@@ -42,9 +42,9 @@ def test_create_group_duplicate_name_409(client):
     assert r.status_code == 409, r.text
 
 
-def test_create_group_empty_name_409(client):
+def test_create_group_empty_name_422(client):
     r = client.post("/project-groups", json={"name": "  "})
-    assert r.status_code == 409
+    assert r.status_code == 422
 
 
 def test_patch_recolor_and_rename(client):

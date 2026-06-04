@@ -312,7 +312,7 @@ async def list_project_groups(ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
     rows = conn.execute(
         "SELECT g.id, g.name, g.color, "
-        "  (SELECT COUNT(*) FROM projects p WHERE p.group_id=g.id) "
+        "  (SELECT COUNT(*) FROM projects p WHERE p.group_id=g.id AND p.workspace_id=g.workspace_id) "
         "FROM project_groups g WHERE g.workspace_id=? ORDER BY g.name",
         (ws,),
     ).fetchall()
@@ -324,7 +324,7 @@ async def list_project_groups(ws: str = Depends(get_workspace)) -> dict:
 async def create_project_group(req: GroupCreate, ws: str = Depends(get_workspace)) -> dict:
     name = (req.name or "").strip()
     if not name:
-        raise HTTPException(status_code=409, detail="name must not be empty")
+        raise HTTPException(status_code=422, detail="name must not be empty")
     conn = _get_conn()
     dupe = conn.execute(
         "SELECT 1 FROM project_groups WHERE workspace_id=? AND lower(name)=lower(?)",
@@ -354,7 +354,7 @@ async def update_project_group(group_id: str, req: GroupUpdate,
         raise HTTPException(status_code=404, detail="group not found")
     name = row[0] if req.name is None else (req.name or "").strip()
     if not name:
-        raise HTTPException(status_code=409, detail="name must not be empty")
+        raise HTTPException(status_code=422, detail="name must not be empty")
     if req.name is not None:
         dupe = conn.execute(
             "SELECT 1 FROM project_groups WHERE workspace_id=? AND lower(name)=lower(?) "
@@ -362,7 +362,7 @@ async def update_project_group(group_id: str, req: GroupUpdate,
         if dupe:
             raise HTTPException(status_code=409, detail=f"group '{name}' already exists")
     color = row[1] if req.color is None else req.color
-    if color not in PROJECT_GROUP_PALETTE:
+    if req.color is not None and color not in PROJECT_GROUP_PALETTE:
         raise HTTPException(status_code=422, detail="color not in palette")
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
