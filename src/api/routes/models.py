@@ -207,6 +207,9 @@ class ConversationMicroBatchRequest(BaseModel):
     # Server, den resultierenden Chunk direkt zu taggen statt auf den
     # IGIO-Cron (async, Stunden später) zu warten.
     igio_hint: str | None = None  # "goal" | "issue" | "intervention" | "outcome"
+    # WHY(C3 project-link): optionale Herkunfts-URL des Gesprächs (z.B. Repo-URL),
+    # wird als origin_ref in chunk_project_links gespeichert wenn X-Project-Id gesetzt.
+    origin_ref: str = ""
 
 
 class WikiGenerateRequest(BaseModel):

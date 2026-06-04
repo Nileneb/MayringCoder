@@ -8,7 +8,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from src.api.auth import get_token_info, get_workspace
@@ -613,6 +613,7 @@ async def memory_put(
 async def conversation_micro_batch(
     request: ConversationMicroBatchRequest,
     workspace_id: str = Depends(get_workspace),
+    x_project_id: str | None = Header(default=None, alias="X-Project-Id"),
 ) -> dict:
     """Accept a batch of raw Claude turns from a remote conversation watcher,
     produce a summary on the server side (so the user doesn't need their own
@@ -698,6 +699,24 @@ async def conversation_micro_batch(
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning("igio_hint tagging failed: %s", exc)
+
+        # WHY(C3 project-link): wenn X-Project-Id übergeben wurde, alle neu erstellten
+        # Chunks zu diesem Projekt linken. Fail-soft: Fehler hier dürfen den Hook NIE
+        # 5xx geben — lautes Warning und weiter.
+        if x_project_id:
+            try:
+                from mayring_core.memory.store import get_chunks_by_source, link_chunk_to_project
+                _proj_id = x_project_id.strip()
+                _conn_link = _get_conn()
+                for _chunk in get_chunks_by_source(_conn_link, source_id, active_only=True):
+                    link_chunk_to_project(
+                        _conn_link, _chunk.chunk_id, _proj_id,
+                        origin_ref=request.origin_ref,
+                        source="conversation",
+                        workspace_id=workspace_id,
+                    )
+            except Exception as _exc:
+                _log.warning("conversation project linking failed project=%r: %s", x_project_id, _exc)
 
         # Prompt → actionable todo (background, never blocks the response;
         # not for system/smoke workspaces).
