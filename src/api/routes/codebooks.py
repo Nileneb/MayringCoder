@@ -219,8 +219,13 @@ def reduce_text_server(text: str, theme: str, *, project_id: str | None = None,
         return (out[0] if out else []) or []
 
     def _llm(prompt: str) -> str:
+        # think=False: die Reduktion ist strukturierte Extraktion — Thinking bringt nichts,
+        # frisst aber bei kleinen Thinking-Modellen (qwen3.5:2b) das num_predict-Budget auf,
+        # bevor das JSON kommt → leeres Label (done_reason=length). Für non-thinking-Modelle
+        # (mistral:7b-instruct) ist es ein No-op → fairer Modell-Vergleich.
         return providers.generate_text(prompt=prompt, ollama_url=ollama_url, model=model,
-                                       label="pi:reduce", options={"temperature": 0.0, "seed": 7})
+                                       label="pi:reduce", options={"temperature": 0.0, "seed": 7},
+                                       think=False)
 
     return mayring_reduce(
         text, theme, conn=conn,
@@ -313,7 +318,8 @@ async def process_text(
         # → gleiches Label), damit Dedup/Evidenz-Akkumulation greift statt zu variieren.
         return providers.generate_text(prompt=prompt, ollama_url=ollama_url,
                                        model=model, label="mayring_process",
-                                       options={"temperature": 0.0, "seed": 7})
+                                       options={"temperature": 0.0, "seed": 7},
+                                       think=False)
 
     try:
         res = mayring_process(
