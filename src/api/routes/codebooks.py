@@ -237,8 +237,10 @@ async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_wor
     try:
         res = reduce_text_server(req.text, req.task or "(kein Task)",
                                  project_id=req.project_id, model_override=req.model.strip())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Duell-tauglich: ein Modell, das Müll/leer liefert (oder fehlt), darf den Lauf
+        # nicht mit 500 abbrechen — der Fehler kommt im Body zurück (NICHT stumm).
+        return {"error": str(e), "model": req.model.strip() or "router-text-default"}
     cand = res.candidates[0] if res.candidates else None
     return {
         "label": cand.label if cand else "",
