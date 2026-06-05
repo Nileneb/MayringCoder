@@ -22,16 +22,21 @@ Usage:
     python tools/export_retrieval_dataset.py
         --out cache/finetuning/retrieval_dataset.jsonl
         --days 30
-        --negative-mode unlabeled
+        --negative-mode explicit
 
 Negative-mode determines how unlabeled chunks become training negatives:
-  * ``unlabeled``  — all top-K chunks that did NOT get positive feedback
-                     are negatives (faster to label, noisier).
-  * ``explicit``   — only chunks with explicit ``negative`` feedback.
-                     Higher-precision negatives, far fewer rows.
+  * ``explicit``   — only chunks with explicit negativ-Rating (1-2★) ODER
+                     was_referenced=1 als Positive. Hochpräzise, menschen-gelabelt.
+  * ``unlabeled``  — ALLE top-K-Chunks ohne positives Feedback werden Negative.
 
-Default ``unlabeled`` because we have far more positives than explicit
-negatives and we need the volume to learn weights.
+WHY(2026-06-05) Default ``explicit`` (vorher ``unlabeled``): top-K-Chunks haben PER
+DEFINITION hohe Vektor-Ähnlichkeit (sie wurden ja retrieved). Sie pauschal als
+Negative zu labeln nur weil sie nicht in der Antwort zitiert wurden (was_referenced=0
+heißt NICHT irrelevant — Kontext kann die Antwort speisen ohne zitiert zu werden)
+lehrt das Modell „hohe v → negativ" → das v-Gewicht wird NEGATIV → der Loader rejected
+das ganze Modell (v/s-hard-gate, #180) → v2 ging nie live. Mensch-gelabelte
+Negative (Rating 1-2★) haben diesen Bias nicht. ``unlabeled`` nur noch für
+Volume-Experimente, idealerweise kombiniert mit ``--span-judge`` (LLM-Relabeling).
 """
 from __future__ import annotations
 
@@ -317,7 +322,7 @@ def main() -> int:
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument(
         "--negative-mode", choices=["unlabeled", "explicit"],
-        default="unlabeled",
+        default="explicit",  # WHY(2026-06-05): unlabeled labelte high-v top-K als Negative → v<0 → Modell-Reject
     )
     ap.add_argument(
         "--span-judge", action="store_true",
