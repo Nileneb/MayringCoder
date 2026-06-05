@@ -273,3 +273,25 @@ async def get_igio_backfill_status(
     if not state:
         raise HTTPException(status_code=404, detail="job not found")
     return {"job_id": job_id, **state}
+
+
+@router.get("/stats/admin/goal-anchor-audit")
+async def goal_anchor_audit(info: TokenInfo = Depends(get_token_info)) -> dict:
+    """Quantifiziert „wildes Codebook": wie viele Sources einen echten goal-Anker haben,
+    wie viele auf den schwachen Fallback ('Inhalte aus …') liefen, und wie viele gar
+    keinen Anker haben (vor v20 ingested → goal unbekannt). source_goals ist forward-only;
+    Alt-Sources erscheinen als no_anchor_pre_v20 bis sie re-ingested werden."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    conn = _conn()
+    total = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    with_goal = conn.execute("SELECT COUNT(*) FROM source_goals").fetchone()[0]
+    fallback = conn.execute(
+        "SELECT COUNT(*) FROM source_goals WHERE goal LIKE 'Inhalte aus %'").fetchone()[0]
+    return {
+        "total_sources": total,
+        "with_goal_anchor": with_goal,
+        "real_anchor": with_goal - fallback,
+        "fallback_anchor": fallback,
+        "no_anchor_pre_v20": total - with_goal,
+    }

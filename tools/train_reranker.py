@@ -88,17 +88,19 @@ def _neutralize_weak_negatives(weights: dict[str, float]) -> dict[str, float]:
 
 def _load(
     path: Path,
-) -> tuple[list[list[float]], list[int], list[float], list[str]]:
-    """Return (X, y, sample_weight, chunk_ids).
+) -> tuple[list[list[float]], list[int], list[float], list[str], list[str]]:
+    """Return (X, y, sample_weight, chunk_ids, queries).
 
     sample_weight per row (#209): rating 5★ = 1.0, 4★ = 0.5, 2★ = 0.5,
     1★ = 1.0 (negativ). Rows ohne explicit rating bekommen 1.0.
     Multi-rating chunks bekommen n-bonus (1 + 0.1*(n-1), clipped).
-    """
+    queries: die Query pro Row — für gruppen-bewussten Split + PER-QUERY-Metriken
+    (Reranking-Precision misst man je Query, nicht global gepoolt)."""
     X: list[list[float]] = []
     y: list[int] = []
     w: list[float] = []
     cids: list[str] = []
+    queries: list[str] = []
     with path.open(encoding="utf-8") as f:
         for line in f:
             row = json.loads(line)
@@ -107,7 +109,8 @@ def _load(
             y.append(int(row.get("label", 0)))
             w.append(float(row.get("sample_weight", 1.0)))
             cids.append(row.get("chunk_id", ""))
-    return X, y, w, cids
+            queries.append(row.get("query", ""))
+    return X, y, w, cids, queries
 
 
 def _ndcg_at_k(labels: list[int], k: int) -> float:
@@ -124,11 +127,11 @@ def train(in_path: Path, out_path: Path) -> int:
     try:
         from sklearn.linear_model import LogisticRegression
         from sklearn.metrics import roc_auc_score
-        from sklearn.model_selection import train_test_split
+        from sklearn.model_selection import GroupShuffleSplit
     except ImportError:
         print("Fehler: sklearn nicht installiert (pip install scikit-learn)")
         return 2
-    X, y, w, _cids = _load(in_path)
+    X, y, w, _cids, queries = _load(in_path)
     if len(X) < MIN_ROWS:
         print(f"zu wenig Daten: {len(X)} rows < {MIN_ROWS} (warte auf mehr Feedback)")
         return 1
@@ -136,12 +139,27 @@ def train(in_path: Path, out_path: Path) -> int:
     if pos < MIN_POSITIVES:
         print(f"zu wenig Positives: {pos} < {MIN_POSITIVES}")
         return 1
-    # WHY(#209): split inkl. sample_weight, sodass die ratings auch in
-    # train/test korrekt mitgeführt werden.
-    Xtr, Xte, ytr, yte, wtr, _wte = train_test_split(
-        X, y, w, test_size=0.2, random_state=42,
-        stratify=y if pos < len(y) else None,
-    )
+    # GRUPPEN-BEWUSSTER Split nach Query (NICHT random per-row): Reranking-Precision
+    # misst man PRO QUERY (alle Kandidaten einer Query zusammen ranken). Ein per-row-
+    # Split zerstreute die Kandidaten einer Query über train+test → per-Query-Metriken
+    # liefen auf Teil-Listen, und die globale p@1/ndcg-Poolung (vorher) war komplett
+    # falsch gemessen (top-1 über ALLE Queries → p@1=1.0 trivial). GroupShuffleSplit
+    # hält jede Query ganz in train ODER test.
+    n_groups = len(set(queries))
+    if n_groups >= 5:
+        gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+        tr_idx, te_idx = next(gss.split(X, y, groups=queries))
+    else:
+        # Cold-Start / zu wenige distinkte Queries für einen gruppen-bewussten Split →
+        # einfacher index-Split (per-Query-Metrik dann approximativ, aber kein Crash).
+        from sklearn.model_selection import train_test_split
+        idx = list(range(len(X)))
+        tr_idx, te_idx = train_test_split(
+            idx, test_size=0.2, random_state=42,
+            stratify=y if 0 < pos < len(y) else None)
+    Xtr = [X[i] for i in tr_idx]; ytr = [y[i] for i in tr_idx]; wtr = [w[i] for i in tr_idx]
+    Xte = [X[i] for i in te_idx]; yte = [y[i] for i in te_idx]
+    qte = [queries[i] for i in te_idx]
     # L2 (Ridge) mit C=0.1 = stark regularisiert. Multikollinearität
     # zwischen v↔s (corr=+0.51), v↔r (+0.43), s↔r (+0.66) führt unter
     # default-C zu willkürlichen Vorzeichen-Flips zwischen den
@@ -158,10 +176,25 @@ def train(in_path: Path, out_path: Path) -> int:
     clf.fit(Xtr, ytr, sample_weight=wtr)
     proba = clf.predict_proba(Xte)[:, 1]
     auc = float(roc_auc_score(yte, proba)) if len(set(yte)) > 1 else 0.0
-    sorted_pairs = sorted(zip(proba, yte), key=lambda p: p[0], reverse=True)
-    sorted_labels = [int(lbl) for _, lbl in sorted_pairs]
-    p_at_1 = float(sum(sorted_labels[:1]) / max(1, len(sorted_labels[:1])))
-    ndcg_5 = _ndcg_at_k(sorted_labels, 5)
+    # PER-QUERY-Metriken (Reranking-Precision): je Query die Kandidaten nach proba
+    # ranken, dann ndcg@5 + p@1 berechnen, über Queries MITTELN. Vorher wurde global
+    # über ALLE Test-Rows gepoolt (top-1 über alles → p@1=1.0 trivial, kein echtes
+    # Ranking-Signal — der falsche Indikator). Queries mit nur Negativen zählen als 0.
+    from collections import defaultdict
+    by_q: dict[str, list[tuple[float, int]]] = defaultdict(list)
+    for p, lbl, q in zip(proba, yte, qte):
+        by_q[q].append((float(p), int(lbl)))
+    ndcgs: list[float] = []
+    p1s: list[float] = []
+    for items in by_q.values():
+        items.sort(key=lambda t: t[0], reverse=True)
+        labels = [lbl for _, lbl in items]
+        ndcgs.append(_ndcg_at_k(labels, 5))
+        p1s.append(float(labels[0]) if labels else 0.0)
+    n_q = len(by_q)
+    p_at_1 = round(sum(p1s) / n_q, 4) if n_q else 0.0
+    ndcg_5 = round(sum(ndcgs) / n_q, 4) if n_q else 0.0
+    print(f"per-query eval: {n_q} queries, p@1={p_at_1}, ndcg@5={ndcg_5}, auc={round(auc,4)}")
 
     weights = {f: round(float(w), 4) for f, w in zip(FEATURES, clf.coef_[0])}
     # Negative pt/re würden vom Loader abgelehnt → neutralisieren, damit
