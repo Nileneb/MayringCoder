@@ -26,15 +26,15 @@ def _now() -> str:
 
 def _category_row(r) -> dict:
     return {
-        "id": r[0], "codebook_id": r[1], "name": r[2], "igio_axis": r[3],
-        "parent_id": r[4], "description": r[5], "status": r[6], "source": r[7],
-        "evidence_count": r[8], "embedding_id": r[9], "risk_level": r[10],
-        "languages": json.loads(r[11] or "[]"), "patterns": json.loads(r[12] or "[]"),
-        "project_id": r[13],
+        "id": r[0], "name": r[1], "igio_axis": r[2],
+        "parent_id": r[3], "description": r[4], "status": r[5], "source": r[6],
+        "evidence_count": r[7], "embedding_id": r[8], "risk_level": r[9],
+        "languages": json.loads(r[10] or "[]"), "patterns": json.loads(r[11] or "[]"),
+        "project_id": r[12],
     }
 
 
-_CAT_COLS = ("id, codebook_id, name, igio_axis, parent_id, description, status, "
+_CAT_COLS = ("id, name, igio_axis, parent_id, description, status, "
              "source, evidence_count, embedding_id, risk_level, languages, patterns, "
              "project_id")
 
@@ -60,46 +60,38 @@ class ProcessRequest(BaseModel):
 
 @router.get("/codebooks")
 async def list_codebooks(_ws: str = Depends(get_workspace)) -> dict:
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT id, slug, description, version, auto_promote_threshold FROM codebooks "
-        "ORDER BY slug").fetchall()
-    return {"codebooks": [
-        {"id": r[0], "slug": r[1], "description": r[2], "version": r[3],
-         "auto_promote_threshold": r[4]} for r in rows]}
+    # WHY(v19-drop-codebook): codebooks-Tabelle existiert nicht mehr — synthetische
+    # Antwort damit Smoke (GET /codebooks → cb_id für /process-Check) grün bleibt.
+    return {"codebooks": [{"id": 1, "slug": "categories",
+                           "description": "alle Kategorien (flach, kein Codebook mehr)",
+                           "version": 1}]}
 
 
 @router.get("/codebooks/{slug}")
 async def get_codebook(slug: str, _ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
-    r = conn.execute(
-        "SELECT id, slug, description, version, auto_promote_threshold FROM codebooks "
-        "WHERE slug = ?", (slug,)).fetchone()
-    if r is None:
-        raise HTTPException(status_code=404, detail=f"codebook {slug!r} not found")
     n = conn.execute(
-        "SELECT count(*) FROM codebook_categories WHERE codebook_id=? AND status='active'",
-        (r[0],)).fetchone()[0]
-    return {"id": r[0], "slug": r[1], "description": r[2], "version": r[3],
-            "auto_promote_threshold": r[4], "active_categories": n}
+        "SELECT count(*) FROM categories WHERE status='active'").fetchone()[0]
+    return {"id": 1, "slug": slug, "description": "alle Kategorien (flach, kein Codebook mehr)",
+            "version": 1, "active_categories": n}
 
 
 @router.get("/codebooks/{codebook_id}/categories")
 async def list_categories(
-    codebook_id: int,
+    codebook_id: int,  # vestigial path param, ignored (v19: kein codebook_id mehr)
     status: str = Query(default="active"),
     _ws: str = Depends(get_workspace),
 ) -> dict:
     conn = _get_conn()
     rows = conn.execute(
-        f"SELECT {_CAT_COLS} FROM codebook_categories "
-        "WHERE codebook_id = ? AND status = ? ORDER BY evidence_count DESC, name",
-        (codebook_id, status)).fetchall()
+        f"SELECT {_CAT_COLS} FROM categories "
+        "WHERE status = ? ORDER BY evidence_count DESC, name",
+        (status,)).fetchall()
     return {"categories": [_category_row(r) for r in rows], "count": len(rows)}
 
 
 def record_proposal(
-    conn, codebook_id: int, category_name: str, *,
+    conn, category_name: str, *,
     paraphrase: str = "", parent_hint_id: int | None = None,
     igio_axis: str | None = None, pi_job_id: str = "",
     chunk_id: str | None = None, embedding_id: str = "",
@@ -109,25 +101,26 @@ def record_proposal(
 
     Shared by the /proposals endpoint and mayring_process (DRY). Does NOT commit —
     the caller owns the transaction so the mixed-method pipeline can batch its writes.
+    v19: codebook_id entfernt — flache categories-Tabelle, UNIQUE(name).
     """
     now = _now()
     cat = conn.execute(
-        "SELECT id FROM codebook_categories WHERE codebook_id=? AND name=?",
-        (codebook_id, category_name)).fetchone()
+        "SELECT id FROM categories WHERE name=?",
+        (category_name,)).fetchone()
     if cat is None:
         # WHY(#270): induzierte Kategorie startet als 'proposed' (parent_hint PFLICHT
         # bei induktiv — der Caller liefert ihn), bis evidence sie auto-promotet.
         conn.execute(
-            "INSERT INTO codebook_categories(codebook_id, name, igio_axis, parent_id, "
+            "INSERT INTO categories(name, igio_axis, parent_id, "
             "description, status, source, evidence_count, embedding_id, project_id) "
-            "VALUES (?,?,?,?,?, 'proposed','induced', 1, ?, ?)",
-            (codebook_id, category_name, igio_axis, parent_hint_id,
+            "VALUES (?,?,?,?, 'proposed','induced', 1, ?, ?)",
+            (category_name, igio_axis, parent_hint_id,
              paraphrase[:200], embedding_id, project_id))
-        cat_id = conn.execute("SELECT id FROM codebook_categories WHERE codebook_id=? "
-                              "AND name=?", (codebook_id, category_name)).fetchone()[0]
+        cat_id = conn.execute("SELECT id FROM categories WHERE name=?",
+                              (category_name,)).fetchone()[0]
     else:
         cat_id = cat[0]
-        conn.execute("UPDATE codebook_categories SET evidence_count = evidence_count + 1 "
+        conn.execute("UPDATE categories SET evidence_count = evidence_count + 1 "
                      "WHERE id=?", (cat_id,))
     conn.execute(
         "INSERT INTO codebook_proposals(category_id, pi_job_id, chunk_id, paraphrase, "
@@ -138,13 +131,14 @@ def record_proposal(
 
 @router.post("/codebooks/{codebook_id}/proposals")
 async def create_proposal(
-    codebook_id: int, req: ProposalRequest, _ws: str = Depends(get_workspace),
+    codebook_id: int,  # vestigial path param, ignored (v19)
+    req: ProposalRequest, _ws: str = Depends(get_workspace),
 ) -> dict:
     """Pi-Agent proposes a (possibly new) category. Embedding-dedup + auto-promote
     run via mayring_process / the promote endpoint. New category → status='proposed'."""
     conn = _get_conn()
     cat_id = record_proposal(
-        conn, codebook_id, req.category_name, paraphrase=req.paraphrase,
+        conn, req.category_name, paraphrase=req.paraphrase,
         parent_hint_id=req.parent_hint_id, igio_axis=req.igio_axis,
         pi_job_id=req.pi_job_id, chunk_id=req.chunk_id, project_id=req.project_id)
     conn.commit()
@@ -153,11 +147,12 @@ async def create_proposal(
 
 @router.post("/codebooks/{codebook_id}/proposals/{category_id}/promote")
 async def promote_category(
-    codebook_id: int, category_id: int, _ws: str = Depends(get_workspace),
+    codebook_id: int,  # vestigial path param, ignored (v19)
+    category_id: int, _ws: str = Depends(get_workspace),
 ) -> dict:
     conn = _get_conn()
-    conn.execute("UPDATE codebook_categories SET status='active', promoted_at=? "
-                 "WHERE id=? AND codebook_id=?", (_now(), category_id, codebook_id))
+    conn.execute("UPDATE categories SET status='active', promoted_at=? "
+                 "WHERE id=?", (_now(), category_id))
     conn.execute("UPDATE codebook_proposals SET decision='promote', reviewed_by='api' "
                  "WHERE category_id=? AND decision IS NULL", (category_id,))
     conn.commit()
@@ -166,23 +161,23 @@ async def promote_category(
 
 @router.post("/codebooks/{codebook_id}/proposals/{category_id}/reject")
 async def reject_category(
-    codebook_id: int, category_id: int, _ws: str = Depends(get_workspace),
+    codebook_id: int,  # vestigial path param, ignored (v19)
+    category_id: int, _ws: str = Depends(get_workspace),
 ) -> dict:
     """Verwirft eine PROPOSED-Kategorie (Gegenstück zu promote): löscht ihre chunk_categories-
     Links, die Kategorie selbst und ihr Chroma-Embedding; markiert offene Proposals 'reject'.
     Safety: aktive Kategorien sind NICHT löschbar (400) — die bedienen cat_match."""
     conn = _get_conn()
     row = conn.execute(
-        "SELECT status, embedding_id FROM codebook_categories WHERE id=? AND codebook_id=?",
-        (category_id, codebook_id)).fetchone()
+        "SELECT status, embedding_id FROM categories WHERE id=?",
+        (category_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"category {category_id} not found")
     if row[0] == "active":
         raise HTTPException(status_code=400, detail="cannot reject an active category")
     conn.execute("DELETE FROM codebook_proposals WHERE category_id=?", (category_id,))
     conn.execute("DELETE FROM chunk_categories WHERE category_id=?", (category_id,))
-    conn.execute("DELETE FROM codebook_categories WHERE id=? AND codebook_id=?",
-                 (category_id, codebook_id))
+    conn.execute("DELETE FROM categories WHERE id=?", (category_id,))
     conn.commit()
     emb_id = row[1]
     if emb_id:
@@ -237,8 +232,8 @@ async def process_text(
     from mayring_core.model_router import ModelRouter
 
     conn = _get_conn()
-    if conn.execute("SELECT 1 FROM codebooks WHERE id=?", (codebook_id,)).fetchone() is None:
-        raise HTTPException(status_code=404, detail=f"codebook {codebook_id} not found")
+    # WHY(v19-drop-codebook): codebooks-Tabelle weg → keine 404-Prüfung mehr.
+    # codebook_id-Pfadparam bleibt aus Back-Compat-Gründen (Smoke nutzt ihn).
 
     # Ollama via Proxy ohne Port (CLAUDE.md-Invariante); Modell aus ModelRouter, nicht env.
     ollama_url = os.environ.get("OLLAMA_URL", "https://three.linn.games")

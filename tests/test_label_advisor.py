@@ -35,12 +35,12 @@ def _conn_with_chunks() -> sqlite3.Connection:
     conn.execute("CREATE TABLE chunks (chunk_id TEXT, summary TEXT, text TEXT, "
                  "is_active INTEGER, category_source TEXT, category_labels TEXT)")
     conn.execute("CREATE TABLE chunk_categories (chunk_id TEXT, category_id INTEGER, confidence REAL)")
-    conn.execute("CREATE TABLE codebook_categories (id INTEGER, name TEXT, status TEXT)")
+    conn.execute("CREATE TABLE categories (id INTEGER, name TEXT, status TEXT)")
     conn.execute("INSERT INTO chunks VALUES ('chk_low','auth login token','',1,'deductive-link','tools')")
     conn.execute("INSERT INTO chunks VALUES ('chk_high','x','',1,'deductive-link','api')")
     conn.execute("INSERT INTO chunk_categories VALUES ('chk_low',1,0.40)")   # weak cosine → eligible
     conn.execute("INSERT INTO chunk_categories VALUES ('chk_high',2,0.90)")  # strong → skipped
-    conn.executemany("INSERT INTO codebook_categories VALUES (?,?,?)",
+    conn.executemany("INSERT INTO categories VALUES (?,?,?)",
                      [(1, "auth", "active"), (2, "api", "active"), (3, "data_access", "active")])
     conn.commit()
     return conn

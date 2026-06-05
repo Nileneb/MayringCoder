@@ -24,9 +24,10 @@ def test_best_matches_topn_and_threshold():
 
 
 def _codebook_conn() -> sqlite3.Connection:
+    # WHY(v19-drop-codebook): categories statt codebook_categories (kein codebook_id)
     conn = sqlite3.connect(":memory:")
     conn.execute(
-        "CREATE TABLE codebook_categories (id INTEGER PRIMARY KEY, name TEXT, "
+        "CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT, "
         "igio_axis TEXT, parent_id INTEGER, embedding_id TEXT, status TEXT, project_id TEXT)"
     )
     conn.execute(
@@ -35,7 +36,7 @@ def _codebook_conn() -> sqlite3.Connection:
     )
     for i, name in enumerate(["auth", "api", "db"], 1):
         conn.execute(
-            "INSERT INTO codebook_categories VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO categories VALUES (?,?,?,?,?,?,?)",
             (i, name, "", None, f"emb_{i}", "active", None),
         )
     conn.commit()
@@ -68,9 +69,9 @@ def test_link_chunks_deductive_default_topn1_single_link(monkeypatch):
 
 def test_derive_labels_from_categories():
     conn = sqlite3.connect(":memory:")
-    conn.execute("CREATE TABLE codebook_categories (id INTEGER PRIMARY KEY, name TEXT)")
+    conn.execute("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT)")
     conn.execute("CREATE TABLE chunk_categories (chunk_id TEXT, category_id INTEGER, confidence REAL)")
-    conn.executemany("INSERT INTO codebook_categories VALUES (?,?)", [(1, "auth"), (2, "api")])
+    conn.executemany("INSERT INTO categories VALUES (?,?)", [(1, "auth"), (2, "api")])
     conn.executemany("INSERT INTO chunk_categories VALUES (?,?,?)",
                      [("chk_1", 1, 0.9), ("chk_1", 2, 0.7)])
     conn.commit()

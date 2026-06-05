@@ -40,16 +40,16 @@ def _make_embed(mapping, default=(0.0, 0.0, 1.0)):
 
 
 def _seed(db, threshold=3):
+    # WHY(v19-drop-codebook): kein codebooks-INSERT mehr — flache categories-Tabelle.
+    # threshold wird nicht mehr genutzt (auto_promote_threshold war codebook-seitig);
+    # der Core liest _AUTO_PROMOTE_THRESHOLD aus seiner eigenen Konstante.
     c = sqlite3.connect(db)
-    now = "2026-05-24T00:00:00Z"
-    c.execute("INSERT INTO codebooks(slug, description, version, auto_promote_threshold, "
-              "created_at, updated_at) VALUES ('t','test',1,?,?,?)", (threshold, now, now))
-    cb_id = c.execute("SELECT id FROM codebooks WHERE slug='t'").fetchone()[0]
     for name, emb_id in [("api", "cb:t:api"), ("domain", "cb:t:domain")]:
-        c.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
-                  "source, evidence_count, embedding_id) VALUES (?,?,?, 'active','imported',5,?)",
-                  (cb_id, name, name, emb_id))
+        c.execute("INSERT INTO categories(name, description, status, "
+                  "source, evidence_count, embedding_id) VALUES (?,?, 'active','imported',5,?)",
+                  (name, name, emb_id))
     c.commit()
+    cb_id = None  # vestigial, kept for call-site compat
     return c, cb_id
 
 
@@ -136,7 +136,7 @@ def test_inductive_new_category(tmp_path):
                           embed_fn=embed, llm_fn=lambda p: "fresh_topic", chunk_id="c3")
     assert out.decision == "inductive"
     assert out.proposed is True
-    row = conn.execute("SELECT name, status, parent_id, embedding_id FROM codebook_categories "
+    row = conn.execute("SELECT name, status, parent_id, embedding_id FROM categories "
                        "WHERE name='fresh_topic'").fetchone()
     assert row[1] == "proposed"
     assert row[2] is not None                     # parent_hint = nearest active category
@@ -151,20 +151,20 @@ def test_inductive_dedup_onto_proposed(tmp_path):
     proposed (Akkumulation Richtung Promotion) statt ein paralleles Fragment."""
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
-    conn.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
-                 "source, evidence_count, embedding_id) VALUES (?,?,?, 'proposed','induced',1,?)",
-                 (cb, "emerging", "x", "cb:proposed:emerging"))
+    conn.execute("INSERT INTO categories(name, description, status, "
+                 "source, evidence_count, embedding_id) VALUES (?,?, 'proposed','induced',1,?)",
+                 ("emerging", "x", "cb:proposed:emerging"))
     conn.commit()
     chroma = _FakeChroma({**CHROMA, "cb:proposed:emerging": [0.0, 0.0, 1.0]})
     embed = _make_embed({"emerging": [0.0, 0.0, 1.0]})
-    n_before = conn.execute("SELECT count(*) FROM codebook_categories").fetchone()[0]
+    n_before = conn.execute("SELECT count(*) FROM categories").fetchone()[0]
     out = mayring_process("zzz", "classify", conn=conn, chroma_categories=chroma,
                           embed_fn=embed, llm_fn=lambda p: "emerging_variant", chunk_id="c4")
     assert out.decision == "inductive-dedup"
     assert out.category_name == "emerging"
-    n_after = conn.execute("SELECT count(*) FROM codebook_categories").fetchone()[0]
+    n_after = conn.execute("SELECT count(*) FROM categories").fetchone()[0]
     assert n_after == n_before                    # no new fragment created
-    assert conn.execute("SELECT evidence_count FROM codebook_categories WHERE name='emerging'"
+    assert conn.execute("SELECT evidence_count FROM categories WHERE name='emerging'"
                         ).fetchone()[0] == 2
 
 
@@ -175,9 +175,9 @@ def test_auto_promotion_at_threshold(tmp_path):
     damit der Reranker (cat_match, active-only) die induktive Kategorie sieht."""
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db", threshold=3)
-    conn.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
-                 "source, evidence_count, embedding_id) VALUES (?,?,?, 'proposed','induced',2,?)",
-                 (cb, "emerging", "x", "cb:proposed:emerging"))
+    conn.execute("INSERT INTO categories(name, description, status, "
+                 "source, evidence_count, embedding_id) VALUES (?,?, 'proposed','induced',2,?)",
+                 ("emerging", "x", "cb:proposed:emerging"))
     conn.commit()
     chroma = _FakeChroma({**CHROMA, "cb:proposed:emerging": [0.0, 0.0, 1.0]})
     embed = _make_embed({"emerging": [0.0, 0.0, 1.0]})
@@ -185,7 +185,7 @@ def test_auto_promotion_at_threshold(tmp_path):
                           embed_fn=embed, llm_fn=lambda p: "emerging_again", chunk_id="c5")
     assert out.decision == "inductive-dedup"
     assert out.proposed is False                  # promoted in this very call
-    row = conn.execute("SELECT status, promoted_at FROM codebook_categories WHERE name='emerging'"
+    row = conn.execute("SELECT status, promoted_at FROM categories WHERE name='emerging'"
                        ).fetchone()
     assert row[0] == "active"
     assert row[1] is not None
@@ -195,21 +195,16 @@ def test_auto_promotion_at_threshold(tmp_path):
 
 def test_empty_codebook_bootstraps_inductive(tmp_path):
     """Kein ACTIVE vorhanden → kein fail-closed: die erste Kategorie wird induktiv gebildet
-    (der kanonische Ablauf erlaubt 'kein Treffer → neu', auch ab Null)."""
+    (der kanonische Ablauf erlaubt 'kein Treffer → neu', auch ab Null).
+    v19: kein codebooks-INSERT mehr, leere categories-Tabelle reicht."""
     init_memory_db(tmp_path / "m.db").close()
     conn = sqlite3.connect(tmp_path / "m.db")
-    now = "2026-05-24T00:00:00Z"
-    conn.execute("INSERT INTO codebooks(slug, description, version, auto_promote_threshold, "
-                 "created_at, updated_at) VALUES ('empty','',1,3,?,?)", (now, now))
-    cb = conn.execute("SELECT id FROM codebooks WHERE slug='empty'").fetchone()[0]
-    conn.commit()
     out = mayring_process("first ever text", "bootstrap", conn=conn,
                           chroma_categories=_FakeChroma({}),
                           embed_fn=_make_embed({"first": [1, 0, 0]}),
                           llm_fn=lambda p: "first_category")
     assert out.decision == "inductive"
-    assert conn.execute("SELECT count(*) FROM codebook_categories WHERE codebook_id=?",
-                        (cb,)).fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM categories WHERE name='first_category'").fetchone()[0] == 1
 
 
 # ---- batched bulk path shares the same decision logic ----------------------
@@ -244,7 +239,7 @@ def test_categorize_chunks_intra_batch_dedup(tmp_path):
         batch_reduce_fn=lambda pairs: ["novel_thing", "novel_thing_two"])
     assert res[0].decision == "inductive"
     assert res[1].decision == "inductive-dedup"          # second deduped onto the first
-    assert conn.execute("SELECT count(*) FROM codebook_categories WHERE source='induced'"
+    assert conn.execute("SELECT count(*) FROM categories WHERE source='induced'"
                         ).fetchone()[0] == 1               # only ONE new category
 
 
@@ -255,10 +250,10 @@ def test_categorize_chunks_rolls_back_on_error(tmp_path, monkeypatch):
     from mayring_core.memory.ingestion import mayring_process as mp
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
-    ev_before = conn.execute("SELECT evidence_count FROM codebook_categories WHERE name='api'").fetchone()[0]
+    ev_before = conn.execute("SELECT evidence_count FROM categories WHERE name='api'").fetchone()[0]
 
     def _boom(conn_, *a, **k):
-        conn_.execute("UPDATE codebook_categories SET evidence_count = evidence_count + 1 "
+        conn_.execute("UPDATE categories SET evidence_count = evidence_count + 1 "
                       "WHERE name='api'")  # ein Write startet die Transaktion
         raise RuntimeError("boom mid-categorize")
 
@@ -269,7 +264,7 @@ def test_categorize_chunks_rolls_back_on_error(tmp_path, monkeypatch):
                              batch_embed_fn=lambda labels: [[1.0, 0.0, 0.0] for _ in labels],
                              batch_reduce_fn=lambda pairs: ["lbl"])
     assert conn.in_transaction is False  # rolled back → keine offene Transaktion
-    ev_after = conn.execute("SELECT evidence_count FROM codebook_categories WHERE name='api'").fetchone()[0]
+    ev_after = conn.execute("SELECT evidence_count FROM categories WHERE name='api'").fetchone()[0]
     assert ev_after == ev_before          # Teil-Write rückgängig
 
 
@@ -388,8 +383,8 @@ def test_derive_query_category_ids_maps_query_to_codebook(tmp_path, monkeypatch)
     from mayring_core.memory.ingestion import mayring_process as mp
     init_memory_db(tmp_path / "m.db").close()
     conn, _cb = _seed(tmp_path / "m.db")
-    api_id = conn.execute("SELECT id FROM codebook_categories WHERE name='api'").fetchone()[0]
-    dom_id = conn.execute("SELECT id FROM codebook_categories WHERE name='domain'").fetchone()[0]
+    api_id = conn.execute("SELECT id FROM categories WHERE name='api'").fetchone()[0]
+    dom_id = conn.execute("SELECT id FROM categories WHERE name='domain'").fetchone()[0]
     chroma = _FakeChroma(CHROMA)
     monkeypatch.setattr(mp, "_CAT_EMB_CACHE", {})
     assert mp.derive_query_category_ids(conn, chroma, [0.95, 0.05, 0.0]) == {api_id}
@@ -401,10 +396,10 @@ def test_derive_query_category_ids_maps_query_to_codebook(tmp_path, monkeypatch)
 def test_link_scopes_by_project(tmp_path):
     init_memory_db(tmp_path / "m.db").close()
     conn, cb = _seed(tmp_path / "m.db")
-    conn.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
+    conn.execute("INSERT INTO categories(name, description, status, "
                  "source, evidence_count, embedding_id, project_id) "
-                 "VALUES (?,?,?, 'active','induced',1,?,?)",
-                 (cb, "proj_only", "x", "cb:t:projonly", "proj-A"))
+                 "VALUES (?,?, 'active','induced',1,?,?)",
+                 ("proj_only", "x", "cb:t:projonly", "proj-A"))
     conn.commit()
     chroma = _FakeChroma({**CHROMA, "cb:t:projonly": [0.0, 0.0, 1.0]})
     assert link_chunks_deductive(conn, chroma, [("c1", [0.0, 0.0, 1.0])],
@@ -421,5 +416,5 @@ def test_inductive_tags_active_project(tmp_path):
                           chroma_categories=_FakeChroma(CHROMA), embed_fn=embed,
                           llm_fn=lambda p: "fresh_proj_cat", active_project_id="proj-Z")
     assert out.decision == "inductive"
-    row = conn.execute("SELECT project_id FROM codebook_categories WHERE name='fresh_proj_cat'").fetchone()
+    row = conn.execute("SELECT project_id FROM categories WHERE name='fresh_proj_cat'").fetchone()
     assert row[0] == "proj-Z"

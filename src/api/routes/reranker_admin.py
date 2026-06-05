@@ -420,7 +420,7 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
     conn = _conn()
     rows = conn.execute(
         "SELECT embedding_id, name, COALESCE(description, name) "
-        "FROM codebook_categories WHERE status='active' AND embedding_id != ''"
+        "FROM categories WHERE status='active' AND embedding_id != ''"
     ).fetchall()
     if not rows:
         return {"categories": 0, "embedded": 0,
@@ -458,7 +458,7 @@ async def cat_match_debug(
     conn = _conn()
     out: dict[str, Any] = {"query": query}
     for label, sql in (
-        ("codebook_active", "SELECT COUNT(*) FROM codebook_categories WHERE status='active' AND embedding_id != ''"),
+        ("codebook_active", "SELECT COUNT(*) FROM categories WHERE status='active' AND embedding_id != ''"),
         ("chunk_categories_total", "SELECT COUNT(*) FROM chunk_categories"),
         ("chunks_with_categories", "SELECT COUNT(DISTINCT chunk_id) FROM chunk_categories"),
     ):
@@ -483,7 +483,7 @@ async def cat_match_debug(
                 ph = ",".join("?" for _ in ids)
                 out["query_category_names"] = [
                     r[0] for r in conn.execute(
-                        f"SELECT name FROM codebook_categories WHERE id IN ({ph})",
+                        f"SELECT name FROM categories WHERE id IN ({ph})",
                         tuple(ids)).fetchall()
                 ]
             # Chunk side: which category_ids do chunks actually link to? If the
@@ -492,7 +492,7 @@ async def cat_match_debug(
             # populated (id fragmentation across the codebook).
             top = conn.execute(
                 "SELECT cc.category_id, cat.name, COUNT(*) c "
-                "FROM chunk_categories cc JOIN codebook_categories cat ON cat.id = cc.category_id "
+                "FROM chunk_categories cc JOIN categories cat ON cat.id = cc.category_id "
                 "GROUP BY cc.category_id ORDER BY c DESC LIMIT 15"
             ).fetchall()
             out["chunk_side_top_category_ids"] = [
@@ -634,7 +634,7 @@ async def label_advisor(
         return {"processed": 0, "advised": 0, "next_after": after, "has_more": False}
     max_rowid = rows[-1][0]
     cats = [r[0] for r in conn.execute(
-        "SELECT name FROM codebook_categories WHERE status='active' AND name != '' ORDER BY name"
+        "SELECT name FROM categories WHERE status='active' AND name != '' ORDER BY name"
     ).fetchall()]
     if not cats:
         return {"processed": len(rows), "advised": 0, "next_after": max_rowid,

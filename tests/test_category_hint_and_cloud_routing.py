@@ -98,13 +98,10 @@ def test_rerank_structured_category_id_boost(tmp_path):
     db = tmp_path / "m.db"
     conn = init_memory_db(db)
     now = "2026-05-24T00:00:00Z"
-    conn.execute("INSERT INTO codebooks(slug,description,version,auto_promote_threshold,"
-                 "created_at,updated_at) VALUES ('t','',1,3,?,?)", (now, now))
-    cb = conn.execute("SELECT id FROM codebooks WHERE slug='t'").fetchone()[0]
-    conn.execute("INSERT INTO codebook_categories(codebook_id,name,description,status,source,"
-                 "evidence_count,embedding_id) VALUES (?,?,?, 'active','imported',1,?)",
-                 (cb, "auth", "a", "cb:t:auth"))
-    cat_id = conn.execute("SELECT id FROM codebook_categories WHERE name='auth'").fetchone()[0]
+    conn.execute("INSERT INTO categories(name,description,status,source,"
+                 "evidence_count,embedding_id) VALUES (?,?, 'active','imported',1,?)",
+                 ("auth", "a", "cb:t:auth"))
+    cat_id = conn.execute("SELECT id FROM categories WHERE name='auth'").fetchone()[0]
     conn.execute("INSERT INTO chunk_categories(chunk_id,category_id,codebook_version,confidence,"
                  "source) VALUES (?,?,1,0.9,'deductive')", ("chk_struct", cat_id))
     conn.commit()

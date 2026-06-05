@@ -27,15 +27,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MAYRING_LOCAL_DB", str(db_file))
     adapter = DBAdapter.create(db_file, check_same_thread=False)
     _init_schema(adapter)
-    now = "2026-05-24T00:00:00Z"
-    adapter.execute("INSERT INTO codebooks(slug, description, version, auto_promote_threshold, "
-                    "created_at, updated_at) VALUES ('t','test',1,3,?,?)", (now, now))
-    cb = adapter.execute("SELECT id FROM codebooks WHERE slug='t'").fetchone()[0]
+    # WHY(v19-drop-codebook): kein codebooks-INSERT mehr — flache categories-Tabelle.
     for name, emb in [("api", "cb:t:api"), ("domain", "cb:t:domain")]:
-        adapter.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
-                        "source, evidence_count, embedding_id) VALUES (?,?,?, 'active','imported',5,?)",
-                        (cb, name, name, emb))
+        adapter.execute("INSERT INTO categories(name, description, status, "
+                        "source, evidence_count, embedding_id) VALUES (?,?, 'active','imported',5,?)",
+                        (name, name, emb))
     adapter.commit()
+    cb = 1  # synthetischer Wert für URL-Kompatibilität (codebook_id wird ignoriert)
     monkeypatch.setattr(_deps, "_conn", adapter)
 
     # mock the Ollama providers + chroma collection used by the route
@@ -65,10 +63,12 @@ def test_process_empty_text_400(client):
     assert r.status_code == 400
 
 
-def test_process_unknown_codebook_404(client):
+def test_process_any_codebook_id_accepted(client):
+    """v19: codebook_id ist vestigial — /process akzeptiert jeden Wert (404 ist weg)."""
     c, _cb = client
     r = c.post("/codebooks/9999/process", json={"text": "api work", "task": "build"})
-    assert r.status_code == 404
+    # 200 (deductive) oder 400 (leerer text/task) sind ok; 404 ist nicht mehr möglich
+    assert r.status_code != 404
 
 
 def test_process_deductive_200(client):
@@ -86,11 +86,11 @@ def test_reject_deletes_proposed_category(client):
     c, cb = client
     import src.api.dependencies as _deps
     conn = _deps._conn
-    conn.execute("INSERT INTO codebook_categories(codebook_id, name, description, status, "
-                 "source, evidence_count, embedding_id) VALUES (?,?,?, 'proposed','induced',1,?)",
-                 (cb, "junk_proposed", "x", "cb:proposed:junk"))
+    conn.execute("INSERT INTO categories(name, description, status, "
+                 "source, evidence_count, embedding_id) VALUES (?,?, 'proposed','induced',1,?)",
+                 ("junk_proposed", "x", "cb:proposed:junk"))
     conn.commit()
-    cat_id = conn.execute("SELECT id FROM codebook_categories WHERE name='junk_proposed'").fetchone()[0]
+    cat_id = conn.execute("SELECT id FROM categories WHERE name='junk_proposed'").fetchone()[0]
     conn.execute("INSERT INTO chunk_categories(chunk_id, category_id, codebook_version, confidence, source) "
                  "VALUES ('ck1', ?, 1, 0.5, 'inductive')", (cat_id,))
     conn.commit()
@@ -98,7 +98,7 @@ def test_reject_deletes_proposed_category(client):
     r = c.post(f"/codebooks/{cb}/proposals/{cat_id}/reject")
     assert r.status_code == 200
     assert r.json()["status"] == "rejected"
-    assert conn.execute("SELECT count(*) FROM codebook_categories WHERE id=?", (cat_id,)).fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM categories WHERE id=?", (cat_id,)).fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM chunk_categories WHERE category_id=?", (cat_id,)).fetchone()[0] == 0
 
 
@@ -106,6 +106,6 @@ def test_reject_refuses_active_category(client):
     """Safety: aktive Kategorien (bedienen cat_match) dürfen NICHT gelöscht werden."""
     c, cb = client
     import src.api.dependencies as _deps
-    api_id = _deps._conn.execute("SELECT id FROM codebook_categories WHERE name='api'").fetchone()[0]
+    api_id = _deps._conn.execute("SELECT id FROM categories WHERE name='api'").fetchone()[0]
     r = c.post(f"/codebooks/{cb}/proposals/{api_id}/reject")
     assert r.status_code == 400
