@@ -398,6 +398,49 @@ async def set_reranker_default(
     return {"default_version": written}
 
 
+@router.delete("/stats/admin/reranker-versions/{version}")
+async def delete_reranker_version_endpoint(
+    version: str,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Lösche ein trainiertes Reranker-Modell (rerank_v<N>.json) aus der Liste.
+    Guard: v1/auto + das aktive Modell sind geschützt."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.memory.reranker_v2 import delete_reranker_version
+    try:
+        deleted = delete_reranker_version(version)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log.info("reranker version %s deleted=%s by workspace=%s", version, deleted, info.workspace_id)
+    return {"version": version, "deleted": deleted}
+
+
+@router.get("/stats/admin/reranker-autorollout")
+async def get_reranker_autorollout(info: TokenInfo = Depends(get_token_info)) -> dict:
+    """Ist das A/B-Auto-Rollout-Gate aktiv (Cron darf den Default automatisch flippen)?"""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.memory.reranker_v2 import read_autorollout_enabled
+    return {"autorollout_enabled": read_autorollout_enabled()}
+
+
+@router.post("/stats/admin/reranker-autorollout")
+async def set_reranker_autorollout(
+    enabled: bool = True,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """A/B-Auto-Rollout abstellen/anschalten. Aus = der Cron flippt den Default NICHT
+    mehr → deine manuelle Modell-Wahl (activate) bleibt stehen, du entscheidest selbst
+    welche Version serviert/verglichen wird."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.memory.reranker_v2 import write_autorollout_enabled
+    write_autorollout_enabled(enabled)
+    _log.info("reranker autorollout set to %s by workspace=%s", enabled, info.workspace_id)
+    return {"autorollout_enabled": enabled}
+
+
 @router.post("/stats/admin/reembed-categories")
 def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
     """Re-embed active codebook_categories into the Chroma 'codebook_categories'
@@ -732,8 +775,16 @@ async def reranker_rollout_decision(
     """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.memory.reranker_v2 import (
+        _read_runtime_default, read_autorollout_enabled, write_runtime_default,
+    )
+    # A/B-Gate abgestellt → der Cron darf den Default NICHT auto-flippen (User
+    # entscheidet manuell via activate). Nur bei apply=True relevant; die reine
+    # Empfehlung (apply=False) bleibt sichtbar.
+    if apply and not read_autorollout_enabled():
+        return {"decision": "skipped", "reason": "autorollout disabled (manual control)",
+                "current_default": _read_runtime_default()}
     from src.api.routes.retrieval_metrics import retrieval_ab as _ab
-    from mayring_core.memory.reranker_v2 import _read_runtime_default, write_runtime_default
     ab = await _ab(info=info, days=days, k=k)
     by_version = ab.get("by_version") or {}
     v1 = by_version.get("v1") or {}

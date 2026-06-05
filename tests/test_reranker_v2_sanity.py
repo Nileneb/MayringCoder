@@ -118,3 +118,27 @@ def test_get_active_falls_back_to_v1_on_degenerate_model(tmp_path, monkeypatch):
     version, model = reranker_v2.get_active_reranker()
     assert version == "v1"
     assert model is None
+
+
+def test_delete_reranker_version_guards_active_and_v1(tmp_path):
+    """Delete-Button-Backend: trainierte v<N> löschbar; v1 + aktives Modell geschützt."""
+    from mayring_core.memory import reranker_v2
+    _write_model(tmp_path / "rerank_v2.json", {"v": 0.9, "r": 0.1, "pt": 0.0})
+    _write_model(tmp_path / "rerank_v3.json", {"v": 0.8, "r": 0.1, "pt": 0.0})
+    reranker_v2.write_runtime_default("v3")          # v3 aktiv
+    assert reranker_v2.delete_reranker_version("v2") is True      # nicht-aktiv → weg
+    assert not (tmp_path / "rerank_v2.json").exists()
+    with pytest.raises(ValueError):                  # aktiv → geschützt
+        reranker_v2.delete_reranker_version("v3")
+    with pytest.raises(ValueError):                  # v1 baseline → geschützt
+        reranker_v2.delete_reranker_version("v1")
+
+
+def test_autorollout_flag_toggle(tmp_path):
+    """A/B-Gate abstellbar: default an, off → aus, on → wieder an."""
+    from mayring_core.memory import reranker_v2
+    assert reranker_v2.read_autorollout_enabled() is True   # default
+    reranker_v2.write_autorollout_enabled(False)
+    assert reranker_v2.read_autorollout_enabled() is False
+    reranker_v2.write_autorollout_enabled(True)
+    assert reranker_v2.read_autorollout_enabled() is True
