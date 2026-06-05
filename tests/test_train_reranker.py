@@ -56,7 +56,8 @@ def test_healthy_data_writes_model(tmp_path):
     assert out_path.exists()
     model = json.loads(out_path.read_text())
     assert model["weights"]["v"] >= 0
-    assert model["weights"]["s"] >= 0
+    # s (symbolic) ist seit 2026-06-05 kein v2-Feature mehr (kollinear zu v, gedroppt)
+    assert "s" not in model["weights"]
 
 
 def test_rejects_negative_vector_weight(tmp_path):
@@ -80,26 +81,6 @@ def test_rejects_negative_vector_weight(tmp_path):
     assert rc == 3, "trainer should return 3 for rejected models"
     assert not out_path.exists(), \
         "rejected model must NOT touch disk (else loader still reads it)"
-
-
-def test_rejects_negative_symbolic_weight(tmp_path):
-    """Same as above but symbolic flipped. Symbolic is also a
-    retrieval-positive signal; negative s makes the model rank
-    token-overlap-LESS chunks higher, which is incoherent."""
-    from tools.train_reranker import train
-
-    rows = []
-    for i in range(60):
-        rows.append(_row(0.7, 0.1, "outcome", 1))
-    for i in range(60):
-        rows.append(_row(0.1, 0.9, "intervention", 0))
-    in_path = tmp_path / "ds.jsonl"
-    out_path = tmp_path / "model.json"
-    _write_dataset(in_path, rows)
-
-    rc = train(in_path, out_path)
-    assert rc == 3
-    assert not out_path.exists()
 
 
 def test_rejection_preserves_existing_model(tmp_path):

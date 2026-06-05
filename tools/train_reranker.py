@@ -63,7 +63,7 @@ IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # im stage-Dict → das gelernte re-Gewicht lief immer auf re=0 (trainiert-aber-nie-genutzt).
 # Schlimmer: re trainierte negativ (-0.67) → Loader rejected das ganze v2-Modell →
 # v2 ging NIE live (0 v2-Traffic 2026-05-28). Ohne re kann v2 endlich laden.
-FEATURES = ("v", "s", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
+FEATURES = ("v", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
@@ -72,7 +72,7 @@ MIN_POSITIVES = 10
 # negative on noisy data — the trainer would then write a model the runtime
 # SILENTLY rejects → permanent v1-fallback. We neutralize negative pt to 0.0
 # ('no signal', which the loader tolerates) so every written model is loadable.
-# v/s stay HARD-rejected below — their negative is a real label leak (#180), not a
+# v stays HARD-rejected below — its negative is a real label leak (#180), not a
 # weak-feature wobble. r and igio_* are NOT loader-gated, sign left untouched.
 _LOADER_GATED_WEAK = ("pt",)
 

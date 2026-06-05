@@ -59,13 +59,15 @@ def test_negative_vector_weight_rejected(tmp_path):
     assert model is None
 
 
-def test_negative_symbolic_weight_rejected(tmp_path):
-    """Symbolic token-overlap is also retrieval-positive — guard both."""
+def test_negative_symbolic_no_longer_gated(tmp_path):
+    """2026-06-05: s (symbolic) ist kein v2-Feature mehr (kollinear zu v → gedroppt).
+    Ein altes Modell mit negativem s darf NICHT mehr deshalb rejected werden —
+    nur v (echter #180-Leak) hard-gated. v=+0.5 stark positiv → muss laden."""
     from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.5, "s": -0.1, "r": 0.0, "a": 0.0, "sf": 0.0, "sl": 0.0,
     })
-    assert reranker_v2._load_model() is None
+    assert reranker_v2._load_model() is not None  # lädt trotz s<0
 
 
 def test_negative_pt_weight_rejected(tmp_path):

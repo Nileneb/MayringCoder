@@ -145,7 +145,7 @@ IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # (rationale-presence) RAUS: erst nach dem Scoring bekannt (wiki_edges-Query pro
 # Chunk), nie im stage-Dict → trainiert-aber-nie-genutzt + sein Negativ-Gewicht
 # (-0.67) rejectete das ganze v2-Modell. Nicht mehr exportieren.
-FEATURES_OUT = ("v", "s", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
+FEATURES_OUT = ("v", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
 
 # Span-Judge-Schwellen (Offline-Teacher, #SSA): nur Rows OHNE explizites
 # Human-Rating werden anhand des LLM-Relevanz-Scores korrigiert. Der
