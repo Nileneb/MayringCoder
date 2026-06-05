@@ -218,3 +218,34 @@ def test_memory_put_applies_igio_hint(client, _reset_conn, monkeypatch):
         assert axis == "goal"
     finally:
         app.dependency_overrides.pop(get_token_info, None)
+
+
+def test_ingest_alias_forwards_token_info(client, _reset_conn, monkeypatch):
+    """Regression: POST /ingest (Laravel-Alias) MUSS info an memory_put weiterreichen.
+    Vorher rief ingest_alias memory_put(request, workspace_id) ohne info → das
+    Depends-Sentinel landete als info → info.memberships → 500 AttributeError."""
+    import src.api.routes.memory as mem
+    from src.api.auth import TokenInfo, get_token_info
+    from mayring_core.memory.schema import Chunk, Source
+    from mayring_core.memory.store import insert_chunk, upsert_source
+    conn = _reset_conn
+    app.dependency_overrides[get_token_info] = lambda: TokenInfo(workspace_id="test-ws", scopes=("*",))
+
+    def _fake_ingest(source_dict, content, *a, **k):
+        sid = source_dict["source_id"]
+        upsert_source(conn, Source(source_id=sid, source_type=source_dict.get("source_type", "note"),
+                                   repo="", path="", content_hash="h:" + sid))
+        insert_chunk(conn, Chunk(chunk_id="chk_alias", source_id=sid, text=content,
+                                 text_hash=Chunk.compute_text_hash(content)))
+        return {"source_id": sid, "state": "new", "chunk_ids": ["chk_alias"]}
+
+    monkeypatch.setattr(mem, "_run_ingest", _fake_ingest)
+    try:
+        r = client.post("/ingest", json={
+            "content": "JWT auth middleware validates bearer tokens in the login flow",
+            "source_id": "note:alias-regression",
+            "source_type": "note",
+        })
+        assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.pop(get_token_info, None)

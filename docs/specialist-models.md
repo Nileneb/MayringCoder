@@ -18,27 +18,23 @@ Split passiert downstream im Trainer (analog `tools/train_reranker.py:120`,
 
 ## 1. Mayring-Categorizer
 
-Text + Task → Mayring-Kategorien mit Belegen.
+Text + Task → Mayring-Kategorien.
+
+> **⚠️ 2026-06-05 (Codebook-Kollaps):** Das Span-Evidence-Subsystem (`pi_mark_categories`,
+> Tabelle `wiki_category_evidence`, `tools/export_mayring_categorizer_dataset.py`) wurde als
+> toter, nie konsumierter Pfad ENTFERNT. „Belege" (span/excerpt/reasoning) gibt es nicht mehr.
+> Ein Categorizer-Datensatz leitet sich jetzt aus der flachen `categories`-Tabelle +
+> `chunk_categories` (FK chunk→Kategorie) bzw. `chunks.category_labels` ab — Text→Labels ohne
+> Belege. Ein neuer Exporter (analog `tools/export_retrieval_dataset.py`) müsste gegen diese
+> Quellen gebaut werden, falls das Spezialisten-Model wiederaufgenommen wird.
 
 | | |
 |---|---|
-| **Tool** | `tools/export_mayring_categorizer_dataset.py` |
-| **Quelle** | `chunks` (memory.db) LEFT JOIN `wiki_category_evidence` (wiki_v2.db) |
-| **Filter** | `category_source='hybrid'` AND `category_labels != ''` AND `is_active=1` |
-| **Format** | `{"input": {"text", "task"}, "output": {"kategorien": [str], "belege": [{kategorie, span, excerpt, reasoning}]}, "workspace_id", "chunk_id"}` |
-| **Lokal verfügbar** | ✅ ~728 Zeilen (hybrid chunks); `belege: []` bis Backfill |
+| **Tool** | — (alter Exporter entfernt; neuer gegen `categories`/`chunk_categories` bei Bedarf) |
+| **Quelle** | `chunks` JOIN `chunk_categories` JOIN `categories` (memory.db) |
+| **Filter** | `category_labels != ''` AND `is_active=1` |
+| **Format** | `{"input": {"text", "task"}, "output": {"kategorien": [str]}, "workspace_id", "chunk_id"}` |
 | **Min-Rows** | ~500 für ein erstes LoRA |
-
-**Backfill für Belege:** `wiki_category_evidence` ist leer bis
-`pi_mark_categories(persist=True)` über die Hybrid-Chunks gelaufen ist. Ohne
-Belege ist der Datensatz ein schwächeres (label-only) Set — als Quick-Start
-nutzbar, für span-grounded Codierung erst nach dem Backfill vollwertig.
-
-```bash
-python tools/export_mayring_categorizer_dataset.py \
-    --db cache/memory.db --wiki-db cache/wiki_v2.db \
-    --out cache/finetuning/mayring_categorizer_dataset.jsonl
-```
 
 ---
 

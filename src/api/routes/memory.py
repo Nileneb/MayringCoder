@@ -1030,9 +1030,12 @@ async def search_alias(
 async def ingest_alias(
     request: MemoryPutRequest,
     workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
 ) -> dict:
-    """Alias for /memory/put — used by Laravel MayringMcpClient."""
-    return await memory_put(request, workspace_id)
+    """Alias for /memory/put — used by Laravel MayringMcpClient. `info` muss
+    mit-injiziert + weitergereicht werden: memory_put liest info.memberships
+    (org-Stamp); ohne das landet das Depends-Sentinel als info → AttributeError."""
+    return await memory_put(request, workspace_id, info)
 
 
 @router.patch("/sources/{source_id}/visibility")
