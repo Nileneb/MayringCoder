@@ -58,6 +58,13 @@ class ProcessRequest(BaseModel):
     project_id: str | None = None
 
 
+class CategorizeRequest(BaseModel):
+    text: str
+    task: str = ""
+    model: str = ""           # Reduktions-LLM-Override (für Modell-Duelle); leer = ModelRouter 'text'
+    project_id: str | None = None
+
+
 @router.get("/codebooks")
 async def list_codebooks(_ws: str = Depends(get_workspace)) -> dict:
     # WHY(v19-drop-codebook): codebooks-Tabelle existiert nicht mehr — synthetische
@@ -191,9 +198,12 @@ async def reject_category(
     return {"category_id": category_id, "status": "rejected"}
 
 
-def reduce_text_server(text: str, theme: str, *, project_id: str | None = None):
+def reduce_text_server(text: str, theme: str, *, project_id: str | None = None,
+                       model_override: str = ""):
     """Verdrahtet die EINE Mayring-Methode (mayring_reduce) mit den echten Server-Providern.
-    EIN Codebook, domänenunabhängig — kein source_type/codebook-Routing."""
+    EIN Codebook, domänenunabhängig — kein source_type/codebook-Routing.
+    model_override: für Modell-Duelle (gleiche mixed Methode inkl. Embedding-Match gegen
+    die Bestands-Kategorien, nur anderes Reduktions-LLM); leer = ModelRouter 'text'."""
     import os
     from mayring_core import providers
     from mayring_core.memory.ingestion.mayring_process import mayring_reduce
@@ -201,7 +211,7 @@ def reduce_text_server(text: str, theme: str, *, project_id: str | None = None):
     from mayring_core.model_router import ModelRouter
     conn = _get_conn()
     ollama_url = os.environ.get("OLLAMA_URL", "https://three.linn.games")
-    model = ModelRouter(ollama_url=ollama_url).resolve("text") or "mistral:7b-instruct"
+    model = model_override or ModelRouter(ollama_url=ollama_url).resolve("text") or "mistral:7b-instruct"
 
     def _embed_one(t: str) -> list[float]:
         out = providers.embed_texts([t], ollama_url)
@@ -215,6 +225,28 @@ def reduce_text_server(text: str, theme: str, *, project_id: str | None = None):
         text, theme, conn=conn,
         chroma_categories=get_chroma_collection("codebook_categories"),
         embed_fn=_embed_one, llm_fn=_llm, project_id=project_id)
+
+
+@router.post("/codebooks/categorize")
+async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_workspace)) -> dict:
+    """Volle mixed Mayring-Methode (Reduktion + Embedding-Match gegen die Bestands-
+    Kategorien) mit optionalem LLM-Override — für Modell-Duelle. Liefert die FINALE
+    Kategorie (nach deduktivem Match), nicht das rohe Reduktions-Label."""
+    if not (req.text or "").strip():
+        raise HTTPException(status_code=422, detail="text required")
+    try:
+        res = reduce_text_server(req.text, req.task or "(kein Task)",
+                                 project_id=req.project_id, model_override=req.model.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    cand = res.candidates[0] if res.candidates else None
+    return {
+        "label": cand.label if cand else "",
+        "match": cand.match if cand else "",       # deductive (Bestand getroffen) | dedup | inductive (neu)
+        "paraphrase": res.paraphrase,
+        "generalize": res.generalization,
+        "model": req.model.strip() or "router-text-default",
+    }
 
 
 @router.post("/codebooks/{codebook_id}/process")

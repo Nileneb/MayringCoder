@@ -662,12 +662,16 @@ def register_agent_tools(mcp: FastMCP) -> None:
     def pi_categorize(
         text: str,
         task: str = "",
+        model: str = "",
         workspace_id: str | None = None,
     ) -> dict:
         """Mayring-kategorisiere Text — die EINE Methode (immer mixed, ein Codebook,
         domänenunabhängig): Ziel→Paraphrase→Generalisierung→Reduktion→Embedding-Match
         gegen ALLE Bestandskategorien (deduktiv treffen ODER induktiv neu). Intrinsischer
         Embedding-Vergleich → trifft Bestand statt Duplikate.
+
+        model: optionaler Override des Reduktions-LLM (für Modell-Duelle; gleiche mixed
+        Methode inkl. Embedding-Match, nur anderes LLM). Leer = ModelRouter 'text'.
 
         Returns: {label, match (deductive|dedup|inductive), paraphrase, generalize,
                   model, workspace_id} oder {error}."""
@@ -677,14 +681,14 @@ def register_agent_tools(mcp: FastMCP) -> None:
         task_str = task.strip() if task and task.strip() else "(kein Task angegeben)"
         try:
             from src.api.routes.codebooks import reduce_text_server
-            res = reduce_text_server(text, task_str)
+            res = reduce_text_server(text, task_str, model_override=model.strip())
             cand = res.candidates[0] if res.candidates else None
             return {
                 "label": cand.label if cand else "",
                 "match": cand.match if cand else "",
                 "paraphrase": res.paraphrase,
                 "generalize": res.generalization,
-                "model": _model("text"),
+                "model": model.strip() or _model("text"),
                 "workspace_id": ws,
             }
         except Exception as exc:
