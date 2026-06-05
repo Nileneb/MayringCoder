@@ -63,6 +63,7 @@ class CategorizeRequest(BaseModel):
     task: str = ""
     model: str = ""           # Reduktions-LLM-Override (für Modell-Duelle); leer = ModelRouter 'text'
     project_id: str | None = None
+    dry_run: bool = False     # nur welche Hälfte griffe (read-only); KEIN Codebook-Write — für Duelle
 
 
 @router.get("/codebooks")
@@ -199,7 +200,7 @@ async def reject_category(
 
 
 def reduce_text_server(text: str, theme: str, *, project_id: str | None = None,
-                       model_override: str = ""):
+                       model_override: str = "", dry_run: bool = False):
     """Verdrahtet die EINE Mayring-Methode (mayring_reduce) mit den echten Server-Providern.
     EIN Codebook, domänenunabhängig — kein source_type/codebook-Routing.
     model_override: für Modell-Duelle (gleiche mixed Methode inkl. Embedding-Match gegen
@@ -224,7 +225,7 @@ def reduce_text_server(text: str, theme: str, *, project_id: str | None = None,
     return mayring_reduce(
         text, theme, conn=conn,
         chroma_categories=get_chroma_collection("codebook_categories"),
-        embed_fn=_embed_one, llm_fn=_llm, project_id=project_id)
+        embed_fn=_embed_one, llm_fn=_llm, project_id=project_id, dry_run=dry_run)
 
 
 @router.post("/codebooks/categorize")
@@ -236,7 +237,8 @@ async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_wor
         raise HTTPException(status_code=422, detail="text required")
     try:
         res = reduce_text_server(req.text, req.task or "(kein Task)",
-                                 project_id=req.project_id, model_override=req.model.strip())
+                                 project_id=req.project_id, model_override=req.model.strip(),
+                                 dry_run=req.dry_run)
     except Exception as e:
         # Duell-tauglich: ein Modell, das Müll/leer liefert (oder fehlt), darf den Lauf
         # nicht mit 500 abbrechen — der Fehler kommt im Body zurück (NICHT stumm).
@@ -249,6 +251,35 @@ async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_wor
         "generalize": res.generalization,
         "model": req.model.strip() or "router-text-default",
     }
+
+
+@router.post("/codebooks/{codebook_id}/categories/{category_id}/deprecate")
+async def deprecate_category(
+    codebook_id: int,  # vestigial path param, ignored (v19)
+    category_id: int, _ws: str = Depends(get_workspace),
+) -> dict:
+    """Stilllegen einer AKTIVEN Kategorie (die Lücke, die reject nicht abdeckt): status→
+    'deprecated' + Chroma-Embedding entfernen, damit cat_match (active-only) und das
+    induktive Dedup (active+proposed) sie nicht mehr ziehen. chunk_categories-Links und
+    Proposal-Historie bleiben (Soft-Delete). Danach ist sie via reject hart löschbar."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT status, embedding_id FROM categories WHERE id=?",
+        (category_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"category {category_id} not found")
+    conn.execute("UPDATE categories SET status='deprecated' WHERE id=?", (category_id,))
+    conn.commit()
+    emb_id = row[1]
+    if emb_id:
+        try:
+            from mayring_core.memory.store import get_chroma_collection
+            get_chroma_collection("codebook_categories").delete(ids=[emb_id])
+        except Exception as exc:  # noqa: BLE001 — Embedding-Cleanup darf den Status-Flip nicht versenken
+            import logging
+            logging.getLogger(__name__).warning(
+                "deprecate: chroma embedding %s nicht entfernt: %s", emb_id, exc)
+    return {"category_id": category_id, "status": "deprecated"}
 
 
 @router.post("/codebooks/{codebook_id}/process")
