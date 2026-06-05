@@ -28,7 +28,7 @@ from src.api.auth import get_token_info
 from src.api.dependencies import get_conn as _conn
 from src.api.jwt_auth import TokenInfo
 
-router = APIRouter()
+router = APIRouter()  # redeploy-marker 2026-06-05 (counterfactual)
 
 
 def _is_admin(info: TokenInfo) -> bool:
@@ -295,4 +295,78 @@ async def retrieval_stage_attribution(
             "recency":         round(wins["r"] / max(counted, 1), 4),
             "source_affinity": round(wins["a"] / max(counted, 1), 4),
         },
+    }
+
+
+@router.get("/stats/admin/reranker-counterfactual")
+async def reranker_counterfactual(
+    info: TokenInfo = Depends(get_token_info),
+    baseline: str = "v1",
+    candidate: str = "v4",
+    days: int = 7,
+    k: int = 5,
+) -> dict:
+    """Fairer Head-to-Head OHNE Live-Traffic für ein neues Modell: nimm die Queries,
+    die ``baseline`` real serviert hat (deren gespeicherte Reihenfolge = baseline's
+    echtes Ranking), und RE-RANKE dieselben Kandidaten mit ``candidate`` (score_v2 über
+    die geloggten stage_scores). precision@K + nDCG@K je Query, gemittelt — identisches
+    Query-Set, echte Labels. So sieht man v1 vs ein nie-serviertes v<N> mit Zahlen."""
+    if not _is_admin(info):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="admin scope required")
+    if k < 1 or k > 20:
+        k = 5
+    if days < 1 or days > 90:
+        days = 7
+    from mayring_core.memory.reranker_v2 import _model_path, score_v2
+    cand_path = _model_path(candidate)
+    if not cand_path.exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"no model file for {candidate}")
+    cand_model = json.loads(cand_path.read_text(encoding="utf-8"))
+
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT trigger_ids, stage_scores FROM context_feedback_log "
+        "WHERE captured_at > datetime('now', ?) AND reranker_version = ? "
+        "AND stage_scores != '{}' AND stage_scores != '' "
+        "ORDER BY captured_at DESC LIMIT 4000",
+        (f"-{days} days", baseline),
+    ).fetchall()
+    fb = conn.execute("SELECT chunk_id, signal FROM chunk_feedback "
+                      "WHERE created_at > datetime('now', ?)", (f"-{days} days",)).fetchall()
+    labels = _label_map(fb)
+
+    def _scores(topk: list[str]) -> tuple[float, float]:
+        labs = [labels.get(c, 0) for c in topk[:k]]
+        return sum(labs) / max(len(labs), 1), _ndcg(labs, k)
+
+    base_p = base_n = cand_p = cand_n = 0.0
+    counted = 0
+    for row in rows:
+        try:
+            cands = json.loads(row["trigger_ids"])
+            stage = json.loads(row["stage_scores"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(cands, list) or not any(labels.get(c, 0) for c in cands):
+            continue  # nur Queries mit mind. einem positiv-gerateten Kandidaten
+        reranked = sorted(cands, key=lambda c: score_v2(stage.get(c, {}) or {}, cand_model),
+                          reverse=True)
+        bp, bn = _scores(cands)        # baseline = servierte Reihenfolge
+        cp, cn = _scores(reranked)     # candidate = re-rankt
+        base_p += bp; base_n += bn; cand_p += cp; cand_n += cn
+        counted += 1
+
+    if not counted:
+        return {"queries": 0, "baseline": baseline, "candidate": candidate,
+                "note": f"keine {baseline}-servierten Queries mit Positiv-Label in {days}d"}
+    return {
+        "window_days": days, "k": k, "queries": counted,
+        "baseline": {"version": baseline, "precision_at_k": round(base_p / counted, 4),
+                     "ndcg_at_k": round(base_n / counted, 4)},
+        "candidate": {"version": candidate, "precision_at_k": round(cand_p / counted, 4),
+                      "ndcg_at_k": round(cand_n / counted, 4)},
+        "delta": {"precision_at_k": round((cand_p - base_p) / counted, 4),
+                  "ndcg_at_k": round((cand_n - base_n) / counted, 4)},
     }
