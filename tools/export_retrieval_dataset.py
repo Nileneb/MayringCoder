@@ -135,11 +135,12 @@ def _label_map(
 # IGIO axes — one-hot encoded into features. 'unknown' covers chunks
 # without a classified axis (~92% today; backfill cron drives this down).
 IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
-# WHY(#187): pt (predicted-topic-boost) und re (rationale-presence) sind seit
-# commit 46e9c2e/c9db1bf live im API-Response, aber bislang nicht im Trainer
-# — Phantom-Features. Hier zur FEATURES_OUT hinzu damit der nächste
-# train_reranker.py-Run sie als Eingabe sieht und ein Gewicht lernt.
-FEATURES_OUT = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
+# WHY(#187/2026-06-05): pt (predicted-topic) ist live im API-Response UND seit
+# 2026-06-05 im stage-Dict am Inferenz-Pfad → echtes lernbares Feature. re
+# (rationale-presence) RAUS: erst nach dem Scoring bekannt (wiki_edges-Query pro
+# Chunk), nie im stage-Dict → trainiert-aber-nie-genutzt + sein Negativ-Gewicht
+# (-0.67) rejectete das ganze v2-Modell. Nicht mehr exportieren.
+FEATURES_OUT = ("v", "s", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
 
 # Span-Judge-Schwellen (Offline-Teacher, #SSA): nur Rows OHNE explizites
 # Human-Rating werden anhand des LLM-Relevanz-Scores korrigiert. Der

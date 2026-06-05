@@ -56,24 +56,25 @@ DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"
 # outcome) is a real semantic discriminator missed by vector similarity
 # — empirically lifts AUC by +0.03 in offline eval.
 IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
-# WHY(#187): pt + re sind seit commit 46e9c2e/c9db1bf live im API-Response
-# (score_predicted_topic, rationale_edges). Vorher: phantom-features ohne
-# Trainings-Pfad. Jetzt im Trainings-Set, sodass v2-Modell sie als Gewicht
-# lernen kann.
-FEATURES = ("v", "s", "r", "a", "pt", "re") + tuple(f"igio_{a}" for a in IGIO_AXES)
+# WHY(#187): pt ist live im API-Response (score_predicted_topic) und seit 2026-06-05
+# auch im stage-Dict am Inferenz-Pfad → echtes lernbares Feature.
+# re (rationale_edge) RAUS 2026-06-05: rationale_edges werden erst NACH dem Scoring
+# berechnet (wiki_edges-Query pro Chunk, zu teuer pro Kandidat) → am Inferenz-Pfad nie
+# im stage-Dict → das gelernte re-Gewicht lief immer auf re=0 (trainiert-aber-nie-genutzt).
+# Schlimmer: re trainierte negativ (-0.67) → Loader rejected das ganze v2-Modell →
+# v2 ging NIE live (0 v2-Traffic 2026-05-28). Ohne re kann v2 endlich laden.
+FEATURES = ("v", "s", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
-# Loader (reranker_v2._load_model) REJECTS models with negative pt/re weights
-# (retrieval-positive by design, #187). A logistic fit can learn pt/re slightly
+# Loader (reranker_v2._load_model) REJECTS models with a negative pt weight
+# (retrieval-positive by design, #187). A logistic fit can learn pt slightly
 # negative on noisy data — the trainer would then write a model the runtime
-# SILENTLY rejects → permanent v1-fallback. That is exactly why v2 never went
-# live in prod (found 2026-05-28: default=v2 but 0 v2 traffic, re=-0.67). We
-# neutralize negative pt/re to 0.0 ('no signal', which the loader tolerates)
-# so every written model is loadable. v/s stay HARD-rejected below — their
-# negative is a real label leak (#180), not a weak-feature wobble. r and igio_*
-# are NOT loader-gated, so their learned sign is left untouched.
-_LOADER_GATED_WEAK = ("pt", "re")
+# SILENTLY rejects → permanent v1-fallback. We neutralize negative pt to 0.0
+# ('no signal', which the loader tolerates) so every written model is loadable.
+# v/s stay HARD-rejected below — their negative is a real label leak (#180), not a
+# weak-feature wobble. r and igio_* are NOT loader-gated, sign left untouched.
+_LOADER_GATED_WEAK = ("pt",)
 
 
 def _neutralize_weak_negatives(weights: dict[str, float]) -> dict[str, float]:

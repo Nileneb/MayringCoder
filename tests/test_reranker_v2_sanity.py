@@ -68,28 +68,30 @@ def test_negative_symbolic_weight_rejected(tmp_path):
     assert reranker_v2._load_model() is None
 
 
-def test_negative_pt_or_re_weight_rejected(tmp_path):
-    """Issue #187: pt (predicted-topic) und re (rationale-presence) sind
-    retrieval-positive Features. Negative weights würden chunks mit predicted-
-    topic-match oder rationale-edge AKTIV runter ranken — analog v/s-flip."""
+def test_negative_pt_weight_rejected(tmp_path):
+    """Issue #187: pt (predicted-topic) ist ein retrieval-positives Feature.
+    Negatives Gewicht würde chunks mit predicted-topic-match AKTIV runter ranken
+    — analog v/s-flip → reject."""
     from mayring_core.memory import reranker_v2
-    # pt negativ
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.5, "s": 0.4, "r": 0.1, "a": 0.1,
-        "pt": -0.1, "re": 0.1,
+        "pt": -0.1,
         "sf": 0.3, "sl": 0.2,
     })
     assert reranker_v2._load_model() is None
 
-    reranker_v2.invalidate_v2_cache()
 
-    # re negativ
+def test_negative_re_weight_no_longer_gated(tmp_path):
+    """2026-06-05: re (rationale_edge) ist KEIN Feature mehr (am Inferenz-Pfad
+    nicht lieferbar). Ein altes Modell mit negativem re darf NICHT mehr deshalb
+    rejected werden — sonst bliebe v2 ewig tot (re=-0.67 war genau der Grund)."""
+    from mayring_core.memory import reranker_v2
     _write_model(tmp_path / "rerank_v2.json", {
         "v": 0.5, "s": 0.4, "r": 0.1, "a": 0.1,
-        "pt": 0.1, "re": -0.05,
+        "pt": 0.1, "re": -0.67,
         "sf": 0.3, "sl": 0.2,
     })
-    assert reranker_v2._load_model() is None
+    assert reranker_v2._load_model() is not None  # lädt trotz re<0
 
 
 def test_zero_weights_pass(tmp_path):

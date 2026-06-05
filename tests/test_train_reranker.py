@@ -127,19 +127,19 @@ def test_rejection_preserves_existing_model(tmp_path):
     assert saved["weights"]["v"] == 0.3  # original kept
 
 
-def test_neutralizes_negative_pt_re_so_model_loads():
-    """Root cause of 'v2 never live' (2026-05-28): the trainer wrote models
-    with negative pt/re that the LOADER then silently rejected → v1 fallback.
-    Negative pt/re must be clamped to 0 (loader tolerates 0); v/s and the
-    non-gated r/igio_* weights stay untouched."""
+def test_neutralizes_negative_pt_so_model_loads():
+    """Root cause of 'v2 never live' (2026-05-28): the trainer wrote models with
+    a negative pt (and the now-removed re) that the LOADER then silently rejected
+    → v1 fallback. Negative pt must be clamped to 0 (loader tolerates 0); v/s and
+    the non-gated r/igio_* weights stay untouched. re ist seit 2026-06-05 kein
+    Feature mehr → nicht mehr geclampt."""
     from tools.train_reranker import _neutralize_weak_negatives
 
-    w = {"v": 0.5, "s": 1.0, "pt": -0.3, "re": -0.6675,
+    w = {"v": 0.5, "s": 1.0, "pt": -0.3,
          "r": -0.2847, "igio_goal": -1.0}
     out = _neutralize_weak_negatives(w)
-    # loader-gated weak features neutralized
+    # loader-gated weak feature neutralized
     assert out["pt"] == 0.0
-    assert out["re"] == 0.0
     # NOT loader-gated → learned sign preserved
     assert out["r"] == -0.2847
     assert out["igio_goal"] == -1.0
@@ -147,7 +147,7 @@ def test_neutralizes_negative_pt_re_so_model_loads():
     assert out["v"] == 0.5 and out["s"] == 1.0
 
 
-def test_positive_pt_re_untouched():
+def test_positive_pt_untouched():
     from tools.train_reranker import _neutralize_weak_negatives
-    w = {"v": 0.5, "s": 1.0, "pt": 0.4, "re": 0.2}
+    w = {"v": 0.5, "s": 1.0, "pt": 0.4}
     assert _neutralize_weak_negatives(w) == w
