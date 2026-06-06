@@ -114,6 +114,8 @@ from src.api.routes import workspace_claim as _workspace_claim  # claim unclaime
 app.include_router(_workspace_claim.router)
 from src.api.routes import agent_keys as _agent_keys  # per-agent A2A API keys (X-API-Key)
 app.include_router(_agent_keys.router)
+from src.api.routes import text_models as _text_models  # runtime text-model override
+app.include_router(_text_models.router)
 
 # A2A research-relay (Langdock → cloud queue → laptop worker). Mounts the
 # agent-card + JSON-RPC (/a2a) onto this app. db_path + workspace_id MUST match
