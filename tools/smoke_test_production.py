@@ -2781,16 +2781,7 @@ ALL_CHECKS = [
 # the workflow log), but they DON'T trigger GitHub-issue alerts.
 # Without this gate, ~20 spam issues hit the inbox in one afternoon
 # from these three checks alone.
-EXPECTED_PENDING_FAILURES = {
-    "wiki_cluster_depth": {
-        "tracker": "#162",
-        "reason": "Cluster engine produces shells without members (#162)",
-    },
-    "igio_axis_on_chunks": {
-        "tracker": "#141",
-        "reason": "IGIO backfill cron auto-recovers; red until coverage ≥ 50%",
-    },
-}
+EXPECTED_PENDING_FAILURES: dict[str, dict[str, str]] = {}
 # Removed:
 #   training_merge_endpoint — smoke check broadened to accept 401
 #   (route is admin-gated; 401 from the check's smoke creds proves the
@@ -2800,6 +2791,10 @@ EXPECTED_PENDING_FAILURES = {
 #   model_identity (#349) — GELÖST: Check auf den kanonischen text_model.txt-
 #   Picker-Pfad (POST /stats/admin/text-model toggle+revert) umgestellt statt
 #   model-routes-Sentinel. Smoke enforced es wieder.
+#   wiki_cluster_depth (#162) + igio_axis_on_chunks (#141) — beide Tracker
+#   CLOSED, beide Checks live verifiziert GRÜN (#253 cleanup 2026-06-06:
+#   igio ratio=0.548≥0.5, wiki clusters=12). Suppression entfernt → Smoke
+#   enforced beide wieder.
 
 
 def _failure_signature(real_failures: list[CheckResult]) -> str:
