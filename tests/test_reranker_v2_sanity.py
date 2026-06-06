@@ -30,7 +30,14 @@ def _write_model(path: Path, weights: dict[str, float]) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolate_cache(tmp_path, monkeypatch):
-    """Each test gets its own cache dir + cleared module cache."""
+    """Each test gets its own cache dir + cleared module cache.
+
+    WHY(2026-06-06): reranker_v2._cache_dir() löst jetzt zur Laufzeit via
+    _resolve_cache_dir(BASE_DIR) auf (damit MAYRING_CACHE_DIR in Tests UND Prod
+    wirkt) — die alte config.CACHE_DIR-Konstante allein zu monkeypatchen reicht
+    nicht mehr, der Env-Override muss gesetzt sein.
+    """
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
     from mayring_core import config as _cfg
     monkeypatch.setattr(_cfg, "CACHE_DIR", tmp_path)
     from mayring_core.memory import reranker_v2
