@@ -3055,32 +3055,40 @@ def main() -> int:
     wait_for_search_ready(api, token, max_wait=args.ready_timeout)
     print()
 
+    # WHY(#344): purge BEFORE the run too — a finally-block does not run when the
+    # CI step is hard-killed (SIGKILL on workflow timeout, e.g. the 781s #345 run),
+    # so smoke.*-workspaces from a killed prior run would otherwise accumulate.
+    # This bounds the clutter to at most one in-flight run.
+    _teardown_smoke_workspaces(api, token)
+
     results: list[CheckResult] = []
     t_start = time.time()
-    for name, fn in ALL_CHECKS:
-        if name in skip:
-            print(f"  SKIP  {name}")
-            continue
-        t0 = time.time()
-        try:
-            res = fn(api, token)
-        except Exception as e:
-            res = CheckResult(name, False, f"check raised: {type(e).__name__}: {e}")
-        dt = time.time() - t0
-        marker = " OK " if res.passed else "FAIL"
-        print(f"  [{marker}] {res.name}  ({dt:.2f}s)")
-        if res.detail:
-            indent = "         "
-            for line in res.detail.split("\n"):
-                print(f"{indent}{line}")
-        results.append(res)
-        if args.fail_fast and not res.passed:
-            break
-        if args.pace > 0:
-            time.sleep(args.pace)
-
-    # Self-clean ephemeral workspaces this run (and any prior runs) created (#253).
-    _teardown_smoke_workspaces(api, token)
+    try:
+        for name, fn in ALL_CHECKS:
+            if name in skip:
+                print(f"  SKIP  {name}")
+                continue
+            t0 = time.time()
+            try:
+                res = fn(api, token)
+            except Exception as e:
+                res = CheckResult(name, False, f"check raised: {type(e).__name__}: {e}")
+            dt = time.time() - t0
+            marker = " OK " if res.passed else "FAIL"
+            print(f"  [{marker}] {res.name}  ({dt:.2f}s)")
+            if res.detail:
+                indent = "         "
+                for line in res.detail.split("\n"):
+                    print(f"{indent}{line}")
+            results.append(res)
+            if args.fail_fast and not res.passed:
+                break
+            if args.pace > 0:
+                time.sleep(args.pace)
+    finally:
+        # Self-clean ephemeral workspaces this run (and any prior runs) created
+        # (#253/#344) — in finally so an exception/SystemExit mid-loop still purges.
+        _teardown_smoke_workspaces(api, token)
 
     failed = [r for r in results if not r.passed]
     elapsed = time.time() - t_start

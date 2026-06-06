@@ -486,12 +486,16 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
                 "detail": "no active categories with embedding_id"}
     url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     model = os.getenv("MAYRING_EMBED_MODEL", "nomic-embed-text")
+    # WHY(#343): fail-fast embed-Timeout statt hardcoded 120 — ein hängendes/
+    # überlastetes Ollama soll den (im Threadpool laufenden) Reembed-Batch nicht
+    # minutenlang blockieren. OLLAMA_EMBED_TIMEOUT=30 default.
+    from mayring_core.config import OLLAMA_EMBED_TIMEOUT
     col = get_chroma_collection("codebook_categories")
     ids = [r[0] for r in rows]
     texts = [f"{r[1]}: {r[2]}" for r in rows]
     embedded = 0
     for i in range(0, len(ids), 64):
-        embs = embed_batch(url, model, texts[i:i + 64], timeout=120)
+        embs = embed_batch(url, model, texts[i:i + 64], timeout=OLLAMA_EMBED_TIMEOUT)
         if embs:
             col.upsert(ids=ids[i:i + 64], embeddings=embs,
                        documents=texts[i:i + 64])
