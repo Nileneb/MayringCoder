@@ -275,6 +275,73 @@ async def get_igio_backfill_status(
     return {"job_id": job_id, **state}
 
 
+@router.get("/stats/categories-overview")
+async def categories_overview(info: TokenInfo = Depends(get_token_info)) -> dict:
+    """List all codebook categories grouped by Workspace → Goal, plus unlinked.
+
+    Admin (scope '*') sees every workspace. Regular JWT sees only its own.
+    A category can appear in multiple (workspace, goal) buckets when its chunks
+    span several sources/goals.
+    """
+    conn = _conn()
+    admin = _is_admin(info)
+    params: list = []
+    ws_clause = ""
+    if not admin:
+        ws_clause = "AND ch.workspace_id = ?"
+        params.append(info.workspace_id)
+
+    linked = conn.execute(
+        "SELECT ch.workspace_id, COALESCE(sg.goal, '') AS goal, "
+        "c.id, c.name, c.status, c.igio_axis, c.source, c.evidence_count, "
+        "COUNT(DISTINCT cc.chunk_id) AS chunk_count "
+        "FROM categories c "
+        "JOIN chunk_categories cc ON cc.category_id = c.id "
+        "JOIN chunks ch ON ch.chunk_id = cc.chunk_id AND ch.is_active = 1 "
+        "LEFT JOIN source_goals sg ON sg.source_id = ch.source_id "
+        f"WHERE 1=1 {ws_clause} "
+        "GROUP BY ch.workspace_id, goal, c.id "
+        "ORDER BY ch.workspace_id, goal, chunk_count DESC, c.name",
+        params,
+    ).fetchall()
+
+    workspaces: dict = {}
+    for r in linked:
+        ws = workspaces.setdefault(r[0], {})
+        ws.setdefault(r[1], []).append({
+            "id": r[2], "name": r[3], "status": r[4],
+            "igio_axis": r[5], "source": r[6], "evidence_count": r[7],
+            "chunk_count": r[8],
+        })
+
+    unlinked = [
+        {"id": r[0], "name": r[1], "status": r[2], "igio_axis": r[3],
+         "source": r[4], "evidence_count": r[5], "chunk_count": 0}
+        for r in conn.execute(
+            "SELECT c.id, c.name, c.status, c.igio_axis, c.source, c.evidence_count "
+            "FROM categories c "
+            "LEFT JOIN chunk_categories cc ON cc.category_id = c.id "
+            "WHERE cc.category_id IS NULL "
+            "ORDER BY c.status, c.id"
+        ).fetchall()
+    ]
+
+    total = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    return {
+        "scope": "all" if admin else "workspace",
+        "workspace_id": info.workspace_id,
+        "total_categories": total,
+        "workspaces": [
+            {
+                "workspace_id": w,
+                "goals": [{"goal": g, "categories": cs} for g, cs in goals.items()],
+            }
+            for w, goals in workspaces.items()
+        ],
+        "unlinked": unlinked,
+    }
+
+
 @router.get("/stats/admin/goal-anchor-audit")
 async def goal_anchor_audit(info: TokenInfo = Depends(get_token_info)) -> dict:
     """Quantifiziert „wildes Codebook": wie viele Sources einen echten goal-Anker haben,
