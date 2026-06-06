@@ -418,17 +418,24 @@ async def set_reranker_default(
     info: TokenInfo = Depends(get_token_info),
     version: str = "auto",
 ) -> dict:
-    """Set the active reranker version (manual click-to-activate from the table).
-    Accepts v1 / auto / any v<N> whose model file exists."""
+    """DEPRECATED-Alias: setzt EINE aktive Reranker-Version. Nutze /reranker-active.
+
+    WHY(2026-06-06): das Serving liest jetzt rerank_active.json (read_active_versions),
+    NICHT mehr rerank_default.txt. Dieser Endpoint schrieb sonst still eine Datei, die
+    niemand liest (Footgun). Er leitet jetzt auf write_active_versions um. 'auto' ist
+    bedeutungslos (zwei aktive Versionen SIND das A/B) → 400."""
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
-    from mayring_core.memory.reranker_v2 import write_runtime_default
+    if (version or "").strip().lower() == "auto":
+        raise HTTPException(status_code=400,
+                            detail="'auto' entfällt — setze 2 aktive Versionen via /reranker-active")
+    from mayring_core.memory.reranker_v2 import write_active_versions
     try:
-        written = write_runtime_default(version)
+        written = write_active_versions([version])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _log.info("reranker default set to %s by workspace=%s", written, info.workspace_id)
-    return {"default_version": written}
+    _log.info("reranker active set to %s (via default-alias) by workspace=%s", written, info.workspace_id)
+    return {"default_version": written[0], "active": written}
 
 
 @router.delete("/stats/admin/reranker-versions/{version}")
