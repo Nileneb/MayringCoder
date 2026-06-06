@@ -2790,12 +2790,6 @@ EXPECTED_PENDING_FAILURES = {
         "tracker": "#141",
         "reason": "IGIO backfill cron auto-recovers; red until coverage ≥ 50%",
     },
-    "reranker_cat_match_fires": {
-        "tracker": "#340",
-        "reason": "Chroma-Reembed erledigt (count 1630); Rest = Kategorie-"
-                  "Fragmentierung query↔chunk (query→262, chunks→261/245/631) → "
-                  "braucht Kategorie-Dedup/Merge (#340 Ebene b)",
-    },
     "model_identity": {
         "tracker": "#349",
         "reason": "Smoke testet alten Kontrakt (model-routes POST); text_model.txt-"
@@ -2806,6 +2800,8 @@ EXPECTED_PENDING_FAILURES = {
 #   training_merge_endpoint — smoke check broadened to accept 401
 #   (route is admin-gated; 401 from the check's smoke creds proves the
 #   route is registered, which IS the actual #87 acceptance).
+#   reranker_cat_match_fires (#340) — GELÖST: query→category-Fenster geweitet
+#   (mayring-core 0.50/8) → cat_match_hits=10 live. Smoke enforced es wieder.
 
 
 def _failure_signature(real_failures: list[CheckResult]) -> str:
