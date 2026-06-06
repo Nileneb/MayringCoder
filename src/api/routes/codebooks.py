@@ -251,8 +251,15 @@ async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_wor
                                  dry_run=req.dry_run)
     except Exception as e:
         # Duell-tauglich: ein Modell, das Müll/leer liefert (oder fehlt), darf den Lauf
-        # nicht mit 500 abbrechen — der Fehler kommt im Body zurück (NICHT stumm).
-        return {"error": str(e), "model": req.model.strip() or "router-text-default"}
+        # nicht mit 500 abbrechen. WHY(#145 stack-trace-exposure): rohe Exception NICHT
+        # an den Client geben (Internals-Leak) — voll serverseitig loggen, im Body nur
+        # ein generischer Marker. Nicht stumm, aber kein Detail-Leak.
+        import logging
+        logging.getLogger(__name__).warning(
+            "reduce_text_server failed (model=%s): %s",
+            req.model.strip() or "router-text-default", e,
+        )
+        return {"error": "categorize_failed", "model": req.model.strip() or "router-text-default"}
     cand = res.candidates[0] if res.candidates else None
     return {
         "label": cand.label if cand else "",
