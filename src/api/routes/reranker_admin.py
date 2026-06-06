@@ -675,8 +675,11 @@ def relink_chunks(
     """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
+    import numpy as np
     from mayring_core.memory.store import get_chroma_collection
-    from mayring_core.memory.ingestion.mayring_process import link_chunks_deductive
+    from mayring_core.memory.ingestion.mayring_process import (
+        _category_embeddings, _link_chunk, _HYBRID_MIN,
+    )
     conn = _conn()
     rows = conn.execute(
         "SELECT chunk_id FROM chunks WHERE workspace_id=? AND is_active=1", (workspace_id,)
@@ -702,13 +705,49 @@ def relink_chunks(
                 "top_n": top_n,
                 "detail": "apply mit dry_run=false verlinkt diese Chunks gegen das aktuelle Codebook"}
 
+    # Aktive Codebook-Kategorien + Embeddings (kanonischer Fetch).
     codebook_col = get_chroma_collection("codebook_categories")
-    linked = link_chunks_deductive(conn, codebook_col, pairs, top_n=top_n)
-    conn.commit()
-    _log.info("relink-chunks: %d Links für %d Chunks geschrieben (top_n=%d) ws=%s",
-              linked, len(pairs), top_n, workspace_id)
+    crows = conn.execute(
+        "SELECT id, name, igio_axis, parent_id, embedding_id FROM categories "
+        "WHERE status='active' AND embedding_id != '' AND project_id IS NULL ORDER BY id"
+    ).fetchall()
+    cats = [{"id": r[0], "name": r[1], "igio_axis": r[2], "parent_id": r[3],
+             "embedding_id": r[4]} for r in crows]
+    cat_pairs = _category_embeddings(codebook_col, cats)
+    if not cat_pairs:
+        return {"dry_run": False, "workspace_id": workspace_id, "links_written": 0,
+                "detail": "keine aktiven Kategorie-Embeddings"}
+    cat_objs = [c for c, _ in cat_pairs]
+    C = np.asarray([e for _, e in cat_pairs], dtype=float)
+    cn = np.linalg.norm(C, axis=1, keepdims=True); cn[cn == 0] = 1.0
+    C = C / cn
+
+    # WHY(#340 perf): EIN numpy-matmul pro Batch (X @ Cᵀ) statt per-Chunk-Python-
+    # _cosine über alle Kategorien (4346×170 Python-Loops = Minuten + Riesen-Txn,
+    # blockierte /memory/search). Batch-Commit alle 1000 Chunks → Write-Lock wird
+    # periodisch freigegeben (kein "database is locked" für parallele Writer).
+    min_score = _HYBRID_MIN
+    written = 0
+    CHUNK_BATCH = 1000
+    for start in range(0, len(pairs), CHUNK_BATCH):
+        cb = pairs[start:start + CHUNK_BATCH]
+        X = np.asarray([e for _, e in cb], dtype=float)
+        xn = np.linalg.norm(X, axis=1, keepdims=True); xn[xn == 0] = 1.0
+        sims = (X / xn) @ C.T
+        for ri, (cid, _) in enumerate(cb):
+            row = sims[ri]
+            for j in np.argsort(row)[::-1][:top_n]:
+                s = float(row[j])
+                if s >= min_score:
+                    _link_chunk(conn, cid, cat_objs[j]["id"], version=1,
+                                confidence=s, source="deductive")
+                    written += 1
+        conn.commit()
+    _log.info("relink-chunks: %d Links für %d Chunks (top_n=%d, %d Kat.) ws=%s",
+              written, len(pairs), top_n, len(cat_objs), workspace_id)
     return {"dry_run": False, "workspace_id": workspace_id,
-            "chunks_relinked": len(pairs), "links_written": linked, "top_n": top_n}
+            "chunks_relinked": len(pairs), "links_written": written,
+            "categories": len(cat_objs), "top_n": top_n}
 
 
 @router.get("/stats/admin/cat-match-debug")
