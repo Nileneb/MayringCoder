@@ -301,8 +301,8 @@ async def retrieval_stage_attribution(
 @router.get("/stats/admin/reranker-counterfactual")
 async def reranker_counterfactual(
     info: TokenInfo = Depends(get_token_info),
-    baseline: str = "v1",
-    candidate: str = "v4",
+    baseline: str | None = None,
+    candidate: str | None = None,
     days: int = 7,
     k: int = 5,
 ) -> dict:
@@ -310,7 +310,10 @@ async def reranker_counterfactual(
     die ``baseline`` real serviert hat (deren gespeicherte Reihenfolge = baseline's
     echtes Ranking), und RE-RANKE dieselben Kandidaten mit ``candidate`` (score_v2 über
     die geloggten stage_scores). precision@K + nDCG@K je Query, gemittelt — identisches
-    Query-Set, echte Labels. So sieht man v1 vs ein nie-serviertes v<N> mit Zahlen."""
+    Query-Set, echte Labels. So sieht man v1 vs ein nie-serviertes v<N> mit Zahlen.
+
+    Werden baseline/candidate nicht übergeben, leitet der Endpunkt das Paar aus
+    den aktiven Reranker-Versionen ab (read_active_versions). Genau 2 aktive nötig."""
     if not _is_admin(info):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="admin scope required")
@@ -318,10 +321,25 @@ async def reranker_counterfactual(
         k = 5
     if days < 1 or days > 90:
         days = 7
-    from mayring_core.memory.reranker_v2 import _model_path, score_v2
+    from mayring_core.memory.reranker_v2 import _model_path, read_active_versions, score_v2
+
+    # WHY: Query-Params sind Optional — fehlen sie, wird das Paar aus den aktiv
+    # gesetzten Versionen abgeleitet (read_active_versions). So vergleicht der
+    # Endpunkt immer die tatsächlich laufenden Versionen statt hartcodierter
+    # v1/v4-Konstanten, die nach einem Retraining sofort veraltet wären.
+    if baseline is None or candidate is None:
+        from fastapi import HTTPException
+        active = read_active_versions()
+        if len(active) != 2:
+            raise HTTPException(
+                status_code=400,
+                detail="A/B braucht genau 2 aktive Reranker-Versionen",
+            )
+        baseline, candidate = active[0], active[1]
+
+    from fastapi import HTTPException
     cand_path = _model_path(candidate)
     if not cand_path.exists():
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"no model file for {candidate}")
     cand_model = json.loads(cand_path.read_text(encoding="utf-8"))
 
