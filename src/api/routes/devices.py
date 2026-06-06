@@ -63,6 +63,33 @@ def _touch_best_effort(conn: Any, device_id: str, workspace_id: str) -> None:
         raise
 
 
+# WHY(#343): fail_stale_cloud_jobs ist ein TTL-Sweep (WRITE) der im Claim-Hotpath
+# bei JEDEM Poll lief → zweite Write-Amplifikation neben touch_last_seen. Der Sweep
+# ist unkritisch + idempotent → global gedrosselt (max 1×/60s) + best-effort (ein
+# DB-Lock killt den Claim nicht). Der Claim-Handler selbst läuft jetzt im Threadpool
+# (def statt async def), sodass ein 10s-busy_timeout-Wait nicht mehr den Event-Loop
+# inkl. /health blockiert.
+_LAST_STALE_SWEEP: list[float] = [0.0]
+_STALE_SWEEP_INTERVAL_S = 60.0
+
+
+def _fail_stale_best_effort() -> None:
+    now = time.monotonic()
+    if now - _LAST_STALE_SWEEP[0] < _STALE_SWEEP_INTERVAL_S:
+        return
+    try:
+        pi_jobs.fail_stale_cloud_jobs(
+            max_age_s=float(os.getenv("MAYRING_CLOUD_JOB_TTL_S", "1800")),
+            db_path=_job_db_path(),
+        )
+        _LAST_STALE_SWEEP[0] = now
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            logger.warning("fail_stale_cloud_jobs skipped (db locked): %s", e)
+            return
+        raise
+
+
 def _job_db_path() -> Path:
     """DB file the pi_jobs helpers should hit — mirror dependencies.get_conn so
     the per-call job connection and the shared device connection point at the
@@ -111,7 +138,7 @@ class CloudCompleteRequest(BaseModel):
 # --- device registry --------------------------------------------------------
 
 @router.post("/devices/register")
-async def register_device(
+def register_device(
     req: DeviceRegisterRequest,
     workspace_id: str = Depends(get_workspace),
     x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
@@ -135,7 +162,7 @@ async def register_device(
 
 
 @router.post("/devices/heartbeat")
-async def device_heartbeat(
+def device_heartbeat(
     req: HeartbeatRequest,
     workspace_id: str = Depends(get_workspace),
     x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
@@ -148,7 +175,7 @@ async def device_heartbeat(
 
 
 @router.get("/devices")
-async def list_devices(workspace_id: str = Depends(get_workspace)) -> dict:
+def list_devices(workspace_id: str = Depends(get_workspace)) -> dict:
     items = device_store.list_devices(_get_conn(), workspace_id)
     return {"devices": items, "count": len(items)}
 
@@ -156,7 +183,7 @@ async def list_devices(workspace_id: str = Depends(get_workspace)) -> dict:
 # --- hook events ------------------------------------------------------------
 
 @router.post("/hooks/events")
-async def record_hook_event(
+def record_hook_event(
     req: HookEventRequest,
     workspace_id: str = Depends(get_workspace),
     x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
@@ -181,7 +208,7 @@ async def record_hook_event(
 
 
 @router.get("/hooks/events")
-async def list_hook_events(
+def list_hook_events(
     since: str | None = Query(default=None),
     limit: int = Query(default=200, le=2000),
     workspace_id: str = Depends(get_workspace),
@@ -193,7 +220,7 @@ async def list_hook_events(
 # --- write-job routing (cloud-claim path, reactivated #274) -----------------
 
 @router.post("/pi_task_claim_cloud")
-async def pi_task_claim_cloud(
+def pi_task_claim_cloud(
     req: CloudClaimRequest,
     workspace_id: str = Depends(get_workspace),
     x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
@@ -210,11 +237,9 @@ async def pi_task_claim_cloud(
     )
     _touch_best_effort(conn, device_id, workspace_id)
     # Cheap piggy-backed TTL sweep: fail cloud jobs no worker claimed in time so
-    # an A2A client does not poll forever. No cron needed.
-    pi_jobs.fail_stale_cloud_jobs(
-        max_age_s=float(os.getenv("MAYRING_CLOUD_JOB_TTL_S", "1800")),
-        db_path=_job_db_path(),
-    )
+    # an A2A client does not poll forever. No cron needed. Throttled + best-effort
+    # (#343) so it can't write-amplify the claim hotpath.
+    _fail_stale_best_effort()
     job = pi_jobs.claim_cloud_next(
         device_id,
         capabilities=caps,
@@ -227,7 +252,7 @@ async def pi_task_claim_cloud(
 
 
 @router.post("/pi_task_complete_cloud")
-async def pi_task_complete_cloud(
+def pi_task_complete_cloud(
     req: CloudCompleteRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
