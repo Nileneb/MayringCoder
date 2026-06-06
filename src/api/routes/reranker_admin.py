@@ -649,6 +649,68 @@ def dedup_categories(
             "merges": merges, "codebook_count": col.count()}
 
 
+@router.post("/stats/admin/relink-chunks")
+def relink_chunks(
+    dry_run: bool = True,
+    top_n: int = 2,
+    info: TokenInfo = Depends(get_token_info),
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """#340 Ebene b (echter Fix) — bestehende Chunks deduktiv gegen das AKTUELLE
+    Codebook neu verlinken.
+
+    Root-Cause cat_match=0: die chunk_categories-Tags wurden zu einem FRÜHEREN
+    Codebook-Stand erzeugt; `derive_query_category_ids` (Query-Seite) nutzt das
+    HEUTIGE Codebook → die vektor-nah abgerufenen Chunks tragen andere category_ids
+    (245/261/631) als die Query ableitet (262/300) → leere Schnittmenge. KEIN
+    Duplikat-Problem (Dedup-Dry-Run bewies: 262/261 clustern nicht mal bei 0.93).
+
+    Fix: `link_chunks_deductive` (dieselbe `_best_match`+`_HYBRID_MIN`-Logik wie die
+    Query-Ableitung) für alle aktiven Chunks des Workspace neu ausführen → die
+    abgerufenen Chunks bekommen die Kategorien, die die Query heute ableitet →
+    cat_match feuert. ADDITIV (INSERT OR REPLACE pro (chunk,cat); bestehende Links
+    bleiben, kein Datenverlust). top_n=2: jeder Chunk wird mit seinen 2 besten
+    aktuellen Kategorien verlinkt (erhöht die Überlapp-Chance mit der top_n=3-Query).
+    Workspace-scoped. dry_run=True (default) zeigt nur Zahlen. Sync def → Threadpool.
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.memory.store import get_chroma_collection
+    from mayring_core.memory.ingestion.mayring_process import link_chunks_deductive
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT chunk_id FROM chunks WHERE workspace_id=? AND is_active=1", (workspace_id,)
+    ).fetchall()
+    chunk_ids = [r[0] for r in rows]
+    if not chunk_ids:
+        return {"dry_run": dry_run, "workspace_id": workspace_id, "active_chunks": 0,
+                "detail": "keine aktiven Chunks in diesem Workspace"}
+
+    chunks_col = get_chroma_collection("memory_chunks")
+    pairs: list[tuple[str, list]] = []
+    _B = 500
+    for i in range(0, len(chunk_ids), _B):
+        batch = chunk_ids[i:i + _B]
+        got = chunks_col.get(ids=batch, include=["embeddings"])
+        for cid, emb in zip(got.get("ids", []), got.get("embeddings", [])):
+            if emb is not None and len(emb):
+                pairs.append((cid, emb))
+
+    if dry_run:
+        return {"dry_run": True, "workspace_id": workspace_id,
+                "active_chunks": len(chunk_ids), "chunks_with_embedding": len(pairs),
+                "top_n": top_n,
+                "detail": "apply mit dry_run=false verlinkt diese Chunks gegen das aktuelle Codebook"}
+
+    codebook_col = get_chroma_collection("codebook_categories")
+    linked = link_chunks_deductive(conn, codebook_col, pairs, top_n=top_n)
+    conn.commit()
+    _log.info("relink-chunks: %d Links für %d Chunks geschrieben (top_n=%d) ws=%s",
+              linked, len(pairs), top_n, workspace_id)
+    return {"dry_run": False, "workspace_id": workspace_id,
+            "chunks_relinked": len(pairs), "links_written": linked, "top_n": top_n}
+
+
 @router.get("/stats/admin/cat-match-debug")
 async def cat_match_debug(
     query: str = "user authentication login session token oauth jwt password",
