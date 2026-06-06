@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,29 @@ from src.api.dependencies import get_conn as _get_conn
 
 router = APIRouter(tags=["devices"])
 logger = logging.getLogger(__name__)
+
+# WHY(#343 db-lock-outage 2026-06-06): touch_last_seen lief im pi_task_claim-
+# Hotpath bei JEDEM Poll → SQLite-Write-Contention → "database is locked"; weil
+# sqlite synchron im async-Handler läuft, blockierte ein 10s-Lock-Wait den
+# Event-Loop inkl. /health → mcp-Outage. Heartbeat ist unkritisch → In-Memory
+# gedrosselt (max 1 Write/30s/Gerät) + best-effort (Lock killt den Request nicht).
+_LAST_TOUCH: dict[str, float] = {}
+_TOUCH_INTERVAL_S = 30.0
+
+
+def _touch_best_effort(conn: Any, device_id: str, workspace_id: str) -> None:
+    key = f"{workspace_id}:{device_id}"
+    now = time.monotonic()
+    if now - _LAST_TOUCH.get(key, 0.0) < _TOUCH_INTERVAL_S:
+        return
+    try:
+        device_store.touch_last_seen(conn, device_id, workspace_id)
+        _LAST_TOUCH[key] = now
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            logger.warning("touch_last_seen skipped (db locked): %s", e)
+            return
+        raise
 
 
 def _job_db_path() -> Path:
@@ -118,7 +143,7 @@ async def device_heartbeat(
     device_id = _resolve_device_id(x_device_id, req.device_id)
     if not device_id:
         raise HTTPException(status_code=400, detail="device_id required (X-Device-Id header or body)")
-    device_store.touch_last_seen(_get_conn(), device_id, workspace_id)
+    _touch_best_effort(_get_conn(), device_id, workspace_id)
     return {"ok": True, "device_id": device_id}
 
 
@@ -183,7 +208,7 @@ async def pi_task_claim_cloud(
     caps = device_store.effective_capabilities(
         conn, device_id, workspace_id, req.capabilities,
     )
-    device_store.touch_last_seen(conn, device_id, workspace_id)
+    _touch_best_effort(conn, device_id, workspace_id)
     # Cheap piggy-backed TTL sweep: fail cloud jobs no worker claimed in time so
     # an A2A client does not poll forever. No cron needed.
     pi_jobs.fail_stale_cloud_jobs(
