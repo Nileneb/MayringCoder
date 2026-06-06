@@ -39,6 +39,11 @@ _CAT_COLS = ("id, name, igio_axis, parent_id, description, status, "
              "project_id")
 
 
+class CategoryPatchReq(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
 class ProposalRequest(BaseModel):
     category_name: str
     pi_job_id: str = ""
@@ -335,3 +340,50 @@ async def process_text(
         "decision": res.decision, "confidence": res.confidence,
         "igio_axis": res.igio_axis, "proposed": res.proposed,
     }
+
+
+@router.patch("/codebooks/{codebook_id}/categories/{category_id}")
+async def patch_category(
+    codebook_id: int,  # vestigial path param, ignored (v19)
+    category_id: int,
+    req: CategoryPatchReq,
+    _ws: str = Depends(get_workspace),
+) -> dict:
+    """Rename and/or update description of a category. If embedding_id is set and name
+    changes, syncs Chroma so cat_match stays consistent with the new name."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT name, embedding_id FROM categories WHERE id=?",
+        (category_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"category {category_id} not found")
+
+    current_name, emb_id = row[0], row[1]
+
+    if req.name is not None and req.name != current_name:
+        collision = conn.execute(
+            "SELECT 1 FROM categories WHERE name=? AND id<>?",
+            (req.name, category_id)).fetchone()
+        if collision:
+            raise HTTPException(status_code=409,
+                                detail=f"category name '{req.name}' already exists")
+        conn.execute("UPDATE categories SET name=? WHERE id=?", (req.name, category_id))
+        if emb_id:
+            # WHY(cat_match-sync): Chroma doc text is the name used for embedding similarity;
+            # stale name breaks deductive matching after rename. Failure must NOT abort the DB
+            # rename — the rename is the authoritative change, Chroma is a derived index.
+            try:
+                from mayring_core.memory.store import get_chroma_collection
+                get_chroma_collection("codebook_categories").upsert(
+                    ids=[emb_id], documents=[req.name])
+            except Exception as exc:  # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).warning(
+                    "patch_category: chroma sync for embedding %s failed: %s", emb_id, exc)
+
+    if req.description is not None:
+        conn.execute("UPDATE categories SET description=? WHERE id=?",
+                     (req.description[:500], category_id))
+
+    conn.commit()
+    return {"category_id": category_id, "status": "updated"}
