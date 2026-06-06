@@ -589,25 +589,26 @@ def dedup_categories(
     for members in clusters.values():
         if len(members) < 2:
             continue
+        # Index in `cats` durchreichen (KEIN cats.index(d) — die Dicts tragen ein
+        # numpy 'vec', dict-Gleichheit darauf wirft "ambiguous truth value").
         ranked = sorted(
             members,
             key=lambda i: (-_link_count(cats[i]["id"]), cats[i]["id"]),
         )
-        canon = cats[ranked[0]]
-        dups = [cats[i] for i in ranked[1:]]
-        repointed = 0
-        for d in dups:
-            repointed += _link_count(d["id"])
+        ci = ranked[0]
+        canon = cats[ci]
+        dup_idxs = ranked[1:]
         merges.append({
             "canonical": {"id": canon["id"], "name": canon["name"],
                           "links": _link_count(canon["id"])},
-            "dups": [{"id": d["id"], "name": d["name"], "links": _link_count(d["id"]),
-                      "cosine": round(float(sim[ranked[0]][cats.index(d)]), 3)} for d in dups],
-            "chunk_links_repointed": repointed,
+            "dups": [{"id": cats[i]["id"], "name": cats[i]["name"],
+                      "links": _link_count(cats[i]["id"]),
+                      "cosine": round(float(sim[ci][i]), 3)} for i in dup_idxs],
+            "chunk_links_repointed": sum(_link_count(cats[i]["id"]) for i in dup_idxs),
         })
 
     if dry_run or not merges:
-        return {"dry_run": True, "threshold": threshold,
+        return {"dry_run": dry_run, "threshold": threshold,
                 "active_with_emb": len(cats), "clusters_with_dups": len(merges),
                 "merges": merges}
 
