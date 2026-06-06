@@ -31,7 +31,10 @@ router = APIRouter(tags=["projects"])
 # `name` is now a single greedy non-slash run (linear, bounded by '/'); the
 # optional `.git` suffix + trailing slash are stripped in _normalize_remote.
 _REMOTE_RE = re.compile(
-    r"github\.com[:/](?P<owner>[^/]+)/(?P<name>[^/]+)",
+    # WHY(#143 polynomial-redos): possessive Quantifier (py3.11+) verhindern
+    # Backtracking der beiden benachbarten [^/]+-Runs — kein ReDoS-Risiko mehr,
+    # Matches identisch (owner/name sind ohnehin durch '/' begrenzt).
+    r"github\.com[:/](?P<owner>[^/]++)/(?P<name>[^/]++)",
     re.IGNORECASE,
 )
 _SEMANTIC_MIN = 0.55
