@@ -188,3 +188,13 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 |---|---|---|
 | 265 | Modularisierung: claude-plugin + Pi-Agent in eigene Repos auslagern (Tracking) | **Tracking abgeschlossen** — alle 3 Stufen: #268 (claude-plugin), #267 (mayring-core, seit 2026-05-26 eigenes PUBLIC Repo `Nileneb/mayring-core`, eingebunden als Submodule `vendor/mayring-core` @v0.1.1), #266 (pi-agent, Submodule v0.1.3). vendor↔core-Zyklus gebrochen (verifiziert: `pip install mayring-pi-agent@v0.1.3` klont kein MayringCoder mehr). Spec `docs/superpowers/specs/2026-05-25-mayring-core-extraction-design.md`. Kein eigenes Live-HTTP-Surface (Repo-Topologie). |
 | 299 | deploy: kein Test-Gate vor Prod-Deploy — build-and-push deployte ungetestet | **CI-only** (Workflow-Härtung): `build-and-push` triggert via `workflow_run` auf grünem `tests`-Lauf statt direkt auf `push` (spiegelt `app.linn.games/deploy.yml`); baut den getesteten `head_sha`, nicht master-HEAD. Roter Push → Job übersprungen → kein Build/Deploy. Behebt zugleich die alte paths-Filter-Silent-no-deploy-Lücke (z.B. `vendor/mayring-pi-agent`-Bumps waren nicht gelistet). Commit 68c985b. Acceptance = Pipeline-Topologie, kein Prod-Endpoint. |
+
+## New Endpoint Shape Probes (2026-06-06)
+
+These smoke checks have no single backing issue — they verify the response shape of newly-built admin/overview endpoints. The check name in `tools/smoke_test_production.py` is the canonical reference.
+
+| Check Name | Endpoint | Shape Asserted |
+|---|---|---|
+| `text_model_switch_roundtrip` | `GET /stats/admin/text-models` | 200 + `active` (str) + `models` (list) |
+| `reranker_active_pair` | `GET /stats/admin/reranker-versions` | 200 + `active` is list of length 1–2 |
+| `categories_overview_reachable` | `GET /stats/categories-overview` | 200 + `total_categories` (int) + `workspaces` (list) + `unlinked` (list) |

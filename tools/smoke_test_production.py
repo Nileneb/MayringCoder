@@ -2618,6 +2618,60 @@ def check_claim_rejects_foreign(api: str, token: str) -> CheckResult:
         else f"expected 403, got http={code}: {body}")
 
 
+def check_text_model_switch_roundtrip(api: str, token: str) -> CheckResult:
+    """GET /stats/admin/text-models → 200, shape has 'active' (str) and 'models'
+    (list). Read-only: proves the endpoint shipped and returns the canonical
+    shape without mutating prod config."""
+    code, body, _ = _http("GET", f"{api}/stats/admin/text-models", token, timeout=10.0)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("text_model_switch_roundtrip", False,
+                           f"http={code} body={body}")
+    has_active = isinstance(body.get("active"), str)
+    has_models = isinstance(body.get("models"), list)
+    ok = has_active and has_models
+    return CheckResult(
+        "text_model_switch_roundtrip", ok,
+        f"http=200 active={body.get('active')!r} models_count={len(body.get('models') or [])} "
+        f"shape_ok={ok}",
+    )
+
+
+def check_reranker_active_pair(api: str, token: str) -> CheckResult:
+    """GET /stats/admin/reranker-versions → 200, JSON 'active' is a list of
+    length 1–2 (new multi-version shape). Proves the endpoint shipped the
+    updated response contract without touching the active selection."""
+    code, body, _ = _http("GET", f"{api}/stats/admin/reranker-versions", token, timeout=10.0)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("reranker_active_pair", False,
+                           f"http={code} body={body}")
+    active = body.get("active")
+    ok = isinstance(active, list) and 1 <= len(active) <= 2
+    return CheckResult(
+        "reranker_active_pair", ok,
+        f"http=200 active={active!r} (must be list len 1–2) shape_ok={ok}",
+    )
+
+
+def check_categories_overview_reachable(api: str, token: str) -> CheckResult:
+    """GET /stats/categories-overview → 200, JSON has keys
+    'total_categories' (int), 'workspaces' (list), 'unlinked' (list).
+    Shape-only — values may be 0/empty on a fresh deploy."""
+    code, body, _ = _http("GET", f"{api}/stats/categories-overview", token, timeout=10.0)
+    if code != 200 or not isinstance(body, dict):
+        return CheckResult("categories_overview_reachable", False,
+                           f"http={code} body={body}")
+    has_total = isinstance(body.get("total_categories"), int)
+    has_workspaces = isinstance(body.get("workspaces"), list)
+    has_unlinked = isinstance(body.get("unlinked"), list)
+    ok = has_total and has_workspaces and has_unlinked
+    return CheckResult(
+        "categories_overview_reachable", ok,
+        f"http=200 total_categories={body.get('total_categories')} "
+        f"workspaces={len(body.get('workspaces') or [])} "
+        f"unlinked={len(body.get('unlinked') or [])} shape_ok={ok}",
+    )
+
+
 def check_project_groups_roundtrip(api: str, token: str) -> CheckResult:
     """C1: create group → assign repo → GET /projects shows color → delete. Proves the
     endpoint shipped end-to-end on the token's own workspace."""
@@ -2712,6 +2766,9 @@ ALL_CHECKS = [
     ("claim_rejects_foreign",         check_claim_rejects_foreign),
     ("project_groups_roundtrip",      check_project_groups_roundtrip),
     ("project_link_boost_roundtrip",  check_project_link_boost_roundtrip),
+    ("text_model_switch_roundtrip",   check_text_model_switch_roundtrip),
+    ("reranker_active_pair",          check_reranker_active_pair),
+    ("categories_overview_reachable", check_categories_overview_reachable),
 ]
 
 
