@@ -2790,6 +2790,17 @@ EXPECTED_PENDING_FAILURES = {
         "tracker": "#141",
         "reason": "IGIO backfill cron auto-recovers; red until coverage ≥ 50%",
     },
+    "reranker_cat_match_fires": {
+        "tracker": "#340",
+        "reason": "Chroma-Reembed erledigt (count 1630); Rest = Kategorie-"
+                  "Fragmentierung query↔chunk (query→262, chunks→261/245/631) → "
+                  "braucht Kategorie-Dedup/Merge (#340 Ebene b)",
+    },
+    "model_identity": {
+        "tracker": "#349",
+        "reason": "Smoke testet alten Kontrakt (model-routes POST); text_model.txt-"
+                  "Picker ist jetzt kanonisch über model-routes → Check überholt (#349)",
+    },
 }
 # Removed:
 #   training_merge_endpoint — smoke check broadened to accept 401
