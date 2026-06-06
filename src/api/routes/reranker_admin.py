@@ -786,6 +786,39 @@ async def cat_match_debug(
         if qemb is not None:
             ids = derive_query_category_ids(conn, col, qemb)
             out["query_category_ids"] = sorted(ids)
+            # #340 Diagnose (read-only): die VOLLE Rangliste der Query gegen alle
+            # Kategorie-Embeddings (mit Scores) — zeigt, wo die chunk-seitigen
+            # Kategorien (z.B. 261/687/637) für die Query ranken → datengetriebene
+            # Wahl von min_score/top_n bzw. Synonym-Expansion statt Raten.
+            try:
+                from mayring_core.memory.ingestion.mayring_process import (
+                    _active_category_pairs, _cosine,
+                )
+                pairs = _active_category_pairs(conn, col, None)
+                ranked = sorted(
+                    ((float(_cosine(qemb, emb)), cat["id"], cat["name"]) for cat, emb in pairs),
+                    key=lambda t: t[0], reverse=True,
+                )
+                out["query_top_categories"] = [
+                    {"id": cid, "name": nm, "cos": round(s, 3)} for s, cid, nm in ranked[:15]
+                ]
+                # Nachbarn der top-1-Query-Kategorie (Synonym-Distanz): wie nah ist
+                # 262 zu 261 & Co.? → entscheidet, ob Synonym-Expansion greift.
+                if ranked:
+                    top_id = ranked[0][1]
+                    emb_by_id = {cat["id"]: emb for cat, emb in pairs}
+                    temb = emb_by_id.get(top_id)
+                    if temb is not None:
+                        nbrs = sorted(
+                            ((float(_cosine(temb, emb)), cat["id"], cat["name"])
+                             for cat, emb in pairs if cat["id"] != top_id),
+                            key=lambda t: t[0], reverse=True,
+                        )
+                        out["top_query_cat_neighbors"] = [
+                            {"id": cid, "name": nm, "cos": round(s, 3)} for s, cid, nm in nbrs[:10]
+                        ]
+            except Exception as e:  # noqa: BLE001 — diagnostic
+                out["ranking_err"] = f"{type(e).__name__}: {e}"
             if ids:
                 ph = ",".join("?" for _ in ids)
                 out["query_category_names"] = [
