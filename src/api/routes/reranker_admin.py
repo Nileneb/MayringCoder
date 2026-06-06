@@ -1146,3 +1146,48 @@ async def reranker_rollout_decision(
         "min_queries": min_queries,
         "window_days": days,
     }
+
+
+@router.get("/stats/admin/db-export")
+def db_export(info: TokenInfo = Depends(get_token_info)):
+    """#backup — streamt einen tar.gz der MayringCoder-DB (memory.db + Chroma) für
+    systemd-unabhängiges Backup + Dev-Sync. Symmetrisch zum app.linn.games
+    pg_dump-Endpoint, nutzt aber die bestehende Admin-Auth (service-token/JWT) +
+    nginx /stats/admin-Allowlist. Exportiert NUR die DB-Artefakte:
+    memory.db(+wal/shm) + memory_chroma/ — KEINE Secrets (agent_keys.json) oder
+    Wiki-/Job-State. memory.db-wal mitnehmen → SQLite repliziert beim Öffnen →
+    konsistenter Snapshot. Sync def → Threadpool (#343), tar streamt ~190 MB ohne
+    Event-Loop-Block.
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    import subprocess
+    from fastapi.responses import StreamingResponse
+    from mayring_core.config import CACHE_DIR
+
+    members = [f for f in ("memory.db", "memory.db-wal", "memory.db-shm", "memory_chroma")
+               if (CACHE_DIR / f).exists()]
+    if not members:
+        raise HTTPException(status_code=500, detail="no DB artefacts in cache dir")
+
+    cmd = ["tar", "-czf", "-", "-C", str(CACHE_DIR), *members]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def _gen():
+        try:
+            assert proc.stdout is not None
+            for chunk in iter(lambda: proc.stdout.read(1 << 16), b""):
+                yield chunk
+        finally:
+            proc.stdout and proc.stdout.close()
+            rc = proc.wait()
+            if rc != 0:
+                err = (proc.stderr.read() if proc.stderr else b"")[:500]
+                _log.error("db-export: tar exit %s: %s", rc, err)
+
+    stamp = time.strftime("%Y-%m-%d_%H%M%S", time.gmtime())
+    return StreamingResponse(_gen(), media_type="application/gzip", headers={
+        "Content-Disposition": f'attachment; filename="mayring_db_{stamp}.tar.gz"',
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+    })
