@@ -235,6 +235,23 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
 
     print(f"[STAGE] ingest_loop start total={total} workers={_workers} delay={_delay}s")
     pbar = _tqdm(total=total, desc="populate-memory", unit="file")
+    _done = 0
+    # WHY(#275): tqdm writes \r-terminated frames with no newline. The job-runner
+    # (src/api/job_queue.py) reads the subprocess stdout via readline() — newline-
+    # delimited — so it never sees a tqdm frame until the next \n-line arrives at
+    # the very end → progress.current stuck at 0/N for the whole run. Emit an
+    # explicit newline-terminated marker the runner parses into progress.current.
+    # Throttled to ~1% (≤~100 lines) so the captured job output stays bounded on
+    # large repos; the final tick always fires.
+    _emit_every = max(1, total // 100)
+
+    def _tick() -> None:
+        nonlocal _done
+        _done += 1
+        pbar.update(1)
+        if _done % _emit_every == 0 or _done == total:
+            print(f"[POPULATE-PROGRESS] {_done}/{total}", flush=True)
+
     try:
         batch_size = _workers
         for batch_start in range(0, total, batch_size):
@@ -248,7 +265,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
                     else:
                         print(f"[populate-memory] FEHLER bei {r['file']!r}: {r['error']}")
                         error_count += 1
-                    pbar.update(1)
+                    _tick()
             else:
                 with ThreadPoolExecutor(max_workers=_workers) as pool:
                     futures = {pool.submit(_ingest_one, f): f for f in batch}
@@ -260,7 +277,7 @@ def run_populate_memory(args, repo_url: str, ollama_url: str, model: str, router
                         else:
                             print(f"[populate-memory] FEHLER bei {r['file']!r}: {r['error']}")
                             error_count += 1
-                        pbar.update(1)
+                        _tick()
             if _delay > 0 and batch_start + batch_size < total:
                 time.sleep(_delay)
     finally:

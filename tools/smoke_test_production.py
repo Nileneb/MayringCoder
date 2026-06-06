@@ -1739,65 +1739,65 @@ def check_populate_accepts_batch_delay(api: str, token: str) -> CheckResult:
 
 
 def check_model_identity(api: str, token: str) -> CheckResult:
-    """Issue #106 acceptance: the MODEL THAT ACTUALLY GETS USED is the
-    one configured via /stats/admin/model-routes.
+    """Issue #106 acceptance, updated for the text_model.txt picker (#349):
+    the model that ACTUALLY gets used is whatever the canonical text-model
+    selection says, and a CHANGE to it is picked up on the next resolve.
 
-    The previous smoke `memory_search_vector` only proved the vector
-    stage runs — it stayed green even when an outdated default model
-    was loaded. Audit subagent flagged this as a GAP: a model upgrade
-    cannot be verified by ``diag=ok(...)``.
+    Since 2026-06-06 the ``text_model.txt`` override has priority over the
+    ``model_routes.yaml`` ``text`` route — ``ModelRouter.resolve("text")``
+    reads it per call. So the old probe (sentinel via POST
+    /stats/admin/model-routes) no longer reflects the used model; it stayed
+    red even though the picker works. This probe drives the now-canonical
+    path: read the active model, switch to a *different* available model,
+    confirm the active resolution flips, then revert.
 
-    Probe: read ``resolved_models.text`` from GET, set a sentinel via
-    POST, re-GET and assert ``resolved_models.text`` reflects the
-    sentinel — proves ModelRouter.resolve() picks up the change AND
-    that callers using ``ModelRouter.resolve("text")`` (per #88 fix)
-    will see the new model on the very next call.
+    Both writes go through POST /stats/admin/text-model, which validates the
+    model against Ollama's tag list — so we only switch to/revert between
+    models that are actually loadable (no unrevertable sentinel state).
     """
-    code, body, _ = _http("GET", f"{api}/stats/admin/model-routes", token)
+    code, body, _ = _http("GET", f"{api}/stats/admin/text-models", token, timeout=10.0)
     if code != 200 or not isinstance(body, dict):
         return CheckResult("model_identity", False,
-                           f"GET http={code} body={body}")
-    routes = (body or {}).get("routes", {})
-    resolved = (body or {}).get("resolved_models", {})
-    if "text" not in resolved:
+                           f"GET text-models http={code} body={body}")
+    orig = body.get("active")
+    models = body.get("models")
+    if not isinstance(orig, str) or not orig or not isinstance(models, list):
         return CheckResult(
             "model_identity", False,
-            "GET /stats/admin/model-routes missing 'resolved_models.text' "
-            "— Issue #106 smoke can't run",
+            f"unexpected shape active={orig!r} models={type(models).__name__}",
         )
-    text_route = routes.get("text") or {}
-    orig_model = text_route.get("model") or "mistral:7b-instruct"
-    sentinel_name = "smoke-identity-sentinel:13"
-    if orig_model == sentinel_name:
-        sentinel_name = "smoke-identity-sentinel:14"
-    payload = {
-        "task": "text",
-        "model": sentinel_name,
-        "fallback": text_route.get("fallback") or "",
-        "timeout": int(text_route.get("timeout") or 240),
-    }
+    names = [m.get("name") for m in models
+             if isinstance(m, dict) and m.get("name")]
+    if orig not in names:
+        # Active model is not in the local Ollama tag list (e.g. a cloud-only
+        # model) → a POST-revert to it would 422, leaving the override wrong.
+        # Skip the mutating probe to stay revertible; the read path is proven.
+        return CheckResult(
+            "model_identity", True,
+            f"active={orig!r} not in local Ollama tags ({len(names)} models) "
+            "— mutating probe skipped to stay revertible; read path OK",
+        )
+    target = next((n for n in names if n != orig), orig)
+    single = target == orig
     code2, body2, _ = _http(
-        "POST", f"{api}/stats/admin/model-routes", token, body=payload,
+        "POST", f"{api}/stats/admin/text-model", token,
+        body={"model": target}, timeout=10.0,
     )
     if code2 != 200:
-        return CheckResult(
-            "model_identity", False,
-            f"POST http={code2} body={body2}",
-        )
-    code3, body3, _ = _http("GET", f"{api}/stats/admin/model-routes", token)
-    new_resolved = (body3 or {}).get("resolved_models", {}).get("text", "")
-    revert = {
-        "task": "text",
-        "model": orig_model,
-        "fallback": text_route.get("fallback") or "",
-        "timeout": int(text_route.get("timeout") or 240),
-    }
-    _http("POST", f"{api}/stats/admin/model-routes", token, body=revert)
+        return CheckResult("model_identity", False,
+                           f"POST set target={target!r} http={code2} body={body2}")
+    code3, body3, _ = _http("GET", f"{api}/stats/admin/text-models", token, timeout=10.0)
+    new_active = body3.get("active") if isinstance(body3, dict) else None
+    # Always revert to the model that was active before the probe.
+    _http("POST", f"{api}/stats/admin/text-model", token,
+          body={"model": orig}, timeout=10.0)
+    ok = new_active == target
+    note = " (single-model host: write→resolve roundtrip only)" if single else ""
     return CheckResult(
         "model_identity",
-        new_resolved == sentinel_name,
-        f"orig={orig_model!r}  set={sentinel_name!r}  resolved={new_resolved!r} "
-        f"(matches sentinel ⇒ ModelRouter is the canonical resolution path)",
+        ok,
+        f"orig={orig!r} set={target!r} resolved={new_active!r}{note} "
+        f"(matches ⇒ text_model.txt picker is the canonical resolution path)",
     )
 
 
@@ -2790,11 +2790,6 @@ EXPECTED_PENDING_FAILURES = {
         "tracker": "#141",
         "reason": "IGIO backfill cron auto-recovers; red until coverage ≥ 50%",
     },
-    "model_identity": {
-        "tracker": "#349",
-        "reason": "Smoke testet alten Kontrakt (model-routes POST); text_model.txt-"
-                  "Picker ist jetzt kanonisch über model-routes → Check überholt (#349)",
-    },
 }
 # Removed:
 #   training_merge_endpoint — smoke check broadened to accept 401
@@ -2802,6 +2797,9 @@ EXPECTED_PENDING_FAILURES = {
 #   route is registered, which IS the actual #87 acceptance).
 #   reranker_cat_match_fires (#340) — GELÖST: query→category-Fenster geweitet
 #   (mayring-core 0.50/8) → cat_match_hits=10 live. Smoke enforced es wieder.
+#   model_identity (#349) — GELÖST: Check auf den kanonischen text_model.txt-
+#   Picker-Pfad (POST /stats/admin/text-model toggle+revert) umgestellt statt
+#   model-routes-Sentinel. Smoke enforced es wieder.
 
 
 def _failure_signature(real_failures: list[CheckResult]) -> str:

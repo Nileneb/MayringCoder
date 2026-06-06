@@ -68,6 +68,13 @@ _TQDM_RE = re.compile(
 # "[populate-memory] 207 Dateien gefunden" → total signal fürs progress-Label
 _FILECOUNT_RE = re.compile(r"\[populate-memory\]\s+(\d+)\s+Dateien gefunden")
 
+# "[POPULATE-PROGRESS] 42/207" → per-file progress (#275). The populate loop's
+# tqdm writes \r-only frames readline() can't see; this newline-terminated marker
+# is the runner-parseable progress signal.
+_POPULATE_PROGRESS_RE = re.compile(
+    r"\[POPULATE-PROGRESS\]\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)"
+)
+
 # "[STAGE] fetch_repo done files=274" → stages dict
 _STAGE_RE = re.compile(r"\[STAGE\]\s+(?P<name>\S+)\s+(?P<detail>.*)")
 
@@ -128,6 +135,24 @@ def _parse_progress_line(line: str) -> dict | None:
     }
 
 
+def _parse_populate_progress(line: str) -> dict | None:
+    """Return a progress dict for a ``[POPULATE-PROGRESS] cur/total`` marker
+    (#275), else None. The populate loop emits this newline-terminated marker
+    because its tqdm bar uses \\r-only frames the line reader never sees.
+    """
+    pm = _POPULATE_PROGRESS_RE.search(line)
+    if not pm:
+        return None
+    cur, tot = int(pm.group("current")), int(pm.group("total"))
+    return {
+        "label":   "populate-memory",
+        "pct":     int(cur * 100 / tot) if tot else 0,
+        "current": cur,
+        "total":   tot,
+        "eta":     "",
+    }
+
+
 async def run_checker_job(job_id: str, checker_args: list[str], workspace_id: str) -> None:
     try:
         # WHY(#1): route the ingest subprocess' generate-load through the central
@@ -160,6 +185,10 @@ async def run_checker_job(job_id: str, checker_args: list[str], workspace_id: st
             progress = _parse_progress_line(last_segment)
             if progress is not None:
                 _JOBS[job_id]["progress"] = progress
+                continue
+            pop_progress = _parse_populate_progress(last_segment)
+            if pop_progress is not None:
+                _JOBS[job_id]["progress"] = pop_progress
                 continue
             sm = _STAGE_RE.search(last_segment)
             if sm:
