@@ -506,6 +506,149 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
             "collection_count": col.count()}
 
 
+@router.post("/stats/admin/dedup-categories")
+def dedup_categories(
+    threshold: float = 0.93,
+    dry_run: bool = True,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """#340 Ebene b — Kategorie-Dedup (Mayring S7 für System #2: die `categories`-
+    Tabelle + chunk_categories-FK, NICHT die chunks.category_labels-CSV).
+
+    Problem: query→category (derive_query_category_ids, cosine-nearest gegen die
+    Chroma-`codebook_categories`) und die chunk_categories-FK der Treffer landen auf
+    VERSCHIEDENEN, aber quasi-identischen Kategorie-IDs (z.B. 262 `user_authentication
+    _and_login_processes` vs 261) → leere Schnittmenge → reranker-v3 cat_match=0.
+
+    Fix: Near-Dup-Kategorien (cosine >= threshold auf ihren Codebook-Embeddings)
+    in EINE kanonische ID kollabieren. Kanonisch = die meist-verlinkte (chunk_
+    categories COUNT, Tie → kleinere id). Pro Dup: chunk_categories + codebook_
+    proposals-FKs auf die kanonische ID repointen (OR IGNORE gegen den UNIQUE-
+    (chunk_id,category_id)-Index, dann Reste löschen), Dup-Chroma-Embedding aus
+    `codebook_categories` entfernen, Dup-Row löschen.
+
+    Idempotent. `dry_run=True` (default) mutiert NICHTS — liefert nur den Plan
+    (read-only). Sync def → Threadpool (#343), blockiert den Event-Loop nicht.
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    import numpy as np
+    from mayring_core.memory.store import get_chroma_collection
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT id, name, embedding_id FROM categories "
+        "WHERE status='active' AND embedding_id != ''"
+    ).fetchall()
+    if len(rows) < 2:
+        return {"dry_run": dry_run, "clusters": 0, "merges": [], "detail": "< 2 active categories"}
+
+    col = get_chroma_collection("codebook_categories")
+    emb_ids = [r[2] for r in rows]
+    got = col.get(ids=emb_ids, include=["embeddings"])
+    # Chroma kann IDs fehlen lassen (verwaiste embedding_ids) → nur vorhandene nutzen.
+    emb_by_id = {i: e for i, e in zip(got.get("ids", []), got.get("embeddings", []))}
+    cats = [
+        {"id": r[0], "name": r[1], "emb_id": r[2], "vec": np.asarray(emb_by_id[r[2]], dtype=float)}
+        for r in rows if r[2] in emb_by_id and emb_by_id[r[2]] is not None
+    ]
+    if len(cats) < 2:
+        return {"dry_run": dry_run, "clusters": 0, "merges": [],
+                "detail": f"{len(cats)} categories with a Chroma embedding (need >=2)"}
+
+    mat = np.vstack([c["vec"] for c in cats])
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    sim = (mat / norms) @ (mat / norms).T
+
+    # Union-Find über alle Paare mit cosine >= threshold → Near-Dup-Cluster.
+    parent = list(range(len(cats)))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a in range(len(cats)):
+        for b in range(a + 1, len(cats)):
+            if sim[a][b] >= threshold:
+                ra, rb = _find(a), _find(b)
+                if ra != rb:
+                    parent[ra] = rb
+
+    clusters: dict[int, list[int]] = {}
+    for i in range(len(cats)):
+        clusters.setdefault(_find(i), []).append(i)
+
+    def _link_count(cat_id: int) -> int:
+        return conn.execute(
+            "SELECT COUNT(*) FROM chunk_categories WHERE category_id=?", (cat_id,)
+        ).fetchone()[0]
+
+    merges: list[dict] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # Index in `cats` durchreichen (KEIN cats.index(d) — die Dicts tragen ein
+        # numpy 'vec', dict-Gleichheit darauf wirft "ambiguous truth value").
+        ranked = sorted(
+            members,
+            key=lambda i: (-_link_count(cats[i]["id"]), cats[i]["id"]),
+        )
+        ci = ranked[0]
+        canon = cats[ci]
+        dup_idxs = ranked[1:]
+        merges.append({
+            "canonical": {"id": canon["id"], "name": canon["name"],
+                          "links": _link_count(canon["id"])},
+            "dups": [{"id": cats[i]["id"], "name": cats[i]["name"],
+                      "links": _link_count(cats[i]["id"]),
+                      "cosine": round(float(sim[ci][i]), 3)} for i in dup_idxs],
+            "chunk_links_repointed": sum(_link_count(cats[i]["id"]) for i in dup_idxs),
+        })
+
+    if dry_run or not merges:
+        return {"dry_run": dry_run, "threshold": threshold,
+                "active_with_emb": len(cats), "clusters_with_dups": len(merges),
+                "merges": merges}
+
+    # --- APPLY (mutiert Prod) -------------------------------------------------
+    applied = 0
+    for m in merges:
+        canon_id = m["canonical"]["id"]
+        for d in m["dups"]:
+            dup_id = d["id"]
+            # chunk_categories: auf canon repointen; OR IGNORE gegen UNIQUE(chunk_id,
+            # category_id), dann verbliebene Dup-Links löschen.
+            conn.execute("UPDATE OR IGNORE chunk_categories SET category_id=? WHERE category_id=?",
+                         (canon_id, dup_id))
+            conn.execute("DELETE FROM chunk_categories WHERE category_id=?", (dup_id,))
+            # codebook_proposals-FKs (falls Tabelle existiert) ebenfalls repointen.
+            for fk in ("category_id", "parent_hint_id"):
+                try:
+                    conn.execute(
+                        f"UPDATE codebook_proposals SET {fk}=? WHERE {fk}=?",
+                        (canon_id, dup_id))
+                except Exception:  # noqa: BLE001 — Tabelle/Spalte optional
+                    pass
+            # Dup-Chroma-Embedding entfernen, damit query→category nicht mehr darauf zeigt.
+            dup_emb = conn.execute(
+                "SELECT embedding_id FROM categories WHERE id=?", (dup_id,)).fetchone()
+            if dup_emb and dup_emb[0]:
+                try:
+                    col.delete(ids=[dup_emb[0]])
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning("dedup: chroma embedding %s nicht entfernt: %s", dup_emb[0], exc)
+            conn.execute("DELETE FROM categories WHERE id=?", (dup_id,))
+            applied += 1
+    conn.commit()
+    _log.info("dedup-categories: %d dup-Kategorien in %d Cluster gemergt (threshold=%s) by ws=%s",
+              applied, len(merges), threshold, info.workspace_id)
+    return {"dry_run": False, "threshold": threshold,
+            "clusters_with_dups": len(merges), "dups_merged": applied,
+            "merges": merges, "codebook_count": col.count()}
+
+
 @router.get("/stats/admin/cat-match-debug")
 async def cat_match_debug(
     query: str = "user authentication login session token oauth jwt password",
