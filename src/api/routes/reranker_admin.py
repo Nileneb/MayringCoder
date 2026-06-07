@@ -485,7 +485,13 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
         return {"categories": 0, "embedded": 0,
                 "detail": "no active categories with embedding_id"}
     url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    model = os.getenv("MAYRING_EMBED_MODEL", "nomic-embed-text")
+    # WHY(bge-m3-migration): MUSS dasselbe Modell wie der Core nutzen (config.EMBEDDING_MODEL,
+    # env-driven → prod=bge-m3). Vorher hartes MAYRING_EMBED_MODEL → embeddete Kategorien
+    # weiter mit nomic@768, während memory_chunks auf bge-m3@1024 lief → Dim-Mismatch,
+    # query→category-Derivation (cat_match) still inert. MAYRING_EMBED_MODEL bleibt als
+    # expliziter Override.
+    from mayring_core.config import EMBEDDING_MODEL as _CORE_EMBED_MODEL
+    model = os.getenv("MAYRING_EMBED_MODEL") or _CORE_EMBED_MODEL
     # WHY(#343): fail-fast embed-Timeout statt hardcoded 120 — ein hängendes/
     # überlastetes Ollama soll den (im Threadpool laufenden) Reembed-Batch nicht
     # minutenlang blockieren. OLLAMA_EMBED_TIMEOUT=30 default.

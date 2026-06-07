@@ -13,6 +13,7 @@ from __future__ import annotations
 import functools as _functools
 import json as _json
 import time as _time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -22,6 +23,11 @@ from src.api.auth import get_token_info, get_workspace
 from src.api.dependencies import get_conn as _conn
 from src.api import shared_state as _shared_state
 from src.api.jwt_auth import TokenInfo
+from mayring_core.notifications import (
+    NOTIFICATION_HOOK_TYPES,
+    URGENCY_ORDER,
+    classify_notification,
+)
 
 router = APIRouter()
 
@@ -781,3 +787,125 @@ def _safe_json(raw: Any) -> Any:
         return _json.loads(raw)
     except (ValueError, TypeError):
         return raw
+
+
+# ---------------------------------------------------------------------------
+# Ampel-Notification-Center  →  hook_events (repo_ci/repo_security) + notification_state
+# Ersetzt den toten 'Triggers'-Panel (der las wiki trigger_stats=0). Die echten
+# GitHub-Notifications liegen in hook_events; hier deterministisch nach Dringlichkeit
+# (Ampel) klassifiziert + repo→project zugeordnet + Seen/Ack-State gejoint.
+# ---------------------------------------------------------------------------
+
+def _norm_repo(r: str) -> str:
+    """Kanonischer Repo-Schlüssel ('owner/name', lowercase) für den repo→project-Join."""
+    s = (r or "").strip().lower()
+    for p in ("https://github.com/", "http://github.com/", "git@github.com:"):
+        if s.startswith(p):
+            s = s[len(p):]
+            break
+    if s.endswith(".git"):
+        s = s[:-4]
+    return s.strip("/")
+
+
+@router.get("/stats/notifications")
+@_dashboard_ttl_cache
+async def notifications(
+    limit: int = 50,
+    only_open: bool = False,
+    info: TokenInfo = Depends(get_token_info),
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """GitHub-Notifications (CI/Security) als Ampel-Feed. Admin (scope '*') sieht
+    alle Workspaces, sonst nur den eigenen. Klassifikation deterministisch on-read
+    (mayring_core.notifications), repo→project via projects.source_ref, Seen/Ack aus
+    notification_state. Sortiert: rot zuerst, innerhalb stabil nach fired_at DESC."""
+    conn = _conn()
+    admin = "*" in tuple(getattr(info, "scopes", ()) or ())
+    ph = ",".join("?" for _ in NOTIFICATION_HOOK_TYPES)
+    params: list = list(NOTIFICATION_HOOK_TYPES)
+    ws_clause = ""
+    if not admin:
+        ws_clause = "AND he.workspace_id = ?"
+        params.append(workspace_id)
+    params.append(max(1, min(limit, 500)))
+    rows = conn.execute(
+        f"SELECT he.id, he.hook_type, he.fired_at, he.payload, "
+        f"COALESCE(ns.seen, 0), COALESCE(ns.acked, 0) "
+        f"FROM hook_events he "
+        f"LEFT JOIN notification_state ns ON ns.hook_event_id = he.id "
+        f"WHERE he.hook_type IN ({ph}) {ws_clause} "
+        f"ORDER BY he.fired_at DESC LIMIT ?",
+        params,
+    ).fetchall()
+
+    proj_by_repo: dict[str, str] = {}
+    for sref, name in conn.execute(
+        "SELECT source_ref, name FROM projects "
+        "WHERE source_ref IS NOT NULL AND source_ref != ''"
+    ).fetchall():
+        proj_by_repo[_norm_repo(sref)] = name
+
+    items = []
+    for hid, ht, fired, payload, seen, acked in rows:
+        d = _safe_json(payload)
+        if not isinstance(d, dict):
+            d = {}
+        repo = str(d.get("repo", ""))
+        items.append({
+            "id": hid,
+            "urgency": classify_notification(ht, d),
+            "type": ht,
+            "repo": repo,
+            "project": proj_by_repo.get(_norm_repo(repo)),
+            "workflow": d.get("workflow", ""),
+            "conclusion": d.get("conclusion", ""),
+            "severity": d.get("severity", ""),
+            "summary": d.get("summary", ""),
+            "url": d.get("url", ""),
+            "fired_at": fired,
+            "seen": bool(seen),
+            "acked": bool(acked),
+        })
+    if only_open:
+        items = [n for n in items if not n["acked"]]
+    items.sort(key=lambda n: URGENCY_ORDER.get(n["urgency"], 9))  # stable → fired DESC bleibt
+
+    return {
+        "scope": "all" if admin else "workspace",
+        "workspace_id": workspace_id,
+        "open_red": sum(1 for n in items if n["urgency"] == "red" and not n["acked"]),
+        "notifications": items,
+    }
+
+
+class NotificationAck(BaseModel):
+    hook_event_id: int
+    seen: bool | None = None
+    acked: bool | None = None
+
+
+@router.post("/stats/notifications/ack")
+async def ack_notification(
+    body: NotificationAck,
+    workspace_id: str = Depends(get_workspace),
+) -> dict:
+    """Seen/Ack-Triage für eine Notification (upsert notification_state). seen/acked
+    None = unverändert lassen."""
+    conn = _conn()
+    now = datetime.now(timezone.utc).isoformat()
+    seen_i = None if body.seen is None else int(body.seen)
+    acked_i = None if body.acked is None else int(body.acked)
+    conn.execute(
+        "INSERT INTO notification_state(hook_event_id, workspace_id, seen, acked, updated_at) "
+        "VALUES (?,?,?,?,?) "
+        "ON CONFLICT(hook_event_id) DO UPDATE SET "
+        "seen=COALESCE(?, seen), acked=COALESCE(?, acked), updated_at=?",
+        (body.hook_event_id, workspace_id,
+         seen_i if seen_i is not None else 0,
+         acked_i if acked_i is not None else 0, now,
+         seen_i, acked_i, now),
+    )
+    conn.commit()
+    return {"ok": True, "hook_event_id": body.hook_event_id,
+            "seen": body.seen, "acked": body.acked}
