@@ -6,9 +6,16 @@
 # Mayring mode (deduktiv/induktiv/hybrid) is a prompt-template choice, not a
 # model choice — set via codebook profile, not here.
 
+# WHY(VRAM-thrashing fix 2026-06-07): the local GPU host was thrashing — bge-m3,
+# mistral:7b (5GB), qwen3.5-mayring:2b and nomic-embed-text all competed for VRAM and
+# evicted each other, so every hook call cold-loaded a model (5-17s) and /memory/search
+# + prompt-categorize timed out the 9s memory-inject budget. Fix: keep the LOCAL hot path
+# to TWO small models that fit together — bge-m3 (embed) + qwen3.5-mayring:2b (text). The
+# 2b is a QLoRA distillation of mistral:7b (≈ same quality), so the advisor/categorize keep
+# their smarts on the user's own GPU. mistral stays OFF the local GPU (cloud-only intent).
 text:
-  model: "mistral:7b-instruct"
-  fallback: "qwen2.5-coder:7b"
+  model: "qwen3.5-mayring:2b"
+  fallback: "qwen3.5:2b"
   timeout: 240
 
 vision:
@@ -16,7 +23,10 @@ vision:
   fallback: ""
   timeout: 120
 
+# WHY(bge-m3-migration leftover): was "nomic-embed-text" (768d) even after the store moved
+# to bge-m3 (1024d) — so some embedding paths loaded nomic into VRAM alongside bge-m3,
+# feeding the thrash. The store collection is bge-m3; the router must match it.
 embedding:
-  model: "nomic-embed-text"
-  fallback: "nomic-embed-text"
+  model: "bge-m3"
+  fallback: "bge-m3"
   timeout: 60
