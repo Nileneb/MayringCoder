@@ -226,6 +226,12 @@ def _plain_ollama_generate(
         timeout=timeout,
         num_predict=num_predict,
         think=False,
+        # WHY(hook-latency 2026-06-08): force LOCAL — these are latency-critical hook/search
+        # feeders (categorize, judge, summarize). The 50% cloud-primary split routed half of
+        # them to a slower cloud model (gemma3:4b), adding 4-8s variance per prompt-categorize
+        # and blowing the memory-inject 9s budget. The local GPU answers in ~1s. Heavy
+        # pi-tasks (run_task_with_memory) keep their own cloud-split for throughput.
+        cloud_primary=False,
         # Caller-options (z.B. temperature=0 + fixer seed der Mayring-Reduktion) erhalten;
         # ohne explizite options bleibt der bisherige Default temperature=0.
         options=options if options is not None else {"temperature": 0.0},
