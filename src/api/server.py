@@ -39,7 +39,7 @@ from src.api.dependencies import get_conn as _get_conn
 from src.api.training import router as _training_router
 from fastapi import Depends, Header
 from src.api.auth import get_workspace, get_token_info
-from src.api.routes import memory, wiki, jobs, duel, reports, integrations
+from src.api.routes import memory, wiki, jobs, duel, reports
 from src.api.routes.sync import router as _sync_router
 from src.api.job_queue import _JOBS, run_checker_job as _run_checker_job
 from src.api.routes import pi_stats as _pi_stats
@@ -69,7 +69,6 @@ app.include_router(wiki.router)
 app.include_router(jobs.router)
 app.include_router(duel.router)
 app.include_router(reports.router)
-app.include_router(integrations.router)
 app.include_router(_sync_router)
 from src.api.routes import dashboard as _dashboard
 app.include_router(_dashboard.router)
