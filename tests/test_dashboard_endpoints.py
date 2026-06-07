@@ -127,6 +127,55 @@ def test_recent_ops_returns_ingestion_events(seeded_db):
     assert res["ops"][0]["payload"] == {"chunks": 3}
 
 
+# ---------------------------------------------------------------------------
+# Hook-A: /stats/notifications/ingest (plugin watch-findings → hook_events)
+# ---------------------------------------------------------------------------
+
+def _admin_info():
+    from src.api.jwt_auth import TokenInfo
+    return TokenInfo(workspace_id="system", sub="admin", scopes=("*",))
+
+
+def test_notifications_ingest_inserts_idempotent_and_enforces_allowlist(seeded_db):
+    from src.api.routes.dashboard import NotificationIngest, NotificationEvent, ingest_notifications
+    repo = "github.com/smoke/repo-notif-unit"  # → 'system' workspace (no user pollution)
+
+    body = NotificationIngest(events=[
+        NotificationEvent(hook_type="repo_pull", repo=repo, number=7,
+                          summary="new PR", url="https://gh/pr/7"),
+    ])
+    res = _run(ingest_notifications(body=body, info=_admin_info()))
+    assert res["ok"] is True
+    assert res["inserted"] == 1
+
+    # The row landed in hook_events under the resolved (system) workspace.
+    row = seeded_db.execute(
+        "SELECT hook_type, payload FROM hook_events WHERE hook_type='repo_pull'"
+    ).fetchone()
+    assert row is not None and '"number": 7' in row[1]
+
+    # Idempotent: re-POST of the exact same event is skipped, not duplicated.
+    res2 = _run(ingest_notifications(body=body, info=_admin_info()))
+    assert res2["inserted"] == 0 and res2["skipped"] == 1
+
+    # Allow-list: ci/security come via /repo-events → rejected here.
+    ci = NotificationIngest(events=[NotificationEvent(hook_type="repo_ci", repo=repo)])
+    res3 = _run(ingest_notifications(body=ci, info=_admin_info()))
+    assert res3["inserted"] == 0 and res3["skipped"] == 1
+
+
+def test_notifications_ingest_requires_privileged(seeded_db):
+    from fastapi import HTTPException
+    from src.api.jwt_auth import TokenInfo
+    from src.api.routes.dashboard import NotificationIngest, NotificationEvent, ingest_notifications
+    body = NotificationIngest(events=[
+        NotificationEvent(hook_type="repo_pull", repo="github.com/smoke/repo-x"),
+    ])
+    with pytest.raises(HTTPException) as exc:
+        _run(ingest_notifications(body=body, info=TokenInfo(workspace_id="u", sub="u", scopes=())))
+    assert exc.value.status_code == 403
+
+
 def test_recent_ops_filters_by_source_id(seeded_db):
     res = _run(dashboard.recent_ops(source_id="nope", workspace_id="user-2"))
     assert res["ops"] == []

@@ -16,10 +16,10 @@ import time as _time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from src.api.auth import get_token_info, get_workspace
+from src.api.auth import get_token_info, get_workspace, _is_privileged
 from src.api.dependencies import get_conn as _conn
 from src.api import shared_state as _shared_state
 from src.api.jwt_auth import TokenInfo
@@ -909,3 +909,74 @@ async def ack_notification(
     conn.commit()
     return {"ok": True, "hook_event_id": body.hook_event_id,
             "seen": body.seen, "acked": body.acked}
+
+
+# Hook-A ingest types the plugin watch-hook (ci_security_warner.py) POSTs. Only the
+# net-new types the GitHub-Action pipeline does NOT produce (dependabot/pull/issue);
+# ci/security already arrive via /repo-events → no duplicate producer.
+_PLUGIN_INGEST_TYPES = ("repo_dependabot", "repo_pull", "repo_issue")
+
+
+class NotificationEvent(BaseModel):
+    hook_type: str             # repo_dependabot | repo_pull | repo_issue
+    repo: str
+    number: int | None = None  # PR/issue/alert number → payload identity (dedup)
+    severity: str | None = None
+    conclusion: str | None = None
+    workflow: str | None = None
+    summary: str | None = None
+    url: str | None = None
+
+
+class NotificationIngest(BaseModel):
+    events: list[NotificationEvent]
+
+
+@router.post("/stats/notifications/ingest")
+async def ingest_notifications(
+    body: NotificationIngest,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Hook-A: the plugin watch-hook POSTs its locally-detected findings here so
+    they persist + surface in the Ampel dashboard. Privileged-only (service/admin
+    token — same trust level as /repo-events). Each event lands in hook_events under
+    the repo's workspace (reusing repo_events._resolve_workspace so plugin findings
+    share the workspace of the GitHub-Action events for that repo). Idempotent on the
+    exact serialized payload, so a re-POST (state-file wipe / GitHub re-delivery) is a
+    no-op. Only the three net-new types are accepted; ci/security come via /repo-events."""
+    if not _is_privileged(info):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "notifications ingest requires a service/admin token",
+        )
+    from src.api.routes.repo_events import _resolve_workspace
+    conn = _conn()
+    inserted = 0
+    skipped = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for ev in body.events:
+        if ev.hook_type not in _PLUGIN_INGEST_TYPES:
+            skipped += 1
+            continue
+        ws = _resolve_workspace(conn, ev.repo)
+        payload = _json.dumps({
+            "repo": ev.repo, "number": ev.number,
+            "conclusion": ev.conclusion, "workflow": ev.workflow,
+            "severity": ev.severity, "summary": ev.summary, "url": ev.url,
+        }, default=str)
+        existing = conn.execute(
+            "SELECT 1 FROM hook_events WHERE workspace_id=? AND hook_type=? AND payload=? LIMIT 1",
+            (ws, ev.hook_type, payload),
+        ).fetchone()
+        if existing is not None:
+            skipped += 1
+            continue
+        conn.execute(
+            "INSERT INTO hook_events (workspace_id, device_id, hook_type, fired_at, payload) "
+            "VALUES (?, 'plugin-watch', ?, ?, ?)",
+            (ws, ev.hook_type, now, payload),
+        )
+        inserted += 1
+    if inserted:
+        conn.commit()
+    return {"ok": True, "inserted": inserted, "skipped": skipped}

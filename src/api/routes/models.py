@@ -210,6 +210,11 @@ class ConversationMicroBatchRequest(BaseModel):
     # WHY(C3 project-link): optionale Herkunfts-URL des Gesprächs (z.B. Repo-URL),
     # wird als origin_ref in chunk_project_links gespeichert wenn X-Project-Id gesetzt.
     origin_ref: str = ""
+    # WHY(B.2 goal→category): die aktive Session-/goal (vom stop_hook aus dem
+    # Transcript extrahiert). Wird als categorize_task an den Ingest gereicht →
+    # core B.1 kanonisiert es als Goal und ankert die abgeleiteten Kategorien
+    # daran (upsert_canonical_goal). Leer = wie bisher (kein Goal-Anker).
+    task: str = ""
 
 
 class WikiGenerateRequest(BaseModel):

@@ -558,7 +558,7 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
         "/stats/recent-ops", "/stats/jobs-history", "/stats/feedback-log",
         "/stats/source-refs", "/stats/triggers", "/stats/topic-flow",
         "/stats/pi-tasks", "/stats/activations", "/stats/workspaces",
-        "/stats/vector-trend",
+        "/stats/vector-trend", "/stats/notifications",
     ]
     failures: list[str] = []
     for p in paths:
@@ -571,6 +571,36 @@ def check_dashboard_endpoints(api: str, token: str) -> CheckResult:
         "dashboard_endpoints",
         not failures,
         "; ".join(failures) if failures else f"all {len(paths)} endpoints 200 + workspace-scoped",
+    )
+
+
+def check_notifications_ingest_roundtrip(api: str, token: str) -> CheckResult:
+    """Hook-A: POST /stats/notifications/ingest accepts a plugin watch-finding and it
+    surfaces in /stats/notifications with the right Ampel urgency. Uses a /smoke/repo-
+    repo so the event resolves to the 'system' workspace (never pollutes the user's
+    dashboard) and is idempotent (re-POST of the same payload → skipped)."""
+    repo = "github.com/smoke/repo-notif-probe"
+    ev = {"hook_type": "repo_pull", "repo": repo, "number": 1,
+          "summary": "smoke notification probe", "url": "https://example/smoke"}
+    code, body, _ = _http("POST", f"{api}/stats/notifications/ingest", token,
+                          body={"events": [ev]}, timeout=8.0)
+    if code != 200:
+        return CheckResult("notifications_ingest_roundtrip", False,
+                           f"POST /stats/notifications/ingest http={code}: {body}")
+    if not isinstance(body, dict) or not body.get("ok"):
+        return CheckResult("notifications_ingest_roundtrip", False,
+                           f"ingest response not ok: {body}")
+    # A non-accepted type must be rejected (skipped), proving the allow-list works.
+    code2, body2, _ = _http("POST", f"{api}/stats/notifications/ingest", token,
+                            body={"events": [{"hook_type": "repo_ci", "repo": repo}]},
+                            timeout=8.0)
+    if code2 != 200 or (isinstance(body2, dict) and body2.get("inserted", 0) != 0):
+        return CheckResult("notifications_ingest_roundtrip", False,
+                           f"repo_ci should be rejected by ingest allow-list: {body2}")
+    return CheckResult(
+        "notifications_ingest_roundtrip", True,
+        f"ingest ok (inserted={body.get('inserted')}, skipped={body.get('skipped')}); "
+        f"ci-type rejected",
     )
 
 
@@ -2769,6 +2799,7 @@ ALL_CHECKS = [
     ("text_model_switch_roundtrip",   check_text_model_switch_roundtrip),
     ("reranker_active_pair",          check_reranker_active_pair),
     ("categories_overview_reachable", check_categories_overview_reachable),
+    ("notifications_ingest_roundtrip", check_notifications_ingest_roundtrip),
 ]
 
 

@@ -689,10 +689,17 @@ async def conversation_micro_batch(
             "visibility": "private",
             "user_id": info.sub or workspace_owner(_get_conn(), workspace_id),
         }
+        # WHY(B.2 goal→category): pass the session-/goal (stop_hook → request.task)
+        # as the categorize task so core B.1 canonicalizes it as a Goal and anchors
+        # the conversation's inductive categories to it (upsert_canonical_goal).
+        # Empty task = unchanged pre-B.2 behaviour (categories stay goal-less).
+        _ingest_opts = {"categorize": True, "codebook": "social", "mode": "hybrid"}
+        if (request.task or "").strip():
+            _ingest_opts["task"] = request.task.strip()
         result = _run_ingest(
             source_dict, content, _get_conn(), _get_chroma(),
             _OLLAMA_URL, _model("text"),
-            {"categorize": True, "codebook": "social", "mode": "hybrid"},
+            _ingest_opts,
             workspace_id,
         )
 
@@ -708,7 +715,11 @@ async def conversation_micro_batch(
                 for chunk in get_chunks_by_source(conn_for_igio, source_id, active_only=True):
                     update_chunk_igio_axis(conn_for_igio, chunk.chunk_id, request.igio_hint.lower())
             except Exception as exc:
-                import logging
+                # WHY(closure-scope fix): NO local `import logging` here. It would make
+                # `logging` a function-local of conversation_micro_batch, bound only if
+                # this branch runs — then the nested _derive_todo_bg thread closure
+                # raises NameError on `logging` when igio_hint was falsy. Use the
+                # module-level import (top of file) so the closure resolves it reliably.
                 logging.getLogger(__name__).warning("igio_hint tagging failed: %s", exc)
 
         # WHY(C3 project-link): wenn X-Project-Id übergeben wurde, alle neu erstellten
@@ -763,7 +774,6 @@ async def conversation_micro_batch(
                 content, _get_conn(), slug,
             )
         except Exception as exc:
-            import logging
             logging.getLogger(__name__).warning(
                 "predictive incremental update failed: %s", exc,
             )
