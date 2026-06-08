@@ -47,20 +47,46 @@ RELEVANCE_RUBRIC = (
 
 # WHY(reranker-gpu-relief): the span-judge export pegged the GPU ~10min straight.
 # Cool the LOCAL model down by sleeping after every Nth real model call (cache
-# hits don't count). 0 on either knob disables. Cloud-split (OLLAMA_CLOUD_PRIMARY_RATIO,
-# set per export subprocess) offloads ~half the calls so the cooldown stays cheap.
+# hits don't count). 0 on either knob disables.
 _COOLDOWN_EVERY = int(os.getenv("SPAN_JUDGE_COOLDOWN_EVERY", "15"))
 _COOLDOWN_SECONDS = float(os.getenv("SPAN_JUDGE_COOLDOWN_SECONDS", "2.5"))
+
+# WHY(2026-06-08 live-run): a 50/50 split still sent half the judge calls
+# LOCAL-first, and the saturated single-slot GPU host (mistral:7b + bge-m3, no
+# OLLAMA_NUM_PARALLEL) hit the 60s ReadTimeout on each before the cloud fallback
+# — the export crawled AND starved the live inject-advisor (hot-path ReadTimeouts).
+# Hard call-budget: a retrain can do at most N fresh judge calls, then span_judge
+# returns {} (keeps the raw was_referenced label) so it can NEVER hammer
+# unboundedly regardless of the uncached-pair count. Claude pre-warm + cloud-first
+# routing shrink the calls; this is the backstop. 0 = unlimited.
+_MAX_CALLS = int(os.getenv("SPAN_JUDGE_MAX_CALLS", "0"))
+# Per-call wall-clock cap. Lower than the old 60s so a slow cloud/local call
+# fails fast (→ {} → was_referenced) instead of stalling the whole export.
+_TIMEOUT = float(os.getenv("SPAN_JUDGE_TIMEOUT", "45"))
 _model_calls = 0
+_budget_logged = False
 
 
-def _maybe_cooldown() -> None:
-    """Sleep periodically to give the local GPU thermal headroom. Counts only
-    real model calls (cache misses); a no-op when either knob is 0."""
+def _budget_exhausted() -> bool:
+    """True once the fresh-call budget is spent — gate BEFORE a model call."""
+    global _budget_logged
+    if _MAX_CALLS and _model_calls >= _MAX_CALLS:
+        if not _budget_logged:
+            _log.warning(
+                "span_judge call budget %d reached — keeping raw labels for the rest",
+                _MAX_CALLS,
+            )
+            _budget_logged = True
+        return True
+    return False
+
+
+def _note_and_cooldown() -> None:
+    """Count a real model call and sleep periodically for GPU headroom."""
     global _model_calls
+    _model_calls += 1
     if _COOLDOWN_EVERY <= 0 or _COOLDOWN_SECONDS <= 0:
         return
-    _model_calls += 1
     if _model_calls % _COOLDOWN_EVERY == 0:
         _log.info(
             "span_judge cooldown: %.1fs after %d model calls",
@@ -166,7 +192,7 @@ def judge_relevance(
     *,
     ollama_url: str | None = None,
     model: str | None = None,
-    timeout: float = 60.0,
+    timeout: float = _TIMEOUT,
 ) -> dict[str, float]:
     """Batched Ollama relevance judge → {chunk_id: 0..1}.
 
@@ -230,7 +256,7 @@ def scores_for_query(
     chunk_ids: list[str],
     *,
     ollama_url: str | None = None,
-    timeout: float = 60.0,
+    timeout: float | None = None,
 ) -> dict[str, float]:
     """Cache-first relevance scores for one query's candidate chunks.
 
@@ -245,15 +271,16 @@ def scores_for_query(
     qhash = query_hash(query)
     cached = _read_cache(conn, qhash, chunk_ids)
     missing = [cid for cid in chunk_ids if cid not in cached]
-    if missing:
+    if missing and not _budget_exhausted():
         texts = _chunk_texts(conn, missing)
         items = [(cid, texts[cid]) for cid in missing if texts.get(cid)]
         if items:
             model = _judge_model(ollama_url)
             fresh = judge_relevance(
-                query, items, ollama_url=ollama_url, model=model, timeout=timeout
+                query, items, ollama_url=ollama_url, model=model,
+                timeout=timeout if timeout is not None else _TIMEOUT,
             )
-            _maybe_cooldown()  # real model call (cache miss) — give the GPU a breather
+            _note_and_cooldown()  # count the call + periodic GPU breather
             if fresh:
                 # WHY(2026-05-28): the export runs in-container next to the live
                 # API, which holds write locks on the shared memory.db. An

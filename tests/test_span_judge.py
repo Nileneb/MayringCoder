@@ -126,3 +126,24 @@ def test_scores_for_query_survives_cache_write_lock(monkeypatch):
     monkeypatch.setattr(span_judge, "_write_cache", _locked)
     out = span_judge.scores_for_query(conn, "q", ["chk_a"])
     assert out == {"chk_a": pytest.approx(0.7)}
+
+
+def test_call_budget_caps_fresh_judge_calls(monkeypatch):
+    """A retrain must NEVER hammer the GPU unboundedly: after _MAX_CALLS fresh
+    judge calls, scores_for_query stops calling the model and keeps raw labels.
+    Regression for the 2026-06-08 live run that crawled on the uncached region
+    while local Ollama ReadTimeout'd and starved the inject-advisor."""
+    conn = _chunks_db()
+    for i in range(5):
+        conn.execute("INSERT INTO chunks VALUES (?, ?)", (f"c{i}", f"text {i}"))
+    conn.commit()
+    monkeypatch.setattr(span_judge, "_judge_model", lambda *a, **k: "m")
+    monkeypatch.setattr(span_judge, "_MAX_CALLS", 2)
+    monkeypatch.setattr(span_judge, "_model_calls", 0)
+    monkeypatch.setattr(span_judge, "_budget_logged", False)
+    calls = []
+    monkeypatch.setattr(span_judge, "judge_relevance",
+                        lambda q, items, **k: (calls.append(1) or {cid: 0.5 for cid, _ in items}))
+    for i in range(5):
+        span_judge.scores_for_query(conn, f"q{i}", [f"c{i}"])
+    assert len(calls) == 2  # budget capped at _MAX_CALLS, rest keep raw labels
