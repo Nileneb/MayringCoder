@@ -808,6 +808,26 @@ def _norm_repo(r: str) -> str:
     return s.strip("/")
 
 
+def _supersede_stale_reds(items: list[dict]) -> None:
+    """Downgrade a CI red that a LATER success for the same (repo, workflow) resolved.
+
+    WHY(stale-ampel 2026-06-08): classify_notification rates each event by its own
+    conclusion, so a fixed-then-green workflow still showed its old red rows — the user
+    saw "2 red" in the Ampel while open_red was already 0 and live CI was green. Mutates
+    `items` in place. Expects fired_at DESC order (first success per key = newest)."""
+    latest_success: dict[tuple[str, str], str] = {}
+    for n in items:
+        if n.get("type") == "repo_ci" and str(n.get("conclusion", "")).lower() == "success":
+            latest_success.setdefault((n.get("repo", ""), n.get("workflow", "")),
+                                      n.get("fired_at") or "")
+    for n in items:
+        if n.get("urgency") == "red" and n.get("type") == "repo_ci":
+            succ = latest_success.get((n.get("repo", ""), n.get("workflow", "")))
+            if succ and succ > (n.get("fired_at") or ""):
+                n["urgency"] = "green"
+                n["superseded"] = True
+
+
 @router.get("/stats/notifications")
 @_dashboard_ttl_cache
 async def notifications(
@@ -867,6 +887,7 @@ async def notifications(
             "seen": bool(seen),
             "acked": bool(acked),
         })
+    _supersede_stale_reds(items)
     if only_open:
         items = [n for n in items if not n["acked"]]
     items.sort(key=lambda n: URGENCY_ORDER.get(n["urgency"], 9))  # stable → fired DESC bleibt
