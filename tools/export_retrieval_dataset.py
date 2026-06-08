@@ -64,6 +64,26 @@ NOISE_QUERY_PATTERNS = (
 )
 
 
+def fetch_feedback_events(conn: sqlite3.Connection, days: int) -> list:
+    """The training window's context_feedback_log events, noise-filtered.
+
+    Shared by the export (label generation) and tools/span_judge_prewarm.py
+    (Claude cache pre-warm) so both operate on the exact same row set — no
+    query drift between what gets pre-warmed and what gets exported.
+    """
+    noise_filter = " AND ".join("query NOT LIKE ?" for _ in NOISE_QUERY_PATTERNS)
+    return conn.execute(
+        "SELECT id, query, trigger_ids, stage_scores, was_referenced, "
+        "       captured_at, workspace_id "
+        "FROM context_feedback_log "
+        "WHERE captured_at > datetime('now', ?) "
+        f"AND query != '' AND stage_scores != '{{}}' "
+        f"AND {noise_filter} "
+        "ORDER BY captured_at DESC",
+        (f"-{days} days", *NOISE_QUERY_PATTERNS),
+    ).fetchall()
+
+
 def _igio_axis_map(conn: sqlite3.Connection) -> dict[str, str]:
     """Return {chunk_id → igio_axis} for chunks with a classified axis.
 
@@ -224,19 +244,7 @@ def export(
         # Injection eines chunks dessen source_id in der Antwort
         # referenziert. Nicht perfekt (event-level statt chunk-level),
         # aber kein Target-Leakage und keine chunk-id-Konzentration.
-        noise_filter = " AND ".join(
-            "query NOT LIKE ?" for _ in NOISE_QUERY_PATTERNS
-        )
-        rows = conn.execute(
-            "SELECT id, query, trigger_ids, stage_scores, was_referenced, "
-            "       captured_at, workspace_id "
-            "FROM context_feedback_log "
-            "WHERE captured_at > datetime('now', ?) "
-            f"AND query != '' AND stage_scores != '{{}}' "
-            f"AND {noise_filter} "
-            "ORDER BY captured_at DESC",
-            (f"-{days} days", *NOISE_QUERY_PATTERNS),
-        ).fetchall()
+        rows = fetch_feedback_events(conn, days)
         written = 0
         total = len(rows)
         # Emit ~25 PROGRESS markers — the API runner parses them into the live

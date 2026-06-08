@@ -215,6 +215,15 @@ async def _run_train_subprocess(
     except Exception:  # fallback: keep the legacy single-slot behaviour
         out_model = CACHE_DIR / "rerank_v2.json"
     env = {**os.environ, "PYTHONPATH": str(_ROOT)}
+    if span_judge:
+        # WHY(reranker-gpu-relief): scope the cloud-split to the EXPORT subprocess
+        # only — its fresh ollama_client import reads OLLAMA_CLOUD_PRIMARY_RATIO at
+        # load, so ~50% of span-judge calls offload to Ollama-Cloud while the live
+        # API process keeps its own (low) hot-path ratio. Cooldown knobs let the
+        # local GPU breathe between batches. All overridable via GitHub env.
+        env["OLLAMA_CLOUD_PRIMARY_RATIO"] = os.getenv("SPAN_JUDGE_CLOUD_RATIO", "0.5")
+        env["SPAN_JUDGE_COOLDOWN_EVERY"] = os.getenv("SPAN_JUDGE_COOLDOWN_EVERY", "15")
+        env["SPAN_JUDGE_COOLDOWN_SECONDS"] = os.getenv("SPAN_JUDGE_COOLDOWN_SECONDS", "2.5")
     try:
         export_cmd = [
             _python_exe(), "tools/export_retrieval_dataset.py",

@@ -23,12 +23,50 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 
 _log = logging.getLogger(__name__)
 
-MAX_CHUNKS_PER_CALL = 20
+MAX_CHUNKS_PER_CALL = int(os.getenv("SPAN_JUDGE_MAX_CHUNKS", "20"))
 CHUNK_TEXT_LIMIT = 600
+
+# Identical rubric for the Ollama judge AND the Claude pre-warm path
+# (tools/span_judge_prewarm.py) so both produce consistent teacher labels.
+RELEVANCE_RUBRIC = (
+    "You are a relevance judge. For each chunk, decide how relevant it is "
+    "to the query on a 0..1 scale:\n"
+    "  0.0 = not relevant at all\n"
+    "  0.3 = tangential\n"
+    "  0.6 = relevant context\n"
+    "  0.9 = primary source\n"
+    "  1.0 = directly answers the query\n\n"
+    'Output STRICT JSON only: {"scores":{"<chunk_id>":<0..1>,...}}\n'
+    "No prose, no explanation. ALL chunks MUST appear in the output."
+)
+
+# WHY(reranker-gpu-relief): the span-judge export pegged the GPU ~10min straight.
+# Cool the LOCAL model down by sleeping after every Nth real model call (cache
+# hits don't count). 0 on either knob disables. Cloud-split (OLLAMA_CLOUD_PRIMARY_RATIO,
+# set per export subprocess) offloads ~half the calls so the cooldown stays cheap.
+_COOLDOWN_EVERY = int(os.getenv("SPAN_JUDGE_COOLDOWN_EVERY", "15"))
+_COOLDOWN_SECONDS = float(os.getenv("SPAN_JUDGE_COOLDOWN_SECONDS", "2.5"))
+_model_calls = 0
+
+
+def _maybe_cooldown() -> None:
+    """Sleep periodically to give the local GPU thermal headroom. Counts only
+    real model calls (cache misses); a no-op when either knob is 0."""
+    global _model_calls
+    if _COOLDOWN_EVERY <= 0 or _COOLDOWN_SECONDS <= 0:
+        return
+    _model_calls += 1
+    if _model_calls % _COOLDOWN_EVERY == 0:
+        _log.info(
+            "span_judge cooldown: %.1fs after %d model calls",
+            _COOLDOWN_SECONDS, _model_calls,
+        )
+        time.sleep(_COOLDOWN_SECONDS)
 
 
 def _loads_lenient(raw: str):
@@ -148,39 +186,32 @@ def judge_relevance(
             norm.append((cid, t))
     if not norm:
         return {}
-    sys_prompt = (
-        "You are a relevance judge. For each chunk, decide how relevant it is "
-        "to the query on a 0..1 scale:\n"
-        "  0.0 = not relevant at all\n"
-        "  0.3 = tangential\n"
-        "  0.6 = relevant context\n"
-        "  0.9 = primary source\n"
-        "  1.0 = directly answers the query\n\n"
-        'Output STRICT JSON only: {"scores":{"<chunk_id>":<0..1>,...}}\n'
-        "No prose, no explanation. ALL chunks MUST appear in the output."
-    )
     chunks_text = "\n\n".join(f"[{cid}]\n{t}" for cid, t in norm)
-    prompt = sys_prompt + f"\n\nQuery: {query}\n\nChunks:\n{chunks_text}"
-    import httpx
+    prompt = RELEVANCE_RUBRIC + f"\n\nQuery: {query}\n\nChunks:\n{chunks_text}"
+    # WHY(reranker-gpu-relief): route through ollama_client.generate instead of a
+    # direct httpx.post so the export inherits its cloud-primary split
+    # (OLLAMA_CLOUD_PRIMARY_RATIO, set to 0.5 for the export subprocess →
+    # ~half the judge calls offload to Ollama-Cloud, qwen2.5-coder:7b →
+    # qwen3-coder-next), model-map and local fallback. num_predict=2048: 600
+    # truncated the format:json scores object mid-structure for ≤20-chunk batches
+    # → invalid JSON → whole refinement silently skipped (2026-05-28).
+    from mayring_core.ollama_client import generate
     try:
-        resp = httpx.post(
-            f"{url}/api/generate",
-            json={
-                "model": mdl,
-                "prompt": prompt,
-                "format": "json",
-                "stream": False,
-                # WHY(2026-05-28): 600 truncated the format:json scores object
-                # mid-structure for ≤20-chunk batches → incomplete (invalid)
-                # JSON → parse fail → span_judge silently skipped the retrain's
-                # whole refinement. 2048 gives ample headroom; format:json keeps
-                # it valid once it completes.
-                "options": {"temperature": 0.1, "num_predict": 2048},
-            },
+        raw = generate(
+            url,
+            mdl,
+            prompt,
+            stream=False,
+            response_format="json",
+            num_predict=2048,
+            options={"temperature": 0.1},
             timeout=timeout,
-        )
-        resp.raise_for_status()
-        raw = resp.json().get("response", "").strip()
+            label="span_judge",
+            # fast-fail like the old direct httpx.post: one local attempt, then
+            # cloud-fallback (if key) — no multi-second retry storm stalling the
+            # export when local Ollama is down. Cloud-primary split is unaffected.
+            max_retries=1,
+        ).strip()
         data = _loads_lenient(raw)
         return {
             str(k): max(0.0, min(1.0, float(v)))
@@ -222,6 +253,7 @@ def scores_for_query(
             fresh = judge_relevance(
                 query, items, ollama_url=ollama_url, model=model, timeout=timeout
             )
+            _maybe_cooldown()  # real model call (cache miss) — give the GPU a breather
             if fresh:
                 # WHY(2026-05-28): the export runs in-container next to the live
                 # API, which holds write locks on the shared memory.db. An
