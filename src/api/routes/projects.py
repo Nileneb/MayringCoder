@@ -113,8 +113,20 @@ def _upsert_embedding(chroma, project_id: str, text: str, embed_fn) -> None:
     emb = embed_fn(text)
     if not emb:
         return
-    chroma.upsert(ids=[f"proj:{project_id}"], embeddings=[emb],
-                  metadatas=[{"project_id": project_id}], documents=[text])
+    ids, metas, docs = [f"proj:{project_id}"], [{"project_id": project_id}], [text]
+    try:
+        chroma.upsert(ids=ids, embeddings=[emb], metadatas=metas, documents=docs)
+    except Exception as exc:  # noqa: BLE001
+        # WHY(bge-m3-migration 2026-06-08): the "projects" collection was created at
+        # nomic(768d); after the store moved to bge-m3(1024d) every upsert raises a
+        # dim-mismatch. Self-heal: drop+recreate the collection and retry once.
+        if "dimension" not in str(exc).lower():
+            raise
+        from mayring_core.memory.store import reset_chroma_collection
+        fresh = reset_chroma_collection("projects")
+        if fresh is None:
+            raise
+        fresh.upsert(ids=ids, embeddings=[emb], metadatas=metas, documents=docs)
 
 
 def _semantic_match(chroma, prompt_emb: list[float]) -> tuple[str | None, float, float]:
@@ -199,7 +211,11 @@ class GroupAssign(BaseModel):
 def _embed_one(text: str) -> list[float]:
     from mayring_core.config import EMBEDDING_MODEL, OLLAMA_TIMEOUT
     from mayring_core.ollama_client import embed_single
-    url = os.environ.get("OLLAMA_URL", "https://three.linn.games")
+    # WHY(ollama-lan-cutover 2026-06-08): prod MayringCoder runs on u-server (no GPU);
+    # embeds MUST reach the LAN GPU host, not localhost. OLLAMA_URL is set via deploy
+    # env, but the fallback has to point at the GPU host so a missing env never routes
+    # an embed to a GPU-less box (old default https://three.linn.games is dead).
+    url = os.environ.get("OLLAMA_URL", "http://192.168.178.11:11434")
     try:
         return embed_single(url, EMBEDDING_MODEL, text, timeout=OLLAMA_TIMEOUT) or []
     except Exception:  # noqa: BLE001 — embed failure must never 500 the router

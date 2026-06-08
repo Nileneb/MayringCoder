@@ -150,6 +150,50 @@ def test_semantic_match_numpy_embeddings():
     assert margin == pytest.approx(1.0)
 
 
+def test_upsert_embedding_self_heals_dim_mismatch(monkeypatch):
+    """bge-m3-migration: the 'projects' collection was created at nomic(768d); after
+    the store moved to bge-m3(1024d) the first upsert raises a dim-mismatch. The
+    upsert must drop+recreate the collection and retry on the fresh one — not 500."""
+    import mayring_core.memory.store as store
+    from src.api.routes.projects import _upsert_embedding
+
+    class _StaleChroma:
+        def upsert(self, **kw):
+            raise RuntimeError(
+                "Collection expecting embedding with dimension of 768, got 1024")
+
+    fresh = _FakeChroma([])
+    calls = {"reset": 0}
+
+    def _fake_reset(name, path=None):
+        calls["reset"] += 1
+        assert name == "projects"
+        return fresh
+
+    monkeypatch.setattr(store, "reset_chroma_collection", _fake_reset)
+    _upsert_embedding(_StaleChroma(), "p1", "MayringCoder", lambda t: [0.1, 0.2])
+
+    assert calls["reset"] == 1
+    assert fresh._items and fresh._items[0][0] == "proj:p1"
+
+
+def test_upsert_embedding_reraises_non_dim_errors(monkeypatch):
+    """Only dim-mismatch is self-healed; an unrelated upsert failure must surface."""
+    import mayring_core.memory.store as store
+    from src.api.routes.projects import _upsert_embedding
+
+    class _BrokenChroma:
+        def upsert(self, **kw):
+            raise RuntimeError("disk full")
+
+    def _fake_reset(name, path=None):  # pragma: no cover — must not be reached
+        raise AssertionError("reset must not run for non-dim errors")
+
+    monkeypatch.setattr(store, "reset_chroma_collection", _fake_reset)
+    with pytest.raises(RuntimeError, match="disk full"):
+        _upsert_embedding(_BrokenChroma(), "p1", "x", lambda t: [0.1])
+
+
 def test_route_null_when_uncertain(tmp_path):
     db = tmp_path / "memory.db"
     init_memory_db(db).close()
