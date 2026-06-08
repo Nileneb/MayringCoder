@@ -862,11 +862,14 @@ def check_db_wal_journal_active(api: str, token: str) -> CheckResult:
     """
     marker = int(time.time() * 1000)
     codes: list[int] = []
+    probe_ids: list[str] = []
     for i in range(3):
+        sid = f"smoke:wal-probe:{marker}-{i}"
+        probe_ids.append(sid)
         code, _, _ = _http(
             "POST", f"{api}/memory/put", token,
             body={
-                "source_id": f"smoke:wal-probe:{marker}-{i}",
+                "source_id": sid,
                 "source_type": "test",
                 "content": f"WAL probe {i}/3 marker={marker}",
             },
@@ -874,6 +877,15 @@ def check_db_wal_journal_active(api: str, token: str) -> CheckResult:
         )
         codes.append(code)
     all_ok = all(c in (200, 201) for c in codes)
+    # WHY(no-pollution): these probes write into the caller's REAL workspace (no
+    # act-as) — without self-clean they accumulate (277 leaked smoke sources found
+    # 2026-06-08). Best-effort invalidate; a failed cleanup must not flip the check.
+    for sid in probe_ids:
+        try:
+            _http("POST", f"{api}/memory/invalidate", token,
+                  body={"source_id": sid}, timeout=10.0)
+        except Exception:
+            pass
     return CheckResult(
         "db_wal_journal_active",
         all_ok,
@@ -1305,6 +1317,16 @@ def check_visibility_isolation(api: str, token: str) -> CheckResult:
     src_ids_seen = {r["source_id"] for r in (body4 or {}).get("results", [])}
     public_visible = pub_id in src_ids_seen
 
+    # WHY(no-pollution): the ephemeral vis-<ts> workspace is teardown-purged, but
+    # the PUBLIC source is globally visible and a skipped teardown leaks it into
+    # everyone's public search. Invalidate both deterministically (best-effort).
+    for sid in (priv_id, pub_id):
+        try:
+            _http("POST", f"{api}/memory/invalidate", token,
+                  body={"source_id": sid}, timeout=10.0, extra_headers=_vis_hdr)
+        except Exception:
+            pass
+
     return CheckResult(
         "visibility_isolation",
         private_visible and public_visible,
@@ -1335,6 +1357,11 @@ def check_share_endpoint(api: str, token: str) -> CheckResult:
     )
     ok = (code2 == 200 and isinstance(body2, dict)
           and body2.get("visibility") == "public" and body2.get("shared") is True)
+    # WHY(no-pollution): unlike the act-as tenancy checks (whose ephemeral
+    # workspaces get purged by _teardown_smoke_workspaces), this one ingests a
+    # PUBLIC note into the caller's REAL workspace — left behind it would surface
+    # in every public search. Self-clean the source.
+    _http("POST", f"{api}/memory/invalidate", token, body={"source_id": sid})
     return CheckResult(
         "share_endpoint", ok,
         f"http={code2}  body={body2}  (POST /sources/{{id}}/share must return visibility=public, shared=true)",
@@ -1672,6 +1699,14 @@ def check_watcher_hook_fires(api: str, token: str) -> CheckResult:
                 if any(marker in str(op) or source_id in str(op) for op in ops):
                     seen = True
                     break
+    # WHY(no-pollution): probe writes into the caller's REAL workspace (no act-as)
+    # — without self-clean these accumulate (277 leaked smoke sources found
+    # 2026-06-08). Best-effort; a failed cleanup must not flip the check.
+    try:
+        _http("POST", f"{api}/memory/invalidate", token,
+              body={"source_id": source_id}, timeout=10.0)
+    except Exception:
+        pass
     return CheckResult(
         "watcher_hook_fires",
         seen,
