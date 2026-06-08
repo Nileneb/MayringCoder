@@ -301,16 +301,32 @@ def wait_for_api_ready(api: str, token: str, max_wait: float = 60.0) -> bool:
 
 
 def _quick_search_ok(api: str, token: str, timeout: float = 8.0) -> bool:
-    """One-shot tiny /memory/search — no retries. True iff it answers 200 fast."""
+    """One-shot tiny /memory/search. True iff it answers 200 AND the embedding model
+    is actually warm — i.e. at least one result carries a non-zero vector score.
+
+    WHY(false-positive-smoke 2026-06-08): http=200 alone is not warmth. Right after a
+    restart the bge-m3 model is cold/loading; search returns 200 with every
+    score_vector=0.000 (max_score=0.000), so memory_search_vector/rag fail spuriously.
+    Gating on a real non-zero vector score makes wait_for_search_ready hold until the
+    model can embed, not just until the HTTP handler is up. Empty result sets (200,
+    no rows) are treated as warm — the corpus, not the model, is the variable there.
+    """
     req = urllib.request.Request(
         f"{api}/memory/search",
-        data=json.dumps({"query": "warmup", "top_k": 1}).encode(),
+        data=json.dumps({"query": "memory retrieval pipeline vector search",
+                         "top_k": 3}).encode(),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode())
+            results = data.get("results") or []
+            if not results:
+                return True  # no corpus to match — model warmth not provable here
+            return any(float(r.get("score_vector") or 0) > 0.0 for r in results)
     except Exception:
         return False
 
@@ -3062,6 +3078,13 @@ def main() -> int:
                    help="open a GitHub issue when any check fails (uses gh CLI)")
     p.add_argument("--ready-timeout", type=float, default=60.0,
                    help="max seconds to wait for /health before running checks (#250)")
+    p.add_argument("--retry-failed", type=int,
+                   default=int(os.getenv("SMOKE_RETRY_FAILED", "2")),
+                   help="re-warm + re-run each FAILED check this many times before "
+                        "declaring it failed. WHY(false-positive-smoke 2026-06-08): a "
+                        "mid-run deploy restart (502) or a cold post-restart bge-m3 "
+                        "model (max_score=0.000) made deploy-window transients look "
+                        "like regressions. Real failures reproduce across retries.")
     p.add_argument("--pace", type=float, default=float(os.getenv("SMOKE_PACE", "0.5")),
                    help="seconds to pause between checks. WHY(api-saturation "
                         "2026-05-24): the prod API is a single uvicorn worker; firing "
@@ -3120,6 +3143,51 @@ def main() -> int:
         # Self-clean ephemeral workspaces this run (and any prior runs) created
         # (#253/#344) — in finally so an exception/SystemExit mid-loop still purges.
         _teardown_smoke_workspaces(api, token)
+
+    # WHY(false-positive-smoke 2026-06-08): the readiness gate runs once, up front.
+    # It cannot protect against a SECOND deploy restarting the API *mid-run* (two
+    # back-to-back deploys → every in-flight check returns http=502) or against the
+    # bge-m3 model going cold after a restart (search 200 but max_score=0.000). Both
+    # produced smoke-FAIL issues (#356-360) that were pure deploy-window artifacts.
+    # Re-warm and re-run ONLY the failed checks: a transient clears on retry, a real
+    # failure (e.g. broken chunk metadata) reproduces and is still reported.
+    retry_n = args.retry_failed
+    failed = [r for r in results if not r.passed]
+    if failed and retry_n > 0:
+        idx = {r.name: i for i, r in enumerate(results)}
+        attempt = 0
+        while failed and attempt < retry_n:
+            attempt += 1
+            print(f"\n# {len(failed)} check(s) failed — re-warming + retry "
+                  f"{attempt}/{retry_n} (deploy-window transients clear, real "
+                  f"failures reproduce)")
+            wait_for_api_ready(api, token, max_wait=args.ready_timeout)
+            wait_for_search_ready(api, token, max_wait=args.ready_timeout)
+            still: list[CheckResult] = []
+            fn_by_name = dict(ALL_CHECKS)
+            for r in failed:
+                fn = fn_by_name.get(r.name)
+                if fn is None:
+                    still.append(r)
+                    continue
+                t0 = time.time()
+                try:
+                    res = fn(api, token)
+                except Exception as e:
+                    res = CheckResult(r.name, False,
+                                      f"check raised: {type(e).__name__}: {e}")
+                dt = time.time() - t0
+                marker = " OK " if res.passed else "FAIL"
+                print(f"  [{marker}] {res.name}  ({dt:.2f}s, retry {attempt})")
+                if res.detail:
+                    for line in res.detail.split("\n"):
+                        print(f"         {line}")
+                results[idx[r.name]] = res
+                if not res.passed:
+                    still.append(res)
+                if args.pace > 0:
+                    time.sleep(args.pace)
+            failed = still
 
     failed = [r for r in results if not r.passed]
     elapsed = time.time() - t_start
