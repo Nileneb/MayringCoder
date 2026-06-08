@@ -310,6 +310,7 @@ def _quick_search_ok(api: str, token: str, timeout: float = 8.0) -> bool:
     Gating on a real non-zero vector score makes wait_for_search_ready hold until the
     model can embed, not just until the HTTP handler is up. Empty result sets (200,
     no rows) are treated as warm — the corpus, not the model, is the variable there.
+
     """
     req = urllib.request.Request(
         f"{api}/memory/search",
@@ -716,16 +717,23 @@ def check_retrieval_reasons_field(api: str, token: str) -> CheckResult:
     source_affinity_match, llm_advisor_high). At least one of the top-5
     results must have a non-empty reasons list.
 
-    Note: _QUERY_CACHE stores only (chunk_id, score) tuples; cache hits
-    return chunks without reasons. Use a per-run unique query so the
-    full _rerank() path runs and reasons get populated.
+    WHY(#361 2026-06-08 false-positive): the probe MUST search the populated
+    SMOKE_VECTOR_WORKSPACE as its owner (act-as), with a MEANINGFUL query — not a
+    random nonce against the bare service token. The bare token only sees the sparse
+    public corpus; a random query there finds 5 far chunks that cross no reason
+    threshold (sv_eff<=0.5, no token_overlap) → reasons=[] → spurious RED. A
+    semantically-relevant query against the dense workspace reliably fires
+    embedding_similarity+token_overlap. The `attempt-<ts>` suffix busts _QUERY_CACHE
+    so the full _rerank() path runs and reasons get (re)populated.
     """
-    unique = f"smoke reasons probe {int(time.time())} {os.urandom(3).hex()}"
+    query = f"memory retrieval reranker vector scoring pipeline attempt-{int(time.time())}"
     code, body, _ = _http(
         "POST", f"{api}/memory/search", token,
-        body={"query": unique, "top_k": 5,
+        body={"query": query, "top_k": 5,
               "include_text": False, "llm_prefilter": False},
         timeout=12.0,
+        workspace_id=SMOKE_VECTOR_WORKSPACE,
+        extra_headers=_act_as(SMOKE_VECTOR_OWNER, workspace=SMOKE_VECTOR_WORKSPACE),
     )
     if code != 200:
         return CheckResult("retrieval_reasons_field", False, f"http={code}")
