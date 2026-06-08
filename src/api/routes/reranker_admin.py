@@ -500,12 +500,29 @@ def reembed_categories(info: TokenInfo = Depends(get_token_info)) -> dict:
     ids = [r[0] for r in rows]
     texts = [f"{r[1]}: {r[2]}" for r in rows]
     embedded = 0
+    _reset_done = False
+    from mayring_core.memory.store import reset_chroma_collection
     for i in range(0, len(ids), 64):
         embs = embed_batch(url, model, texts[i:i + 64], timeout=OLLAMA_EMBED_TIMEOUT)
-        if embs:
+        if not embs:
+            continue
+        try:
             col.upsert(ids=ids[i:i + 64], embeddings=embs,
                        documents=texts[i:i + 64])
-            embedded += len(embs)
+        except Exception as exc:
+            # WHY(bge-m3 dim-mismatch 2026-06-08): the codebook_categories collection was
+            # created at the old nomic dim (768); re-embedding at bge-m3 (1024) raised
+            # "Collection expecting embedding with dimension of 768, got 1024" → cat_match
+            # stayed inert. Drop+recreate at the new dim once, then retry. (Same self-heal
+            # as memory_sync; now a shared core helper.)
+            if "dimension" not in str(exc).lower() or _reset_done:
+                raise
+            _log.warning("reembed-categories: dim mismatch (%s) — recreating collection", exc)
+            col = reset_chroma_collection("codebook_categories")
+            _reset_done = True
+            col.upsert(ids=ids[i:i + 64], embeddings=embs,
+                       documents=texts[i:i + 64])
+        embedded += len(embs)
     _log.info("reembed-categories: %d/%d embedded by workspace=%s",
               embedded, len(rows), info.workspace_id)
     return {"categories": len(rows), "embedded": embedded,
