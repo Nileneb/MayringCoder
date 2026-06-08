@@ -86,6 +86,135 @@ def _reconcile_chroma_sqlite(
     return out
 
 
+def _desired_metadata(row: dict) -> dict:
+    """Canonical Chroma metadata for a chunk — mirrors the ingest writer
+    (ingestion/core.py upsert). Chroma forbids None → empty-string the optionals."""
+    return {
+        "workspace_id": row["workspace_id"] or "default",
+        "source_id": row["source_id"],
+        "chunk_level": row["chunk_level"] or "file",
+        "category_labels": row["category_labels"] or "",
+        "category_source": row["category_source"] or "",
+        "category_confidence": float(row["category_confidence"] or 0.0),
+        "is_active": 1,
+        "visibility": row["visibility"] or "private",
+        "org_id": row["org_id"] or "",
+        "user_id": row["user_id"] or "",
+    }
+
+
+# The tenancy axis the vector where-clause filters on (build_chroma_where).
+# A drift in any of these silently drops the chunk from the vector candidate pool.
+_TENANCY_KEYS = ("visibility", "user_id", "org_id")
+
+
+def _repair_chroma_metadata(
+    conn: Any,
+    chroma: Any,
+    *,
+    workspace_id: str | None,
+    source_type: str | None,
+    dry_run: bool,
+    batch: int = 200,
+) -> dict:
+    """Re-write Chroma metadata from the SQLite source-of-truth WITHOUT re-embedding.
+
+    WHY(bge-m3-migration 2026-06-08): the migration wrote repo_file chunks into the
+    bge collection without the visibility/user_id axis. The vectors are correct and
+    present (reconcile: not missing) — only the metadata is wrong, so build_chroma_where
+    drops them from the vector pool (score_vector=0.000) while the SQL/keyword lens
+    (which reads the sources table) still finds them. Re-embedding 1831 sources over
+    HTTP would burn hours of GPU for nothing; chroma.update(ids, metadatas=...) fixes
+    the metadata in place at zero embedding cost. Only ids whose tenancy axis actually
+    drifted are touched, so the pass is idempotent and reports the true repair count.
+    """
+    out: dict[str, Any] = {"scanned": 0, "in_chroma": 0, "mismatched": 0,
+                           "updated": 0, "missing_in_chroma": 0, "dry_run": dry_run}
+    if conn is None or chroma is None:
+        return out
+
+    sql = (
+        "SELECT c.chunk_id, c.workspace_id, c.source_id, c.chunk_level, "
+        "c.category_labels, c.category_source, c.category_confidence, "
+        "s.visibility, s.org_id, s.user_id "
+        "FROM chunks c LEFT JOIN sources s ON c.source_id = s.source_id "
+        "WHERE c.is_active = 1"
+    )
+    params: list = []
+    if workspace_id:
+        sql += " AND c.workspace_id = ?"
+        params.append(workspace_id)
+    if source_type:
+        sql += " AND s.source_type = ?"
+        params.append(source_type)
+
+    cols = ["chunk_id", "workspace_id", "source_id", "chunk_level",
+            "category_labels", "category_source", "category_confidence",
+            "visibility", "org_id", "user_id"]
+    rows = [dict(zip(cols, r)) for r in conn.execute(sql, params).fetchall()]
+    out["scanned"] = len(rows)
+    by_id = {r["chunk_id"]: r for r in rows}
+
+    ids = list(by_id)
+    for i in range(0, len(ids), batch):
+        chunk_ids = ids[i:i + batch]
+        try:
+            cur = chroma.get(ids=chunk_ids, include=["metadatas"])
+        except (RuntimeError, ValueError, AttributeError) as e:
+            _log.warning("repair: chroma.get batch failed: %s", e)
+            continue
+        cur_ids = cur.get("ids") or []
+        cur_metas = cur.get("metadatas") or []
+        present = {cid: (cur_metas[j] or {}) for j, cid in enumerate(cur_ids)}
+        out["in_chroma"] += len(cur_ids)
+        out["missing_in_chroma"] += len(chunk_ids) - len(cur_ids)
+
+        upd_ids: list[str] = []
+        upd_metas: list[dict] = []
+        for cid in chunk_ids:
+            if cid not in present:
+                continue  # no vector → repair can't help; reconcile handles those
+            want = _desired_metadata(by_id[cid])
+            have = present[cid]
+            if any(str(have.get(k, "")) != str(want[k]) for k in _TENANCY_KEYS):
+                upd_ids.append(cid)
+                upd_metas.append(want)
+        out["mismatched"] += len(upd_ids)
+        if upd_ids and not dry_run:
+            try:
+                chroma.update(ids=upd_ids, metadatas=upd_metas)
+                out["updated"] += len(upd_ids)
+            except (RuntimeError, ValueError) as e:
+                _log.warning("repair: chroma.update batch failed: %s", e)
+    return out
+
+
+@router.post("/admin/repair-chroma-metadata")
+async def repair_chroma_metadata(
+    workspace_id: str | None = None,
+    source_type: str | None = None,
+    dry_run: bool = True,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Repair drifted Chroma tenancy metadata (visibility/user_id/org_id) from the
+    SQLite source-of-truth, in place, WITHOUT re-embedding. Fixes chunks that the
+    bge-m3 migration wrote without the visibility axis (score_vector=0.000 despite a
+    present vector). `dry_run=False` writes; restrict scope with workspace_id and/or
+    source_type (e.g. 'repo_file'). Authz: service token or admin scope."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin-scope required")
+    result = _repair_chroma_metadata(
+        _get_conn(), _get_chroma(),
+        workspace_id=workspace_id, source_type=source_type, dry_run=dry_run,
+    )
+    if not dry_run and result.get("updated"):
+        from mayring_core.memory.retrieval import invalidate_query_cache
+        invalidate_query_cache()
+    result["workspace_id"] = workspace_id or "<all>"
+    result["source_type"] = source_type or "<all>"
+    return result
+
+
 @router.post("/admin/reconcile-chroma")
 async def reconcile_chroma(
     workspace_id: str | None = None,
