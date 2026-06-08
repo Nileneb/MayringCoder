@@ -889,6 +889,7 @@ async def memory_reindex(
 
         reindexed = 0
         errors = 0
+        last_error = ""
 
         for chunk in chunks:
             try:
@@ -924,11 +925,21 @@ async def memory_reindex(
                         }],
                     )
                 reindexed += 1
-            except Exception:
+            except Exception as exc:
+                # WHY(no-silent-errors): a backfill that silently counts errors hides
+                # WHY a chunk failed to re-embed (e.g. Ollama unreachable, dim-mismatch).
+                # Log the chunk + cause so a broken reindex is diagnosable, not invisible.
                 errors += 1
+                _log.warning("reindex failed for chunk %s: %s",
+                             getattr(chunk, "chunk_id", "?"), exc)
+                last_error = str(exc)
 
         invalidate_query_cache()
-        return {"workspace_id": workspace_id, "reindexed_count": reindexed, "errors": errors}
+        result = {"workspace_id": workspace_id,
+                  "reindexed_count": reindexed, "errors": errors}
+        if errors:
+            result["last_error"] = last_error
+        return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
