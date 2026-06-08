@@ -189,10 +189,40 @@ def _repair_chroma_metadata(
     return out
 
 
+def _assign_owner_to_orphans(
+    conn: Any, *, workspace_id: str, owner: str, dry_run: bool,
+) -> dict:
+    """Stamp an owner on ownerless private data in ONE workspace.
+
+    WHY(owner-attribution 2026-06-08): private data with no user_id is unreachable —
+    build_chroma_where requires `user_id = caller`, so a private chunk with user_id=''
+    matches nobody (dead, ungoverned data). In a single-user personal workspace every
+    ownerless row provably belongs to that one owner, so we backfill it. Scoped to the
+    given workspace_id ONLY — never a blanket cross-tenant stamp. Only visibility=
+    'private' rows are touched (the sources CHECK constraint guarantees visibility is
+    always one of private/org/public); public/org data keeps its semantics."""
+    where = ("workspace_id = ? AND visibility = 'private' "
+             "AND (user_id IS NULL OR user_id = '')")
+    n_src = conn.execute(
+        f"SELECT COUNT(*) FROM sources WHERE {where}", (workspace_id,)).fetchone()[0]
+    n_chk = conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE workspace_id = ? "
+        "AND (user_id IS NULL OR user_id = '')", (workspace_id,)).fetchone()[0]
+    if not dry_run and (n_src or n_chk):
+        conn.execute(
+            f"UPDATE sources SET user_id = ? WHERE {where}", (owner, workspace_id))
+        conn.execute(
+            "UPDATE chunks SET user_id = ? WHERE workspace_id = ? "
+            "AND (user_id IS NULL OR user_id = '')", (owner, workspace_id))
+        conn.commit()
+    return {"orphan_sources": n_src, "orphan_chunks": n_chk, "owner": owner}
+
+
 @router.post("/admin/repair-chroma-metadata")
 async def repair_chroma_metadata(
     workspace_id: str | None = None,
     source_type: str | None = None,
+    assign_owner: str | None = None,
     dry_run: bool = True,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -200,13 +230,24 @@ async def repair_chroma_metadata(
     SQLite source-of-truth, in place, WITHOUT re-embedding. Fixes chunks that the
     bge-m3 migration wrote without the visibility axis (score_vector=0.000 despite a
     present vector). `dry_run=False` writes; restrict scope with workspace_id and/or
-    source_type (e.g. 'repo_file'). Authz: service token or admin scope."""
+    source_type (e.g. 'repo_file'). `assign_owner=<sub>` first stamps that owner on
+    ownerless private data in the workspace (single-user-workspace backfill) so the
+    chroma sync below picks up a real user_id — requires workspace_id. Authz: service
+    token or admin scope."""
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin-scope required")
-    result = _repair_chroma_metadata(
-        _get_conn(), _get_chroma(),
+    conn = _get_conn()
+    result: dict = {}
+    if assign_owner:
+        if not workspace_id:
+            raise HTTPException(status_code=400,
+                                detail="assign_owner requires workspace_id (no blanket stamp)")
+        result["owner_assignment"] = _assign_owner_to_orphans(
+            conn, workspace_id=workspace_id, owner=assign_owner, dry_run=dry_run)
+    result.update(_repair_chroma_metadata(
+        conn, _get_chroma(),
         workspace_id=workspace_id, source_type=source_type, dry_run=dry_run,
-    )
+    ))
     if not dry_run and result.get("updated"):
         from mayring_core.memory.retrieval import invalidate_query_cache
         invalidate_query_cache()

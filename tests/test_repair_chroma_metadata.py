@@ -3,6 +3,7 @@ from pathlib import Path
 
 from mayring_core.memory.store import init_memory_db
 from src.api.routes.reconcile_admin import (
+    _assign_owner_to_orphans,
     _desired_metadata,
     _repair_chroma_metadata,
 )
@@ -74,6 +75,38 @@ def test_repair_is_idempotent(tmp_path):
     out = _repair_chroma_metadata(conn, chroma, workspace_id="ws1",
                                   source_type="repo_file", dry_run=False)
     assert out["scanned"] == 1 and out["mismatched"] == 0 and out["updated"] == 0
+
+
+def test_assign_owner_stamps_ownerless_private_data(tmp_path):
+    db = tmp_path / "memory.db"
+    init_memory_db(db).close()
+    c = sqlite3.connect(db)
+    now = "2026-06-08T00:00:00Z"
+    # ownerless private source + chunk in ws1; a public source must stay untouched;
+    # a foreign workspace must never be stamped.
+    c.execute("INSERT INTO sources(source_id,source_type,visibility,user_id,workspace_id,captured_at)"
+              " VALUES (?,?,?,?,?,?)", ("repo:x:a.py", "repo_file", "private", "", "ws1", now))
+    c.execute("INSERT INTO sources(source_id,source_type,visibility,user_id,workspace_id,captured_at)"
+              " VALUES (?,?,?,?,?,?)", ("pub:y", "note", "public", "", "ws1", now))
+    c.execute("INSERT INTO sources(source_id,source_type,visibility,user_id,workspace_id,captured_at)"
+              " VALUES (?,?,?,?,?,?)", ("repo:z:b.py", "repo_file", "private", "", "ws2", now))
+    c.execute("INSERT INTO chunks(chunk_id,source_id,workspace_id,is_active,created_at)"
+              " VALUES (?,?,?,?,?)", ("chk_a", "repo:x:a.py", "ws1", 1, now))
+    c.commit()
+
+    dry = _assign_owner_to_orphans(c, workspace_id="ws1", owner="1", dry_run=True)
+    assert dry["orphan_sources"] == 1 and dry["orphan_chunks"] == 1
+    # dry-run wrote nothing
+    assert c.execute("SELECT user_id FROM sources WHERE source_id='repo:x:a.py'").fetchone()[0] == ""
+
+    wet = _assign_owner_to_orphans(c, workspace_id="ws1", owner="1", dry_run=False)
+    assert wet["orphan_sources"] == 1
+    row = c.execute("SELECT user_id,visibility FROM sources WHERE source_id='repo:x:a.py'").fetchone()
+    assert row == ("1", "private")
+    assert c.execute("SELECT user_id FROM chunks WHERE chunk_id='chk_a'").fetchone()[0] == "1"
+    # public source and foreign workspace untouched
+    assert c.execute("SELECT user_id FROM sources WHERE source_id='pub:y'").fetchone()[0] == ""
+    assert c.execute("SELECT user_id FROM sources WHERE source_id='repo:z:b.py'").fetchone()[0] == ""
 
 
 def test_repair_skips_chunks_absent_from_chroma(tmp_path):
