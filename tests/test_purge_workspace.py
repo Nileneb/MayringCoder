@@ -127,3 +127,22 @@ def test_claim_not_smoke_guard_matches_canonical_slug(tmp_path):
         "SELECT COUNT(*) FROM projects WHERE lower(source_ref) NOT LIKE '%smoke/repo-%'"
     ).fetchone()[0]
     assert hit == 0
+
+
+def test_purge_smoke_projects_also_cleans_smoke_sources(tmp_path):
+    from src.api.admin_purge_workspace import purge_smoke_projects
+    conn = store.init_memory_db(tmp_path / "m.db")
+    coll = _FakeCollection()
+    _seed(conn, coll, "user-ws", "smoke:state:1780000000:ab", "cs1")
+    _seed(conn, coll, "user-ws", "repo:real/source", "cr1")
+
+    result = purge_smoke_projects(conn)
+
+    assert result["smoke_sources"] == 1
+    assert result["chunks_deactivated"] >= 1
+    remaining = [r[0] for r in conn.execute("SELECT source_id FROM sources").fetchall()]
+    assert remaining == ["repo:real/source"]
+    active = conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE source_id='smoke:state:1780000000:ab' AND is_active=1"
+    ).fetchone()[0]
+    assert active == 0

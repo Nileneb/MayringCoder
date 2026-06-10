@@ -46,9 +46,25 @@ def purge_smoke_projects(conn: DBAdapter) -> dict:
     groups = conn.execute(
         "DELETE FROM project_groups WHERE name LIKE 'smoke-%'"
     ).rowcount
+
+    # smoke:%-Quellen (z.B. smoke:state:<ts>) — Checks ohne Self-Clean haben
+    # ~200 Source-Zeilen an 3 Canonical-Chunks im realen Workspace angesammelt
+    # (#253). Chunks via Standard-Invalidate-Pfad deaktivieren, dann Refs+Rows weg.
+    from mayring_core.memory.store import deactivate_chunks_by_source
+    smoke_sources = [r[0] for r in conn.execute(
+        "SELECT source_id FROM sources WHERE source_id LIKE 'smoke:%'"
+    ).fetchall()]
+    deactivated = 0
+    for sid in smoke_sources:
+        deactivated += deactivate_chunks_by_source(conn, sid)
+    if smoke_sources:
+        ph = ",".join("?" * len(smoke_sources))
+        conn.execute(f"DELETE FROM chunk_source_refs WHERE source_id IN ({ph})", smoke_sources)
+        conn.execute(f"DELETE FROM sources WHERE source_id IN ({ph})", smoke_sources)
     conn.commit()
     return {"projects": len(ids), "chunk_project_links": max(links, 0),
-            "project_groups": max(groups, 0)}
+            "project_groups": max(groups, 0), "smoke_sources": len(smoke_sources),
+            "chunks_deactivated": deactivated}
 
 
 def purge_workspace(conn: DBAdapter, chroma, workspace_id: str) -> dict:

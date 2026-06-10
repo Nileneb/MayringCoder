@@ -1176,6 +1176,12 @@ def check_ingest_state_field(api: str, token: str) -> CheckResult:
     s2 = _put("content-version-1")  # identical → unchanged
     s3 = _put("content-version-2")  # different → changed
 
+    # WHY(self-clean 2026-06-10): ohne invalidate akkumulierte JEDER Lauf eine
+    # weitere smoke:state-Source am selben Canonical-Chunk (96 aufgelaufen).
+    # Fail-soft: ein fehlgeschlagenes Cleanup kippt den Check nicht.
+    _http("POST", f"{api}/memory/invalidate", token,
+          body={"source_id": sid}, timeout=15.0)
+
     ok = s1 == "new" and s2 == "unchanged" and s3 == "changed"
     return CheckResult(
         "ingest_state_field",
