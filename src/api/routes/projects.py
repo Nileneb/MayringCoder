@@ -263,7 +263,11 @@ async def claim_system_repos(
     conn = _get_conn()
     # Smoke-Suite-Wegwerf-Repos (github.com/smoke/repo-*) NIE in den User-Workspace
     # (sonst pollutet jeder Smoke-Lauf die Projekt-Sicht).
-    NOT_SMOKE = "lower(source_ref) NOT LIKE '%/smoke/repo-%'"
+    # WHY(2026-06-10): KEIN führender Slash im Pattern — canonical_repo_ref
+    # normalisiert auf 'smoke/repo-c3-<ts>' (owner/name-Slug ohne URL-Prefix),
+    # das alte '%/smoke/repo-%' matchte diese Form NIE → claim zog 87
+    # Smoke-Projekte in den User-Workspace, die unsmoke-Korrektur war wirkungslos.
+    NOT_SMOKE = "lower(source_ref) NOT LIKE '%smoke/repo-%'"
     repos = [r[0] for r in conn.execute(
         f"SELECT source_ref FROM projects WHERE workspace_id='system' AND source_type='github' "
         f"AND {NOT_SMOKE}").fetchall()]

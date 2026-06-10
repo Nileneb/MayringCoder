@@ -3130,6 +3130,17 @@ def _teardown_smoke_workspaces(api: str, token: str) -> None:
     if failed:
         print(f"# teardown: FAILED purges: {', '.join(failed)}")
 
+    # WHY(2026-06-10): the C3 check creates one smoke/repo-c3-<ts> PROJECT per
+    # run (and repo_event/HMAC checks more smoke/repo-* refs) — projects live in
+    # the purge-protected 'system' workspace, so the workspace purge above never
+    # touched them and ~90 junk rows piled up in the dashboard Projekte list.
+    pc, pbody, _ = _http("POST", f"{api}/stats/admin/purge-smoke-projects", token)
+    if pc == 200 and isinstance(pbody, dict):
+        print(f"# teardown: purged smoke projects={pbody.get('projects', 0)} "
+              f"links={pbody.get('chunk_project_links', 0)} groups={pbody.get('project_groups', 0)}")
+    else:
+        print(f"# teardown: purge-smoke-projects FAILED http={pc}")
+
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,

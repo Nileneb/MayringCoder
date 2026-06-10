@@ -23,6 +23,34 @@ def _workspace_tables(conn: DBAdapter) -> list[str]:
     return [t for t in tabs if "workspace_id" in conn.get_columns(t)]
 
 
+def purge_smoke_projects(conn: DBAdapter) -> dict:
+    """Delete smoke-suite throwaway projects (+ links + leftover smoke groups)
+    across ALL workspaces.
+
+    WHY(2026-06-10): the C3 check creates one ``smoke/repo-c3-<ts>`` project per
+    run and nothing deleted them; the broken NOT_SMOKE guard ('%/smoke/repo-%'
+    vs the canonical slug 'smoke/repo-...' WITHOUT leading slash) had also
+    claimed 87 of them into the user workspace. Pattern-gated -- owner 'smoke'
+    is the suite's fake org, never a real repo.
+    """
+    ids = [r[0] for r in conn.execute(
+        "SELECT id FROM projects WHERE lower(source_ref) LIKE '%smoke/repo-%'"
+    ).fetchall()]
+    links = 0
+    if ids:
+        ph = ",".join("?" * len(ids))
+        links = conn.execute(
+            f"DELETE FROM chunk_project_links WHERE project_id IN ({ph})", ids
+        ).rowcount
+        conn.execute(f"DELETE FROM projects WHERE id IN ({ph})", ids)
+    groups = conn.execute(
+        "DELETE FROM project_groups WHERE name LIKE 'smoke-%'"
+    ).rowcount
+    conn.commit()
+    return {"projects": len(ids), "chunk_project_links": max(links, 0),
+            "project_groups": max(groups, 0)}
+
+
 def purge_workspace(conn: DBAdapter, chroma, workspace_id: str) -> dict:
     """Delete every row + vector for ``workspace_id``. Returns per-table counts."""
     if workspace_id in PROTECTED_WORKSPACES:
