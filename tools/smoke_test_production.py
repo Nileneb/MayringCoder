@@ -1198,6 +1198,14 @@ def _http_await_source(method: str, url: str, token: str, *, body=None,
     return code, body_r, hdrs
 
 
+# Every ephemeral workspace a check acts-as, registered at creation time. The
+# teardown purges this set UNION the server-side listing — so a workspace whose
+# chunks materialize late (async ingest) or that the listing misses for any
+# reason still gets purged in the same run (2026-06-10: 10 leftovers despite a
+# green run and a SILENT teardown — the listing returned none of them).
+_EPHEMERAL_WS: set[str] = set()
+
+
 def _act_as(sub: str, *, orgs: tuple[str, ...] = (), workspace: str | None = None,
             role: str | None = None) -> dict:
     """Build X-Act-As-* headers so a privileged smoke token simulates another
@@ -1210,6 +1218,8 @@ def _act_as(sub: str, *, orgs: tuple[str, ...] = (), workspace: str | None = Non
         h["X-Act-As-Orgs"] = ",".join(orgs)
     if workspace:
         h["X-Act-As-Workspace"] = workspace
+        if _SMOKE_WS_RE.match(workspace):
+            _EPHEMERAL_WS.add(workspace)
     if role:
         h["X-Act-As-Role"] = role
     return h
@@ -3093,21 +3103,32 @@ _PROTECTED_WS = {"system", "public", "default", "bene:logs", "mayringcoder",
 
 
 def _teardown_smoke_workspaces(api: str, token: str) -> None:
+    # WHY(2026-06-10 silent-miss): purge the union of (a) workspaces THIS run
+    # registered via _act_as and (b) whatever the server lists. A green run
+    # left 10 leftovers with a completely SILENT teardown — the listing
+    # returned none of them, and both the empty-targets case and non-200
+    # purges were invisible. Now: always print, list failures with codes.
+    listed: set[str] = set()
     code, body, _ = _http("GET", f"{api}/stats/workspaces", token)
-    if code != 200 or not isinstance(body, dict):
-        print(f"# teardown: /stats/workspaces {code}; skipping cleanup")
-        return
-    targets = [w["workspace_id"] for w in body.get("workspaces", [])
-               if _SMOKE_WS_RE.match(str(w.get("workspace_id", "")))
-               and w["workspace_id"] not in _PROTECTED_WS]
-    purged = 0
+    if code == 200 and isinstance(body, dict):
+        listed = {str(w.get("workspace_id", "")) for w in body.get("workspaces", [])
+                  if _SMOKE_WS_RE.match(str(w.get("workspace_id", "")))}
+    else:
+        print(f"# teardown: /stats/workspaces {code}; purging registered set only")
+
+    targets = sorted((listed | _EPHEMERAL_WS) - _PROTECTED_WS)
+    purged, failed = 0, []
     for ws in targets:
         c, _, _ = _http("POST", f"{api}/stats/admin/purge-workspace", token,
                         body={"workspace_id": ws})
         if c == 200:
             purged += 1
-    if targets:
-        print(f"# teardown: purged {purged}/{len(targets)} ephemeral smoke workspaces")
+        else:
+            failed.append(f"{ws}={c}")
+    print(f"# teardown: purged {purged}/{len(targets)} ephemeral smoke workspaces "
+          f"(listed={len(listed)} registered={len(_EPHEMERAL_WS)})")
+    if failed:
+        print(f"# teardown: FAILED purges: {', '.join(failed)}")
 
 
 def main() -> int:
@@ -3231,6 +3252,10 @@ def main() -> int:
                 if args.pace > 0:
                     time.sleep(args.pace)
             failed = still
+        # WHY(2026-06-10): retried checks create fresh ephemeral workspaces
+        # AFTER the finally-teardown of the main loop — without this purge they
+        # accumulate until the next scheduled run (the 07:35-leftover batch).
+        _teardown_smoke_workspaces(api, token)
 
     failed = [r for r in results if not r.passed]
     elapsed = time.time() - t_start
