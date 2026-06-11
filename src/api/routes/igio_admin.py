@@ -43,7 +43,7 @@ def _is_admin(info: TokenInfo) -> bool:
 
 
 @router.get("/stats/igio-coverage")
-async def igio_coverage(
+def igio_coverage(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Ratio of active chunks with non-empty ``igio_axis``.
@@ -82,7 +82,7 @@ async def igio_coverage(
 
 
 @router.get("/stats/igio-lens")
-async def igio_lens(
+def igio_lens(
     limit: int = 10,
     info: TokenInfo = Depends(get_token_info),
     workspace: str = Depends(get_workspace),
@@ -263,7 +263,7 @@ async def trigger_igio_backfill(
 
 
 @router.get("/stats/igio-backfill/{job_id}")
-async def get_igio_backfill_status(
+def get_igio_backfill_status(
     job_id: str,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -276,7 +276,7 @@ async def get_igio_backfill_status(
 
 
 @router.get("/stats/categories-overview")
-async def categories_overview(info: TokenInfo = Depends(get_token_info)) -> dict:
+def categories_overview(info: TokenInfo = Depends(get_token_info)) -> dict:
     """List all codebook categories grouped by Workspace → Goal, plus unlinked.
 
     Admin (scope '*') sees every workspace. Regular JWT sees only its own.
@@ -343,7 +343,7 @@ async def categories_overview(info: TokenInfo = Depends(get_token_info)) -> dict
 
 
 @router.get("/stats/admin/goal-anchor-audit")
-async def goal_anchor_audit(info: TokenInfo = Depends(get_token_info)) -> dict:
+def goal_anchor_audit(info: TokenInfo = Depends(get_token_info)) -> dict:
     """Quantifiziert „wildes Codebook": wie viele Sources einen echten goal-Anker haben,
     wie viele auf den schwachen Fallback ('Inhalte aus …') liefen, und wie viele gar
     keinen Anker haben (vor v20 ingested → goal unbekannt). source_goals ist forward-only;

@@ -10,6 +10,10 @@ found live 2026-05-28: window=6718 vs trainset=18336 → new_rows=0).
 from __future__ import annotations
 
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import sqlite3
 
 from src.api.routes import reranker_admin as ra
@@ -43,7 +47,7 @@ def test_new_rows_since_train_counts_rows_after_trained_at(monkeypatch):
         "n_train": 16000, "n_test": 2336, "metrics": {},
     })
 
-    out = asyncio.run(ra.training_data_counts(info=None, days=3650))
+    out = _maybe_run(ra.training_data_counts(info=None, days=3650))
 
     assert out["new_rows_since_train"] == 5      # the 5 rows after 16:53 — NOT 0
     assert out["n_rows_at_last_train"] == 18336  # still surfaced, just not used for the delta
@@ -55,7 +59,7 @@ def test_new_rows_since_train_falls_back_to_log_count_without_model(monkeypatch)
     monkeypatch.setattr(ra, "_is_admin", lambda info: True)
     monkeypatch.setattr(rv2, "_load_model", lambda: None)  # never trained
 
-    out = asyncio.run(ra.training_data_counts(info=None, days=3650))
+    out = _maybe_run(ra.training_data_counts(info=None, days=3650))
 
     # No model → new_rows == full windowed count (8 rows, all training-eligible).
     assert out["new_rows_since_train"] == out["retrieval_log_with_features"] == 8

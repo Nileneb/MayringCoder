@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/stats/agent-keys")
-async def list_agent_keys(workspace_id: str = Depends(get_workspace)) -> dict:
+def list_agent_keys(workspace_id: str = Depends(get_workspace)) -> dict:
     return {"keys": store.list_keys(workspace_id)}
 
 
@@ -23,7 +23,7 @@ class MintRequest(BaseModel):
 
 
 @router.post("/stats/agent-keys")
-async def mint_agent_key(
+def mint_agent_key(
     req: MintRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -33,7 +33,7 @@ async def mint_agent_key(
 
 
 @router.delete("/stats/agent-keys/{key_id}")
-async def revoke_agent_key(
+def revoke_agent_key(
     key_id: str,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:

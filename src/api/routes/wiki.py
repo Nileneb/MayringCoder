@@ -19,7 +19,7 @@ router = APIRouter(tags=["wiki"])
 
 
 @router.get("/wiki/slugs")
-async def wiki_slugs() -> dict:
+def wiki_slugs() -> dict:
     """List available wiki slugs (public — only exposes slug names, no content)."""
     from mayring_core.config import CACHE_DIR
     slugs = sorted({
@@ -31,7 +31,7 @@ async def wiki_slugs() -> dict:
 
 
 @router.get("/wiki/graph")
-async def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json"):
+def wiki_graph(slug: str = "", workspace_id: str = "", format: str = "json"):
     """Return wiki cluster graph + recent Pi-agent search activations for Brain visualization.
 
     Tries wiki_v2 graph.json first, falls back to legacy _wiki_clusters.json.
@@ -193,7 +193,7 @@ async def wiki_rebuild(
 
 
 @router.post("/wiki/edge")
-async def wiki_edge_create(
+def wiki_edge_create(
     request: WikiEdgeCreateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -231,7 +231,7 @@ async def wiki_edge_create(
 
 
 @router.get("/wiki/conflicts")
-async def wiki_conflicts(
+def wiki_conflicts(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """Return edges where both existing and incoming are validated (manual conflict)."""
@@ -253,7 +253,7 @@ async def wiki_conflicts(
 
 
 @router.post("/wiki/conflicts/resolve")
-async def wiki_conflicts_resolve(
+def wiki_conflicts_resolve(
     request: WikiConflictResolveRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -288,7 +288,7 @@ async def wiki_conflicts_resolve(
 
 
 @router.get("/wiki/history")
-async def wiki_history(
+def wiki_history(
     workspace_id: str = Depends(get_workspace),
     limit: int = 20,
 ) -> dict:
@@ -313,7 +313,7 @@ async def wiki_history(
 
 
 @router.get("/wiki/diff")
-async def wiki_diff(
+def wiki_diff(
     from_date: str,
     to_date: str,
     workspace_id: str = Depends(get_workspace),
@@ -343,7 +343,7 @@ async def wiki_diff(
 
 
 @router.get("/wiki/feedback-matrix")
-async def wiki_feedback_matrix(
+def wiki_feedback_matrix(
     limit: int = 50,
     query_filter: str | None = None,
     mode: str = "chunk",
@@ -364,7 +364,7 @@ async def wiki_feedback_matrix(
 
 
 @router.get("/wiki/team")
-async def wiki_team_activity(
+def wiki_team_activity(
     workspace_id: str = Depends(get_workspace),
     days: int = 30,
 ) -> dict:

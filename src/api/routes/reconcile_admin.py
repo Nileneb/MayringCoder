@@ -219,7 +219,7 @@ def _assign_owner_to_orphans(
 
 
 @router.post("/admin/repair-chroma-metadata")
-async def repair_chroma_metadata(
+def repair_chroma_metadata(
     workspace_id: str | None = None,
     source_type: str | None = None,
     assign_owner: str | None = None,
@@ -257,7 +257,7 @@ async def repair_chroma_metadata(
 
 
 @router.post("/admin/reconcile-chroma")
-async def reconcile_chroma(
+def reconcile_chroma(
     workspace_id: str | None = None,
     dry_run: bool = True,
     info: TokenInfo = Depends(get_token_info),

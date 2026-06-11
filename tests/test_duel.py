@@ -1,6 +1,10 @@
 """Tests for model duel endpoint."""
 from __future__ import annotations
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import pytest
 
 from src.api.routes.duel import _run_duel
@@ -34,7 +38,7 @@ def test_run_duel_executes_both_models(monkeypatch):
 
     job_id = _make_job("ws1")
     req = DuelRequest(task="test", model_a="mA", model_b="mB")
-    asyncio.run(_run_duel(job_id, req, "ws1"))
+    _maybe_run(_run_duel(job_id, req, "ws1"))
 
     job = _JOBS[job_id]
     assert job["progress"] == "done"
@@ -54,7 +58,7 @@ def test_run_duel_captures_exception_as_text(monkeypatch):
 
     job_id = _make_job("ws1")
     req = DuelRequest(task="test", model_a="mA", model_b="mB")
-    asyncio.run(_run_duel(job_id, req, "ws1"))
+    _maybe_run(_run_duel(job_id, req, "ws1"))
 
     job = _JOBS[job_id]
     assert "[Fehler]" in job["result_a"]

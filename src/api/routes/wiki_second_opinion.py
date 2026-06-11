@@ -27,7 +27,7 @@ class SecondOpinionRequest(BaseModel):
 
 
 @router.post("/wiki/second-opinion")
-async def wiki_second_opinion(
+def wiki_second_opinion(
     request: SecondOpinionRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:

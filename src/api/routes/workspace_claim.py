@@ -19,7 +19,7 @@ class ClaimRequest(BaseModel):
 
 
 @router.post("/stats/workspaces/claim")
-async def claim_workspace(
+def claim_workspace(
     req: ClaimRequest,
     target: str = Depends(get_workspace),
 ) -> dict:

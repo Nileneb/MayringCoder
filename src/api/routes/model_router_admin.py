@@ -70,7 +70,7 @@ class RouteUpdateRequest(BaseModel):
 
 
 @router.get("/stats/admin/model-routes")
-async def get_model_routes(
+def get_model_routes(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Return the active ModelRouter configuration.
@@ -97,7 +97,7 @@ async def get_model_routes(
 
 
 @router.post("/stats/admin/model-routes")
-async def update_model_route(
+def update_model_route(
     request: RouteUpdateRequest,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -129,7 +129,7 @@ async def update_model_route(
 
 
 @router.post("/stats/admin/model-routes/reset")
-async def reset_model_routes(
+def reset_model_routes(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Drop ``config/model_routes.yaml`` so ``ModelRouter`` falls back to

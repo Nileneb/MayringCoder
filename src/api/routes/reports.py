@@ -13,7 +13,7 @@ _ROOT = Path(__file__).parent.parent.parent.parent
 
 
 @router.get("/reports")
-async def list_reports(
+def list_reports(
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
     """List analysis reports for this workspace."""

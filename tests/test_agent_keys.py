@@ -53,14 +53,14 @@ def test_route_mint_list_revoke(store):
     import asyncio
     from src.api.routes import agent_keys as route
 
-    out = asyncio.run(route.mint_agent_key(route.MintRequest(label="research"), workspace_id="ws1"))
+    out = (route.mint_agent_key(route.MintRequest(label="research"), workspace_id="ws1"))
     assert out["api_key"].startswith("mca_")
     kid = out["key"]["key_id"]
-    listed = asyncio.run(route.list_agent_keys(workspace_id="ws1"))
+    listed = (route.list_agent_keys(workspace_id="ws1"))
     assert any(k["key_id"] == kid and k["label"] == "research" for k in listed["keys"])
     # the list endpoint never returns the plaintext
     assert all("api_key" not in k and "mca_" not in str(k.values()) for k in listed["keys"])
-    rev = asyncio.run(route.revoke_agent_key(kid, workspace_id="ws1"))
+    rev = (route.revoke_agent_key(kid, workspace_id="ws1"))
     assert rev["ok"] and ak.verify(out["api_key"]) is None
 
 
@@ -69,7 +69,7 @@ def test_route_revoke_foreign_404(store):
     import pytest as _pytest
     from fastapi import HTTPException
     from src.api.routes import agent_keys as route
-    out = asyncio.run(route.mint_agent_key(route.MintRequest(label="x"), workspace_id="ws1"))
+    out = (route.mint_agent_key(route.MintRequest(label="x"), workspace_id="ws1"))
     with _pytest.raises(HTTPException) as e:
-        asyncio.run(route.revoke_agent_key(out["key"]["key_id"], workspace_id="ws2"))
+        (route.revoke_agent_key(out["key"]["key_id"], workspace_id="ws2"))
     assert e.value.status_code == 404

@@ -342,7 +342,7 @@ def _signature_for_event(ev: LogEvent) -> str:
 
 
 @router.post("/memory/log-event")
-async def memory_log_event(
+def memory_log_event(
     batch: LogEventBatch,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -421,7 +421,7 @@ async def memory_log_event(
 
 
 @router.post("/memory/put")
-async def memory_put(
+def memory_put(
     request: MemoryPutRequest,
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),
@@ -610,7 +610,7 @@ async def memory_put(
 
 
 @router.post("/conversation/micro-batch")
-async def conversation_micro_batch(
+def conversation_micro_batch(
     request: ConversationMicroBatchRequest,
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),
@@ -790,7 +790,7 @@ async def conversation_micro_batch(
 
 
 @router.get("/memory/chunk/{chunk_id}")
-async def memory_get_chunk(
+def memory_get_chunk(
     chunk_id: str,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -805,7 +805,7 @@ async def memory_get_chunk(
 
 
 @router.post("/memory/invalidate")
-async def memory_invalidate(
+def memory_invalidate(
     request: MemoryInvalidateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -819,7 +819,7 @@ async def memory_invalidate(
 
 
 @router.get("/memory/chunks/{source_id}")
-async def memory_list_by_source(
+def memory_list_by_source(
     source_id: str,
     active_only: bool = True,
     workspace_id: str = Depends(get_workspace),
@@ -835,7 +835,7 @@ async def memory_list_by_source(
 
 
 @router.get("/memory/explain/{chunk_id}")
-async def memory_explain(
+def memory_explain(
     chunk_id: str,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -866,7 +866,7 @@ async def memory_explain(
 
 
 @router.post("/memory/reindex")
-async def memory_reindex(
+def memory_reindex(
     request: MemoryReindexRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -945,7 +945,7 @@ async def memory_reindex(
 
 
 @router.post("/memory/feedback")
-async def memory_feedback(
+def memory_feedback(
     request: MemoryFeedbackRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -1060,7 +1060,7 @@ async def ingest_alias(
 
 
 @router.patch("/sources/{source_id}/visibility")
-async def patch_source_visibility(
+def patch_source_visibility(
     source_id: str,
     request: PatchVisibilityRequest,
     workspace_id: str = Depends(get_workspace),
@@ -1138,7 +1138,7 @@ async def patch_source_visibility(
 
 
 @router.post("/sources/{source_id}/share")
-async def share_source(
+def share_source(
     source_id: str,
     request: ShareSourceRequest | None = None,
     workspace_id: str = Depends(get_workspace),
@@ -1219,7 +1219,7 @@ async def share_source(
 
 
 @router.get("/memory/goals")
-async def memory_goals(
+def memory_goals(
     top_k: int = 8,
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),

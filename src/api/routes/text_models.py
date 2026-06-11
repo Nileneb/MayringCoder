@@ -63,7 +63,7 @@ class TextModelReq(BaseModel):
 
 
 @router.get("/stats/admin/text-models")
-async def list_text_models(
+def list_text_models(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict[str, Any]:
     """List models available in Ollama and the currently active text model."""
@@ -84,7 +84,7 @@ async def list_text_models(
 
 
 @router.post("/stats/admin/text-model")
-async def set_text_model(
+def set_text_model(
     req: TextModelReq,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict[str, str]:

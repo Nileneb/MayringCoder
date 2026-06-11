@@ -56,8 +56,11 @@ def _dashboard_ttl_cache(fn):
     preserves the original signature so FastAPI still resolves Depends/query
     params. Apply BELOW ``@router.get`` so the router registers the wrapper.
     """
+    # WHY(#363, event-loop): sync wrapper — als async lief jeder Cache-Miss
+    # (SQLite-Scan) auf dem Event-Loop statt im FastAPI-Threadpool; ein
+    # langsamer Scan starvte alle parallelen Requests (http=0 im Smoke).
     @_functools.wraps(fn)
-    async def _wrapper(**kwargs):
+    def _wrapper(**kwargs):
         key = fn.__name__ + ":" + repr(sorted(kwargs.items()))
         now = _time.monotonic()
         # Shared L2 (Redis) — consistent across uvicorn workers when reachable.
@@ -68,7 +71,7 @@ def _dashboard_ttl_cache(fn):
         hit = _DASH_CACHE.get(key)
         if hit is not None and hit[0] > now:
             return hit[1]
-        value = await fn(**kwargs)
+        value = fn(**kwargs)
         if len(_DASH_CACHE) >= _DASH_CACHE_MAX:
             _DASH_CACHE.clear()
         _DASH_CACHE[key] = (now + _DASH_CACHE_TTL, value)
@@ -83,7 +86,7 @@ def _dashboard_ttl_cache(fn):
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/recent-ops")
-async def recent_ops(  # NOT cached: live ingest feed (WHY, smoke-fix 2026-05-24).
+def recent_ops(  # NOT cached: live ingest feed (WHY, smoke-fix 2026-05-24).
     # The 15s @_dashboard_ttl_cache served the pre-ingest list on a write-then-read
     # (watcher_hook_fires polled within 8s and never saw the just-PUT source until
     # the TTL expired). ORDER BY created_at DESC LIMIT is index-backed (v13), so
@@ -128,7 +131,7 @@ async def recent_ops(  # NOT cached: live ingest feed (WHY, smoke-fix 2026-05-24
 # /jobs/{job_id} as a catch-all path-param — registering /jobs/history would
 # either be shadowed by it or shadow it depending on include order, both bad.
 @router.get("/stats/jobs-history")
-async def jobs_history(
+def jobs_history(
     status: str | None = None,
     limit: int = 50,
     include_smoke: bool = False,
@@ -210,7 +213,7 @@ async def jobs_history(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/feedback-log")
-async def feedback_log(
+def feedback_log(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -265,7 +268,7 @@ async def feedback_log(
 
 @router.get("/stats/prompt-trace")
 @_dashboard_ttl_cache
-async def prompt_trace(
+def prompt_trace(
     limit: int = 20,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -347,7 +350,7 @@ async def prompt_trace(
 
 @router.get("/stats/source-refs")
 @_dashboard_ttl_cache
-async def source_refs(
+def source_refs(
     limit: int = 50,
     min_sources: int = 2,
     workspace_id: str = Depends(get_workspace),
@@ -381,7 +384,7 @@ async def source_refs(
 
 @router.get("/stats/triggers")
 @_dashboard_ttl_cache
-async def triggers(
+def triggers(
     only_active: bool = True,
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
@@ -415,7 +418,7 @@ async def triggers(
 
 @router.get("/stats/topic-flow")
 @_dashboard_ttl_cache
-async def topic_flow(
+def topic_flow(
     from_topic: str | None = None,
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
@@ -453,7 +456,7 @@ async def topic_flow(
 # (404). /stats/* is already whitelisted.
 @router.get("/stats/pi-tasks")
 @_dashboard_ttl_cache
-async def pi_tasks(
+def pi_tasks(
     status: str | None = None,
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
@@ -520,7 +523,7 @@ class _PiTaskRecord(BaseModel):
 # Path stays under /stats/ so the prod nginx whitelist already routes it (no
 # allowlist change). Upsert by job_id, scoped to the caller's workspace.
 @router.post("/stats/pi-tasks/record")
-async def record_pi_task(
+def record_pi_task(
     rec: _PiTaskRecord,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -564,7 +567,7 @@ async def record_pi_task(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/activations")
-async def activations(
+def activations(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),
@@ -613,7 +616,7 @@ def _workspace_kind(wid: str, caller_ws: str) -> str:
 
 
 @router.get("/stats/workspaces")
-async def workspaces(
+def workspaces(
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -698,7 +701,7 @@ async def workspaces(
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/llm-call-types")
-async def llm_call_types(
+def llm_call_types(
     days: int = 1,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -725,7 +728,7 @@ async def llm_call_types(
 
 @router.get("/stats/vector-trend")
 @_dashboard_ttl_cache
-async def vector_trend(
+def vector_trend(
     limit: int = 50,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -830,7 +833,7 @@ def _supersede_stale_reds(items: list[dict]) -> None:
 
 @router.get("/stats/notifications")
 @_dashboard_ttl_cache
-async def notifications(
+def notifications(
     limit: int = 50,
     only_open: bool = False,
     info: TokenInfo = Depends(get_token_info),
@@ -907,7 +910,7 @@ class NotificationAck(BaseModel):
 
 
 @router.post("/stats/notifications/ack")
-async def ack_notification(
+def ack_notification(
     body: NotificationAck,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -954,7 +957,7 @@ class NotificationIngest(BaseModel):
 
 
 @router.post("/stats/notifications/ingest")
-async def ingest_notifications(
+def ingest_notifications(
     body: NotificationIngest,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:

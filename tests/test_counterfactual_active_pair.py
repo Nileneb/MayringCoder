@@ -8,6 +8,10 @@ test_reranker_active_endpoints.py abgedeckt.
 from __future__ import annotations
 
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import json
 from pathlib import Path
 
@@ -20,7 +24,7 @@ from src.api.jwt_auth import TokenInfo
 
 
 def _run(coro):
-    return asyncio.run(coro)
+    return _maybe_run(coro) if asyncio.iscoroutine(coro) else coro
 
 
 def _make_admin() -> TokenInfo:

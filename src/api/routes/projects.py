@@ -223,7 +223,7 @@ def _embed_one(text: str) -> list[float]:
 
 
 @router.post("/projects/route")
-async def route_project(req: RouteRequest, ws: str = Depends(get_workspace)) -> dict:
+def route_project(req: RouteRequest, ws: str = Depends(get_workspace)) -> dict:
     from mayring_core.memory.store import get_chroma_collection
     conn = _get_conn()
     chroma = get_chroma_collection("projects")
@@ -232,7 +232,7 @@ async def route_project(req: RouteRequest, ws: str = Depends(get_workspace)) -> 
 
 
 @router.get("/projects")
-async def list_projects(ws: str = Depends(get_workspace)) -> dict:
+def list_projects(ws: str = Depends(get_workspace)) -> dict:
     """Projekte des Workspace (id, name, repo, source_type) — die bisher fehlende Sicht auf
     die projects-Tabelle (Projekte→Repos). Read-only. Behebt die 'blackbox'-Lücke #4."""
     conn = _get_conn()
@@ -250,7 +250,7 @@ async def list_projects(ws: str = Depends(get_workspace)) -> dict:
 
 
 @router.post("/projects/claim-system")
-async def claim_system_repos(
+def claim_system_repos(
     info: TokenInfo = Depends(get_token_info),
     ws: str = Depends(get_workspace),
 ) -> dict:
@@ -299,7 +299,7 @@ async def claim_system_repos(
 
 
 @router.post("/projects/dedup")
-async def dedup_projects(
+def dedup_projects(
     info: TokenInfo = Depends(get_token_info),
     ws: str = Depends(get_workspace),
 ) -> dict:
@@ -331,7 +331,7 @@ async def dedup_projects(
 
 
 @router.get("/project-groups")
-async def list_project_groups(ws: str = Depends(get_workspace)) -> dict:
+def list_project_groups(ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
     rows = conn.execute(
         "SELECT g.id, g.name, g.color, "
@@ -344,7 +344,7 @@ async def list_project_groups(ws: str = Depends(get_workspace)) -> dict:
 
 
 @router.post("/project-groups")
-async def create_project_group(req: GroupCreate, ws: str = Depends(get_workspace)) -> dict:
+def create_project_group(req: GroupCreate, ws: str = Depends(get_workspace)) -> dict:
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(status_code=422, detail="name must not be empty")
@@ -367,7 +367,7 @@ async def create_project_group(req: GroupCreate, ws: str = Depends(get_workspace
 
 
 @router.patch("/project-groups/{group_id}")
-async def update_project_group(group_id: str, req: GroupUpdate,
+def update_project_group(group_id: str, req: GroupUpdate,
                                ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
     row = conn.execute(
@@ -396,7 +396,7 @@ async def update_project_group(group_id: str, req: GroupUpdate,
 
 
 @router.delete("/project-groups/{group_id}")
-async def delete_project_group(group_id: str, ws: str = Depends(get_workspace)) -> dict:
+def delete_project_group(group_id: str, ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
     row = conn.execute(
         "SELECT 1 FROM project_groups WHERE id=? AND workspace_id=?",
@@ -412,7 +412,7 @@ async def delete_project_group(group_id: str, ws: str = Depends(get_workspace)) 
 
 
 @router.post("/project-groups/assign")
-async def assign_repo_group(req: GroupAssign, ws: str = Depends(get_workspace)) -> dict:
+def assign_repo_group(req: GroupAssign, ws: str = Depends(get_workspace)) -> dict:
     """Ordnet ein Repo einer Gruppe zu. Legt das Projekt an, falls es noch keins gibt
     (canonical source_ref — gleiche Anlage-Logik wie /repo-events). group_id=None löst."""
     conn = _get_conn()

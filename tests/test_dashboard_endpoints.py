@@ -7,6 +7,10 @@ endpoints are async functions called directly with a stub workspace_id.
 from __future__ import annotations
 
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -110,9 +114,9 @@ def seeded_db(tmp_path, monkeypatch) -> sqlite3.Connection:
 
 
 def _run(coro):
-    # asyncio.run() each call: simpler than juggling a shared loop, and
+    # _maybe_run() each call: simpler than juggling a shared loop, and
     # Python 3.13 deprecates get_event_loop() outside an existing loop.
-    return asyncio.run(coro)
+    return _maybe_run(coro)
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +340,7 @@ def test_activations_returns_recent_searches(monkeypatch):
     memory_service._RECENT_ACTIVATIONS.append(
         {"workspace_id": "user-99", "query": "q2", "source_ids": ["s2"], "ts": 2}
     )
-    res = asyncio.run(dashboard.activations(
+    res = _maybe_run(dashboard.activations(
         workspace_id="user-2", info=TokenInfo(workspace_id="user-2", scopes=("admin",))))
     assert len(res["activations"]) == 2
 
@@ -351,7 +355,7 @@ def test_activations_tenant_filters_to_own_workspace(monkeypatch):
     memory_service._RECENT_ACTIVATIONS.append(
         {"workspace_id": "user-99", "query": "q2", "source_ids": [], "ts": 2}
     )
-    res = asyncio.run(dashboard.activations(
+    res = _maybe_run(dashboard.activations(
         workspace_id="user-2", info=TokenInfo(workspace_id="user-2", scopes=())))
     assert len(res["activations"]) == 1
     assert res["activations"][0]["query"] == "q1"

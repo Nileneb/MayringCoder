@@ -71,7 +71,7 @@ def _ndcg(labels: list[int], k: int) -> float:
 
 
 @router.get("/stats/retrieval-metrics")
-async def retrieval_metrics(
+def retrieval_metrics(
     info: TokenInfo = Depends(get_token_info),
     days: int = 7,
     k: int = 5,
@@ -147,7 +147,7 @@ async def retrieval_metrics(
 
 
 @router.get("/stats/retrieval-ab")
-async def retrieval_ab(
+def retrieval_ab(
     info: TokenInfo = Depends(get_token_info),
     days: int = 7,
     k: int = 5,
@@ -228,7 +228,7 @@ async def retrieval_ab(
 
 
 @router.get("/stats/retrieval-stage-attribution")
-async def retrieval_stage_attribution(
+def retrieval_stage_attribution(
     info: TokenInfo = Depends(get_token_info),
     days: int = 7,
 ) -> dict:
@@ -299,7 +299,7 @@ async def retrieval_stage_attribution(
 
 
 @router.get("/stats/admin/reranker-counterfactual")
-async def reranker_counterfactual(
+def reranker_counterfactual(
     info: TokenInfo = Depends(get_token_info),
     baseline: str | None = None,
     candidate: str | None = None,

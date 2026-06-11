@@ -95,7 +95,7 @@ def _is_admin(info: TokenInfo) -> bool:
 
 
 @router.get("/stats/admin/training-data-counts")
-async def training_data_counts(
+def training_data_counts(
     info: TokenInfo = Depends(get_token_info),
     days: int = 30,
 ) -> dict:
@@ -357,7 +357,7 @@ async def trigger_train_reranker(
 
 
 @router.get("/stats/admin/train-reranker/{job_id}")
-async def get_train_reranker_status(
+def get_train_reranker_status(
     job_id: str,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -372,7 +372,7 @@ async def get_train_reranker_status(
 
 
 @router.get("/stats/admin/reranker-default")
-async def get_reranker_default(
+def get_reranker_default(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Current persisted default reranker version.
@@ -386,7 +386,7 @@ async def get_reranker_default(
 
 
 @router.get("/stats/admin/reranker-versions")
-async def list_reranker_versions_endpoint(
+def list_reranker_versions_endpoint(
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """All selectable reranker versions for the dashboard table (v1 baseline +
@@ -405,7 +405,7 @@ class RerankerActiveReq(BaseModel):
 
 
 @router.post("/stats/admin/reranker-active")
-async def set_reranker_active(
+def set_reranker_active(
     body: RerankerActiveReq,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -430,7 +430,7 @@ async def set_reranker_active(
 
 
 @router.post("/stats/admin/reranker-default")
-async def set_reranker_default(
+def set_reranker_default(
     info: TokenInfo = Depends(get_token_info),
     version: str = "auto",
 ) -> dict:
@@ -455,7 +455,7 @@ async def set_reranker_default(
 
 
 @router.delete("/stats/admin/reranker-versions/{version}")
-async def delete_reranker_version_endpoint(
+def delete_reranker_version_endpoint(
     version: str,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
@@ -790,7 +790,7 @@ def relink_chunks(
 
 
 @router.get("/stats/admin/cat-match-debug")
-async def cat_match_debug(
+def cat_match_debug(
     query: str = "user authentication login session token oauth jwt password",
     info: TokenInfo = Depends(get_token_info),
     workspace_id: str = Depends(get_workspace),

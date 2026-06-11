@@ -14,6 +14,6 @@ router = APIRouter(tags=["pi"])
 
 
 @router.get("/pi-jobs/stats")
-async def pi_jobs_stats() -> dict:
+def pi_jobs_stats() -> dict:
     """Read-only counters + p50/p95-latency per job-class."""
     return get_pi_queue().stats()

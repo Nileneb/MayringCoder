@@ -1,5 +1,9 @@
 """Admin/service-only act-as identity override (V2 org-memory acceptance harness)."""
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import os
 from unittest.mock import patch
 
@@ -11,10 +15,10 @@ from src.api.jwt_auth import TokenInfo
 
 
 def _run(coro):
-    # asyncio.run() each call: robust to import side-effects that close the
+    # _maybe_run() each call: robust to import side-effects that close the
     # default loop (a2a-sdk does this on import). Python 3.13 also raises from
     # get_event_loop() outside a running loop. Same pattern as test_dashboard_endpoints.
-    return asyncio.run(coro)
+    return _maybe_run(coro)
 
 
 def _creds(tok="svc"):

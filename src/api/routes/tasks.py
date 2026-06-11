@@ -24,7 +24,7 @@ async def create_task(req: TaskCreateRequest, workspace_id: str = Depends(get_wo
 
 
 @router.get("/tasks")
-async def list_tasks(status: str | None = None, tag: str | None = None,
+def list_tasks(status: str | None = None, tag: str | None = None,
                      priority: str | None = None,
                      workspace_id: str = Depends(get_workspace)) -> dict:
     return {"workspace_id": workspace_id,
@@ -32,13 +32,13 @@ async def list_tasks(status: str | None = None, tag: str | None = None,
 
 
 @router.get("/tasks/goals")
-async def list_workspace_goals(workspace_id: str = Depends(get_workspace)) -> dict:
+def list_workspace_goals(workspace_id: str = Depends(get_workspace)) -> dict:
     return {"workspace_id": workspace_id,
             "goals": _t.list_workspace_goals(_get_conn(), workspace_id)}
 
 
 @router.patch("/tasks/by-external/{external_id}")
-async def update_task_by_external(external_id: str, req: TaskUpdateRequest,
+def update_task_by_external(external_id: str, req: TaskUpdateRequest,
                                   workspace_id: str = Depends(get_workspace)) -> dict:
     row = _get_conn().execute(
         "SELECT task_id FROM tasks WHERE workspace_id=? AND external_id=?",
@@ -55,7 +55,7 @@ async def update_task_by_external(external_id: str, req: TaskUpdateRequest,
 
 
 @router.patch("/tasks/{task_id}")
-async def update_task(task_id: str, req: TaskUpdateRequest, workspace_id: str = Depends(get_workspace)) -> dict:
+def update_task(task_id: str, req: TaskUpdateRequest, workspace_id: str = Depends(get_workspace)) -> dict:
     fields = {k: v for k, v in req.model_dump().items() if v is not None}
     try:
         updated = _t.update_task(_get_conn(), workspace_id, task_id, **fields)
@@ -67,7 +67,7 @@ async def update_task(task_id: str, req: TaskUpdateRequest, workspace_id: str = 
 
 
 @router.post("/tasks/{task_id}/complete")
-async def complete_task(task_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
+def complete_task(task_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
     done = _t.complete_task(_get_conn(), workspace_id, task_id)
     if done is None:
         raise HTTPException(status_code=404, detail="task not found")
@@ -75,7 +75,7 @@ async def complete_task(task_id: str, workspace_id: str = Depends(get_workspace)
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
+def delete_task(task_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
     if not _t.delete_task(_get_conn(), workspace_id, task_id):
         raise HTTPException(status_code=404, detail="task not found")
     return {"deleted": task_id}

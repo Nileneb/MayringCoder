@@ -10,7 +10,7 @@ from src.api.jwt_auth import TokenInfo
 
 
 def _run(c):
-    return asyncio.run(c)
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 
 
 def _seed(tmp_path):

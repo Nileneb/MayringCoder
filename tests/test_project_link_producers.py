@@ -11,6 +11,10 @@ TASK 6 — Producer B:
 from __future__ import annotations
 
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -242,7 +246,7 @@ def test_micro_batch_with_project_id_links_chunks(tmp_path, monkeypatch):
     with patch("src.api.routes.memory._run_ingest", side_effect=_fake_run_ingest), \
          patch("src.api.routes.memory._get_conn", return_value=conn), \
          patch("src.api.routes.memory._get_chroma", return_value=MagicMock()):
-        asyncio.run(conversation_micro_batch(request, workspace_id="ws-5", info=_INFO, x_project_id=pid))
+        _maybe_run(conversation_micro_batch(request, workspace_id="ws-5", info=_INFO, x_project_id=pid))
 
     rows = conn.execute(
         "SELECT chunk_id, project_id, source FROM chunk_project_links WHERE project_id=?",
@@ -279,7 +283,7 @@ def test_micro_batch_without_project_id_leaves_no_links(tmp_path, monkeypatch):
     with patch("src.api.routes.memory._run_ingest", side_effect=_fake_run_ingest), \
          patch("src.api.routes.memory._get_conn", return_value=conn), \
          patch("src.api.routes.memory._get_chroma", return_value=MagicMock()):
-        asyncio.run(conversation_micro_batch(request, workspace_id="ws-6", info=_INFO))
+        _maybe_run(conversation_micro_batch(request, workspace_id="ws-6", info=_INFO))
 
     rows = conn.execute("SELECT * FROM chunk_project_links").fetchall()
     assert rows == [], "without X-Project-Id, no chunk_project_links should be created"

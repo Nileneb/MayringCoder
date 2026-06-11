@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/stats/sources")
-async def list_sources_endpoint(
+def list_sources_endpoint(
     limit: int = 200,
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),

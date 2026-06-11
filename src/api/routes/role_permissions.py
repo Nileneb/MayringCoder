@@ -29,7 +29,7 @@ def _effective_matrix(overrides: dict[tuple[str, str], bool]) -> dict[str, dict[
 
 
 @router.get("/stats/workspaces/{ws}/role-permissions")
-async def get_role_permissions_endpoint(ws: str, workspace_id: str = Depends(get_workspace), info: TokenInfo = Depends(get_token_info)) -> dict:
+def get_role_permissions_endpoint(ws: str, workspace_id: str = Depends(get_workspace), info: TokenInfo = Depends(get_token_info)) -> dict:
     overrides = get_role_permissions(_get_conn(), ws)
     if not caller_can(info, ws, "manage_members", overrides=overrides):
         raise HTTPException(status_code=403, detail="manage_members required")
@@ -37,7 +37,7 @@ async def get_role_permissions_endpoint(ws: str, workspace_id: str = Depends(get
 
 
 @router.put("/stats/workspaces/{ws}/role-permissions")
-async def put_role_permission_endpoint(ws: str, body: RolePermissionUpdate, workspace_id: str = Depends(get_workspace), info: TokenInfo = Depends(get_token_info)) -> dict:
+def put_role_permission_endpoint(ws: str, body: RolePermissionUpdate, workspace_id: str = Depends(get_workspace), info: TokenInfo = Depends(get_token_info)) -> dict:
     overrides = get_role_permissions(_get_conn(), ws)
     if not caller_can(info, ws, "manage_members", overrides=overrides):
         raise HTTPException(status_code=403, detail="manage_members required")

@@ -72,7 +72,7 @@ class CategorizeRequest(BaseModel):
 
 
 @router.get("/codebooks")
-async def list_codebooks(_ws: str = Depends(get_workspace)) -> dict:
+def list_codebooks(_ws: str = Depends(get_workspace)) -> dict:
     # WHY(v19-drop-codebook): codebooks-Tabelle existiert nicht mehr — synthetische
     # Antwort damit Smoke (GET /codebooks → cb_id für /process-Check) grün bleibt.
     return {"codebooks": [{"id": 1, "slug": "categories",
@@ -81,7 +81,7 @@ async def list_codebooks(_ws: str = Depends(get_workspace)) -> dict:
 
 
 @router.get("/codebooks/{slug}")
-async def get_codebook(slug: str, _ws: str = Depends(get_workspace)) -> dict:
+def get_codebook(slug: str, _ws: str = Depends(get_workspace)) -> dict:
     conn = _get_conn()
     n = conn.execute(
         "SELECT count(*) FROM categories WHERE status='active'").fetchone()[0]
@@ -90,7 +90,7 @@ async def get_codebook(slug: str, _ws: str = Depends(get_workspace)) -> dict:
 
 
 @router.get("/codebooks/{codebook_id}/categories")
-async def list_categories(
+def list_categories(
     codebook_id: int,  # vestigial path param, ignored (v19: kein codebook_id mehr)
     status: str = Query(default="active"),
     _ws: str = Depends(get_workspace),
@@ -143,7 +143,7 @@ def record_proposal(
 
 
 @router.post("/codebooks/{codebook_id}/proposals")
-async def create_proposal(
+def create_proposal(
     codebook_id: int,  # vestigial path param, ignored (v19)
     req: ProposalRequest, _ws: str = Depends(get_workspace),
 ) -> dict:
@@ -159,7 +159,7 @@ async def create_proposal(
 
 
 @router.post("/codebooks/{codebook_id}/proposals/{category_id}/promote")
-async def promote_category(
+def promote_category(
     codebook_id: int,  # vestigial path param, ignored (v19)
     category_id: int, _ws: str = Depends(get_workspace),
 ) -> dict:
@@ -173,7 +173,7 @@ async def promote_category(
 
 
 @router.post("/codebooks/{codebook_id}/proposals/{category_id}/reject")
-async def reject_category(
+def reject_category(
     codebook_id: int,  # vestigial path param, ignored (v19)
     category_id: int, _ws: str = Depends(get_workspace),
 ) -> dict:
@@ -239,7 +239,7 @@ def reduce_text_server(text: str, theme: str, *, project_id: str | None = None,
 
 
 @router.post("/codebooks/categorize")
-async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_workspace)) -> dict:
+def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_workspace)) -> dict:
     """Volle mixed Mayring-Methode (Reduktion + Embedding-Match gegen die Bestands-
     Kategorien) mit optionalem LLM-Override — für Modell-Duelle. Liefert die FINALE
     Kategorie (nach deduktivem Match), nicht das rohe Reduktions-Label."""
@@ -271,7 +271,7 @@ async def categorize_endpoint(req: CategorizeRequest, _ws: str = Depends(get_wor
 
 
 @router.post("/codebooks/{codebook_id}/categories/{category_id}/deprecate")
-async def deprecate_category(
+def deprecate_category(
     codebook_id: int,  # vestigial path param, ignored (v19)
     category_id: int, _ws: str = Depends(get_workspace),
 ) -> dict:
@@ -300,7 +300,7 @@ async def deprecate_category(
 
 
 @router.post("/codebooks/{codebook_id}/process")
-async def process_text(
+def process_text(
     codebook_id: int, req: ProcessRequest, _ws: str = Depends(get_workspace),
 ) -> dict:
     """Phase 3 mixed-method, fail-closed categorization. Wires the real Ollama
@@ -350,7 +350,7 @@ async def process_text(
 
 
 @router.patch("/codebooks/{codebook_id}/categories/{category_id}")
-async def patch_category(
+def patch_category(
     codebook_id: int,  # vestigial path param, ignored (v19)
     category_id: int,
     req: CategoryPatchReq,

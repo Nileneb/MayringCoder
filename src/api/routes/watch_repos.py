@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/stats/watch-repos")
-async def list_watch_repos(workspace_id: str = Depends(get_workspace)) -> dict:
+def list_watch_repos(workspace_id: str = Depends(get_workspace)) -> dict:
     return {"repos": watch_store.get_watched(workspace_id)}
 
 
@@ -36,7 +36,7 @@ class WatchRepoRequest(BaseModel):
 
 
 @router.post("/stats/watch-repos")
-async def set_watch_repo(
+def set_watch_repo(
     req: WatchRepoRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:

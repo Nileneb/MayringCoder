@@ -46,12 +46,12 @@ def test_route_activate_triggers_ingest(store, monkeypatch):
     from src.api.routes import watch_repos as route
 
     with patch("src.api.routes.jobs.enqueue_populate", return_value="job-123") as enq:
-        out = asyncio.run(route.set_watch_repo(
+        out = (route.set_watch_repo(
             route.WatchRepoRequest(repo_slug="nileneb/foo", active=True, alerts=["ci"]),
             workspace_id="ws1"))
     assert enq.called and enq.call_args[0][0] == "nileneb/foo"
     assert out["repo"]["active"] is True and out["repo"]["ingested_at"]
-    listed = asyncio.run(route.list_watch_repos(workspace_id="ws1"))
+    listed = (route.list_watch_repos(workspace_id="ws1"))
     assert listed["repos"][0]["repo_slug"] == "nileneb/foo"
 
 
@@ -60,7 +60,7 @@ def test_route_deactivate_no_ingest(store):
     from unittest.mock import patch
     from src.api.routes import watch_repos as route
     with patch("src.api.routes.jobs.enqueue_populate") as enq:
-        asyncio.run(route.set_watch_repo(
+        (route.set_watch_repo(
             route.WatchRepoRequest(repo_slug="nileneb/foo", active=False, alerts=["ci"]),
             workspace_id="ws1"))
     assert not enq.called  # deactivating must not ingest

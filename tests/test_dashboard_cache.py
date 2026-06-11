@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import asyncio
 
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -56,7 +60,7 @@ def test_decorated_endpoint_still_resolves_deps_and_returns_200():
 
 
 def _run(coro):
-    return asyncio.run(coro)
+    return _maybe_run(coro) if asyncio.iscoroutine(coro) else coro
 
 
 def test_cache_keys_by_workspace_no_cross_tenant_bleed():

@@ -9,6 +9,10 @@ dropped) so labels stay aligned with the FK/codebook SoT.
 from __future__ import annotations
 
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import sqlite3
 
 from src.api.routes import reranker_admin as ra
@@ -60,7 +64,7 @@ def test_label_advisor_low_conf_only_and_codebook_constrained(monkeypatch):
     # LLM returns one valid codebook label + one hallucinated (must be dropped).
     _patch(monkeypatch, conn, '{"chk_low": ["auth", "totally-made-up-category"]}')
 
-    out = asyncio.run(ra.label_advisor(after=0, limit=10, confidence_threshold=0.62,
+    out = _maybe_run(ra.label_advisor(after=0, limit=10, confidence_threshold=0.62,
                                        info=None, workspace_id="ws"))
     assert out["processed"] == 1   # only chk_low (weak cosine); chk_high (0.90) skipped
     assert out["advised"] == 1
@@ -76,6 +80,6 @@ def test_label_advisor_no_eligible_chunks(monkeypatch):
     conn = _conn_with_chunks()
     _patch(monkeypatch, conn, "{}")
     # threshold below the weak link → nothing eligible
-    out = asyncio.run(ra.label_advisor(after=0, limit=10, confidence_threshold=0.1,
+    out = _maybe_run(ra.label_advisor(after=0, limit=10, confidence_threshold=0.1,
                                        info=None, workspace_id="ws"))
     assert out["processed"] == 0 and out["advised"] == 0 and out["has_more"] is False

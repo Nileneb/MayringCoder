@@ -128,7 +128,7 @@ async def _run_with_v2_postingest(
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(
+def get_job(
     job_id: str,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:
@@ -289,7 +289,7 @@ def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None 
 
 
 @router.post("/populate")
-async def trigger_populate(
+def trigger_populate(
     request: PopulateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:

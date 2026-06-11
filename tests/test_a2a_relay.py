@@ -1,5 +1,9 @@
 import asyncio
 
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
+
 import pytest
 from mayring_core.memory.store import init_memory_db
 from mayring_pi_agent import pi_jobs
@@ -21,7 +25,7 @@ def test_taskstore_maps_completed_job(db):
     pi_jobs.claim_cloud_next("wkr", capabilities=["research"], workspace_id="ws1", db_path=db)
     pi_jobs.complete_job(job.job_id, {"text": "ERGEBNIS 42"}, db_path=db)
     store = PiJobsTaskStore(db_path=db)
-    task = asyncio.run(store.get(job.job_id, None))
+    task = _maybe_run(store.get(job.job_id, None))
     assert task is not None
     assert task.id == job.job_id
     from a2a.types import TaskState
@@ -35,7 +39,7 @@ def test_taskstore_maps_completed_job(db):
 
 def test_taskstore_unknown_returns_none(db):
     store = PiJobsTaskStore(db_path=db)
-    assert asyncio.run(store.get("nope", None)) is None
+    assert _maybe_run(store.get("nope", None)) is None
 
 
 def test_taskstore_scopes_to_workspace(db):
@@ -44,9 +48,9 @@ def test_taskstore_scopes_to_workspace(db):
     job = pi_jobs.insert_cloud_job("geheim", workspace_id="ws1",
                                    capability_required="research", db_path=db)
     store_other = PiJobsTaskStore(db_path=db, workspace_id="ws2")
-    assert asyncio.run(store_other.get(job.job_id, None)) is None
+    assert _maybe_run(store_other.get(job.job_id, None)) is None
     store_own = PiJobsTaskStore(db_path=db, workspace_id="ws1")
-    assert asyncio.run(store_own.get(job.job_id, None)) is not None
+    assert _maybe_run(store_own.get(job.job_id, None)) is not None
 
 
 class _Q:
@@ -93,7 +97,7 @@ def test_relay_executor_returns_result_message(db):
         await asyncio.wait_for(asyncio.gather(ex.execute(_Ctx(), q), completer()), timeout=10)
         return q
 
-    q = asyncio.run(scenario())
+    q = _maybe_run(scenario())
     # job was created with job_id == task_id
     assert any(j.job_id == task_id for j in pi_jobs.list_recent(db_path=db))
     # exactly one agent Message carrying the result text (no Task/status events)

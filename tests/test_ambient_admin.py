@@ -1,4 +1,8 @@
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 from unittest.mock import patch
 
 import pytest
@@ -18,14 +22,14 @@ def _user():
 
 def test_ambient_refresh_requires_admin():
     with pytest.raises(HTTPException) as e:
-        asyncio.run(ambient_admin.trigger_ambient_refresh(info=_user(), repo_slug="x", model="m"))
+        _maybe_run(ambient_admin.trigger_ambient_refresh(info=_user(), repo_slug="x", model="m"))
     assert e.value.status_code == 403
 
 
 def test_ambient_refresh_calls_generate_and_returns_chars():
     with patch("mayring_core.memory.ambient.generate_ambient_snapshot",
                return_value="snapshot text 123") as gen:
-        out = asyncio.run(ambient_admin.trigger_ambient_refresh(
+        out = _maybe_run(ambient_admin.trigger_ambient_refresh(
             info=_admin(), repo_slug="myrepo", model="m", workspace_id="ws1"))
     assert gen.called
     assert out["generated"] is True

@@ -14,7 +14,7 @@ import src.api.routes.codebooks as cb
 
 
 def _run(c):
-    return asyncio.run(c)
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 
 
 def _seed(tmp_path: Path):

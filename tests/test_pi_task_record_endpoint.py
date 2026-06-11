@@ -1,4 +1,8 @@
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 import sqlite3
 from pathlib import Path
 
@@ -23,9 +27,9 @@ def test_record_pi_task_upserts_and_get_projection_has_no_updated_at(tmp_path: P
 
     ws = "ws-1"
     rec = dash._PiTaskRecord(job_id="pij_x", task_text="do X", status="queued")
-    asyncio.run(dash.record_pi_task(rec, workspace_id=ws))
+    _maybe_run(dash.record_pi_task(rec, workspace_id=ws))
     done = dash._PiTaskRecord(job_id="pij_x", task_text="do X", status="completed", result="OK")
-    asyncio.run(dash.record_pi_task(done, workspace_id=ws))
+    _maybe_run(dash.record_pi_task(done, workspace_id=ws))
 
     # The exact (fixed) GET projection must run and return the upserted row.
     rows = conn.execute(
@@ -50,7 +54,7 @@ def test_record_pi_task_scopes_by_workspace(tmp_path: Path, monkeypatch):
     conn = sqlite3.connect(str(db))
     monkeypatch.setattr(dash, "_conn", lambda: conn)
 
-    asyncio.run(dash.record_pi_task(dash._PiTaskRecord(job_id="a", status="completed"), workspace_id="ws-a"))
-    asyncio.run(dash.record_pi_task(dash._PiTaskRecord(job_id="b", status="completed"), workspace_id="ws-b"))
+    _maybe_run(dash.record_pi_task(dash._PiTaskRecord(job_id="a", status="completed"), workspace_id="ws-a"))
+    _maybe_run(dash.record_pi_task(dash._PiTaskRecord(job_id="b", status="completed"), workspace_id="ws-b"))
     n_a = conn.execute("SELECT COUNT(*) FROM pi_jobs WHERE workspace_id='ws-a'").fetchone()[0]
     assert n_a == 1, "record must be written under the caller's workspace"

@@ -1,13 +1,17 @@
 """Backward-compat regression: /pi-task response-schema unchanged after T3.
 
 All tests are async (anyio/asyncio) so the event loop is consistent across
-queue creation, handler setup, and endpoint invocation. Using asyncio.run()
+queue creation, handler setup, and endpoint invocation. Using _maybe_run()
 in a non-async test would create multiple isolated event loops and cause the
 worker tasks to be stranded on the wrong loop.
 """
 from __future__ import annotations
 
 import asyncio
+
+
+def _maybe_run(c):
+    return asyncio.run(c) if asyncio.iscoroutine(c) else c
 
 import pytest
 
