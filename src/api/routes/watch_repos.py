@@ -36,7 +36,7 @@ class WatchRepoRequest(BaseModel):
 
 
 @router.post("/stats/watch-repos")
-def set_watch_repo(
+async def set_watch_repo(
     req: WatchRepoRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:

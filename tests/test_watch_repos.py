@@ -46,7 +46,7 @@ def test_route_activate_triggers_ingest(store, monkeypatch):
     from src.api.routes import watch_repos as route
 
     with patch("src.api.routes.jobs.enqueue_populate", return_value="job-123") as enq:
-        out = (route.set_watch_repo(
+        out = asyncio.run(route.set_watch_repo(
             route.WatchRepoRequest(repo_slug="nileneb/foo", active=True, alerts=["ci"]),
             workspace_id="ws1"))
     assert enq.called and enq.call_args[0][0] == "nileneb/foo"

@@ -10,6 +10,7 @@ explicit ``workspace_id`` query param is given.
 """
 from __future__ import annotations
 
+import inspect as _inspect
 import functools as _functools
 import json as _json
 import time as _time
@@ -59,6 +60,11 @@ def _dashboard_ttl_cache(fn):
     # WHY(#363, event-loop): sync wrapper — als async lief jeder Cache-Miss
     # (SQLite-Scan) auf dem Event-Loop statt im FastAPI-Threadpool; ein
     # langsamer Scan starvte alle parallelen Requests (http=0 im Smoke).
+    if _inspect.iscoroutinefunction(fn):
+        raise TypeError(
+            f"{fn.__name__}: dashboard handlers must be sync (def) — async producers "
+            "would cache the coroutine object instead of its result")
+
     @_functools.wraps(fn)
     def _wrapper(**kwargs):
         key = fn.__name__ + ":" + repr(sorted(kwargs.items()))

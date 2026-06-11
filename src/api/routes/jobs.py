@@ -289,7 +289,7 @@ def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None 
 
 
 @router.post("/populate")
-def trigger_populate(
+async def trigger_populate(
     request: PopulateRequest,
     workspace_id: str = Depends(get_workspace),
 ) -> dict:

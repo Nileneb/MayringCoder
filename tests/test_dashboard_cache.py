@@ -68,7 +68,7 @@ def test_cache_keys_by_workspace_no_cross_tenant_bleed():
     calls: list[tuple] = []
 
     @dashboard._dashboard_ttl_cache
-    async def ep(*, workspace_id, limit=50):
+    def ep(*, workspace_id, limit=50):
         calls.append((workspace_id, limit))
         return {"ws": workspace_id}
 
@@ -90,7 +90,7 @@ def test_cache_expires_after_ttl():
     calls: list[int] = []
 
     @dashboard._dashboard_ttl_cache
-    async def ep(*, workspace_id):
+    def ep(*, workspace_id):
         calls.append(1)
         return {"n": len(calls)}
 

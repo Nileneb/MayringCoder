@@ -22,7 +22,13 @@ from pathlib import Path
 
 ROUTES_DIR = Path(__file__).resolve().parent.parent / "src" / "api" / "routes"
 
-_LOOP_CALLS = {"create_task", "ensure_future", "get_event_loop", "run_in_executor"}
+_LOOP_CALLS = {
+    "create_task", "ensure_future", "get_event_loop", "run_in_executor",
+    # Helpers, die intern asyncio.create_task aufrufen — Handler, die sie
+    # rufen, brauchen den Loop transitiv (CI-Fund nach der Konvertierung:
+    # trigger_populate/set_watch_repo/repo_events → "no running event loop").
+    "enqueue_populate", "_handle_event",
+}
 
 
 def _needs_event_loop(fn: ast.AsyncFunctionDef) -> bool:
