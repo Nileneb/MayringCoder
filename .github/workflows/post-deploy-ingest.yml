@@ -69,12 +69,14 @@ jobs:
             echo "::error::MCP_SERVICE_TOKEN not in $ENV_FILE"
             exit 1
           fi
-          # Retry up to 3 times — the container can return nginx HTML
-          # (502) during the first few seconds while Uvicorn finishes
-          # startup. Only the JSON response counts. Single-line python
+          # Retry up to 10 times à 15s (~2.5min) — the deploy kann den
+          # Container NACH dem initialen Health-OK nochmal recyclen
+          # (beobachtet 2026-06-12: alle 3 alten 10s-Retries fielen in
+          # dasselbe 502-Fenster und der Run failte trotz Wait-Step).
+          # Only the JSON response counts. Single-line python
           # to keep YAML scanner happy.
           job_id=""
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
             # X-Workspace-Id: bene — Service-Token defaultet seit
             # 2026-05-09 auf workspace='system' (Multi-Tenant-sicher).
             # Ohne den Header würde der Ingest in den 'system'-Bucket
@@ -93,10 +95,10 @@ jobs:
                 if [ -n "$job_id" ]; then break; fi
                 ;;
             esac
-            sleep 10
+            sleep 15
           done
           if [ -z "$job_id" ]; then
-            echo "::error::no job_id after 3 attempts — last response: $response"
+            echo "::error::no job_id after 10 attempts — last response: $response"
             exit 1
           fi
           echo "::notice::ingest job_id=$job_id queued; check /jobs/$job_id for progress"
