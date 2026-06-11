@@ -27,7 +27,7 @@ from src.api.dependencies import get_conn as _get_conn
 router = APIRouter()
 
 
-async def repo_event_principal(
+def repo_event_principal(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
     """Authorize a repo-event POST. Accepts (1) a GitHub Actions OIDC token from the
