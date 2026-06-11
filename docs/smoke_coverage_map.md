@@ -33,7 +33,7 @@ verifiziert, dass jedes closed Issue genau einen Eintrag hat.
 | 90 | Task-Feedback-Matrix | API: `task_feedback_matrix` |
 | 89 | Legacy Wiki entfernen | Code-only: dateien gelöscht (`wiki.py` etc.) |
 | 88 | OLLAMA_MODEL env-Bleed | Code-only: `src/model_router.py` |
-| 87 | Training-Data-Generator | **REOPENED** — `training_merge_endpoint` failt live |
+| 87 | Training-Data-Generator | API: `training_merge_endpoint` (resolved 2026-05-08, siehe Recently-Closed-Eintrag unten — Check ist live enforced) |
 | 86 | Mayring Plugin + Feedback Loop | API: `feedback_count_delta`, `stop_hook_e2e` |
 | 85 | GPU-Entlastung Batch-Delay | API: `jobs_progress_observability` |
 | 84 | Pipeline-Observability | API: `jobs_progress_observability` |
@@ -71,7 +71,7 @@ verifiziert, dass jedes closed Issue genau einen Eintrag hat.
 | 28 | Architektur-Entscheidungen | Meta |
 | 27 | MCP-basierte lokale Memory | API: `pi_tasks_schema` |
 | 26 | Prompt Hardening | Code-only: `prompts/` files |
-| 25 | Training-Pipeline | **REOPENED** via #87 (`training_merge_endpoint`) |
+| 25 | Training-Pipeline | API: `training_merge_endpoint` (via #87, resolved 2026-05-08) |
 | 24 | Categorizer Kategorien | API: `categorization_logging` (mistral runs) |
 | 23 | Similarity-Score 1.0 | Pytest: `tests/test_categorizer.py` |
 | 22 | Dead Code | Code-only: removed |
@@ -113,9 +113,7 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 
 ## Reopened (Acceptance not met)
 
-| # | Status | Smoke-Check |
-|---|---|---|
-| 92 | Retraining mayringqwen | offen, kein automatisierter Test (manueller Trainings-Run) |
+_Aktuell keine. Historisch: #92 (Retraining mayringqwen) → won't-fix 2026-05-12 (siehe Recently-Closed-Eintrag — Hauptmodell mistral:7b-instruct, Hebel liegt beim Reranker)._
 
 ## Production Bugs (tracker issues)
 
@@ -125,9 +123,7 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 
 ## Currently Open (parallel work)
 
-| # | Description |
-|---|---|
-| 141 | IGIO classifier rerun auf bestehende chunks (auto-close via igio-coverage-watch when ratio ≥ 0.5) |
+_Keine. #141 (IGIO-Backfill) auto-closed: ratio 0.59 ≥ 0.5-Ziel erreicht; Coverage via Smoke `igio_axis_on_chunks` enforced._
 
 ## Recently Closed (today, 2026-05-08)
 
@@ -151,7 +147,7 @@ Live verifiziert via `pytest tests/test_*` 158/158 passed @ 2026-05-08.
 |---|---|---|
 | 209 | Reranker-Training: rating-basiert statt binary | `tools/export_retrieval_dataset.py::_label_map` rating 1..5 → (label, sample_weight); `tools/train_reranker.py` `clf.fit(sample_weight=…)`; Pytest `tests/test_export_retrieval_dataset.py` (6 rating-weighted tests) — PR #216 |
 | 210 | Codebook-editor + style-auswahl | HINFÄLLIG durch task-based categorization (#215): kategorien beziehen sich auf den task/forschungsfrage — deduktiv = subkategorien des tasks, induktiv = kreative leistung via `prompts/mayring_induktiv.md`. `pi_categorize` nutzt die kanonischen `prompts/mayring_{deduktiv,induktiv,hybrid}.md` (PR #229). Kein UI-editor mehr nötig. |
-| 211 | Pi-Agent als first-class tool-replacement | ⚠️ **WIEDER OFFEN (Scope erweitert)** — read-only-Teil war fertig (`claude-plugin/agents/` subagent-def später dropped + 3 spezialisierte MCP-tools `pi_categorize`/`pi_judge_relevance`/`pi_summarize_for_memory` in `src/api/mcp_agent_tools.py` + CLAUDE.md decision-table; Pytest `tests/test_pi_specialized_tools.py` 14 tests — PR #218/#223/#229). #211 wurde danach auf **write+web+plan** erweitert (commit `03f1a4d` read-only-safe web_fetch+plan; write/exec via #266 mayring-pi-agent dual-mode) → Issue ist OFFEN, gehört NICHT in "Recently Closed". Coverage folgt beim Schließen. |
+| 211 | Pi-Agent als first-class tool-replacement | ⚠️ **WIEDER OFFEN (Scope erweitert)** — read-only-Teil war fertig (`claude-plugin/agents/` subagent-def später dropped + 3 spezialisierte MCP-tools `pi_categorize`/`pi_judge_relevance`/`pi_summarize_for_memory` in `src/api/mcp_agent_tools.py` + CLAUDE.md decision-table; Pytest `tests/test_pi_specialized_tools.py` 14 tests — PR #218/#223/#229). #211 wurde danach auf **write+web+plan** erweitert (commit `03f1a4d` read-only-safe web_fetch+plan; write/exec via #266 mayring-pi-agent dual-mode) und am 2026-05-23 mit dem #266-Repo-Split GESCHLOSSEN. Coverage: Pytest `tests/test_pi_specialized_tools.py` + Paket-Smoke `test_pi_agent_package_smoke` (#266 v0.1.3). |
 | 213 | Log-Endpoints ohne SSH (Phase A+B+C) | MayringCoder: `GET /admin/logs?service=...&since=...&grep=...` (admin-scope, rate-limit 5/min, secret-redaction) + MCP-tool `live_logs`; Pytest `tests/test_admin_logs.py` (20 tests) — PR #218. app.linn.games: `GET /api/mayring/logs` proxy — PR #345. Phase D (UI-tab) → app.linn.games separat |
 
 ## Recently Closed (today, 2026-05-12)
