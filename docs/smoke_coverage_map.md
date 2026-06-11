@@ -202,3 +202,10 @@ These smoke checks have no single backing issue — they verify the response sha
 | `text_model_switch_roundtrip` | `GET /stats/admin/text-models` | 200 + `active` (str) + `models` (list) |
 | `reranker_active_pair` | `GET /stats/admin/reranker-versions` | 200 + `active` is list of length 1–2 |
 | `categories_overview_reachable` | `GET /stats/categories-overview` | 200 + `total_categories` (int) + `workspaces` (list) + `unlinked` (list) |
+
+## Recently Closed (2026-06-12)
+
+| # | Description | Coverage |
+|---|---|---|
+| 363 | smoke FAIL (2) — micro_batch_indexes + project_link_boost_roundtrip http=0 | **API/Pytest** — Root cause: 102 `async def`-Handler ohne `await` (sync Ollama/SQLite-Arbeit auf dem Event-Loop des einzigen Uvicorn-Workers); EIN langsamer micro-batch-Summarize unter IGIO-Backfill-Last starvte alle parallelen Requests. Fix: Handler → `def` (Threadpool), `_dashboard_ttl_cache` sync (Commits e9e4bd5/d3893f0/73fc185/0fc6756). Gate `tests/test_no_blocking_async_handlers.py` (Red-Green: 102→0 Violations) + beide Smoke-Checks live grün (Run 27384247590). |
+| 364 | smoke FAIL (2) — coverage_map_complete + reranker_rollout_decision | **API** — Folge-Effekte des #363-Fixes: `reranker_rollout_decision` awaited das konvertierte `retrieval_ab` (500), `#141`-Map-Zeile war in Prosa umgewandelt. Beide in 0fc6756 behoben; Checks `reranker_rollout_decision` + `coverage_map_complete` live grün (Run 27384247590). |
