@@ -1081,7 +1081,7 @@ async def label_advisor(
 
 
 @router.post("/stats/admin/reranker-rollout-decision")
-async def reranker_rollout_decision(
+def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),
     days: int = 7,
     k: int = 5,
@@ -1115,7 +1115,7 @@ async def reranker_rollout_decision(
         _read_runtime_default, write_runtime_default,
     )
     from src.api.routes.retrieval_metrics import retrieval_ab as _ab
-    ab = await _ab(info=info, days=days, k=k)
+    ab = _ab(info=info, days=days, k=k)
     by_version = ab.get("by_version") or {}
     v1 = by_version.get("v1") or {}
     v2 = by_version.get("v2") or {}

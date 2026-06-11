@@ -123,7 +123,9 @@ _Aktuell keine. Historisch: #92 (Retraining mayringqwen) → won't-fix 2026-05-1
 
 ## Currently Open (parallel work)
 
-_Keine. #141 (IGIO-Backfill) auto-closed: ratio 0.59 ≥ 0.5-Ziel erreicht; Coverage via Smoke `igio_axis_on_chunks` enforced._
+| # | Description |
+|---|---|
+| 141 | IGIO classifier rerun — CLOSED: ratio 0.59 ≥ 0.5-Ziel erreicht (auto-close via igio-coverage-watch); Coverage via Smoke `igio_axis_on_chunks` enforced |
 
 ## Recently Closed (today, 2026-05-08)
 
