@@ -655,3 +655,23 @@ def test_notifications_hides_synthetic_smoke_probe_repos(seeded_db):
         else [n["repo"] for n in res.get("items", [])]
     assert all("smoke/repo-" not in r for r in repos), repos
     assert any("app.linn.games" in r for r in repos), repos
+
+
+def test_supersede_matches_across_repo_url_formats():
+    """Dieselben CI-Events kommen als 'https://github.com/Owner/x' UND 'Owner/x' an —
+    ein späterer Success in EINEM Format muss rote Zeilen BEIDER Formate ablösen
+    (stale-red-Regression 2026-06-13: zwei 16:58-Failures blieben ewig rot)."""
+    items = [
+        {"type": "repo_ci", "urgency": "green", "conclusion": "success",
+         "repo": "https://github.com/Nileneb/app.linn.games",
+         "workflow": "Build & Push Images", "fired_at": "2026-06-12T20:38:00+00:00"},
+        {"type": "repo_ci", "urgency": "red", "conclusion": "failure",
+         "repo": "https://github.com/Nileneb/app.linn.games",
+         "workflow": "Build & Push Images", "fired_at": "2026-06-12T16:58:33+00:00"},
+        {"type": "repo_ci", "urgency": "red", "conclusion": "failure",
+         "repo": "Nileneb/app.linn.games",
+         "workflow": "Build & Push Images", "fired_at": "2026-06-12T16:58:27+00:00"},
+    ]
+    dashboard._supersede_stale_reds(items)
+    assert all(n["urgency"] == "green" for n in items), items
+    assert items[1].get("superseded") and items[2].get("superseded")

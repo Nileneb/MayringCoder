@@ -364,6 +364,7 @@ def _process_reembed_queue(
             # chunk gone or deactivated — pull it off the queue, can't re-embed
             _log_done(cid, "skipped_missing")
             out["skipped_missing"] += 1
+            conn.commit()
             continue
         rec = dict(zip(cols, row))
         try:
@@ -379,6 +380,12 @@ def _process_reembed_queue(
         except Exception as e:  # isolate per-chunk; surface in counter, never abort
             _log.warning("reembed failed for %s: %s", cid[:12], e)
             out["failed"] += 1
+        # WHY(write-lock-starvation 2026-06-13): EIN End-Commit hielt den SQLite-
+        # Write-Lock über ALLE Embed-HTTP-Calls (Live-Lauf: 98s für 313 Chunks) —
+        # parallele /repo-events-Webhooks starben nach busy_timeout=10s mit
+        # "database is locked", deren CI-Events gingen verloren (best-effort-Sender).
+        # Per-Chunk-Commit hält den Lock nur Millisekunden.
+        conn.commit()
     conn.commit()
     return out
 

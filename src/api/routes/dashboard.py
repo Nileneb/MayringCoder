@@ -824,14 +824,18 @@ def _supersede_stale_reds(items: list[dict]) -> None:
     conclusion, so a fixed-then-green workflow still showed its old red rows — the user
     saw "2 red" in the Ampel while open_red was already 0 and live CI was green. Mutates
     `items` in place. Expects fired_at DESC order (first success per key = newest)."""
+    # WHY(format-drift 2026-06-13): dieselben CI-Events kommen in ZWEI Repo-Formaten an
+    # ('https://github.com/Owner/x' via repo-watch, 'Owner/x' via Webhook) — der rohe
+    # String-Match ließ rote Zeilen des jeweils anderen Formats für immer rot stehen.
+    # → über _norm_repo matchen (gleiche Kanonisierung wie der projects-Join).
     latest_success: dict[tuple[str, str], str] = {}
     for n in items:
         if n.get("type") == "repo_ci" and str(n.get("conclusion", "")).lower() == "success":
-            latest_success.setdefault((n.get("repo", ""), n.get("workflow", "")),
+            latest_success.setdefault((_norm_repo(n.get("repo", "")), n.get("workflow", "")),
                                       n.get("fired_at") or "")
     for n in items:
         if n.get("urgency") == "red" and n.get("type") == "repo_ci":
-            succ = latest_success.get((n.get("repo", ""), n.get("workflow", "")))
+            succ = latest_success.get((_norm_repo(n.get("repo", "")), n.get("workflow", "")))
             if succ and succ > (n.get("fired_at") or ""):
                 n["urgency"] = "green"
                 n["superseded"] = True
