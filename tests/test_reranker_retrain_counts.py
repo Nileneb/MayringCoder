@@ -63,3 +63,26 @@ def test_new_rows_since_train_falls_back_to_log_count_without_model(monkeypatch)
 
     # No model → new_rows == full windowed count (8 rows, all training-eligible).
     assert out["new_rows_since_train"] == out["retrieval_log_with_features"] == 8
+
+
+def test_counts_fall_back_to_latest_versioned_model(monkeypatch):
+    """Seit dem Versioning akkumulieren Trainings als rerank_v3..vN — das Legacy-
+    rerank_v2.json existiert nicht mehr. _load_model() (default v2) liefert dann
+    None; die Counts müssen aufs NEUESTE trainierte Modell zurückfallen statt
+    'nie trainiert' zu zeigen (Dashboard-Regression 2026-06-13)."""
+    conn = _conn_with_rows()
+    monkeypatch.setattr(ra, "_conn", lambda: conn)
+    monkeypatch.setattr(ra, "_is_admin", lambda info: True)
+    monkeypatch.setattr(rv2, "_load_model", lambda *a, **k: None)
+    monkeypatch.setattr(rv2, "list_reranker_versions", lambda: [
+        {"version": "v1", "baseline": True, "trained_at": None},
+        {"version": "v5", "trained_at": "2026-06-08T19:03:15+00:00",
+         "n_train": 20677, "n_test": 6410, "metrics": {"auc": 0.83}},
+        {"version": "v7", "trained_at": "2026-06-12T21:14:18+00:00",
+         "n_train": 21764, "n_test": 5937, "metrics": {"auc": 0.6}},
+    ])
+
+    out = _maybe_run(ra.training_data_counts(info=None, days=3650))
+    assert out["last_trained_at"] == "2026-06-12T21:14:18+00:00"
+    assert out["n_rows_at_last_train"] == 21764 + 5937
+    assert out["last_metrics"] == {"auc": 0.6}

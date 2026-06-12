@@ -140,14 +140,28 @@ def training_data_counts(
     n_rows_last_train: int = 0
     last_metrics: dict | None = None
     try:
-        from mayring_core.memory.reranker_v2 import _load_model
+        from mayring_core.memory.reranker_v2 import _load_model, list_reranker_versions
         m = _load_model()
+        if not isinstance(m, dict):
+            # WHY(versioning 2026-06-13): Trainings akkumulieren als rerank_v3..vN —
+            # das Legacy-Single-Slot rerank_v2.json existiert nicht mehr, _load_model()
+            # (default v2) lieferte None → Dashboard zeigte "nie trainiert" trotz v7.
+            # Fallback: das NEUESTE trainierte Modell aus der Versionsliste.
+            trained = [v for v in list_reranker_versions() if v.get("trained_at")]
+            if trained:
+                latest = max(trained, key=lambda v: str(v["trained_at"]))
+                m = {
+                    "trained_at": latest["trained_at"],
+                    "n_train": latest.get("n_train") or 0,
+                    "n_test": latest.get("n_test") or 0,
+                    "metrics": latest.get("metrics"),
+                }
         if isinstance(m, dict):
             last_trained_at = m.get("trained_at")
             n_rows_last_train = int(m.get("n_train", 0)) + int(m.get("n_test", 0))
             last_metrics = m.get("metrics")
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning("training-data-counts: model state unreadable: %s", e)
 
     if last_trained_at:
         # WHY(2026-05-28): count rows actually logged SINCE the model trained —

@@ -875,12 +875,20 @@ def notifications(
     ).fetchall():
         proj_by_repo[_norm_repo(sref)] = name
 
+    from src.api.routes.repo_events import _is_smoke_repo
+
     items = []
     for hid, ht, fired, payload, seen, acked in rows:
         d = _safe_json(payload)
         if not isinstance(d, dict):
             d = {}
         repo = str(d.get("repo", ""))
+        # WHY(false-positive-ampel 2026-06-13): die Smoke-Suite POSTet pro Lauf einen
+        # SYNTHETISCHEN workflow_run-failure (smoke/repo-<ts>), um den Alert-Pfad zu
+        # beweisen. Der Check asserted die POST-Response — das Artefakt gehört NIE in
+        # den User-Feed, sonst sieht jeder Smoke-Lauf wie ein echter roter CI aus.
+        if _is_smoke_repo(repo):
+            continue
         items.append({
             "id": hid,
             "urgency": classify_notification(ht, d),

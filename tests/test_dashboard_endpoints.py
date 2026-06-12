@@ -629,3 +629,29 @@ def test_make_job_writes_state_file(tmp_path, monkeypatch):
         assert payload[jid]["workspace_id"] == "user-2"
     finally:
         del job_queue._JOBS[jid]
+
+
+# ---------------------------------------------------------------------------
+# Smoke-Probe-Filter: synthetische smoke/repo-<ts>-Events nie im Ampel-Feed
+# ---------------------------------------------------------------------------
+
+def test_notifications_hides_synthetic_smoke_probe_repos(seeded_db):
+    """check_repo_event_surfaces POSTet pro Smoke-Lauf einen synthetischen
+    workflow_run-FAILURE für github.com/smoke/repo-<ts>. Der gehört NIE in den
+    User-Feed — sonst sieht jeder Smoke-Lauf wie ein echter roter CI aus."""
+    now = datetime.now(timezone.utc).isoformat()
+    for repo in ("https://github.com/smoke/repo-1781294737",
+                 "https://github.com/Nileneb/app.linn.games"):
+        seeded_db.execute(
+            "INSERT INTO hook_events (workspace_id, hook_type, fired_at, payload) "
+            "VALUES (?,?,?,?)",
+            ("system", "repo_ci", now,
+             json.dumps({"repo": repo, "conclusion": "failure", "workflow": "ci"})),
+        )
+    seeded_db.commit()
+
+    res = _run(dashboard.notifications(limit=50, info=_admin_info(), workspace_id="system"))
+    repos = [n["repo"] for n in res["notifications"]] if "notifications" in res \
+        else [n["repo"] for n in res.get("items", [])]
+    assert all("smoke/repo-" not in r for r in repos), repos
+    assert any("app.linn.games" in r for r in repos), repos
