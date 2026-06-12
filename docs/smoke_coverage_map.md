@@ -125,7 +125,7 @@ _Aktuell keine. Historisch: #92 (Retraining mayringqwen) → won't-fix 2026-05-1
 
 | # | Description |
 |---|---|
-| 141 | IGIO classifier rerun — CLOSED: ratio 0.59 ≥ 0.5-Ziel erreicht (auto-close via igio-coverage-watch); Coverage via Smoke `igio_axis_on_chunks` enforced |
+| 141 | IGIO classifier rerun — ~~Coverage via Smoke `igio_axis_on_chunks`~~ ENTFERNT (2026-06-12, IGIO-Rückbau): IGIO-Achse komplett abgeschafft, Check + Classifier gelöscht |
 
 ## Recently Closed (today, 2026-05-08)
 
@@ -139,7 +139,7 @@ _Aktuell keine. Historisch: #92 (Retraining mayringqwen) → won't-fix 2026-05-1
 
 | # | Description | Coverage |
 |---|---|---|
-| 182 | IGIO-Backfill hält SQLite-Lock zu lang | Pytest `tests/test_igio_backfill.py` chunked-commit + smoke `db_wal_journal_active` (Lock-acquire-Probe unter 1s) |
+| 182 | IGIO-Backfill hält SQLite-Lock zu lang | ENTFERNT (2026-06-12, IGIO-Rückbau): Backfill + `test_igio_backfill.py` gelöscht; chunked-commit-Pattern + smoke `db_wal_journal_active` bleiben generisch relevant |
 | 183 | Pi-Agent: Job-Verteilung & In-Process-Queue stabilisieren | API: `pi_tasks_schema` + `/pi-jobs/stats` (job_class p50/p95) + Pytest `tests/test_pi_queue.py` (3-lane priority routing, with_lanes(), classify_pi_job) |
 | 192 | Ollama-API-Skalierung: parallel-jobs + Pi-Worker-Pool | host: OLLAMA_NUM_PARALLEL=4 + MAX_LOADED_MODELS=3 (systemd override) · code: PiQueue 3-lane defaults 4/4/2 (PR #219) · resilience: cloud-fallback OLLAMA_CLOUD_API_KEY |
 

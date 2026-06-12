@@ -27,8 +27,7 @@ def _build_db(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.executescript("""
         CREATE TABLE chunks (
-            chunk_id TEXT PRIMARY KEY,
-            igio_axis TEXT
+            chunk_id TEXT PRIMARY KEY
         );
         CREATE TABLE context_feedback_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,32 +109,6 @@ def test_features_drop_sf_and_sl(tmp_path):
     assert {"v", "s", "r", "a"} <= set(feats)
 
 
-def test_igio_axis_one_hot_in_features(tmp_path):
-    """IGIO axis is the new training signal (Issue #180). Each chunk
-    must contribute its axis as one-hot, with 'unknown' as the
-    fallback for unclassified chunks."""
-    from tools.export_retrieval_dataset import export
-
-    conn = _build_db(tmp_path / "memory.db")
-    conn.execute("INSERT INTO chunks(chunk_id, igio_axis) VALUES('chk_classified','outcome')")
-    # chk_other not in chunks → fallback 'unknown'
-    _insert_event(
-        conn, "real q", ["chk_classified", "chk_other"],
-        {"chk_classified": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0},
-         "chk_other":      {"v": 0.6, "s": 0.4, "r": 0.7, "a": 0.0}},
-    )
-    conn.commit(); conn.close()
-
-    out = tmp_path / "ds.jsonl"
-    export(tmp_path / "memory.db", out, days=30, negative_mode="unlabeled")
-    rows = [json.loads(l) for l in out.read_text().splitlines()]
-    by_id = {r["chunk_id"]: r for r in rows}
-    assert by_id["chk_classified"]["features"]["igio_outcome"] == 1.0
-    assert by_id["chk_classified"]["features"]["igio_unknown"] == 0.0
-    assert by_id["chk_other"]["features"]["igio_unknown"] == 1.0
-    assert by_id["chk_other"]["features"]["igio_outcome"] == 0.0
-
-
 def test_label_uses_event_was_referenced_not_chunk_global(tmp_path):
     """Critical regression: the OLD label_map aggregated chunk_feedback
     rows into a per-chunk-id label, which made 9 chunks dominate the
@@ -188,7 +161,7 @@ def _export_to_jsonl(tmp_path, conn) -> list[dict]:
 def test_rating_5_sets_label_1_with_high_weight(tmp_path):
     db_path = tmp_path / "test.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')", ("chk_top",))
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)", ("chk_top",))
     _insert_event(conn, "real query", ["chk_top"],
                   {"chk_top": {"v": 0.7, "s": 0.5, "r": 0.3, "a": 0.0,
                                "pt": 0.0, "re": 0.0}},
@@ -207,7 +180,7 @@ def test_rating_5_sets_label_1_with_high_weight(tmp_path):
 def test_rating_1_sets_label_0_with_high_weight(tmp_path):
     db_path = tmp_path / "test.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')", ("chk_bad",))
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)", ("chk_bad",))
     _insert_event(conn, "real query", ["chk_bad"],
                   {"chk_bad": {"v": 0.6, "s": 0.4, "r": 0.5, "a": 0.0,
                                "pt": 0.0, "re": 0.0}},
@@ -225,7 +198,7 @@ def test_rating_3_is_omitted_no_signal(tmp_path):
     """Neutral 3★ ratings should NOT influence label — fall back to was_referenced + default weight."""
     db_path = tmp_path / "test.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')", ("chk_mid",))
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)", ("chk_mid",))
     _insert_event(conn, "real query", ["chk_mid"],
                   {"chk_mid": {"v": 0.5, "s": 0.5, "r": 0.5, "a": 0.0,
                                "pt": 0.0, "re": 0.0}},
@@ -243,7 +216,7 @@ def test_rating_3_is_omitted_no_signal(tmp_path):
 def test_no_rating_uses_was_referenced_default_weight(tmp_path):
     db_path = tmp_path / "test.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')", ("chk_no_fb",))
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)", ("chk_no_fb",))
     _insert_event(conn, "real query", ["chk_no_fb"],
                   {"chk_no_fb": {"v": 0.5, "s": 0.4, "r": 0.3, "a": 0.0,
                                  "pt": 0.0, "re": 0.0}},
@@ -260,7 +233,7 @@ def test_multiple_ratings_get_n_bonus(tmp_path):
     """3× 5★ feedback sollte weight > 1× 5★ haben (mehr confidence)."""
     db_path = tmp_path / "test.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')", ("chk_consensus",))
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)", ("chk_consensus",))
     _insert_event(conn, "real query", ["chk_consensus"],
                   {"chk_consensus": {"v": 0.7, "s": 0.5, "r": 0.5, "a": 0.0,
                                      "pt": 0.0, "re": 0.0}},
@@ -279,7 +252,7 @@ def test_legacy_positive_signal_maps_to_rating_4(tmp_path):
     """Pre-rating-migration callers used 'positive'/'negative' — accept those too."""
     db_path = tmp_path / "test.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')", ("chk_legacy",))
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)", ("chk_legacy",))
     _insert_event(conn, "real query", ["chk_legacy"],
                   {"chk_legacy": {"v": 0.4, "s": 0.4, "r": 0.4, "a": 0.0,
                                   "pt": 0.0, "re": 0.0}},
@@ -362,7 +335,7 @@ def test_explicit_rating_overrides_span_judge(tmp_path):
     Judge-Score — kein Down-Weight."""
     db_path = tmp_path / "memory.db"
     conn = _build_db(db_path)
-    conn.execute("INSERT INTO chunks (chunk_id, igio_axis) VALUES (?, '')",
+    conn.execute("INSERT INTO chunks (chunk_id) VALUES (?)",
                  ("chk_rated",))
     _insert_event(conn, "real query", ["chk_rated"],
                   {"chk_rated": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}},

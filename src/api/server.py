@@ -72,8 +72,8 @@ app.include_router(reports.router)
 app.include_router(_sync_router)
 from src.api.routes import dashboard as _dashboard
 app.include_router(_dashboard.router)
-from src.api.routes import igio_admin as _igio_admin
-app.include_router(_igio_admin.router)
+from src.api.routes import stats_admin as _stats_admin
+app.include_router(_stats_admin.router)
 from src.api.routes import model_router_admin as _model_router_admin
 app.include_router(_model_router_admin.router)
 from src.api.routes import wiki_second_opinion as _wiki_second_opinion

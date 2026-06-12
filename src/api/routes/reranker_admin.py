@@ -747,11 +747,11 @@ def relink_chunks(
     # Aktive Codebook-Kategorien + Embeddings (kanonischer Fetch).
     codebook_col = get_chroma_collection("codebook_categories")
     crows = conn.execute(
-        "SELECT id, name, igio_axis, parent_id, embedding_id FROM categories "
+        "SELECT id, name, parent_id, embedding_id FROM categories "
         "WHERE status='active' AND embedding_id != '' AND project_id IS NULL ORDER BY id"
     ).fetchall()
-    cats = [{"id": r[0], "name": r[1], "igio_axis": r[2], "parent_id": r[3],
-             "embedding_id": r[4]} for r in crows]
+    cats = [{"id": r[0], "name": r[1], "parent_id": r[2],
+             "embedding_id": r[3]} for r in crows]
     cat_pairs = _category_embeddings(codebook_col, cats)
     if not cat_pairs:
         return {"dry_run": False, "workspace_id": workspace_id, "links_written": 0,

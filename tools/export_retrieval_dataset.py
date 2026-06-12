@@ -84,25 +84,6 @@ def fetch_feedback_events(conn: sqlite3.Connection, days: int) -> list:
     ).fetchall()
 
 
-def _igio_axis_map(conn: sqlite3.Connection) -> dict[str, str]:
-    """Return {chunk_id → igio_axis} for chunks with a classified axis.
-
-    IGIO axis (issue/goal/intervention/outcome) is a strong retrieval
-    signal that vector similarity misses — outcome chunks get
-    referenced ~6× more often than intervention chunks in real
-    user-feedback data. Adding it as a feature lifted v4 model AUC
-    from 0.73 to 0.76 in offline eval.
-    """
-    out = {}
-    for cid, axis in conn.execute(
-        "SELECT chunk_id, igio_axis FROM chunks "
-        "WHERE igio_axis IS NOT NULL AND igio_axis != ''"
-    ):
-        if axis:
-            out[cid] = axis
-    return out
-
-
 def _label_map(
     conn: sqlite3.Connection, days: int
 ) -> dict[str, tuple[int, float]]:
@@ -157,15 +138,12 @@ def _label_map(
     return out
 
 
-# IGIO axes — one-hot encoded into features. 'unknown' covers chunks
-# without a classified axis (~92% today; backfill cron drives this down).
-IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # WHY(#187/2026-06-05): pt (predicted-topic) ist live im API-Response UND seit
 # 2026-06-05 im stage-Dict am Inferenz-Pfad → echtes lernbares Feature. re
 # (rationale-presence) RAUS: erst nach dem Scoring bekannt (wiki_edges-Query pro
 # Chunk), nie im stage-Dict → trainiert-aber-nie-genutzt + sein Negativ-Gewicht
 # (-0.67) rejectete das ganze v2-Modell. Nicht mehr exportieren.
-FEATURES_OUT = ("v", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
+FEATURES_OUT = ("v", "r", "a", "pt")
 
 # Span-Judge-Schwellen (Offline-Teacher, #SSA): nur Rows OHNE explizites
 # Human-Rating werden anhand des LLM-Relevanz-Scores korrigiert. Der
@@ -180,28 +158,18 @@ SPAN_HIGH = 0.75
 SpanJudgeFn = Callable[[sqlite3.Connection, str, "list[str]"], "dict[str, float]"]
 
 
-def _normalize_features(
-    feats: dict,
-    chunk_id: str,
-    igio_map: dict[str, str],
-) -> dict | None:
-    """Return retrieval features + IGIO one-hot for one (event, chunk) row.
+def _normalize_features(feats: dict) -> dict | None:
+    """Return retrieval features for one (event, chunk) row.
 
     Dropped vs the legacy 6-feature set:
       * `sf` and `sl`: target leakage. `sf` is computed from
         chunk_feedback which is the same source as the label — model
         was learning sf as proxy for the label (sf weight 8.77 in v2).
       * `f` (score_final): linear combination of others, multikollin.
-
-    Added:
-      * `igio_<axis>` one-hot: outcome-axis chunks get referenced ~6×
-        more often than intervention-axis chunks; a real retrieval
-        signal that pure vector similarity does not capture.
     """
     if not isinstance(feats, dict):
         return None
-    axis = igio_map.get(chunk_id, "unknown")
-    out = {
+    return {
         "v": float(feats.get("v", 0.0) or 0.0),
         "s": float(feats.get("s", 0.0) or 0.0),
         "r": float(feats.get("r", 0.0) or 0.0),
@@ -212,9 +180,6 @@ def _normalize_features(
         "pt": float(feats.get("pt", 0.0) or 0.0),
         "re": float(feats.get("re", 0.0) or 0.0),
     }
-    for a in IGIO_AXES:
-        out[f"igio_{a}"] = 1.0 if axis == a else 0.0
-    return out
 
 
 def export(
@@ -225,7 +190,6 @@ def export(
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
-        igio_map = _igio_axis_map(conn)
         # WHY(#209, rating-weighted): chunks die EXPLIZITES rating-feedback
         # haben bekommen einen sample_weight basierend auf der rating-skala
         # (5★ = strong positive, 1★ = strong negative). Chunks ohne explicit
@@ -272,7 +236,7 @@ def export(
                         conn, row["query"], list(chunks)
                     ) or {}
                 for cid in chunks:
-                    feats = _normalize_features(stage.get(cid), cid, igio_map)
+                    feats = _normalize_features(stage.get(cid))
                     if feats is None:
                         continue
                     # WHY(#209): rating-weight (1..5★) als sample_weight.

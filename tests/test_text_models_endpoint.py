@@ -1,7 +1,7 @@
 """Tests for GET /stats/admin/text-models + POST /stats/admin/text-model.
 
-Pattern mirrors test_igio_lens.py: call endpoint functions directly,
-monkeypatch module-level helpers, no TestClient.
+Pattern: call endpoint functions directly, monkeypatch module-level
+helpers, no TestClient.
 """
 from __future__ import annotations
 

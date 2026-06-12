@@ -1,22 +1,15 @@
-"""One-off prod cleanup of the two data-quality bugs fixed in commit bc110e2.
+"""One-off prod cleanup: merge near-duplicate research_questions.
 
-Both operations are idempotent and DRY-RUN by default — they print exactly what
-they would change and write nothing unless `--apply` is passed.
+The dedup bug let every prompt mint a new research_questions row. This clusters
+per workspace by the stored embedding (cosine >= --sim), keeps the row with the
+highest occurrence_count, sums counts, repoints research_question_chunk_links,
+and deletes the collapsed rows.
 
-  1. --igio : clear the bogus IGIO axis on `repo_file` (code) chunks. The
-              classifier used to force an axis (often 'goal') onto code; the
-              go-forward fix skips repo_file, this removes the historical mess.
-  2. --rq   : merge near-duplicate research_questions (the dedup bug let every
-              prompt mint a new row). Clusters per workspace by the stored
-              embedding (cosine >= --sim), keeps the row with the highest
-              occurrence_count, sums counts, repoints
-              research_question_chunk_links, deletes the collapsed rows.
+Idempotent and DRY-RUN by default — prints exactly what it would change and
+writes nothing unless `--apply` is passed. Usage inside the prod container:
 
-With no operation flag, both run. Usage inside the prod container:
-
-    python /app/tools/cleanup_rq_and_igio.py            # dry-run, both
-    python /app/tools/cleanup_rq_and_igio.py --apply     # write, both
-    python /app/tools/cleanup_rq_and_igio.py --igio --apply
+    python /app/tools/cleanup_rq.py            # dry-run
+    python /app/tools/cleanup_rq.py --apply    # write
 """
 from __future__ import annotations
 
@@ -35,27 +28,6 @@ def _cos(a: list[float], b: list[float]) -> float:
         da += x * x
         db += y * y
     return s / ((da ** 0.5) * (db ** 0.5) + 1e-9)
-
-
-def clear_igio_repo_file(db: sqlite3.Connection, apply: bool) -> None:
-    print("\n=== IGIO clear (repo_file chunks) ===")
-    before = db.execute(
-        "SELECT c.igio_axis, COUNT(*) FROM chunks c JOIN sources s ON c.source_id=s.source_id "
-        "WHERE s.source_type='repo_file' AND c.igio_axis!='' GROUP BY c.igio_axis ORDER BY 2 DESC"
-    ).fetchall()
-    total = sum(n for _, n in before)
-    print(f"repo_file chunks carrying an IGIO axis: {total}  by axis: {before}")
-    if not apply:
-        print("DRY-RUN — would clear all of the above (no write).")
-        return
-    # igio_classified_at is TEXT NOT NULL DEFAULT '' — reset to '' (NOT NULL).
-    cur = db.execute(
-        "UPDATE chunks SET igio_axis='', igio_confidence=0.0, igio_classified_at='' "
-        "WHERE igio_axis!='' AND source_id IN "
-        "(SELECT source_id FROM sources WHERE source_type='repo_file')"
-    )
-    db.commit()
-    print(f"APPLIED — cleared {cur.rowcount} rows.")
 
 
 def merge_rq_dupes(db: sqlite3.Connection, apply: bool, sim: float) -> None:
@@ -132,19 +104,13 @@ def merge_rq_dupes(db: sqlite3.Connection, apply: bool, sim: float) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--igio", action="store_true", help="run the IGIO repo_file clear")
-    ap.add_argument("--rq", action="store_true", help="run the research_question merge")
     ap.add_argument("--sim", type=float, default=0.85)
     ap.add_argument("--apply", action="store_true", help="write (default: dry-run)")
     ap.add_argument("--db", default=DB_PATH)
     args = ap.parse_args()
-    both = not (args.igio or args.rq)
     db = sqlite3.connect(args.db, timeout=30)
     db.execute("PRAGMA busy_timeout=20000")
-    if args.igio or both:
-        clear_igio_repo_file(db, args.apply)
-    if args.rq or both:
-        merge_rq_dupes(db, args.apply, args.sim)
+    merge_rq_dupes(db, args.apply, args.sim)
     db.close()
     if not args.apply:
         print("\n(DRY-RUN. Re-run with --apply to write.)")

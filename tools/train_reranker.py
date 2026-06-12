@@ -52,10 +52,6 @@ DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"
 #     the model to learn from actual retrieval signals.
 #   * `sl`: LLM-advisor score. ~70% of rows have sl=0.5 (default 'no
 #     signal yet') — almost constant, low information.
-# Added: igio_<axis> one-hot. IGIO axis (issue/goal/intervention/
-# outcome) is a real semantic discriminator missed by vector similarity
-# — empirically lifts AUC by +0.03 in offline eval.
-IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # WHY(#187): pt ist live im API-Response (score_predicted_topic) und seit 2026-06-05
 # auch im stage-Dict am Inferenz-Pfad → echtes lernbares Feature.
 # re (rationale_edge) RAUS 2026-06-05: rationale_edges werden erst NACH dem Scoring
@@ -63,7 +59,7 @@ IGIO_AXES = ("issue", "goal", "intervention", "outcome", "unknown")
 # im stage-Dict → das gelernte re-Gewicht lief immer auf re=0 (trainiert-aber-nie-genutzt).
 # Schlimmer: re trainierte negativ (-0.67) → Loader rejected das ganze v2-Modell →
 # v2 ging NIE live (0 v2-Traffic 2026-05-28). Ohne re kann v2 endlich laden.
-FEATURES = ("v", "r", "a", "pt") + tuple(f"igio_{a}" for a in IGIO_AXES)
+FEATURES = ("v", "r", "a", "pt")
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
@@ -73,7 +69,7 @@ MIN_POSITIVES = 10
 # SILENTLY rejects → permanent v1-fallback. We neutralize negative pt to 0.0
 # ('no signal', which the loader tolerates) so every written model is loadable.
 # v stays HARD-rejected below — its negative is a real label leak (#180), not a
-# weak-feature wobble. r and igio_* are NOT loader-gated, sign left untouched.
+# weak-feature wobble. r and a are NOT loader-gated, sign left untouched.
 _LOADER_GATED_WEAK = ("pt",)
 
 
@@ -165,8 +161,7 @@ def train(in_path: Path, out_path: Path) -> int:
     # default-C zu willkürlichen Vorzeichen-Flips zwischen den
     # korrelierten Features (so wurde v=-0.51 in v2 gelernt). Mit
     # C=0.1 schmiert ridge das Gewicht über die korrelierten Features
-    # → keine 'cancel-out' Vorzeichen mehr, IGIO-Features bekommen
-    # ihren echten Effekt-Anteil. AUC nahezu identisch zu unregulierter
+    # → keine 'cancel-out' Vorzeichen mehr. AUC nahezu identisch zu unregulierter
     # version; Weights sind interpretierbarer + multi-tenant-stabiler.
     clf = LogisticRegression(max_iter=500, class_weight="balanced", C=0.1)
     # WHY(#209): sample_weight führt rating-skala 1..5 als training-signal

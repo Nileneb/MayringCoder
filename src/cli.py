@@ -127,144 +127,6 @@ def _cmd_generate_wiki(args: argparse.Namespace, repo_url: str, ollama_url: str,
         print(f"Wiki 2.0 update skipped: {_e}")
 
 
-# WHY(#182, multi-tenant): IGIO-Backfill darf cross-tenant arbeiten wenn
-# Service-Token (ws='system') aufruft, sonst nur eigener workspace.
-# Vor dem Fix filterte die SQL hart auf workspace_id=current → bei
-# ws=system fand der Cron 0 chunks (99% leben in 'bene'-bucket) →
-# persisted=0/0 stündlich grün, Coverage hing bei 7.8% fest. Plus #182:
-# 1500-row-batch in einer Tx blockt SQLite > busy_timeout=5s und kollidiert
-# mit smoke-write-tests. Workaround heute: stick to limit=300 (cron default).
-def _cmd_classify_igio(args: argparse.Namespace, ollama_url: str, model: str) -> None:
-    """Backfill IGIO axes for unclassified active chunks.
-
-    Reads `chunks` rows where `igio_axis = ''` and `is_active = 1`, runs
-    `classify_chunk()` per row, persists the verdict back to the row when the
-    confidence clears `--igio-min-confidence`.
-
-    DBAdapter wraps sqlite3 with `row_factory = sqlite3.Row`, so rows are
-    Mapping-like and we always use key access.
-    """
-    from mayring_core.config import CACHE_DIR
-    from mayring_core.memory.store import init_memory_db
-    from src.wiki_v2.igio_classifier import IGIO_SKIP_SOURCE_TYPES, classify_chunk, now_iso
-
-    if not model:
-        print("Fehler: --classify-igio braucht ein --model.")
-        return
-
-    limit = max(1, int(getattr(args, "igio_limit", 200)))
-    threshold = float(getattr(args, "igio_min_confidence", 0.5))
-    conn = init_memory_db(CACHE_DIR / "memory.db")
-    workspace = resolve_cli_workspace(args, conn=conn, auto_create=False)
-
-    # Build NOT IN placeholders from IGIO_SKIP_SOURCE_TYPES so we never pull
-    # code/repo_file chunks into the classifier at all (primary gate).
-    skip_placeholders = ",".join("?" * len(IGIO_SKIP_SOURCE_TYPES))
-    skip_params = tuple(IGIO_SKIP_SOURCE_TYPES)
-
-    # IGIO-Backfill ist Maintenance: 'system' (Service-Token) operiert
-    # cross-tenant über ALLE chunks, jeder andere workspace nur eigene.
-    # Vorher filterte die Query immer auf workspace_id=current → der
-    # Cron triggerte mit ws=system, fand 0 chunks im system-bucket
-    # (99% leben in 'bene'), persisted=0/0 jede Stunde.
-    # JOIN sources: (a) exclude IGIO_SKIP_SOURCE_TYPES so code never enters the
-    # classifier, (b) fetch source_type for defense-in-depth in classify_chunk.
-    if workspace == "system":
-        rows = conn.execute(
-            f"SELECT c.chunk_id, c.text, c.category_labels, s.source_type "
-            f"FROM chunks c JOIN sources s ON c.source_id = s.source_id "
-            f"WHERE c.igio_axis = '' AND c.is_active = 1 AND c.text != '' "
-            f"AND s.source_type NOT IN ({skip_placeholders}) "
-            f"ORDER BY c.created_at DESC LIMIT ?",
-            skip_params + (limit,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f"SELECT c.chunk_id, c.text, c.category_labels, s.source_type "
-            f"FROM chunks c JOIN sources s ON c.source_id = s.source_id "
-            f"WHERE c.igio_axis = '' AND c.is_active = 1 AND c.text != '' "
-            f"AND c.workspace_id = ? "
-            f"AND s.source_type NOT IN ({skip_placeholders}) "
-            f"ORDER BY c.created_at DESC LIMIT ?",
-            (workspace,) + skip_params + (limit,),
-        ).fetchall()
-    if not rows:
-        print(f"[igio] Nichts zu klassifizieren (workspace={workspace}).")
-        conn.close()
-        return
-
-    print(f"[igio] {len(rows)} Chunks → Klassifikator (model={model})")
-    counts: dict[str, int] = {a: 0 for a in ("issue", "goal", "intervention", "outcome", "")}
-    persisted = 0
-    pending = 0
-    # WHY(#182): chunked commit alle 50 rows. Der vorherige single-Tx über
-    # 1500 UPDATEs blockierte SQLite > busy_timeout=5s und kollidierte mit
-    # smoke-write-tests (database is locked → 21 fails in #181). 50 ist
-    # Kompromiss: schnell genug damit andere Writer nicht 5s warten,
-    # langsam genug dass fsync-Overhead pro Commit den Throughput nicht
-    # zerstört. CHANGE WITH CARE — niedriger erhöht IO, höher reproduziert
-    # den Lock-Bug.
-    BATCH = 50
-    for r in rows:
-        cats = [c for c in (r["category_labels"] or "").split(",") if c]
-        verdict = classify_chunk(
-            r["text"], cats,
-            source_type=r["source_type"],
-            ollama_url=ollama_url, model=model,
-        )
-        counts[verdict.axis] = counts.get(verdict.axis, 0) + 1
-        if verdict.axis and verdict.confidence >= threshold:
-            conn.execute(
-                "UPDATE chunks SET igio_axis = ?, igio_confidence = ?, "
-                "igio_classified_at = ? WHERE chunk_id = ?",
-                (verdict.axis, verdict.confidence, now_iso(), r["chunk_id"]),
-            )
-            persisted += 1
-            pending += 1
-            if pending >= BATCH:
-                conn.commit()
-                pending = 0
-
-    conn.commit()
-    conn.close()
-    print(
-        f"[igio] persisted={persisted}/{len(rows)} | "
-        f"issue={counts.get('issue',0)} goal={counts.get('goal',0)} "
-        f"intervention={counts.get('intervention',0)} outcome={counts.get('outcome',0)} "
-        f"unclassified={counts.get('',0)}"
-    )
-
-
-def _cmd_generate_recap(args: argparse.Namespace) -> None:
-    """Render a markdown recap for a single issue id."""
-    from mayring_core.config import CACHE_DIR, WIKI_DIR
-    from mayring_core.memory.store import init_memory_db
-    from src.wiki_v2.recap_indexer import build_recap
-    from src.wiki_v2.recap_renderer import render_recap
-
-    issue_id = str(getattr(args, "generate_recap", "") or "").strip().lstrip("#")
-    if not issue_id:
-        print("Fehler: --generate-recap erwartet eine Issue-ID.")
-        return
-    workspace = resolve_cli_workspace(args)
-
-    conn = init_memory_db(CACHE_DIR / "memory.db")
-    recap = build_recap(issue_id, conn=conn, workspace_id=workspace)
-    conn.close()
-
-    md = render_recap(recap)
-    out_arg = getattr(args, "recap_out", None)
-    out_path = Path(out_arg) if out_arg else (WIKI_DIR / workspace / f"recap-{issue_id}.md")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(md, encoding="utf-8")
-    print(
-        f"[recap] issue=#{issue_id} workspace={workspace} → {out_path} "
-        f"(issue:{len(recap.issue_chunks)} interv:{len(recap.intervention_chunks)} "
-        f"out:{len(recap.outcome_chunks)} plans:{len(recap.plans)} "
-        f"commits:{len(recap.commits)})"
-    )
-
-
 def _cmd_wiki_history(args: argparse.Namespace) -> None:
     import sqlite3 as _sq
     from src.wiki_v2.history import WikiHistory
@@ -423,16 +285,13 @@ def main() -> None:
         args.mode in ("analyze", "overview")
         or (args.mode == "turbulence" and args.llm)
         or args.resolve_model_only
-        or getattr(args, "classify_igio", False)
-        # Ambient + Wiki + Recap rufen einen TEXT-Generator auf (Snapshot-
-        # Texte / Recap-Markdown). Ohne diese in _needs_llm bleibt
-        # `model = args.model or ""`, dann fällt der Sub-Caller selber
-        # auf das erste Ollama-Tag zurück — oft `all-minilm` (Embedding-
-        # Only), was /api/generate mit 400 quittiert. Beweis-Run
-        # 2026-05-09: ambient-job done aber 0 Snapshots geschrieben.
+        # Ambient + Wiki rufen einen TEXT-Generator auf (Snapshot-Texte).
+        # Ohne diese in _needs_llm bleibt `model = args.model or ""`, dann
+        # fällt der Sub-Caller selber auf das erste Ollama-Tag zurück — oft
+        # `all-minilm` (Embedding-Only), was /api/generate mit 400 quittiert.
+        # Beweis-Run 2026-05-09: ambient-job done aber 0 Snapshots geschrieben.
         or getattr(args, "generate_ambient", False)
         or getattr(args, "generate_wiki", False)
-        or getattr(args, "generate_recap", None)
     )
     # Modell-Auswahl über ModelRouter (DB/yaml-konfiguriert) statt der
     # alten resolve_model-Heuristik. Issue #88 verlangt explizit kein
@@ -485,8 +344,6 @@ def main() -> None:
         set_batch_delay(args.batch_delay)
 
     if not repo_url and not (args.ingest_issues or args.ingest_images or args.pi_task or args.generate_wiki
-                              or getattr(args, "classify_igio", False)
-                              or getattr(args, "generate_recap", None)
                               or getattr(args, "generate_training_data", None)):
         print("Fehler: Kein Repository angegeben. Nutze --repo oder setze GITHUB_REPO in .env")
         sys.exit(1)
@@ -539,8 +396,6 @@ def main() -> None:
     # Pipeline commands
     if args.populate_memory:                           run_populate_memory(args, repo_url, ollama_url, model); sys.exit(0)
     if args.generate_wiki:                             _cmd_generate_wiki(args, repo_url, ollama_url, model);  sys.exit(0)
-    if getattr(args, "classify_igio", False):          _cmd_classify_igio(args, ollama_url, model);            sys.exit(0)
-    if getattr(args, "generate_recap", None):          _cmd_generate_recap(args);                              sys.exit(0)
     if getattr(args, "wiki_history", False):           _cmd_wiki_history(args);                               sys.exit(0)
     if getattr(args, "wiki_team_activity", False):     _cmd_wiki_team_activity(args);                         sys.exit(0)
     if getattr(args, "wiki_history_cleanup", None) is not None: _cmd_wiki_history_cleanup(args);              sys.exit(0)

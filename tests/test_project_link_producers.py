@@ -92,7 +92,7 @@ def test_repo_event_chunk_links_to_project(tmp_path, monkeypatch):
     )
 
     from src.api.routes import repo_events as re_mod
-    re_mod._repo_event_chunk(conn, "ws-1", req, "issue")
+    re_mod._repo_event_chunk(conn, "ws-1", req)
 
     # Check chunk_project_links table
     rows = conn.execute(
@@ -120,7 +120,7 @@ def test_repo_event_chunk_no_project_no_link(tmp_path, monkeypatch):
     )
 
     from src.api.routes import repo_events as re_mod
-    re_mod._repo_event_chunk(conn, "ws-x", req, "issue")
+    re_mod._repo_event_chunk(conn, "ws-x", req)
 
     rows = conn.execute("SELECT * FROM chunk_project_links").fetchall()
     assert rows == [], "no project → no chunk_project_links row"
@@ -146,8 +146,8 @@ def test_two_repos_two_distinct_project_links(tmp_path, monkeypatch):
     req_cd = RepoEventRequest(event_type="workflow_run", repo="https://github.com/c/d",
                                sha="cc", conclusion="failure", workflow="ci")
 
-    re_mod._repo_event_chunk(conn, "ws-2", req_ab, "issue")
-    re_mod._repo_event_chunk(conn, "ws-2", req_cd, "issue")
+    re_mod._repo_event_chunk(conn, "ws-2", req_ab)
+    re_mod._repo_event_chunk(conn, "ws-2", req_cd)
 
     rows = conn.execute("SELECT chunk_id, project_id FROM chunk_project_links").fetchall()
     linked_projects = {r[1] for r in rows}

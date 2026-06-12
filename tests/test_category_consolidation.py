@@ -28,7 +28,7 @@ def _codebook_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.execute(
         "CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT, "
-        "igio_axis TEXT, parent_id INTEGER, embedding_id TEXT, status TEXT, project_id TEXT)"
+        "parent_id INTEGER, embedding_id TEXT, status TEXT, project_id TEXT)"
     )
     conn.execute(
         "CREATE TABLE chunk_categories (chunk_id TEXT, category_id INTEGER, "
@@ -36,8 +36,8 @@ def _codebook_conn() -> sqlite3.Connection:
     )
     for i, name in enumerate(["auth", "api", "db"], 1):
         conn.execute(
-            "INSERT INTO categories VALUES (?,?,?,?,?,?,?)",
-            (i, name, "", None, f"emb_{i}", "active", None),
+            "INSERT INTO categories VALUES (?,?,?,?,?,?)",
+            (i, name, None, f"emb_{i}", "active", None),
         )
     conn.commit()
     return conn

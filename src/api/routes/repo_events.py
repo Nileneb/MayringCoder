@@ -1,6 +1,6 @@
 """POST /repo-events — the reusable GitHub Action posts repo push/CI/security
 events here. Push re-ingests the newest version; CI/security are logged in
-hook_events + a lightweight searchable repo_event chunk (recall + IGIO-Lens).
+hook_events + a lightweight searchable repo_event chunk (recall).
 
 WHY(repo-watching C+D): closes the gap where only MayringCoder auto-ingested and
 gives every watched repo's CI/security a memory presence."""
@@ -114,13 +114,6 @@ def _resolve_workspace(conn, repo: str) -> str:
     return ws
 
 
-_AXIS = {
-    ("workflow_run", "failure"): "issue",
-    ("workflow_run", "success"): "outcome",
-    ("security", None): "issue",
-}
-
-
 def _record_repo_event(conn, workspace_id: str, hook_type: str, req: RepoEventRequest) -> None:
     """Log a CI/security event into hook_events (reuse payload JSON, NO migration).
 
@@ -147,18 +140,15 @@ def _record_repo_event(conn, workspace_id: str, hook_type: str, req: RepoEventRe
     conn.commit()
 
 
-def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str) -> None:
-    """Insert a lightweight, searchable source+chunk for a CI/security event,
-    tagged with the deterministic igio axis (NO LLM in the hot path).
+def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest) -> None:
+    """Insert a lightweight, searchable source+chunk for a CI/security event.
 
-    WHY(repo-watching): gives every watched repo's CI/security a memory presence
-    (recall + IGIO-Lens). igio_axis is written via update_chunk_igio_axis because
-    insert_chunk does not persist igio columns.
+    WHY(repo-watching): gives every watched repo's CI/security a memory presence (recall).
     WHY(C3 project-link): after insert, links the chunk to the matching project so
     project_match boost fires in retrieval. Fail-soft: a missing project or DB error
     is logged and skipped — the chunk is always created regardless."""
     import logging as _log_re
-    from mayring_core.memory.store import upsert_source, insert_chunk, update_chunk_igio_axis
+    from mayring_core.memory.store import upsert_source, insert_chunk
     from mayring_core.memory.schema import Source, Chunk
     from src.api.routes.projects import canonical_repo_ref
     now = datetime.now(timezone.utc).isoformat()
@@ -179,8 +169,6 @@ def _repo_event_chunk(conn, workspace_id: str, req: RepoEventRequest, axis: str)
         ordinal=0, text=text, text_hash=thash, created_at=now, workspace_id=workspace_id,
     )
     insert_chunk(conn, chunk, workspace_id=workspace_id)
-    if axis:
-        update_chunk_igio_axis(conn, chunk.chunk_id, axis, confidence=0.9)
 
     # Link chunk → project (C3 producer A)
     try:
@@ -211,9 +199,8 @@ def _handle_event(conn, workspace_id: str, req: RepoEventRequest) -> dict:
 
     hook_type = "repo_ci" if req.event_type == "workflow_run" else "repo_security"
     _record_repo_event(conn, workspace_id, hook_type, req)
-    axis = _AXIS.get((req.event_type, req.conclusion)) or _AXIS.get((req.event_type, None)) or ""
-    _repo_event_chunk(conn, workspace_id, req, axis)
-    return {"ok": True, "action": hook_type, "workspace_id": workspace_id, "igio_axis": axis}
+    _repo_event_chunk(conn, workspace_id, req)
+    return {"ok": True, "action": hook_type, "workspace_id": workspace_id}
 
 
 @router.post("/repo-events")

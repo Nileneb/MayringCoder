@@ -39,7 +39,7 @@ def _generate_via_queue(args: tuple, kwargs: dict) -> str | None:
     hitting Ollama directly. Returns the content on success, or ``None`` to signal
     fail-soft fallback to the direct path (already logged).
 
-    WHY(#1): the ingest subprocess is the dominant generate load (categorize/igio);
+    WHY(#1): the ingest subprocess is the dominant generate load (categorize);
     funnelling it through /pi/run gives ONE bounded, observable, worker-delegatable
     entry. Determinism is preserved by forwarding the caller's ``options`` verbatim;
     ``num_predict`` is merged INTO options so it overrides the handler's 1024 cap

@@ -1,7 +1,7 @@
 """Tests for the new reranker-active endpoints (Task 7).
 
-Mirrors tests/test_igio_lens.py: asyncio.run + TokenInfo(workspace_id="system",
-scopes=("*",)) for admin, monkeypatch MAYRING_CACHE_DIR.
+Pattern: asyncio.run + TokenInfo(workspace_id="system", scopes=("*",)) for
+admin, monkeypatch MAYRING_CACHE_DIR.
 """
 from __future__ import annotations
 

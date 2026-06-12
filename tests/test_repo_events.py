@@ -152,7 +152,7 @@ def test_security_event_records_and_dedups_with_none_fields(monkeypatch, tmp_pat
         from src.api import server as srv; srv.app.dependency_overrides.clear()
 
 
-def test_workflow_run_failure_creates_issue_chunk(monkeypatch, tmp_path):
+def test_workflow_run_failure_creates_chunk(monkeypatch, tmp_path):
     client = _make_repo_events_client(monkeypatch, tmp_path)
     from src.api.dependencies import get_conn
     try:
@@ -160,15 +160,15 @@ def test_workflow_run_failure_creates_issue_chunk(monkeypatch, tmp_path):
             json={"event_type": "workflow_run", "repo": "https://github.com/a/b",
                   "sha": "c0ffee", "conclusion": "failure", "workflow": "tests"})
         rows = get_conn().execute(
-            "SELECT text, igio_axis FROM chunks c JOIN sources s ON c.source_id=s.source_id "
+            "SELECT text FROM chunks c JOIN sources s ON c.source_id=s.source_id "
             "WHERE s.source_type='repo_event'").fetchall()
         assert rows, "a repo_event chunk must be created"
-        assert any(r[1] == "issue" and "tests" in r[0] for r in rows)
+        assert any("tests" in r[0] for r in rows)
     finally:
         from src.api import server as srv; srv.app.dependency_overrides.clear()
 
 
-def test_workflow_run_success_creates_outcome_chunk(monkeypatch, tmp_path):
+def test_workflow_run_success_creates_chunk(monkeypatch, tmp_path):
     client = _make_repo_events_client(monkeypatch, tmp_path)
     from src.api.dependencies import get_conn
     try:
@@ -176,14 +176,14 @@ def test_workflow_run_success_creates_outcome_chunk(monkeypatch, tmp_path):
             json={"event_type": "workflow_run", "repo": "https://github.com/a/b",
                   "sha": "beef", "conclusion": "success", "workflow": "deploy"})
         rows = get_conn().execute(
-            "SELECT igio_axis FROM chunks c JOIN sources s ON c.source_id=s.source_id "
+            "SELECT text FROM chunks c JOIN sources s ON c.source_id=s.source_id "
             "WHERE s.source_type='repo_event'").fetchall()
-        assert any(r[0] == "outcome" for r in rows)
+        assert any("deploy" in r[0] for r in rows)
     finally:
         from src.api import server as srv; srv.app.dependency_overrides.clear()
 
 
-def test_security_event_creates_issue_chunk(monkeypatch, tmp_path):
+def test_security_event_creates_chunk(monkeypatch, tmp_path):
     client = _make_repo_events_client(monkeypatch, tmp_path)
     from src.api.dependencies import get_conn
     try:
@@ -191,9 +191,9 @@ def test_security_event_creates_issue_chunk(monkeypatch, tmp_path):
             json={"event_type": "security", "repo": "https://github.com/a/b",
                   "severity": "high", "summary": "CVE-1"})
         rows = get_conn().execute(
-            "SELECT text, igio_axis FROM chunks c JOIN sources s ON c.source_id=s.source_id "
+            "SELECT text FROM chunks c JOIN sources s ON c.source_id=s.source_id "
             "WHERE s.source_type='repo_event'").fetchall()
-        assert any(r[1] == "issue" and "CVE-1" in r[0] for r in rows)
+        assert any("CVE-1" in r[0] for r in rows)
     finally:
         from src.api import server as srv; srv.app.dependency_overrides.clear()
 

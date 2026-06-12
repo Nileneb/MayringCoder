@@ -5,7 +5,7 @@ dem Event-Loop aus. Ein Handler ohne ``await``, der sync-Arbeit macht
 (Ollama-HTTP, SQLite, Chroma), blockiert damit den EINZIGEN Uvicorn-Worker
 für die gesamte Dauer — alle parallelen Requests laufen in Timeouts (http=0).
 Genau das hat smoke #363 produziert: EIN langsamer micro-batch-Summarize
-unter IGIO-Backfill-Last → micro_batch_indexes UND project_link_boost_roundtrip
+unter Last → micro_batch_indexes UND project_link_boost_roundtrip
 gleichzeitig rot. #343 hat dieselbe Klasse in devices.py gefixt; dieser Test
 verhindert die Wiederkehr in ALLEN Route-Files: sync-Arbeit gehört in
 ``def``-Handler (FastAPI-Threadpool).

@@ -26,15 +26,15 @@ def _now() -> str:
 
 def _category_row(r) -> dict:
     return {
-        "id": r[0], "name": r[1], "igio_axis": r[2],
-        "parent_id": r[3], "description": r[4], "status": r[5], "source": r[6],
-        "evidence_count": r[7], "embedding_id": r[8], "risk_level": r[9],
-        "languages": json.loads(r[10] or "[]"), "patterns": json.loads(r[11] or "[]"),
-        "project_id": r[12],
+        "id": r[0], "name": r[1],
+        "parent_id": r[2], "description": r[3], "status": r[4], "source": r[5],
+        "evidence_count": r[6], "embedding_id": r[7], "risk_level": r[8],
+        "languages": json.loads(r[9] or "[]"), "patterns": json.loads(r[10] or "[]"),
+        "project_id": r[11],
     }
 
 
-_CAT_COLS = ("id, name, igio_axis, parent_id, description, status, "
+_CAT_COLS = ("id, name, parent_id, description, status, "
              "source, evidence_count, embedding_id, risk_level, languages, patterns, "
              "project_id")
 
@@ -50,7 +50,6 @@ class ProposalRequest(BaseModel):
     chunk_id: str | None = None
     paraphrase: str = ""
     parent_hint_id: int | None = None
-    igio_axis: str | None = None
     project_id: str | None = None
 
 
@@ -106,7 +105,7 @@ def list_categories(
 def record_proposal(
     conn, category_name: str, *,
     paraphrase: str = "", parent_hint_id: int | None = None,
-    igio_axis: str | None = None, pi_job_id: str = "",
+    pi_job_id: str = "",
     chunk_id: str | None = None, embedding_id: str = "",
     project_id: str | None = None,
 ) -> int:
@@ -124,10 +123,10 @@ def record_proposal(
         # WHY(#270): induzierte Kategorie startet als 'proposed' (parent_hint PFLICHT
         # bei induktiv — der Caller liefert ihn), bis evidence sie auto-promotet.
         conn.execute(
-            "INSERT INTO categories(name, igio_axis, parent_id, "
+            "INSERT INTO categories(name, parent_id, "
             "description, status, source, evidence_count, embedding_id, project_id) "
-            "VALUES (?,?,?,?, 'proposed','induced', 1, ?, ?)",
-            (category_name, igio_axis, parent_hint_id,
+            "VALUES (?,?,?, 'proposed','induced', 1, ?, ?)",
+            (category_name, parent_hint_id,
              paraphrase[:200], embedding_id, project_id))
         cat_id = conn.execute("SELECT id FROM categories WHERE name=?",
                               (category_name,)).fetchone()[0]
@@ -152,7 +151,7 @@ def create_proposal(
     conn = _get_conn()
     cat_id = record_proposal(
         conn, req.category_name, paraphrase=req.paraphrase,
-        parent_hint_id=req.parent_hint_id, igio_axis=req.igio_axis,
+        parent_hint_id=req.parent_hint_id,
         pi_job_id=req.pi_job_id, chunk_id=req.chunk_id, project_id=req.project_id)
     conn.commit()
     return {"category_id": cat_id, "status": "recorded"}
@@ -345,7 +344,7 @@ def process_text(
     return {
         "category_id": res.category_id, "category_name": res.category_name,
         "decision": res.decision, "confidence": res.confidence,
-        "igio_axis": res.igio_axis, "proposed": res.proposed,
+        "proposed": res.proposed,
     }
 
 

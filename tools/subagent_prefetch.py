@@ -2,7 +2,7 @@
 
 Subagents bekommen ihre eigene Sub-Session und sehen den UserPromptSubmit-
 Hook NICHT — d.h. das gesamte Memory-System (reranker-v2, rating-feedback,
-IGIO, rationale) ist für sie unsichtbar wenn sie nicht selbst /memory/search
+rationale) ist für sie unsichtbar wenn sie nicht selbst /memory/search
 aufrufen.
 
 Dieses Skript schliesst die Lücke OHNE den Subagent-Kontext mit

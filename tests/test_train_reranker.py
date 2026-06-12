@@ -21,16 +21,9 @@ def _write_dataset(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(r) + "\n")
 
 
-def _row(v: float, s: float, igio: str, label: int) -> dict:
+def _row(v: float, s: float, label: int) -> dict:
     """One training row in the v3-feature schema."""
-    feats = {
-        "v": v, "s": s, "r": 0.5, "a": 0.0,
-        "igio_issue": 1.0 if igio == "issue" else 0.0,
-        "igio_goal": 1.0 if igio == "goal" else 0.0,
-        "igio_intervention": 1.0 if igio == "intervention" else 0.0,
-        "igio_outcome": 1.0 if igio == "outcome" else 0.0,
-        "igio_unknown": 1.0 if igio == "unknown" else 0.0,
-    }
+    feats = {"v": v, "s": s, "r": 0.5, "a": 0.0, "pt": 0.0}
     return {"chunk_id": f"c_{v}_{s}", "features": feats, "label": label}
 
 
@@ -43,10 +36,10 @@ def test_healthy_data_writes_model(tmp_path):
     rows = []
     # 60 positives where high v + high s → strong positive signal
     for i in range(60):
-        rows.append(_row(0.8, 0.7, "outcome", 1))
+        rows.append(_row(0.8, 0.7, 1))
     # 60 negatives where low v + low s
     for i in range(60):
-        rows.append(_row(0.1, 0.1, "intervention", 0))
+        rows.append(_row(0.1, 0.1, 0))
     in_path = tmp_path / "ds.jsonl"
     out_path = tmp_path / "model.json"
     _write_dataset(in_path, rows)
@@ -70,9 +63,9 @@ def test_rejects_negative_vector_weight(tmp_path):
     rows = []
     # Pattern: high v ↔ label=0, low v ↔ label=1 (inverted signal)
     for i in range(60):
-        rows.append(_row(0.1, 0.7, "outcome", 1))
+        rows.append(_row(0.1, 0.7, 1))
     for i in range(60):
-        rows.append(_row(0.9, 0.1, "intervention", 0))
+        rows.append(_row(0.9, 0.1, 0))
     in_path = tmp_path / "ds.jsonl"
     out_path = tmp_path / "model.json"
     _write_dataset(in_path, rows)
@@ -95,8 +88,8 @@ def test_rejection_preserves_existing_model(tmp_path):
     original_mtime = out_path.stat().st_mtime
 
     # Bad data → reject
-    rows = [_row(0.1, 0.1, "outcome", 1) for _ in range(60)]
-    rows += [_row(0.9, 0.9, "intervention", 0) for _ in range(60)]
+    rows = [_row(0.1, 0.1, 1) for _ in range(60)]
+    rows += [_row(0.9, 0.9, 0) for _ in range(60)]
     in_path = tmp_path / "ds.jsonl"
     _write_dataset(in_path, rows)
 
@@ -112,18 +105,18 @@ def test_neutralizes_negative_pt_so_model_loads():
     """Root cause of 'v2 never live' (2026-05-28): the trainer wrote models with
     a negative pt (and the now-removed re) that the LOADER then silently rejected
     → v1 fallback. Negative pt must be clamped to 0 (loader tolerates 0); v/s and
-    the non-gated r/igio_* weights stay untouched. re ist seit 2026-06-05 kein
+    the non-gated r/a weights stay untouched. re ist seit 2026-06-05 kein
     Feature mehr → nicht mehr geclampt."""
     from tools.train_reranker import _neutralize_weak_negatives
 
     w = {"v": 0.5, "s": 1.0, "pt": -0.3,
-         "r": -0.2847, "igio_goal": -1.0}
+         "r": -0.2847, "a": -1.0}
     out = _neutralize_weak_negatives(w)
     # loader-gated weak feature neutralized
     assert out["pt"] == 0.0
     # NOT loader-gated → learned sign preserved
     assert out["r"] == -0.2847
-    assert out["igio_goal"] == -1.0
+    assert out["a"] == -1.0
     # v/s never clamped here (their negative is a hard-reject elsewhere)
     assert out["v"] == 0.5 and out["s"] == 1.0
 

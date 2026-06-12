@@ -5,7 +5,7 @@ import asyncio
 import datetime
 
 from mayring_core.memory.store import init_memory_db
-import src.api.routes.igio_admin as ia
+import src.api.routes.stats_admin as ia
 from src.api.jwt_auth import TokenInfo
 
 
@@ -96,4 +96,4 @@ def test_admin_sees_linked_fields(tmp_path, monkeypatch):
     for ws_entry in res["workspaces"]:
         for goal_entry in ws_entry["goals"]:
             for cat in goal_entry["categories"]:
-                assert {"id", "name", "status", "igio_axis", "source", "evidence_count", "chunk_count"} <= set(cat)
+                assert {"id", "name", "status", "source", "evidence_count", "chunk_count"} <= set(cat)

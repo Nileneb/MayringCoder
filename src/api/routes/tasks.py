@@ -31,12 +31,6 @@ def list_tasks(status: str | None = None, tag: str | None = None,
             "tasks": _t.list_tasks(_get_conn(), workspace_id, status=status, tag=tag, priority=priority)}
 
 
-@router.get("/tasks/goals")
-def list_workspace_goals(workspace_id: str = Depends(get_workspace)) -> dict:
-    return {"workspace_id": workspace_id,
-            "goals": _t.list_workspace_goals(_get_conn(), workspace_id)}
-
-
 @router.patch("/tasks/by-external/{external_id}")
 def update_task_by_external(external_id: str, req: TaskUpdateRequest,
                                   workspace_id: str = Depends(get_workspace)) -> dict:

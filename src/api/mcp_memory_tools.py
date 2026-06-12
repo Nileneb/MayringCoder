@@ -99,7 +99,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                     context_text=result.get("prompt_context", ""),
                     query=query, workspace_id=ws)
             except (sqlite3.OperationalError, sqlite3.IntegrityError) as log_exc:
-                # WHY(v2-stufe2.1): das ist Telemetrie-Insert für IGIO,
+                # WHY(v2-stufe2.1): das ist Telemetrie-Insert (context-injection-log),
                 # niemals der hot-path. Schlucken nur konkreten DB-Klassen,
                 # alles andere (z.B. unerwartetes JSON-Encoding) muss laut.
                 import logging as _logging

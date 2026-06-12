@@ -11,7 +11,7 @@ docs are exempt — the rule is "src/ uses ModelRouter, period."
 
 The original Issue #88 fix removed the read from src/model_router.py.
 A later round of new admin endpoints reintroduced it in 4 files
-(pi_worker.py, igio_admin.py, mcp_second_opinion.py,
+(pi_worker.py, stats_admin.py, mcp_second_opinion.py,
 wiki_second_opinion.py) — caught by post-deploy audit, fixed in the
 same commit that added this test. Without the test, the next feature
 that needs a default model name will silently re-introduce it again.

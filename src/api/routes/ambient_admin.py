@@ -3,8 +3,8 @@
 WHY(2026-05-30 audit): `generate_ambient_snapshot()` was only ever called from
 the CLI — no cron/scheduler in prod — so `build_context()` always returned ""
 and the entire ambient memory layer was a no-op in production. This endpoint runs
-the same code path so a self-hosted cron (mirror of igio-backfill) can keep
-snapshots fresh. Admin/service-token gated.
+the same code path so a self-hosted cron can keep snapshots fresh.
+Admin/service-token gated.
 """
 from __future__ import annotations
 

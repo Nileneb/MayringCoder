@@ -3,7 +3,6 @@
 1. category_hint boost in _rerank (was reviewer-finding #1 — feature
    tot ohne diesen wire-up).
 2. cloud-primary routing in chat() / generate() — model-mapping correct.
-3. IGIO-intent detection + outcome-boost.
 
 Diese features wurden heute eingefügt aber von der existing test-suite
 nicht abgedeckt (reviewer-finding #8).
@@ -174,79 +173,3 @@ def test_cloud_routing_off_at_zero_ratio(monkeypatch):
     monkeypatch.setattr(oc, "_CLOUD_PRIMARY_RATIO", 0.0)
     for _ in range(100):
         assert oc._should_route_cloud_primary() is False
-
-
-# ---------------------------------------------------------------------------
-# 4) IGIO-intent detection + outcome-boost (user-feedback "outcome wird
-#    nirgendwo genutzt")
-# ---------------------------------------------------------------------------
-
-def test_detect_igio_intent_outcome_de():
-    from mayring_core.memory.retrieval import detect_igio_intent
-    assert detect_igio_intent("Was kam dabei raus?") == "outcome"
-    assert detect_igio_intent("Welche Konsequenzen hat das?") == "outcome"
-    assert detect_igio_intent("Was war das ergebnis der refactoring?") == "outcome"
-    assert detect_igio_intent("Wie war die wirkung auf die latenz?") == "outcome"
-
-
-def test_detect_igio_intent_outcome_en():
-    from mayring_core.memory.retrieval import detect_igio_intent
-    assert detect_igio_intent("what happened after the deploy?") == "outcome"
-    assert detect_igio_intent("Show me the results") == "outcome"
-    assert detect_igio_intent("what was the impact?") == "outcome"
-
-
-def test_detect_igio_intent_issue():
-    from mayring_core.memory.retrieval import detect_igio_intent
-    assert detect_igio_intent("Was ist das Problem mit der auth?") == "issue"
-    assert detect_igio_intent("warum failed der test?") == "issue"
-    assert detect_igio_intent("what's the root cause?") == "issue"
-
-
-def test_detect_igio_intent_intervention():
-    from mayring_core.memory.retrieval import detect_igio_intent
-    assert detect_igio_intent("wie implementieren wir das?") == "intervention"
-    assert detect_igio_intent("how do I fix this?") == "intervention"
-
-
-def test_detect_igio_intent_none_for_generic_query():
-    from mayring_core.memory.retrieval import detect_igio_intent
-    assert detect_igio_intent("zeig mir den code") is None
-    assert detect_igio_intent("xyz") is None
-    assert detect_igio_intent("") is None
-
-
-def test_rerank_outcome_chunk_boosted_with_outcome_intent():
-    """Outcome-chunk muss höher ranken als non-outcome bei outcome-intent."""
-    from mayring_core.memory.retrieval import _rerank
-    from mayring_core.memory.schema import Chunk
-
-    chunk_outcome = Chunk(
-        chunk_id="chk_out", source_id="s1", chunk_level="function",
-        ordinal=0, text="test passed in 2s", category_labels=["testing"],
-        igio_axis="outcome", workspace_id="default",
-    )
-    chunk_intervention = Chunk(
-        chunk_id="chk_int", source_id="s2", chunk_level="function",
-        ordinal=0, text="implementation steps", category_labels=["api"],
-        igio_axis="intervention", workspace_id="default",
-    )
-    vs = {"chk_out": 0.5, "chk_int": 0.5}
-    ss = {"chk_out": 0.5, "chk_int": 0.5}
-
-    out_with_intent = _rerank(
-        [chunk_outcome, chunk_intervention], vs, ss,
-        top_k=2, conn=_empty_conn(), igio_intent="outcome",
-    )
-    out_no_intent = _rerank(
-        [chunk_outcome, chunk_intervention], vs, ss,
-        top_k=2, conn=_empty_conn(),
-    )
-
-    score_out_intent = next(r for r in out_with_intent if r.chunk_id == "chk_out").score_final
-    score_int_intent = next(r for r in out_with_intent if r.chunk_id == "chk_int").score_final
-    assert score_out_intent > score_int_intent
-
-    score_out_baseline = next(r for r in out_no_intent if r.chunk_id == "chk_out").score_final
-    # Boost ist _IGIO_INTENT_BOOST = 0.10
-    assert score_out_intent - score_out_baseline >= 0.09

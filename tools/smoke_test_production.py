@@ -747,60 +747,6 @@ def check_retrieval_reasons_field(api: str, token: str) -> CheckResult:
     )
 
 
-def check_igio_axis_on_chunks(api: str, token: str) -> CheckResult:
-    """Issue #141 acceptance: ≥50% of active chunks have a non-empty
-    ``igio_axis``. The IGIO classifier was added late; older chunks were
-    never reclassified, so the column was filled <5% across the dataset.
-
-    Two parts to this check:
-      1) shape — /memory/chunk/{id} response includes ``igio_axis`` and
-         ``igio_confidence`` fields (regression guard for the column itself).
-      2) coverage — /stats/igio-coverage reports ratio ≥ 0.5 (the
-         backfill loop has run enough times to fill the historical gap).
-
-    Coverage drives an admin-side backfill loop (cron'd workflow). Until
-    coverage clears 50%, this check stays red — that's the whole point:
-    the failing smoke is the trigger that keeps the loop running.
-    """
-    code, body, _ = _http(
-        "POST", f"{api}/memory/search", token,
-        body={"query": "fix bug", "top_k": 1, "include_text": False,
-              "llm_prefilter": False},
-    )
-    if code != 200 or not (body or {}).get("results"):
-        return CheckResult("igio_axis_on_chunks", False,
-                           "could not get a chunk_id to inspect")
-    cid = body["results"][0]["chunk_id"]
-    code2, body2, _ = _http("GET", f"{api}/memory/chunk/{cid}", token)
-    if code2 != 200:
-        return CheckResult("igio_axis_on_chunks", False,
-                           f"GET /memory/chunk http={code2}")
-    chunk = (body2 or {}).get("chunk", {})
-    has_igio = "igio_axis" in chunk and "igio_confidence" in chunk
-    if not has_igio:
-        return CheckResult(
-            "igio_axis_on_chunks", False,
-            f"shape regression: chunk_id={cid[:18]} missing igio fields",
-        )
-    code3, body3, _ = _http("GET", f"{api}/stats/igio-coverage", token)
-    if code3 != 200 or not isinstance(body3, dict):
-        return CheckResult(
-            "igio_axis_on_chunks", False,
-            f"GET /stats/igio-coverage http={code3}",
-        )
-    ratio = float(body3.get("ratio") or 0.0)
-    total = int(body3.get("total_active") or 0)
-    with_axis = int(body3.get("with_axis") or 0)
-    scope = body3.get("scope")
-    threshold = 0.5
-    ok = ratio >= threshold or total < 50
-    return CheckResult(
-        "igio_axis_on_chunks", ok,
-        f"shape=OK  scope={scope}  total={total}  with_axis={with_axis}  "
-        f"ratio={ratio:.3f}  (target ≥ {threshold})",
-    )
-
-
 def check_wiki_context_injector_used(api: str, token: str) -> CheckResult:
     """Closed Issue #75 (Wiki-v2 P5) acceptance: WikiContextInjector
     builds context blocks. The /wiki/graph response includes the
@@ -2388,28 +2334,6 @@ def check_role_enforcement(api: str, token: str) -> CheckResult:
                        f"user->share_public http={code} (must be 403) body={body}")
 
 
-def check_igio_lens_axes_present(api: str, token: str) -> CheckResult:
-    """IGIO-Lens acceptance: GET /stats/igio-lens returns all four IGIO axes with
-    integer counts + an unclassified bucket (workspace-scoped). Guards the
-    endpoint the IgioLens view binds to — if it 404s/changes shape the lens goes
-    silently empty."""
-    code, body, _ = _http("GET", f"{api}/stats/igio-lens", token, timeout=20.0)
-    if code != 200 or not isinstance(body, dict):
-        return CheckResult("igio_lens_axes_present", False, f"http={code} body={body}")
-    axes = body.get("axes") or {}
-    expected = {"issue", "goal", "intervention", "outcome"}
-    have_all = expected <= set(axes)
-    counts_ok = all(isinstance((axes.get(a) or {}).get("count"), int) for a in expected)
-    uncl_ok = isinstance((body.get("unclassified") or {}).get("count"), int)
-    ok = have_all and counts_ok and uncl_ok
-    summary = {a: (axes.get(a) or {}).get("count") for a in sorted(expected)}
-    return CheckResult(
-        "igio_lens_axes_present", ok,
-        f"http={code} axes={summary} unclassified={(body.get('unclassified') or {}).get('count')} "
-        f"(need all 4 axes + int counts + unclassified)",
-    )
-
-
 # ---------------------------------------------------------------------------
 # V2 org/public-memory acceptance checks (Tasks 3–11)
 # ---------------------------------------------------------------------------
@@ -2625,9 +2549,9 @@ def check_multi_org_membership(api: str, token: str) -> CheckResult:
         f"sees_org_x={found_x}  sees_org_y={found_y} (both must be True)  marker={suffix}")
 
 
-def check_intervention_todos_surface(api: str, token: str) -> CheckResult:
-    """A task created via POST /tasks must appear in GET /stats/igio-lens under
-    intervention.todos (the lens intervention column source)."""
+def check_task_surfaces_in_list(api: str, token: str) -> CheckResult:
+    """A task created via POST /tasks must appear in GET /tasks?status=open
+    (the workspace task tracker — session_start injects open tasks from here)."""
     suffix = int(time.time())
     ws = f"todo-{suffix}"
     title = f"SMOKE-TODO {suffix}"
@@ -2636,14 +2560,14 @@ def check_intervention_todos_surface(api: str, token: str) -> CheckResult:
               "external_id": f"smoke-{suffix}"},
         extra_headers=_act_as("A", role="admin",workspace=ws), timeout=12.0)
     if code1 != 200:
-        return CheckResult("intervention_todos_surface", False,
+        return CheckResult("task_surfaces_in_list", False,
                            f"create failed http={code1}: {body1}")
-    code2, body2, _ = _http("GET", f"{api}/stats/igio-lens?limit=20", token,
+    code2, body2, _ = _http("GET", f"{api}/tasks?status=open", token,
         extra_headers=_act_as("A", role="admin",workspace=ws), timeout=12.0)
-    todos = ((((body2 or {}).get("axes") or {}).get("intervention") or {}).get("todos")) or []
-    found = any(t.get("title") == title for t in todos)
-    return CheckResult("intervention_todos_surface", found,
-        f"task_in_intervention_todos={found} (must be True)  todos={len(todos)}  marker={suffix}")
+    tasks = ((body2 or {}).get("tasks")) or []
+    found = any(t.get("title") == title for t in tasks)
+    return CheckResult("task_surfaces_in_list", found,
+        f"task_in_open_list={found} (must be True)  tasks={len(tasks)}  marker={suffix}")
 
 
 def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
@@ -2681,8 +2605,8 @@ def check_stats_workspaces_lists_all(api: str, token: str) -> CheckResult:
 
 def check_repo_event_surfaces(api: str, token: str) -> CheckResult:
     """POST a synthetic workflow_run failure to /repo-events → the response must
-    be action=repo_ci + igio_axis=issue (a hook_events row + repo_event chunk are
-    created server-side, workspace-scoped). Uses a unique repo URL per run."""
+    be action=repo_ci (a hook_events row + repo_event chunk are created
+    server-side, workspace-scoped). Uses a unique repo URL per run."""
     suffix = int(time.time())
     repo = f"https://github.com/smoke/repo-{suffix}"
     code, body, _ = _http("POST", f"{api}/repo-events", token,
@@ -2690,11 +2614,10 @@ def check_repo_event_surfaces(api: str, token: str) -> CheckResult:
               "conclusion": "failure", "workflow": "smoke-ci"}, timeout=12.0)
     if code != 200:
         return CheckResult("repo_event_surfaces", False, f"post failed http={code}: {body}")
-    ok = isinstance(body, dict) and body.get("action") == "repo_ci" and body.get("igio_axis") == "issue"
+    ok = isinstance(body, dict) and body.get("action") == "repo_ci"
     return CheckResult("repo_event_surfaces", ok,
         f"action={body.get('action') if isinstance(body, dict) else body} "
-        f"igio_axis={body.get('igio_axis') if isinstance(body, dict) else '?'} "
-        f"(want repo_ci/issue) marker={suffix}")
+        f"(want repo_ci) marker={suffix}")
 
 
 def check_repo_webhook_hmac(api: str, token: str) -> CheckResult:
@@ -2815,7 +2738,6 @@ ALL_CHECKS = [
     ("wiki_graph_clusters",           check_wiki_graph_clusters),
     ("coverage_map_complete",         check_coverage_map_complete),
     ("retrieval_reasons_field",       check_retrieval_reasons_field),
-    ("igio_axis_on_chunks",           check_igio_axis_on_chunks),
     ("wiki_context_injector_used",    check_wiki_context_injector_used),
     ("wiki_p7_endpoints",             check_wiki_p7_endpoints),
     ("wiki_p8_history",               check_wiki_p8_history),
@@ -2838,8 +2760,7 @@ ALL_CHECKS = [
     ("reranker_cat_match_fires",      check_reranker_cat_match_fires),
     ("role_policy_roundtrip",         check_role_policy_roundtrip),
     ("role_enforcement",              check_role_enforcement),
-    ("igio_lens_axes_present",        check_igio_lens_axes_present),
-    ("intervention_todos_surface",    check_intervention_todos_surface),
+    ("task_surfaces_in_list",         check_task_surfaces_in_list),
     ("dashboard_endpoints",           check_dashboard_endpoints),
     ("feedback_log_movement",         check_feedback_log_movement),
     ("model_router_runtime",          check_model_router_runtime),
@@ -2897,10 +2818,9 @@ EXPECTED_PENDING_FAILURES: dict[str, dict[str, str]] = {}
 #   model_identity (#349) — GELÖST: Check auf den kanonischen text_model.txt-
 #   Picker-Pfad (POST /stats/admin/text-model toggle+revert) umgestellt statt
 #   model-routes-Sentinel. Smoke enforced es wieder.
-#   wiki_cluster_depth (#162) + igio_axis_on_chunks (#141) — beide Tracker
-#   CLOSED, beide Checks live verifiziert GRÜN (#253 cleanup 2026-06-06:
-#   igio ratio=0.548≥0.5, wiki clusters=12). Suppression entfernt → Smoke
-#   enforced beide wieder.
+#   wiki_cluster_depth (#162) — Tracker CLOSED, Check live verifiziert GRÜN
+#   (#253 cleanup 2026-06-06: wiki clusters=12). Suppression entfernt → Smoke
+#   enforced ihn wieder.
 
 
 def _failure_signature(real_failures: list[CheckResult]) -> str:

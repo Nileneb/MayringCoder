@@ -5,7 +5,7 @@ POST /stats/admin/text-model   — write CACHE_DIR/text_model.txt (admin only)
 
 Mounted under /stats/ so the production nginx allowlist already covers it.
 POST is admin-only; GET is read-only and also requires auth (admin gate mirrors
-igio_admin.py so the pattern is consistent across admin routes).
+the other /stats/admin routes so the pattern is consistent across admin routes).
 """
 from __future__ import annotations
 

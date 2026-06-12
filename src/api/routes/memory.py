@@ -282,8 +282,6 @@ def _memory_search_sync(
             opts["category_hint"] = [
                 c.lower().strip() for c in request.category_hint if c and c.strip()
             ]
-        if request.igio_intent:
-            opts["igio_intent"] = request.igio_intent.lower().strip()
         if request.session_id:
             # Recency-Lane: Session-Thread garantiert sichtbar (siehe retrieval._session_recency_ids)
             opts["session_id"] = request.session_id.strip()
@@ -572,27 +570,6 @@ def memory_put(
                              {"categorize": request.categorize, "task": request.task},
                              workspace_id)
 
-        # WHY(session→IGIO #2, 2026-05-29): honor igio_hint on /memory/put. The stop_hook
-        # captures Claude's native /goal and ingests it here with igio_hint='goal' so it lands
-        # on the goal axis (/memory/goals + IGIO-lens) DIRECTLY, instead of being guessed by
-        # the async classifier. This block was MISSING from /memory/put (it only existed in
-        # /conversation/micro-batch) → igio_hint was silently ignored, the chunk got no axis.
-        # NOT wrapped in a swallowing try/except: a tagging failure must surface (→ outer 500),
-        # the hook then retries next turn. An empty match is warned loudly, never silent.
-        _VALID_IGIO = ("goal", "issue", "intervention", "outcome")
-        if request.igio_hint and request.igio_hint.lower() in _VALID_IGIO and request.source_id:
-            from mayring_core.memory.store import get_chunks_by_source, update_chunk_igio_axis
-            tagged = 0
-            for chunk in get_chunks_by_source(_get_conn(), request.source_id, active_only=True):
-                update_chunk_igio_axis(_get_conn(), chunk.chunk_id, request.igio_hint.lower())
-                tagged += 1
-            if not tagged:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "igio_hint=%s set but no active chunks for source_id=%s (axis NOT applied)",
-                    request.igio_hint, request.source_id)
-            result["igio_axis"] = request.igio_hint.lower()
-
         if source_dict.get("source_type") == "paper":
             _threading.Thread(
                 target=_bg_wiki_rebuild,
@@ -702,25 +679,6 @@ def conversation_micro_batch(
             _ingest_opts,
             workspace_id,
         )
-
-        # WHY(igio-pipeline-2026-05-15): stop_hook sendet igio_hint wenn es
-        # per fast-hints (kein LLM) eine Axis aus dem User-Prompt erkannt hat.
-        # Wir taggen die neu erstellten Chunks sofort — überspringt den
-        # async IGIO-Cron der sonst Stunden später läuft.
-        _VALID_IGIO = ("goal", "issue", "intervention", "outcome")
-        if request.igio_hint and request.igio_hint.lower() in _VALID_IGIO:
-            try:
-                from mayring_core.memory.store import update_chunk_igio_axis, get_chunks_by_source
-                conn_for_igio = _get_conn()
-                for chunk in get_chunks_by_source(conn_for_igio, source_id, active_only=True):
-                    update_chunk_igio_axis(conn_for_igio, chunk.chunk_id, request.igio_hint.lower())
-            except Exception as exc:
-                # WHY(closure-scope fix): NO local `import logging` here. It would make
-                # `logging` a function-local of conversation_micro_batch, bound only if
-                # this branch runs — then the nested _derive_todo_bg thread closure
-                # raises NameError on `logging` when igio_hint was falsy. Use the
-                # module-level import (top of file) so the closure resolves it reliably.
-                logging.getLogger(__name__).warning("igio_hint tagging failed: %s", exc)
 
         # WHY(C3 project-link): wenn X-Project-Id übergeben wurde, alle neu erstellten
         # Chunks zu diesem Projekt linken. Fail-soft: Fehler hier dürfen den Hook NIE
@@ -1216,51 +1174,3 @@ def share_source(
         _log.warning("chroma visibility-sync failed for %s: %s", source_id, _e)
 
     return {"source_id": source_id, "visibility": new_vis, "org_id": new_org, "shared": True}
-
-
-@router.get("/memory/goals")
-def memory_goals(
-    top_k: int = 8,
-    workspace_id: str = Depends(get_workspace),
-    info: TokenInfo = Depends(get_token_info),
-) -> dict:
-    """Return goal-axis chunks for the workspace.
-
-    WHY(igio-pipeline-2026-05-15): session_start hook calls this to inject
-    known workspace goals into the session context. Also used by the /goal
-    plugin skill to show what goals have been derived from past sessions.
-    Returns chunks with igio_axis='goal', ranked by recency + feedback score.
-    """
-    try:
-        # WHY(2026-05-28): the old impl semantic-searched "goal objective…" and
-        # filtered the top-K by igio_axis — which (a) read run_search's wrong key
-        # ("chunks") and (b) never surfaced goal chunks because they rarely rank
-        # top-K for that generic query (491 goal chunks existed, endpoint returned
-        # 0). Per the docstring this must return goal-axis chunks DIRECTLY, ranked
-        # by recency — same direct query the IGIO-lens uses (igio_admin.py).
-        top_k = max(1, min(top_k, 50))
-        rows = _get_conn().execute(
-            "SELECT chunk_id, summary, text, source_id, igio_confidence, created_at "
-            "FROM chunks WHERE is_active = 1 AND igio_axis = 'goal' AND workspace_id = ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (workspace_id, top_k),
-        ).fetchall()
-        goals = [
-            {
-                "chunk_id": r[0],
-                "summary": (r[1] or r[2] or "")[:300],
-                "source_id": r[3],
-                "confidence": round(r[4] or 0.0, 3),
-                "created_at": r[5],
-            }
-            for r in rows
-        ]
-        prompt_context = "\n".join(f"- {g['summary']}" for g in goals)
-        return {
-            "workspace_id": workspace_id,
-            "goals": goals,
-            "total": len(goals),
-            "prompt_context": prompt_context,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
