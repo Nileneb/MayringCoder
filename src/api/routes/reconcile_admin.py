@@ -72,8 +72,16 @@ def _reconcile_chroma_sqlite(
     out["total_sqlite"] = len(sqlite_ids)
 
     try:
-        # Chroma's get() ohne ids gibt alle zurück (paginiert). limit=None.
-        chroma_payload = chroma.get(include=[])
+        # WHY(#drift 2026-06-12, Datenverlust-Bug): bei gesetztem workspace_id MUSS
+        # Chroma auf denselben Workspace gescopet werden. Ein unscoped get() holt ALLE
+        # ids → missing_in_sqlite = chroma_ids - sqlite_ids enthielte dann jeden FREMDEN
+        # Workspace-Vektor, den dry_run=False löschen würde. Collection-Metadaten tragen
+        # workspace_id (siehe _desired_metadata), also where={"workspace_id": …} abziehen.
+        if workspace_id:
+            chroma_payload = chroma.get(where={"workspace_id": workspace_id}, include=[])
+        else:
+            # Chroma's get() ohne ids gibt alle zurück (paginiert). limit=None.
+            chroma_payload = chroma.get(include=[])
         chroma_ids = set(chroma_payload.get("ids") or [])
     except (RuntimeError, ValueError, AttributeError) as e:
         # WHY(v2-stufe5.3): konkrete Chroma-Fehler typisieren — anderes laut.
@@ -218,12 +226,43 @@ def _assign_owner_to_orphans(
     return {"orphan_sources": n_src, "orphan_chunks": n_chk, "owner": owner}
 
 
+def _repair_all_workspaces(
+    conn: Any,
+    chroma: Any,
+    *,
+    source_type: str | None,
+    dry_run: bool,
+    batch: int,
+) -> dict:
+    """Full-scope repair as a per-workspace iteration instead of one monolithic scan.
+
+    WHY(#drift 2026-06-12, full-scope-crash): a single unscoped scan over ~8.5k chunks
+    reproducibly killed the uvicorn child (502, no traceback) — likely a memory/pointer
+    blow-up holding the whole by_id map + Chroma payloads at once. Iterating the distinct
+    workspace_ids keeps each scan+update round bounded; results are summed so the response
+    shape is identical to a scoped call. Workspace-scoped callers never hit this path.
+    """
+    ws_ids = [r[0] for r in conn.execute(
+        "SELECT DISTINCT workspace_id FROM chunks WHERE is_active = 1").fetchall()]
+    agg: dict[str, Any] = {"scanned": 0, "in_chroma": 0, "mismatched": 0,
+                           "updated": 0, "missing_in_chroma": 0, "dry_run": dry_run,
+                           "workspaces_iterated": len(ws_ids)}
+    for ws in ws_ids:
+        part = _repair_chroma_metadata(
+            conn, chroma, workspace_id=ws, source_type=source_type,
+            dry_run=dry_run, batch=batch)
+        for k in ("scanned", "in_chroma", "mismatched", "updated", "missing_in_chroma"):
+            agg[k] += part[k]
+    return agg
+
+
 @router.post("/admin/repair-chroma-metadata")
 def repair_chroma_metadata(
     workspace_id: str | None = None,
     source_type: str | None = None,
     assign_owner: str | None = None,
     dry_run: bool = True,
+    batch: int = 200,
     info: TokenInfo = Depends(get_token_info),
 ) -> dict:
     """Repair drifted Chroma tenancy metadata (visibility/user_id/org_id) from the
@@ -236,6 +275,7 @@ def repair_chroma_metadata(
     token or admin scope."""
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin-scope required")
+    batch = max(1, min(int(batch), 500))
     conn = _get_conn()
     result: dict = {}
     if assign_owner:
@@ -244,15 +284,135 @@ def repair_chroma_metadata(
                                 detail="assign_owner requires workspace_id (no blanket stamp)")
         result["owner_assignment"] = _assign_owner_to_orphans(
             conn, workspace_id=workspace_id, owner=assign_owner, dry_run=dry_run)
-    result.update(_repair_chroma_metadata(
-        conn, _get_chroma(),
-        workspace_id=workspace_id, source_type=source_type, dry_run=dry_run,
-    ))
+    chroma = _get_chroma()
+    if workspace_id:
+        result.update(_repair_chroma_metadata(
+            conn, chroma,
+            workspace_id=workspace_id, source_type=source_type,
+            dry_run=dry_run, batch=batch,
+        ))
+    else:
+        result.update(_repair_all_workspaces(
+            conn, chroma, source_type=source_type, dry_run=dry_run, batch=batch,
+        ))
     if not dry_run and result.get("updated"):
         from mayring_core.memory.retrieval import invalidate_query_cache
         invalidate_query_cache()
     result["workspace_id"] = workspace_id or "<all>"
     result["source_type"] = source_type or "<all>"
+    return result
+
+
+def _process_reembed_queue(
+    conn: Any,
+    chroma: Any,
+    *,
+    embed_fn: Any,
+    ollama_url: str,
+    dry_run: bool,
+    limit: int,
+) -> dict:
+    """Drain the reembed-pending queue: re-embed each pending chunk into the LIVE
+    Chroma collection and log a reembed-done event.
+
+    WHY(#drift 2026-06-12): reconcile writes 'reembed-pending' events (source_id column
+    holds the CHUNK id) but nothing ever consumed them — the queue was a feature built
+    but never wired. Idempotency: a chunk is pending iff it has a 'reembed-pending' event
+    with no later 'reembed-done' event for the same id. Each chunk is isolated (one
+    failure does not abort the run). Inactive/deleted chunks are marked done + counted
+    as skipped_missing so they leave the queue.
+    """
+    out: dict[str, Any] = {"queued": 0, "processed": 0, "failed": 0,
+                           "skipped_missing": 0, "dry_run": dry_run}
+    if conn is None or chroma is None:
+        return out
+
+    pending = [r[0] for r in conn.execute(
+        "SELECT DISTINCT p.source_id FROM ingestion_log p "
+        "WHERE p.event_type = 'reembed-pending' "
+        "AND NOT EXISTS (SELECT 1 FROM ingestion_log d "
+        "  WHERE d.source_id = p.source_id AND d.event_type = 'reembed-done') "
+        "ORDER BY p.source_id LIMIT ?",
+        [int(limit)],
+    ).fetchall()]
+    out["queued"] = len(pending)
+    if dry_run or not pending:
+        return out
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _log_done(cid: str, status: str) -> None:
+        conn.execute(
+            "INSERT INTO ingestion_log (source_id, event_type, payload, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (cid, "reembed-done", json.dumps({"status": status}), now),
+        )
+
+    cols = ["chunk_id", "text", "workspace_id", "source_id", "chunk_level",
+            "category_labels", "category_source", "category_confidence",
+            "visibility", "org_id", "user_id"]
+    select = (
+        "SELECT c.chunk_id, c.text, c.workspace_id, c.source_id, c.chunk_level, "
+        "c.category_labels, c.category_source, c.category_confidence, "
+        "s.visibility, s.org_id, s.user_id "
+        "FROM chunks c LEFT JOIN sources s ON c.source_id = s.source_id "
+        "WHERE c.chunk_id = ? AND c.is_active = 1"
+    )
+    for cid in pending:
+        row = conn.execute(select, [cid]).fetchone()
+        if row is None:
+            # chunk gone or deactivated — pull it off the queue, can't re-embed
+            _log_done(cid, "skipped_missing")
+            out["skipped_missing"] += 1
+            continue
+        rec = dict(zip(cols, row))
+        try:
+            emb = embed_fn([rec["text"][:500]], ollama_url)[0]
+            chroma.upsert(
+                ids=[cid],
+                documents=[rec["text"][:500]],
+                embeddings=[emb],
+                metadatas=[_desired_metadata(rec)],
+            )
+            _log_done(cid, "ok")
+            out["processed"] += 1
+        except Exception as e:  # isolate per-chunk; surface in counter, never abort
+            _log.warning("reembed failed for %s: %s", cid[:12], e)
+            out["failed"] += 1
+    conn.commit()
+    return out
+
+
+@router.post("/admin/process-reembed-queue")
+def process_reembed_queue(
+    limit: int = 100,
+    dry_run: bool = True,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Consume the reembed-pending queue written by /admin/reconcile-chroma.
+
+    For each pending chunk (a 'reembed-pending' ingestion_log event with no matching
+    'reembed-done'): load its text, embed it (bge-m3 via ModelRouter — no OLLAMA_MODEL
+    env-bleed), upsert into the LIVE Chroma collection with canonical metadata, and log
+    'reembed-done'. Inactive/deleted chunks are marked done + skipped. Per-chunk errors
+    are isolated (counted, not fatal). `dry_run=True` (default) only reports the queue
+    depth. Authz: service token or admin scope."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin-scope required")
+    limit = max(1, int(limit))
+
+    import os
+    from mayring_core.providers import embed_texts as _embed_texts
+
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    result = _process_reembed_queue(
+        _get_conn(), _get_chroma(),
+        embed_fn=_embed_texts, ollama_url=ollama_url,
+        dry_run=dry_run, limit=limit,
+    )
+    if not dry_run and result.get("processed"):
+        from mayring_core.memory.retrieval import invalidate_query_cache
+        invalidate_query_cache()
     return result
 
 
