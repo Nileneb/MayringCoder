@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -24,12 +23,19 @@ from src.api.dependencies import get_conn as _get_conn
 router = APIRouter(tags=["embed-pool"])
 logger = logging.getLogger(__name__)
 
-_GOLDEN_FIXTURE = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "golden_embed.json"
+# WHY(#365): the golden test-job sample ships WITH the code (not from tests/), so a
+# divergence event in a slim prod image can't FileNotFoundError. The reference vector
+# is a deterministic placeholder — a real bge-m3 device fails it (dim mismatch → cosine
+# 0.0 → stays quarantined, fail-closed); replace with a real bge-m3 vector before prod
+# (tracked in the embedding-pool plan's open prod points).
+_GOLDEN_SAMPLE = {
+    "text": "MayringCoder golden embedding probe — do not change this string.",
+    "reference": [0.6, 0.8],
+}
 
 
 def _golden_sample() -> tuple[str, list[float]]:
-    data = json.loads(_GOLDEN_FIXTURE.read_text())
-    return data["text"], data["reference"]
+    return _GOLDEN_SAMPLE["text"], _GOLDEN_SAMPLE["reference"]
 
 
 def _now_iso() -> str:
