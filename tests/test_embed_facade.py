@@ -44,3 +44,19 @@ def test_uses_pool_when_enough_devices(conn, monkeypatch):
         conn, text="t", workspace_id="ws", projekt_id="p", chunk_ref="c",
         now="2026-06-13T12:00:00Z")
     assert vec == [0.5, 0.5]
+
+
+def test_poll_verified_returns_list_not_str(conn):
+    """Regression: ep.get returns result_a as a JSON string — _poll_verified must
+    json.loads it into a real list[float], not return the raw string (#365)."""
+    ds.upsert_device(conn, device_id="dA", workspace_id="ws", capabilities=["embed"])
+    ds.upsert_device(conn, device_id="dB", workspace_id="ws", capabilities=["embed"])
+    eid = ep.enqueue(conn, workspace_id="ws", projekt_id="p", text="t", chunk_ref="c")
+    ep.claim_replica(conn, device_id="dA", workspace_id="ws")
+    ep.claim_replica(conn, device_id="dB", workspace_id="ws")
+    ep.submit_result(conn, embed_id=eid, device_id="dA", vector=[0.5, 0.5], threshold=0.9999)
+    ep.submit_result(conn, embed_id=eid, device_id="dB", vector=[0.5, 0.5], threshold=0.9999)
+    out = embed_facade._poll_verified(conn, eid, timeout_s=1.0, model="bge-m3")
+    assert out == [0.5, 0.5]
+    assert isinstance(out, list)
+    assert all(isinstance(x, float) for x in out)

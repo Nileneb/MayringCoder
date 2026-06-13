@@ -5,6 +5,7 @@ verified pool (dual-send + cosine agreement). Otherwise it falls back to the dir
 Spec-B path (local GPU host, deadline->cloud) — the pool is relief, not a single point."""
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -26,13 +27,13 @@ def _poll_verified(conn: Any, embed_id: str, *, timeout_s: float, model: str) ->
     """Poll the embed job until verified (agreed vector) or timeout. Returns the
     agreed vector, or None on timeout/divergence (caller falls back).
 
-    The worker claims+submits asynchronously; this only reads status. ep.get already
-    deserializes result_a into a list, so no json.loads here."""
+    ep.get returns result_a as a JSON string (TEXT column, not deserialized) — must
+    json.loads here before returning."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         job = ep.get(conn, embed_id)
         if job and job["status"] == "verified" and job["result_a"]:
-            return job["result_a"]
+            return json.loads(job["result_a"])
         if job and job["status"] in ("diverged", "failed"):
             return None
         time.sleep(1.0)
