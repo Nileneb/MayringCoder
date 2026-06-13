@@ -60,3 +60,15 @@ def test_golden_job_fail(conn):
     ep.claim_golden(conn, device_id="dQ", workspace_id="ws")
     out = ep.submit_golden(conn, embed_id=eid, device_id="dQ", vector=[1.0, 0.0], threshold=0.9999)
     assert out["passed"] is False
+
+
+def test_submit_result_unknown_embed_id_raises(conn):
+    with pytest.raises(ValueError):
+        ep.submit_result(conn, embed_id="emb_nope", device_id="dA", vector=[1.0], threshold=0.9999)
+
+
+def test_submit_result_wrong_device_raises(conn):
+    eid = ep.enqueue(conn, workspace_id="ws", projekt_id="p", text="t", chunk_ref="c")
+    ep.claim_replica(conn, device_id="dA", workspace_id="ws")
+    with pytest.raises(ValueError):
+        ep.submit_result(conn, embed_id=eid, device_id="dX", vector=[1.0], threshold=0.9999)
