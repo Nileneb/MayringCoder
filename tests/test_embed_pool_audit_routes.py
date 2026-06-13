@@ -69,3 +69,22 @@ def test_high_trust_device_sampled_out(client):
                      "device_a": "trusted", "vector_a": [0.5, 0.5]}).json()
     assert r["audited"] is False
     assert "embed_id" not in r or r.get("embed_id") in (None, "")
+
+
+def test_house_worker_not_quarantined_by_audit_divergence(client):
+    c, _ = client
+    c.post("/devices/register", headers={"X-Device-Id": "house"}, json={"capabilities": ["embed"]})
+    eid = c.post("/embed_pool/enqueue_audit",
+                 json={"projekt_id": "p", "text": "t", "chunk_ref": "c",
+                       "device_a": "player1", "vector_a": [1.0, 0.0]}).json()["embed_id"]
+    c.post("/embed_pool/claim", headers={"X-Device-Id": "house"}, json={})
+    c.post("/embed_pool/complete", headers={"X-Device-Id": "house"},
+           json={"embed_id": eid, "vector": [0.0, 1.0]})  # divergence
+    # house worker must still be able to claim the NEXT audit
+    c.post("/embed_pool/enqueue_audit",
+           json={"projekt_id": "p", "text": "t2", "chunk_ref": "c2",
+                 "device_a": "player2", "vector_a": [0.5, 0.5]})
+    j = c.post("/embed_pool/claim", headers={"X-Device-Id": "house"}, json={}).json()
+    assert j["job"] is not None  # NOT quarantined → still claims
+    devs = {d["device_id"]: d for d in c.get("/devices").json()["devices"]}
+    assert devs["house"]["quarantined_until"] == ""  # house worker untouched

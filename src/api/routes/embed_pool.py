@@ -115,7 +115,9 @@ def complete(req: CompleteRequest, workspace_id: str = Depends(get_workspace),
     if out.get("verdict") == "agreement":
         for d in out["devices"]:
             device_store.record_embed_verified(conn, d, workspace_id)
-    elif out.get("verdict") == "divergence":
+    elif out.get("verdict") == "divergence" and not out.get("is_audit"):
+        # WHY(#365): audit divergence must NOT quarantine the trusted house worker (device_b)
+        # — it'd stall the sole auditor; the app-side reaper applies the real consequence (FP clawback).
         until = (datetime.now(timezone.utc)
                  + timedelta(seconds=cfg.EMBED_QUARANTINE_SECONDS)
                  ).strftime("%Y-%m-%dT%H:%M:%SZ")

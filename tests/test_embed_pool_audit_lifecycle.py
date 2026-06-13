@@ -39,6 +39,15 @@ def test_reap_deletes_diverged_audit(conn):
     assert ep.list_diverged_audits(conn, "system") == []
 
 
+def test_audit_divergence_return_flags_is_audit(conn):
+    eid = ep.enqueue_with_seed(conn, workspace_id="system", projekt_id="p", text="t",
+                               chunk_ref="c", device_a="player", vector_a=[1.0, 0.0], is_audit=True)
+    ep.claim_replica(conn, device_id="house", workspace_id="system")
+    out = ep.submit_result(conn, embed_id=eid, device_id="house", vector=[0.0, 1.0], threshold=0.9999)
+    assert out["verdict"] == "divergence"
+    assert out["is_audit"] is True
+
+
 def test_non_audit_agreement_still_marks_verified(conn):
     eid = ep.enqueue_with_seed(conn, workspace_id="system", projekt_id="p", text="t",
                                chunk_ref="c", device_a="player", vector_a=[0.5, 0.5])
