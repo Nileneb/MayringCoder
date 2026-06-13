@@ -56,3 +56,7 @@ def test_claim_skips_fully_claimed(conn):
     ep.claim_replica(conn, device_id="dA", workspace_id="ws")
     ep.claim_replica(conn, device_id="dB", workspace_id="ws")
     assert ep.claim_replica(conn, device_id="dC", workspace_id="ws") is None
+
+
+def test_claim_on_empty_queue_returns_none(conn):
+    assert ep.claim_replica(conn, device_id="dA", workspace_id="ws") is None
