@@ -128,6 +128,40 @@ def complete(req: CompleteRequest, workspace_id: str = Depends(get_workspace),
     return out
 
 
+class EnqueueAuditRequest(BaseModel):
+    projekt_id: str = ""
+    text: str
+    chunk_ref: str = ""
+    device_a: str
+    vector_a: list[float]
+    model: str = "bge-m3"
+
+
+@router.post("/embed_pool/enqueue_audit")
+def enqueue_audit(req: EnqueueAuditRequest, workspace_id: str = Depends(get_workspace)) -> dict:
+    """House-audit enqueue (#365): seed slot A with the player's vector, trust-sampled.
+    Skipped (not audited) for trusted off-cycle devices."""
+    conn = _get_conn()
+    if not ep.should_audit(conn, req.device_a, workspace_id,
+                           warmup=cfg.EMBED_AUDIT_TRUST_WARMUP, sample_rate=cfg.EMBED_AUDIT_SAMPLE_RATE):
+        return {"audited": False}
+    eid = ep.enqueue_with_seed(conn, workspace_id=workspace_id, projekt_id=req.projekt_id,
+                               text=req.text, chunk_ref=req.chunk_ref, device_a=req.device_a,
+                               vector_a=req.vector_a, model=req.model, is_audit=True)
+    return {"audited": True, "embed_id": eid}
+
+
+@router.get("/embed_pool/audits/diverged")
+def diverged_audits(workspace_id: str = Depends(get_workspace)) -> dict:
+    return {"audits": ep.list_diverged_audits(_get_conn(), workspace_id)}
+
+
+@router.post("/embed_pool/audits/{embed_id}/reap")
+def reap_audit(embed_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
+    ep.reap_audit(_get_conn(), embed_id)
+    return {"reaped": True}
+
+
 @router.get("/embed_pool/{embed_id}")
 def status(embed_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
     job = ep.get(_get_conn(), embed_id)
