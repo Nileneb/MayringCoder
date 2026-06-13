@@ -6,8 +6,10 @@ quarantined. On a divergence both devices are quarantined + flagged; the caller
 that enqueued polls GET /embed_pool/{embed_id} for the verified vector."""
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -21,6 +23,13 @@ from src.api.dependencies import get_conn as _get_conn
 
 router = APIRouter(tags=["embed-pool"])
 logger = logging.getLogger(__name__)
+
+_GOLDEN_FIXTURE = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "golden_embed.json"
+
+
+def _golden_sample() -> tuple[str, list[float]]:
+    data = json.loads(_GOLDEN_FIXTURE.read_text())
+    return data["text"], data["reference"]
 
 
 def _now_iso() -> str:
@@ -88,7 +97,9 @@ def complete(req: CompleteRequest, workspace_id: str = Depends(get_workspace),
         for d in out["devices"]:
             device_store.record_embed_divergence(conn, d, workspace_id)
             device_store.set_quarantine(conn, d, workspace_id, until=until)
-        # NOTE: golden test-job dispatch to the quarantined devices is wired in Task 6.
+        text, ref = _golden_sample()
+        for d in out["devices"]:
+            ep.enqueue_golden(conn, workspace_id=workspace_id, text=text, reference=ref)
     return out
 
 
@@ -100,6 +111,34 @@ def status(embed_id: str, workspace_id: str = Depends(get_workspace)) -> dict:
     out = {"embed_id": embed_id, "status": job["status"], "verdict": job["verdict"],
            "cosine": job["cosine"], "chunk_ref": job["chunk_ref"]}
     if job["status"] == "verified" and not job["is_golden"] and job["result_a"]:
-        import json
         out["agreed_vector"] = json.loads(job["result_a"])
+    return out
+
+
+class GoldenClaimRequest(BaseModel):
+    capabilities: list[str] = []
+
+
+class GoldenCompleteRequest(BaseModel):
+    embed_id: str
+    vector: list[float]
+
+
+@router.post("/embed_pool/golden/claim")
+def golden_claim(req: GoldenClaimRequest, workspace_id: str = Depends(get_workspace),
+                 x_device_id: str | None = Header(default=None, alias="X-Device-Id")) -> dict:
+    device_id = _device_id(x_device_id)
+    job = ep.claim_golden(_get_conn(), device_id=device_id, workspace_id=workspace_id)
+    return {"job": job}
+
+
+@router.post("/embed_pool/golden/complete")
+def golden_complete(req: GoldenCompleteRequest, workspace_id: str = Depends(get_workspace),
+                    x_device_id: str | None = Header(default=None, alias="X-Device-Id")) -> dict:
+    device_id = _device_id(x_device_id)
+    conn = _get_conn()
+    out = ep.submit_golden(conn, embed_id=req.embed_id, device_id=device_id,
+                           vector=req.vector, threshold=cfg.EMBED_VERIFY_THRESHOLD)
+    if out["passed"]:
+        device_store.set_quarantine(conn, device_id, workspace_id, until="")  # rehabilitate
     return out

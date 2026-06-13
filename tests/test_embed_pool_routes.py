@@ -74,3 +74,4 @@ def test_divergence_quarantines_both(client):
     assert devs["dA"]["quarantined_until"] != ""
     assert devs["dB"]["quarantined_until"] != ""
     assert devs["dA"]["embed_divergences"] == 1
+    assert devs["dB"]["embed_divergences"] == 1
