@@ -65,6 +65,25 @@ def _device_id(header_id: str | None) -> str:
     return did
 
 
+class EnqueueSeededRequest(BaseModel):
+    projekt_id: str = ""
+    text: str
+    chunk_ref: str = ""
+    device_a: str
+    vector_a: list[float]
+    model: str = "bge-m3"
+
+
+@router.post("/embed_pool/enqueue_seeded")
+def enqueue_seeded(req: EnqueueSeededRequest, workspace_id: str = Depends(get_workspace)) -> dict:
+    """Seed slot A with a submitter's own vector (#365 player-embed verification).
+    A second eligible device confirms via the normal claim/complete path."""
+    eid = ep.enqueue_with_seed(_get_conn(), workspace_id=workspace_id, projekt_id=req.projekt_id,
+                               text=req.text, chunk_ref=req.chunk_ref, device_a=req.device_a,
+                               vector_a=req.vector_a, model=req.model)
+    return {"embed_id": eid}
+
+
 @router.post("/embed_pool/enqueue")
 def enqueue(req: EnqueueRequest, workspace_id: str = Depends(get_workspace)) -> dict:
     eid = ep.enqueue(_get_conn(), workspace_id=workspace_id, projekt_id=req.projekt_id,
