@@ -23,7 +23,7 @@ def _direct_embed(text: str, *, model: str = "bge-m3") -> list[float]:
     return embed_single(url, model, text)
 
 
-def _poll_verified(conn: Any, embed_id: str, *, timeout_s: float, model: str) -> list[float] | None:
+def _poll_verified(conn: Any, embed_id: str, *, timeout_s: float) -> list[float] | None:
     """Poll the embed job until verified (agreed vector) or timeout. Returns the
     agreed vector, or None on timeout/divergence (caller falls back).
 
@@ -52,7 +52,7 @@ def verified_embedding(conn: Any, *, text: str, workspace_id: str, projekt_id: s
         return _direct_embed(text, model=model)
     eid = ep.enqueue(conn, workspace_id=workspace_id, projekt_id=projekt_id,
                      text=text, chunk_ref=chunk_ref, model=model)
-    vec = _poll_verified(conn, eid, timeout_s=cfg.EMBED_DUAL_CLAIM_TIMEOUT_SECONDS, model=model)
+    vec = _poll_verified(conn, eid, timeout_s=cfg.EMBED_DUAL_CLAIM_TIMEOUT_SECONDS)
     if vec is None:
         return _direct_embed(text, model=model)  # pool didn't agree in time -> fallback
     return vec

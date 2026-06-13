@@ -56,7 +56,7 @@ def test_poll_verified_returns_list_not_str(conn):
     ep.claim_replica(conn, device_id="dB", workspace_id="ws")
     ep.submit_result(conn, embed_id=eid, device_id="dA", vector=[0.5, 0.5], threshold=0.9999)
     ep.submit_result(conn, embed_id=eid, device_id="dB", vector=[0.5, 0.5], threshold=0.9999)
-    out = embed_facade._poll_verified(conn, eid, timeout_s=1.0, model="bge-m3")
+    out = embed_facade._poll_verified(conn, eid, timeout_s=1.0)
     assert out == [0.5, 0.5]
     assert isinstance(out, list)
     assert all(isinstance(x, float) for x in out)
