@@ -91,6 +91,8 @@ from src.api.routes import tasks as _tasks
 app.include_router(_tasks.router)
 from src.api.routes import devices as _devices
 app.include_router(_devices.router)
+from src.api.routes import embed_pool as _embed_pool  # #365 Schicht 3: distributed embedding pool
+app.include_router(_embed_pool.router)
 from src.api.routes import codebooks as _codebooks  # #workspace-uuid-sot v2.0 P1.3
 app.include_router(_codebooks.router)
 from src.api.routes import projects as _projects  # Project Router Slice 1
