@@ -5,6 +5,9 @@ already covers it — no nginx config change required.
 """
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.auth import get_token_info
@@ -104,4 +107,28 @@ def goal_anchor_audit(info: TokenInfo = Depends(get_token_info)) -> dict:
         "real_anchor": with_goal - fallback,
         "fallback_anchor": fallback,
         "no_anchor_pre_v20": total - with_goal,
+    }
+
+
+@router.get("/stats/gpu-idle")
+def gpu_idle(idle_for: int = 20, info: TokenInfo = Depends(get_token_info)) -> dict:
+    """Is the qwen text-route idle for at least ``idle_for`` seconds? (Spec B1)
+
+    Reads the last qwen text-generate timestamp (Redis or cache-file, written in
+    mayring_core.ollama_client.generate). app.linn.games' Gemma worker probes this
+    before running the local research batch: idle → run local, busy → wait/Cloud.
+    No stamp yet (qwen never used / store unreachable) → idle (safe default; Spec B
+    degrades a dead idle-signal to "escalate to Cloud", never to a stuck batch).
+    """
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from mayring_core.qwen_activity import last_activity
+    last = last_activity()
+    if last is None:
+        return {"idle": True, "idle_seconds": float("inf"), "last_activity": None}
+    idle_seconds = max(0.0, time.time() - last)
+    return {
+        "idle": idle_seconds >= idle_for,
+        "idle_seconds": idle_seconds,
+        "last_activity": datetime.fromtimestamp(last, tz=timezone.utc).isoformat(),
     }
