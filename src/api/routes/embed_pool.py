@@ -91,6 +91,22 @@ def enqueue(req: EnqueueRequest, workspace_id: str = Depends(get_workspace)) -> 
     return {"embed_id": eid}
 
 
+@router.post("/embed")
+def embed_direct(req: EnqueueRequest, workspace_id: str = Depends(get_workspace)) -> dict:
+    """Synchroner, USER-workspace-scoped Embed über embed_facade. Nutzt den
+    verifizierten Pool nur wenn genug embed-Devices eligible sind, sonst DIREKT
+    über Ollama bge-m3 — kein Confirmer-Wait, kein Queue-Roundtrip. Für Query-
+    Embeddings (openalex search_library, paper-search RAG), die den Vektor sofort
+    brauchen. Workspace-Scope: get_workspace honoriert X-Workspace-Id (Service-Token
+    → User-Workspace statt 'system'), bzw. den workspace_id-Claim eines User-JWT."""
+    from src.embed_facade import verified_embedding
+    vec = verified_embedding(
+        _get_conn(), text=req.text, workspace_id=workspace_id,
+        projekt_id=req.projekt_id, chunk_ref=req.chunk_ref, model=req.model,
+    )
+    return {"vector": vec, "model": req.model, "dim": len(vec)}
+
+
 @router.post("/embed_pool/claim")
 def claim(req: ClaimRequest, workspace_id: str = Depends(get_workspace),
           x_device_id: str | None = Header(default=None, alias="X-Device-Id")) -> dict:
