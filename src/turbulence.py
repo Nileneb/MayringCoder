@@ -142,6 +142,9 @@ def categorize_chunk_llm(chunk: Chunk, model: str | None = None) -> Chunk:
         text = _ollama_generate(
             _OLLAMA_URL, _model, prompt,
             stream=False, timeout=30.0,
+            # WHY(gemma4:e4b-categorize): thinking-Modelle schreiben das JSON-Label sonst in
+            # den thinking-Channel, content bleibt leer → re.search scheitert → alles wird "Logik".
+            think=False,
         )
         m = re.search(r'\{[^}]+\}', text)
         if m:
@@ -298,6 +301,8 @@ def deep_analyze_hotzone(
         text = _ollama_generate(
             _OLLAMA_URL, _model, prompt,
             stream=False, timeout=60.0,
+            # WHY(gemma4:e4b): JSON-Extraktion — Thinking-Channel würde content leeren.
+            think=False,
         )
         m = re.search(r'\{[^}]+\}', text)
         if m:
