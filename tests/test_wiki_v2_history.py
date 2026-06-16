@@ -113,8 +113,12 @@ def test_conflict_resolver_both_manual_needs_review():
 
 
 def test_wiki_history_endpoint_registered():
-    from src.api.server import app
-    paths = [r.path for r in app.routes if hasattr(r, "path")]
+    # WHY(xdist-isolation): den Router direkt prüfen, NICHT app.routes — das geteilte
+    # src.api.server.app-Singleton kann von einem co-located Test (pytest -n auto) mutiert
+    # sein → flaky. Der Router ist die Registrierungs-Quelle (gleiches Muster wie
+    # test_reranker_active_endpoints.py). Routen existieren in wiki.py unbedingt.
+    from src.api.routes import wiki
+    paths = [r.path for r in wiki.router.routes if hasattr(r, "path")]
     assert "/wiki/history" in paths
     assert "/wiki/diff" in paths
     assert "/wiki/team" in paths
