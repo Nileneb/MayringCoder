@@ -151,8 +151,12 @@ def test_cloud_model_mapping_translates_local_names():
     assert _resolve_cloud_model("mistral:7b-instruct") == "gemma3:4b"
     assert _resolve_cloud_model("qwen2.5-coder:7b") == "qwen3-coder-next"
     assert _resolve_cloud_model("phi3:3.8b") == "ministral-3:3b"
-    # unbekannt → default
-    assert _resolve_cloud_model("totally-unknown") == "gemma3:4b"
+    # local 'text' route fine-tune (does NOT exist on cloud) → small cloud model,
+    # both the exact tag and the family-prefix fallback.
+    assert _resolve_cloud_model("qwen3.5-mayring:2b") == "ministral-3:3b"
+    assert _resolve_cloud_model("qwen3.5-mayring:9b") == "ministral-3:3b"
+    # unbekannt → default (kleinstes verfügbares cloud-modell, höchster durchsatz)
+    assert _resolve_cloud_model("totally-unknown") == "ministral-3:3b"
 
 
 def test_cloud_routing_off_without_api_key(monkeypatch):

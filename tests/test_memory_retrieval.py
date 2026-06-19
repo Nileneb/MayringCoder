@@ -118,6 +118,67 @@ class TestSymbolicScore:
         assert score > 0.0  # path bonus kicks in
 
 
+class TestChunkTokenCache:
+    """The per-chunk token memoisation that fixed the 5s hook-timeout (2026-06-20):
+    re-tokenising 10k full texts per search dominated /memory/search latency."""
+
+    def setup_method(self) -> None:
+        from mayring_core.memory import retrieval
+        retrieval._CHUNK_TOKENS.clear()
+
+    def test_token_set_matches_fresh_tokenisation(self) -> None:
+        from mayring_core.memory.retrieval import _chunk_token_set
+        chunk = _make_chunk("repo:s", text="authenticate the user via token")
+        chunk.summary = "login summary blurb"
+        expected = _tokenize(chunk.text) | _tokenize(chunk.summary)
+        assert _chunk_token_set(chunk) == expected
+
+    def test_memoised_second_call_skips_retokenisation(self, monkeypatch) -> None:
+        from mayring_core.memory import retrieval
+        chunk = _make_chunk("repo:s", text="def authenticate_user(): pass")
+        terms = _tokenize("authenticate user")
+        first = _symbolic_score(chunk, terms)
+
+        calls = {"n": 0}
+        real_tokenize = retrieval._tokenize
+
+        def _counting(text: str):
+            calls["n"] += 1
+            return real_tokenize(text)
+
+        monkeypatch.setattr(retrieval, "_tokenize", _counting)
+        # query-side _tokenize still runs inside _symbolic_score, but the cached
+        # chunk token set must NOT trigger a re-tokenisation of chunk text.
+        second = _symbolic_score(chunk, terms)
+        assert second == first
+        # only the query terms get tokenised by the caller, never the chunk again.
+        # _symbolic_score itself tokenises category_labels once → allow that, but
+        # the (expensive) text+summary tokenisation must be served from cache.
+        assert calls["n"] <= 1
+
+    def test_invalidates_on_text_hash_change(self) -> None:
+        from mayring_core.memory.retrieval import _chunk_token_set
+        chunk = _make_chunk("repo:s", text="original body alpha")
+        first = _chunk_token_set(chunk)
+        assert "alpha" in first
+        # simulate a re-ingest: new text + new hash, same chunk_id
+        chunk.text = "rewritten body beta"
+        chunk.text_hash = Chunk.compute_text_hash(chunk.text)
+        second = _chunk_token_set(chunk)
+        assert "beta" in second
+        assert "alpha" not in second
+
+    def test_no_hash_does_not_cache_stale(self) -> None:
+        from mayring_core.memory.retrieval import _chunk_token_set
+        chunk = _make_chunk("repo:s", text="legacy body gamma")
+        chunk.text_hash = ""  # legacy row without a hash → never cached
+        first = _chunk_token_set(chunk)
+        assert "gamma" in first
+        chunk.text = "legacy body delta"
+        second = _chunk_token_set(chunk)
+        assert "delta" in second and "gamma" not in second
+
+
 class TestRecencyScore:
     def test_fresh_chunk_is_near_one(self) -> None:
         chunk = _make_chunk("repo:s", created_at=datetime.now(timezone.utc).isoformat())
