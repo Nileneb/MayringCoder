@@ -79,3 +79,73 @@ def test_versions_endpoint_returns_list(monkeypatch, tmp_path):
     result = _run(ra.list_reranker_versions_endpoint(info=info))
     assert isinstance(result["active"], list)
     assert "versions" in result
+
+
+# --- Qualitäts-Gate (2026-06-20): ein Modell darf nur aktiv werden, wenn es auf
+# der leakage-freien clean-eval ≥ v1-Baseline liegt. Verhindert, dass degenerierte/
+# unterdurchschnittliche Modelle (v4–v7) je wieder in den Serving-A/B-Pool kriechen. ---
+
+def test_gate_rejects_below_baseline(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    (tmp_path / "rerank_v5.json").write_text('{"weights":{"v":0.3}}')
+    monkeypatch.setattr(ra, "_clean_eval_scores", lambda k=5: {"v1": 0.3678, "v5": 0.3433})
+    info = _admin()
+    with pytest.raises(HTTPException) as exc:
+        _run(ra.set_reranker_active(ra.RerankerActiveReq(versions=["v5"]), info=info))
+    assert exc.value.status_code == 422
+    assert "baseline" in str(exc.value.detail).lower()
+
+
+def test_gate_allows_above_baseline(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    (tmp_path / "rerank_v3.json").write_text('{"weights":{"v":1.1}}')
+    monkeypatch.setattr(ra, "_clean_eval_scores", lambda k=5: {"v1": 0.3678, "v3": 0.3684})
+    info = _admin()
+    result = _run(ra.set_reranker_active(ra.RerankerActiveReq(versions=["v3"]), info=info))
+    assert result == {"active": ["v3"]}
+
+
+def test_gate_force_overrides_below_baseline(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    (tmp_path / "rerank_v5.json").write_text('{"weights":{"v":0.3}}')
+    monkeypatch.setattr(ra, "_clean_eval_scores", lambda k=5: {"v1": 0.3678, "v5": 0.3433})
+    info = _admin()
+    result = _run(ra.set_reranker_active(
+        ra.RerankerActiveReq(versions=["v5"]), info=info, force=True))
+    assert result["active"] == ["v5"]
+
+
+def test_gate_skips_without_eval_data(monkeypatch, tmp_path):
+    """No claude-prewarm labels yet → no quality evidence → don't block (fail-soft).
+    The existence/format validation in write_active_versions still applies."""
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    (tmp_path / "rerank_v5.json").write_text('{"weights":{"v":0.3}}')
+    monkeypatch.setattr(ra, "_clean_eval_scores", lambda k=5: {})
+    info = _admin()
+    result = _run(ra.set_reranker_active(ra.RerankerActiveReq(versions=["v5"]), info=info))
+    assert result == {"active": ["v5"]}
+
+
+def test_gate_v1_always_allowed(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(ra, "_clean_eval_scores", lambda k=5: {"v1": 0.3678, "v5": 0.3433})
+    info = _admin()
+    result = _run(ra.set_reranker_active(ra.RerankerActiveReq(versions=["v1"]), info=info))
+    assert result == {"active": ["v1"]}
+
+
+def test_versions_active_flag_matches_serving_sot(monkeypatch, tmp_path):
+    """The per-version active flag MUST reflect rerank_active.json (the serving SoT),
+    not rerank_default.txt (legacy). Regression for the v4-active=True display lie."""
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    (tmp_path / "rerank_v3.json").write_text('{"weights":{"v":1.1}}')
+    (tmp_path / "rerank_v4.json").write_text('{"weights":{"v":0.9}}')
+    # legacy default points at v4, but the serving SoT will be v3
+    (tmp_path / "rerank_default.txt").write_text("v4")
+    (tmp_path / "rerank_active.json").write_text('["v3"]')
+    info = _admin()
+    result = _run(ra.list_reranker_versions_endpoint(info=info))
+    by_ver = {v["version"]: v["active"] for v in result["versions"]}
+    assert by_ver["v3"] is True
+    assert by_ver["v4"] is False
+    assert result["active"] == ["v3"]

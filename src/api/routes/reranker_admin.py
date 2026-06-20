@@ -426,7 +426,50 @@ def list_reranker_versions_endpoint(
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
     from mayring_core.memory.reranker_v2 import read_active_versions, list_reranker_versions
-    return {"active": read_active_versions(), "versions": list_reranker_versions()}
+    active = read_active_versions()
+    versions = list_reranker_versions()
+    # WHY(2026-06-20): list_reranker_versions derives `active` from the legacy
+    # rerank_default.txt, which diverges from the real serving SoT (rerank_active.json
+    # via read_active_versions) — that mismatch is why the dashboard showed v4 active
+    # while v3 was actually serving. Re-stamp the flag from the SoT so there is ONE truth.
+    active_set = set(active)
+    for v in versions:
+        v["active"] = v["version"] in active_set
+    return {"active": active, "versions": versions}
+
+
+def _assert_active_quality(versions: list[str], force: bool) -> None:
+    """Quality invariant: a trained model may only become active if it scores
+    ≥ the v1 vector baseline on the leakage-free clean-eval. This is the single
+    gate that stops degenerate/below-baseline models (v4–v7) from creeping back
+    into the serving A/B pool — no matter which write path put them there
+    (manual, deprecated alias, future auto-rollout, migration fallback).
+
+    Fail-soft: when there is no claude-labelled evidence yet, clean-eval is empty
+    → we cannot judge → we do NOT block (the existence/format check still runs).
+    `force=True` is an explicit, logged human override for a deliberate below-
+    baseline activation. v1 (the baseline itself) is always allowed."""
+    if force:
+        return
+    scores = _clean_eval_scores()
+    if not scores:
+        return
+    baseline = scores.get("v1")
+    if baseline is None:
+        return
+    for v in (str(x).strip().lower() for x in versions):
+        if v == "v1":
+            continue
+        s = scores.get(v)
+        if s is not None and s < baseline:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{v} clean-eval nDCG {s:.4f} < v1 baseline {baseline:.4f} — "
+                    f"refusing to activate a below-baseline model. Pass force=true "
+                    f"to override deliberately."
+                ),
+            )
 
 
 class RerankerActiveReq(BaseModel):
@@ -437,23 +480,26 @@ class RerankerActiveReq(BaseModel):
 def set_reranker_active(
     body: RerankerActiveReq,
     info: TokenInfo = Depends(get_token_info),
+    force: bool = False,
 ) -> dict:
     """Set 1–2 active reranker versions (A/B pair or single).
 
     Replaces the old single-default + autorollout model.  Each version must
     be 'v1' or a 'v<N>' whose model file exists; passing 3+ versions returns
-    HTTP 422.  Admin scope required.
+    HTTP 422.  A non-v1 version below the v1 clean-eval baseline is rejected
+    (422) unless force=true. Admin scope required.
     """
     if not _is_admin(info):
         raise HTTPException(status_code=403, detail="admin scope required")
+    _assert_active_quality(body.versions, force)
     from mayring_core.memory.reranker_v2 import write_active_versions
     try:
         written = write_active_versions(body.versions)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     _log.info(
-        "reranker active versions set to %s by workspace=%s",
-        written, info.workspace_id,
+        "reranker active versions set to %s (force=%s) by workspace=%s",
+        written, force, info.workspace_id,
     )
     return {"active": written}
 
@@ -474,6 +520,7 @@ def set_reranker_default(
     if (version or "").strip().lower() == "auto":
         raise HTTPException(status_code=400,
                             detail="'auto' entfällt — setze 2 aktive Versionen via /reranker-active")
+    _assert_active_quality([version], force=False)
     from mayring_core.memory.reranker_v2 import write_active_versions
     try:
         written = write_active_versions([version])
@@ -1185,18 +1232,13 @@ def _ndcg_at_k(ranked_rels: list[float], k: int) -> float:
     return (dcg / idcg) if idcg > 0 else 0.0
 
 
-@router.get("/stats/admin/reranker-clean-eval")
-def reranker_clean_eval(
-    k: int = 5,
-    info: TokenInfo = Depends(get_token_info),
-) -> dict:
-    """Leakage-free reranker eval: rank each query's chunks by every model and
-    score nDCG@k against CLAUDE's relevance labels (span_judge_cache claude-prewarm),
-    NOT the recency-leaked was_referenced label. This is the honest "is model X
-    better than v5" measure — the offline auc/p@1 from training reward the very
-    recency leakage that crippled v5's served vector weight. Read-only; admin."""
-    if not _is_admin(info):
-        raise HTTPException(status_code=403, detail="admin scope required")
+def _clean_eval_compute(k: int = 5) -> dict:
+    """Leakage-free reranker eval, factored out so BOTH the endpoint and the
+    active-versions quality gate use the identical measure. Ranks each query's
+    chunks by every model and scores nDCG@k against CLAUDE's relevance labels
+    (span_judge_cache claude-prewarm), NOT the recency-leaked was_referenced
+    label. Returns {} (no by_version) when there is no claude-labelled evidence
+    yet — callers treat that as 'cannot judge', never as 'all zero'."""
     import json as _json
     try:
         from tools import span_judge as _sj
@@ -1204,7 +1246,11 @@ def reranker_clean_eval(
         import span_judge as _sj
     from mayring_core.memory.reranker_v2 import _load_model, score_v2, list_reranker_versions
 
-    conn = _memory_db_conn()
+    try:
+        conn = _memory_db_conn()
+    except Exception as exc:  # no DB (fresh install / test env) → no evidence
+        _log.warning("clean-eval: memory.db unavailable (%s) — no quality evidence", exc)
+        return {}
     try:
         h2q: dict[str, str] = {}
         for (q,) in conn.execute(
@@ -1240,8 +1286,7 @@ def reranker_clean_eval(
         conn.close()
 
     if not eval_queries:
-        return {"error": "no claude-labelled queries with stage_scores + ≥2 chunks",
-                "hint": "run span-judge prewarm ingest first"}
+        return {}
 
     versions = [v["version"] for v in list_reranker_versions()]
     out: dict[str, float] = {}
@@ -1257,11 +1302,36 @@ def reranker_clean_eval(
             scored.sort(key=lambda t: t[0], reverse=True)
             ndcgs.append(_ndcg_at_k([rel for _s, rel in scored], k))
         out[ver] = round(sum(ndcgs) / len(ndcgs), 4) if ndcgs else 0.0
+    return {"by_version": out, "eval_queries": len(eval_queries), "eval_pairs": n_pairs}
+
+
+def _clean_eval_scores(k: int = 5) -> dict[str, float]:
+    """ver → clean nDCG@k. Empty dict = no claude-labelled evidence → no gating."""
+    return _clean_eval_compute(k).get("by_version", {})
+
+
+@router.get("/stats/admin/reranker-clean-eval")
+def reranker_clean_eval(
+    k: int = 5,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Leakage-free reranker eval: rank each query's chunks by every model and
+    score nDCG@k against CLAUDE's relevance labels (span_judge_cache claude-prewarm),
+    NOT the recency-leaked was_referenced label. This is the honest "is model X
+    better than v5" measure — the offline auc/p@1 from training reward the very
+    recency leakage that crippled v5's served vector weight. Read-only; admin."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    res = _clean_eval_compute(k)
+    if not res:
+        return {"error": "no claude-labelled queries with stage_scores + ≥2 chunks",
+                "hint": "run span-judge prewarm ingest first"}
+    out = res["by_version"]
     ranked = sorted(out.items(), key=lambda t: t[1], reverse=True)
     return {
         "metric": f"clean_ndcg_at_{k}_vs_claude",
-        "eval_queries": len(eval_queries),
-        "eval_pairs": n_pairs,
+        "eval_queries": res["eval_queries"],
+        "eval_pairs": res["eval_pairs"],
         "by_version": out,
         "best": ranked[0][0] if ranked else None,
         "ranking": ranked,
