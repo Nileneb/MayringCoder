@@ -1,10 +1,15 @@
 """Shared memory search and ingest logic used by server.py and mcp.py."""
 from __future__ import annotations
 
+import logging as _logging
+import os as _os
 import re as _re
+import threading as _threading
 import time as _time
 from collections import deque
 from typing import Any
+
+_log = _logging.getLogger(__name__)
 
 from mayring_core.memory.ingest import ingest
 from mayring_core.memory.retrieval import compress_for_prompt, search
@@ -19,6 +24,63 @@ _TRIVIAL_RE = _re.compile(
     r"^(ping|ok|okay|k|ja|nein|test|hi|hallo|hey|danke|thx|thanks|yes|no|"
     r"stop|weiter|los|go|fertig|done)[\s!?.]*$", _re.I)
 _MIN_QUERY_LEN = 8
+
+
+# Task-loop HTTP-fanout cap (FALLE 1, 2026-06-20): the act-path loop POSTs each
+# sub-question to our OWN /memory/search so uvicorn's worker PROCESSES run the
+# CPU-bound symbolic search truly in parallel (separate GILs) — in-process threads
+# only parallelised the I/O, the symbolic rerank stayed GIL-serialised. This
+# BoundedSemaphore caps TOTAL in-flight internal searches per process so the loop
+# never starves the 4 api workers it shares with the hot-path inject. Start at 2
+# (conservative); raise via env once measured under load.
+_FANOUT_CAP = max(1, int(_os.getenv("TASK_SEARCH_FANOUT_CAP", "2")))
+_FANOUT_SEM = _threading.BoundedSemaphore(_FANOUT_CAP)
+
+
+def _http_retrieve_fn(retrieve_url: str, bearer: str, opts: dict[str, Any],
+                      char_budget: int):
+    """Build a retrieve_fn that fans sub-questions out as HTTP POSTs to our own
+    /memory/search (true cross-process parallelism), instead of an in-process call.
+
+    Preserves the caller's user/workspace scope by forwarding the raw bearer (FALLE
+    2) and the same opts the in-process path uses. llm_prefilter=False: the loop
+    already judges sufficiency with gemma, so each search skips the redundant
+    PI-advisor stage and stays fast."""
+    import httpx
+
+    url = retrieve_url.rstrip("/") + "/memory/search"
+    body_base: dict[str, Any] = {
+        "top_k": opts.get("top_k", 8),
+        "char_budget": char_budget,
+        "llm_prefilter": False,
+    }
+    for src_key, dst_key in (("repo", "repo"), ("scope_key", "scope"),
+                             ("project_id", "project"), ("session_id", "session_id"),
+                             ("category_hint", "category_hint")):
+        val = opts.get(src_key)
+        if val:
+            body_base[dst_key] = val
+    auth = bearer if bearer.lower().startswith("bearer ") else f"Bearer {bearer}"
+    headers = {"Authorization": auth}
+    timeout = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
+
+    def retrieve(q: str) -> list[dict]:
+        try:
+            with _FANOUT_SEM:  # cap total in-flight internal searches per process
+                with httpx.Client(timeout=timeout) as client:
+                    resp = client.post(url, json={"query": q, **body_base}, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+        except httpx.HTTPError as exc:
+            # One sub-question's search failed (network/auth/timeout). Degrade THIS
+            # question to no-chunks so the loop continues with the others instead of
+            # 500-ing the whole act-path — logged loudly, never silently swallowed.
+            _log.warning("task-loop HTTP fanout failed for sub-question %r: %s", q, exc)
+            return []
+        return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
+                for r in data.get("results", []) if r.get("chunk_id")]
+
+    return retrieve
 
 
 def _is_corpus_worthy(raw_query: str | None, task: str | None) -> bool:
@@ -192,6 +254,8 @@ def run_task_search(
     anchor_only: bool = False,
     conn_factory: Any = None,
     parallelism: int = 4,
+    retrieve_url: str | None = None,
+    bearer: str | None = None,
 ) -> dict[str, Any]:
     """Task-anchored Mythos retrieval, shared by REST + MCP.
 
@@ -209,18 +273,29 @@ def run_task_search(
     workspace_id = opts.get("workspace_id", "default")
     task = query.strip() if already_task else derive_task(query, ollama_url)
 
-    # Parallel sub-question retrieval needs a fresh SQLite connection per thread
-    # (sqlite objects aren't thread-safe); Chroma is a shared thread-safe server.
-    # conn_factory (= get_conn, thread-local) supplies the per-thread connection.
-    # Without it we must stay sequential (parallelism=1) — the shared conn would
-    # race. The hot-path anchor_only is single-call, so it never needs this.
-    _par = parallelism if conn_factory else 1
+    # Sub-question retrieval, two modes (act-path only; anchor_only never loops):
+    #  - HTTP fanout (retrieve_url + bearer given): POST to our own /memory/search
+    #    so the CPU-bound search runs in OTHER uvicorn worker PROCESSES → true
+    #    parallelism past the GIL. Cap = _FANOUT_CAP (conservative 2).
+    #  - In-process: a fresh thread-local SQLite conn per thread (conn_factory);
+    #    Chroma is a shared thread-safe server. Without conn_factory the shared
+    #    conn would race, so we fall back to sequential (parallelism=1). This stays
+    #    GIL-serialised for the symbolic stage — the fallback, not the fast path.
+    # Kill-switch: TASK_SEARCH_FANOUT=0 forces the in-process path in prod without a
+    # redeploy (instant rollback if the fanout misbehaves under load).
+    _fanout_on = _os.getenv("TASK_SEARCH_FANOUT", "1").lower() not in ("0", "false", "no")
+    use_http = bool(_fanout_on and retrieve_url and bearer and not anchor_only)
+    if use_http:
+        retrieve_fn = _http_retrieve_fn(retrieve_url, bearer, opts, char_budget)
+        _par = min(parallelism, _FANOUT_CAP)
+    else:
+        _par = parallelism if conn_factory else 1
 
-    def retrieve_fn(q: str) -> list[dict]:
-        c = conn_factory() if conn_factory else conn
-        sr = run_search(q, c, chroma, ollama_url, opts, char_budget)
-        return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
-                for r in sr.get("results", []) if r.get("chunk_id")]
+        def retrieve_fn(q: str) -> list[dict]:
+            c = conn_factory() if conn_factory else conn
+            sr = run_search(q, c, chroma, ollama_url, opts, char_budget)
+            return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
+                    for r in sr.get("results", []) if r.get("chunk_id")]
 
     extra: dict[str, Any] = {}
     if anchor_only:

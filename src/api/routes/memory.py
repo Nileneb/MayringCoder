@@ -245,7 +245,8 @@ async def memory_search(
     return await run_in_threadpool(_memory_search_sync, request, workspace_id, info)
 
 
-def _task_search_sync(request: TaskSearchRequest, workspace_id: str, info: TokenInfo) -> dict:
+def _task_search_sync(request: TaskSearchRequest, workspace_id: str,
+                      info: TokenInfo, bearer: str | None = None) -> dict:
     from src.api.memory_service import run_task_search
 
     opts: dict[str, Any] = {
@@ -266,13 +267,19 @@ def _task_search_sync(request: TaskSearchRequest, workspace_id: str, info: Token
         opts["category_hint"] = [c.lower().strip() for c in request.category_hint
                                  if c and c.strip()]
 
+    # HTTP-fanout (act-path only): forward the raw bearer + our own internal API
+    # URL so the loop's sub-question searches run in OTHER uvicorn workers (true
+    # parallelism). Falls back to in-process if either is missing.
+    _internal = os.getenv("MAYRING_INTERNAL_API_URL") or \
+        f"http://localhost:{os.getenv('API_PORT', '8090')}"
     out = run_task_search(
         request.query, _get_conn(), _get_chroma(), _OLLAMA_URL, opts,
         char_budget=request.char_budget, max_loops=request.max_loops,
         budget_s=request.budget_s, max_q=request.max_q,
         think=request.think, already_task=request.already_task,
         anchor_only=request.anchor_only,
-        conn_factory=_get_conn,  # thread-local conn for parallel sub-question search
+        conn_factory=_get_conn,  # thread-local conn (in-process fallback path)
+        retrieve_url=_internal, bearer=bearer,
     )
     return {"workspace_id": workspace_id, **out}
 
@@ -282,12 +289,18 @@ async def memory_task_search(
     request: TaskSearchRequest,
     workspace_id: str = Depends(get_workspace),
     info: TokenInfo = Depends(get_token_info),
+    authorization: str | None = Header(None),
 ) -> dict:
     """Task-anchored Mythos retrieval (LIVE): distill prompt→task, decompose into
     sub-questions, loop until answered/no-progress (cap/budget backstop). Logs the
     clean (prompt→task→questions→chunks) corpus for the future judge finetune.
-    Synchronous body in a threadpool like /memory/search; act-path use only."""
-    return await run_in_threadpool(_task_search_sync, request, workspace_id, info)
+    Synchronous body in a threadpool like /memory/search; act-path use only.
+
+    The raw Authorization header is forwarded into the loop so its sub-question
+    searches can fan out as authenticated HTTP calls to our own /memory/search
+    (true cross-worker parallelism), preserving this caller's workspace scope."""
+    return await run_in_threadpool(
+        _task_search_sync, request, workspace_id, info, authorization)
 
 
 @router.get("/stats/task-search-corpus")

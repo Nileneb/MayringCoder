@@ -143,6 +143,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         try:
             from mayring_core.memory.schema import canonicalize_url
             from src.api.memory_service import run_task_search
+            from src.api.mcp_auth import _current_raw_jwt
             ws = _enforce_tenant(workspace_id)
             opts = {
                 "repo": canonicalize_url(repo) if repo else repo,
@@ -152,12 +153,18 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 "user_id": _effective_user_id(),
                 "org_ids": _effective_org_ids(),
             }
+            # HTTP-fanout: the loop runs HERE in the (single) mcp process, so its
+            # sub-question searches go to mayring-api's 4 workers → true parallelism
+            # past this process's GIL, orchestrator separate. Forward the request's
+            # raw JWT to preserve workspace scope; falls back to in-process if absent.
             return run_task_search(
                 query, _get_conn(), _get_chroma(),
                 os.getenv("OLLAMA_URL", "http://localhost:11434"),
                 opts, char_budget=char_budget, max_loops=max_loops,
                 max_q=max_q, already_task=already_task, anchor_only=anchor_only,
-                conn_factory=_get_conn,  # thread-local conn for parallel sub-question search
+                conn_factory=_get_conn,  # thread-local conn (in-process fallback)
+                retrieve_url=os.getenv("MAYRING_API_URL", "http://localhost:8090"),
+                bearer=_current_raw_jwt(),
             )
         except Exception as exc:
             return {"error": str(exc), "task": "", "questions": [], "chunks": []}
