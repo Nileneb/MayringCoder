@@ -257,6 +257,36 @@ def test_task_loop_halts_cap():
     assert out["loops"] == 2
 
 
+def test_task_loop_parallel_is_faster_and_deterministic():
+    """Parallel sub-question retrieval: 3 questions × 0.15s each cost ~0.15s
+    parallel vs ~0.45s sequential — AND the merged chunk set is identical
+    (order-preserving map + seen-set keep determinism)."""
+    import time as _t
+    decompose = lambda t: ["qa", "qb"]  # +seed → 3 questions
+    answered = lambda q, ch: True
+    catalog = {"the-task": [_chunk("t1")], "qa": [_chunk("a1")], "qb": [_chunk("b1")]}
+
+    def slow_retrieve(q):
+        _t.sleep(0.15)
+        return catalog.get(q, [])
+
+    t0 = _t.time()
+    seq = sg.run_task_loop("the-task", slow_retrieve, "http://o",
+                           decompose_fn=decompose, answered_fn=answered, parallelism=1)
+    seq_dt = _t.time() - t0
+
+    t0 = _t.time()
+    par = sg.run_task_loop("the-task", slow_retrieve, "http://o",
+                           decompose_fn=decompose, answered_fn=answered, parallelism=4)
+    par_dt = _t.time() - t0
+
+    # same result regardless of parallelism
+    assert {c["chunk_id"] for c in seq["final_chunks"]} == {"t1", "a1", "b1"}
+    assert {c["chunk_id"] for c in par["final_chunks"]} == {"t1", "a1", "b1"}
+    # parallel meaningfully faster (3 questions: ~0.45s seq vs ~0.15s par)
+    assert par_dt < seq_dt * 0.6, f"parallel {par_dt:.2f}s not < 0.6×seq {seq_dt:.2f}s"
+
+
 def test_task_loop_halts_budget():
     decompose = lambda t: ["q1"]
     answered = lambda q, ch: False

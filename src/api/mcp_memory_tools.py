@@ -157,6 +157,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 os.getenv("OLLAMA_URL", "http://localhost:11434"),
                 opts, char_budget=char_budget, max_loops=max_loops,
                 max_q=max_q, already_task=already_task, anchor_only=anchor_only,
+                conn_factory=_get_conn,  # thread-local conn for parallel sub-question search
             )
         except Exception as exc:
             return {"error": str(exc), "task": "", "questions": [], "chunks": []}

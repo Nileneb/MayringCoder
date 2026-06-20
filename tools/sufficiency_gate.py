@@ -255,6 +255,18 @@ def _result(chunks: list[dict], trace: list[dict], halted_by: str, loops: int) -
             "halted_by": halted_by, "loops": loops}
 
 
+def _parallel_map(fn: Callable, items: list, workers: int) -> list:
+    """map(fn, items), concurrently when workers>1. Order-preserving (ex.map), so
+    results stay deterministic. Used to fan the sub-question retrievals + answered-
+    checks of ONE loop round out in parallel — the sub-questions are independent,
+    so a round drops from N×latency to ~max(latency) without skipping any question."""
+    if workers <= 1 or len(items) <= 1:
+        return [fn(x) for x in items]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as ex:
+        return list(ex.map(fn, items))
+
+
 def run_task_loop(
     task: str,
     retrieve_fn: Callable[[str], list[dict]],
@@ -266,6 +278,7 @@ def run_task_loop(
     budget_s: float = 30.0,
     max_q: int = 4,
     seed_with_task: bool = True,
+    parallelism: int = 4,
     decompose_fn: Callable[[str], list[str]] | None = None,
     answered_fn: Callable[..., bool] | None = None,
     clock: Callable[[], float] | None = None,
@@ -302,14 +315,20 @@ def run_task_loop(
     loops = 0
 
     while True:
+        # Fan the round's sub-questions out in parallel — they're independent, so a
+        # round costs ~max(latency) not N×latency. Chroma is a server (thread-safe
+        # under concurrent queries); the retrieve_fn must give each thread its own
+        # SQLite connection (sqlite objects are not thread-safe). Order-preserving.
+        fetched = _parallel_map(retrieve_fn, open_qs, parallelism)
         round_fresh = 0
-        for q in open_qs:
-            for c in retrieve_fn(q):
+        for res in fetched:
+            for c in res:
                 if c["chunk_id"] not in seen:
                     seen.add(c["chunk_id"])
                     chunks.append(c)
                     round_fresh += 1
-        still_open = [q for q in open_qs if not answered(q, chunks)]
+        answers = _parallel_map(lambda q: answered(q, chunks), open_qs, parallelism)
+        still_open = [q for q, a in zip(open_qs, answers) if not a]
         trace.append({"loop": loops, "open_before": len(open_qs),
                       "open_after": len(still_open), "fresh_chunks": round_fresh})
         open_qs = still_open

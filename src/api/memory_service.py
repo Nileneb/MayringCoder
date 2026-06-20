@@ -190,6 +190,8 @@ def run_task_search(
     think: bool = False,
     already_task: bool = False,
     anchor_only: bool = False,
+    conn_factory: Any = None,
+    parallelism: int = 4,
 ) -> dict[str, Any]:
     """Task-anchored Mythos retrieval, shared by REST + MCP.
 
@@ -207,8 +209,16 @@ def run_task_search(
     workspace_id = opts.get("workspace_id", "default")
     task = query.strip() if already_task else derive_task(query, ollama_url)
 
+    # Parallel sub-question retrieval needs a fresh SQLite connection per thread
+    # (sqlite objects aren't thread-safe); Chroma is a shared thread-safe server.
+    # conn_factory (= get_conn, thread-local) supplies the per-thread connection.
+    # Without it we must stay sequential (parallelism=1) — the shared conn would
+    # race. The hot-path anchor_only is single-call, so it never needs this.
+    _par = parallelism if conn_factory else 1
+
     def retrieve_fn(q: str) -> list[dict]:
-        sr = run_search(q, conn, chroma, ollama_url, opts, char_budget)
+        c = conn_factory() if conn_factory else conn
+        sr = run_search(q, c, chroma, ollama_url, opts, char_budget)
         return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
                 for r in sr.get("results", []) if r.get("chunk_id")]
 
@@ -226,7 +236,8 @@ def run_task_search(
                  "diagnostics": sr.get("diagnostics", {})}
     else:
         loop = run_task_loop(task, retrieve_fn, ollama_url, think=think,
-                             max_loops=max_loops, budget_s=budget_s, max_q=max_q)
+                             max_loops=max_loops, budget_s=budget_s, max_q=max_q,
+                             parallelism=_par)
         chunks = loop["final_chunks"]
         questions, halted_by, loops = loop["questions"], loop["halted_by"], loop["loops"]
 
