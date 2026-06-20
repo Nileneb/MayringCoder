@@ -77,6 +77,27 @@ def test_scores_for_query_caches(monkeypatch):
     assert len(calls) == 1  # second call served from span_judge_cache
 
 
+def test_cache_only_mode_skips_fresh_judge(monkeypatch):
+    """SPAN_JUDGE_CACHE_ONLY=1 → never calls the Ollama judge; returns only
+    pre-warmed (e.g. claude-prewarm) cache hits. Used for Claude-teacher retrains
+    so the weak ministral judge can't poison the labels."""
+    conn = _chunks_db()
+    monkeypatch.setenv("SPAN_JUDGE_CACHE_ONLY", "1")
+    monkeypatch.setattr(span_judge, "_judge_model", lambda *a, **k: "m")
+
+    def _boom(*a, **k):
+        raise AssertionError("judge_relevance must NOT be called in cache-only mode")
+
+    monkeypatch.setattr(span_judge, "judge_relevance", _boom)
+
+    # no cache yet → cache-only returns empty, no fresh call
+    assert span_judge.scores_for_query(conn, "q", ["chk_a"]) == {}
+    # pre-warm a label, then cache-only serves it
+    span_judge.ensure_cache_table(conn)
+    span_judge._write_cache(conn, span_judge.query_hash("q"), {"chk_a": 0.9}, "claude-prewarm")
+    assert span_judge.scores_for_query(conn, "q", ["chk_a"]) == {"chk_a": pytest.approx(0.9)}
+
+
 def test_loads_lenient_raw_fenced_prose_and_broken():
     import json as _json
     assert span_judge._loads_lenient('{"scores":{"a":1}}') == {"scores": {"a": 1}}

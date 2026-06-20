@@ -242,13 +242,18 @@ async def _run_train_subprocess(
         # SPAN_JUDGE_MAX_CALLS caps fresh judge calls so a retrain can never hammer
         # unboundedly (backstop next to Claude pre-warm + cooldown). All via GitHub env.
         env["OLLAMA_CLOUD_PRIMARY_RATIO"] = os.getenv("SPAN_JUDGE_CLOUD_RATIO", "1.0")
-        # WHY(Pfad-A claude-teacher): max_calls=0 lässt den Export NUR die
-        # vorgewärmten Claude-Labels (span_judge_cache) nutzen — keine frischen
-        # Ollama-Calls → der schwache ministral-3:3b kann v nicht mehr vergiften
-        # (v7: v=-3.26). Override pro Job; ohne Override der 400-Backstop.
-        _mc = span_judge_max_calls if span_judge_max_calls is not None \
-            else int(os.getenv("SPAN_JUDGE_MAX_CALLS", "400"))
-        env["SPAN_JUDGE_MAX_CALLS"] = str(_mc)
+        # WHY(Pfad-A claude-teacher): span_judge_max_calls=0 → CACHE-ONLY: der
+        # Export refined NUR mit vorgewärmten Claude-Labels (span_judge_cache),
+        # KEIN frischer Ollama-Call → der schwache ministral-3:3b kann v nicht mehr
+        # vergiften (v7/v8: v invertiert). (max_calls=0 heißt im budget-check
+        # 'unbegrenzt', daher der separate SPAN_JUDGE_CACHE_ONLY-Schalter.)
+        # max_calls>0 = harter Fresh-Call-Backstop; None = 400-Default.
+        if span_judge_max_calls == 0:
+            env["SPAN_JUDGE_CACHE_ONLY"] = "1"
+        else:
+            _mc = span_judge_max_calls if span_judge_max_calls is not None \
+                else int(os.getenv("SPAN_JUDGE_MAX_CALLS", "400"))
+            env["SPAN_JUDGE_MAX_CALLS"] = str(_mc)
         env["SPAN_JUDGE_TIMEOUT"] = os.getenv("SPAN_JUDGE_TIMEOUT", "45")
         env["SPAN_JUDGE_COOLDOWN_EVERY"] = os.getenv("SPAN_JUDGE_COOLDOWN_EVERY", "15")
         env["SPAN_JUDGE_COOLDOWN_SECONDS"] = os.getenv("SPAN_JUDGE_COOLDOWN_SECONDS", "2.5")

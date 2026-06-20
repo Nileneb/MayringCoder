@@ -270,6 +270,12 @@ def scores_for_query(
     ensure_cache_table(conn)
     qhash = query_hash(query)
     cached = _read_cache(conn, qhash, chunk_ids)
+    # WHY(2026-06-20): cache-only mode für Claude-Teacher-Retrains — refine NUR
+    # mit vorgewärmten Labels (claude-prewarm), KEIN frischer Ollama-Call. Trennt
+    # die sauberen Claude-Urteile vom schwachen ministral-3:3b (v7/v8: v invertiert).
+    # (max_calls=0 heißt 'unbegrenzt', NICHT 'null' — daher dieser separate Schalter.)
+    if os.getenv("SPAN_JUDGE_CACHE_ONLY") == "1":
+        return cached
     missing = [cid for cid in chunk_ids if cid not in cached]
     if missing and not _budget_exhausted():
         texts = _chunk_texts(conn, missing)
