@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import sqlite3
 import threading as _threading
 from typing import Any
 
@@ -286,6 +287,44 @@ async def memory_task_search(
     clean (prompt→task→questions→chunks) corpus for the future judge finetune.
     Synchronous body in a threadpool like /memory/search; act-path use only."""
     return await run_in_threadpool(_task_search_sync, request, workspace_id, info)
+
+
+@router.get("/stats/task-search-corpus")
+def task_search_corpus(
+    limit: int = 30,
+    workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Observe the task-anchored inject in action + the growing finetune corpus:
+    the last N (raw_query → task → questions → halt → n_chunks) rows plus
+    aggregate stats. This is the live test surface — every UserPromptSubmit that
+    runs the anchor_only inject writes a row here. Workspace-scoped, read-only."""
+    import json as _json
+    conn = _get_conn()
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT raw_query, task, questions, halted_by, n_chunks, created_at "
+                "FROM task_search_log WHERE workspace_id = ? "
+                "ORDER BY id DESC LIMIT ?", (workspace_id, max(1, min(limit, 200)))
+            ).fetchall()
+            agg = conn.execute(
+                "SELECT COUNT(*), AVG(n_chunks) FROM task_search_log WHERE workspace_id = ?",
+                (workspace_id,)).fetchone()
+        except sqlite3.OperationalError:
+            return {"total": 0, "recent": [], "hint": "no task-anchored searches yet — "
+                    "run /plugin update to 1.3.5 + reload, then send a prompt"}
+    finally:
+        conn.close()
+    recent = [{
+        "raw_query": r[0][:120], "task": r[1], "n_questions": len(_json.loads(r[2] or "[]")),
+        "halted_by": r[3], "n_chunks": r[4], "at": r[5],
+    } for r in rows]
+    return {
+        "total": agg[0] or 0,
+        "avg_chunks": round(agg[1] or 0.0, 1),
+        "recent": recent,
+    }
 
 
 def _memory_search_sync(

@@ -99,6 +99,36 @@ def test_corpus_log_failure_does_not_break_search(monkeypatch):
     assert "chunks" in out  # search still returns despite log failure
 
 
+def test_corpus_endpoint_shows_rows(monkeypatch):
+    import src.api.routes.memory as mem
+    from src.api.jwt_auth import TokenInfo
+    conn = sqlite3.connect(":memory:")
+    ms.ensure_task_search_log(conn)
+    conn.execute(
+        "INSERT INTO task_search_log (workspace_id, raw_query, task, questions, "
+        "halted_by, loops, n_chunks, chunk_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        ("ws1", "JAAA mach das", "do the thing", '["q1","q2"]', "anchor_only", 0, 5, "[]", "2026-06-20"))
+    conn.commit()
+    monkeypatch.setattr(mem, "_get_conn", lambda: conn)
+    out = mem.task_search_corpus(limit=10, workspace_id="ws1",
+                                 info=TokenInfo(workspace_id="ws1", scopes=("*",), sub="u1"))
+    assert out["total"] == 1
+    assert out["recent"][0]["task"] == "do the thing"
+    assert out["recent"][0]["n_questions"] == 2
+    assert out["recent"][0]["halted_by"] == "anchor_only"
+
+
+def test_corpus_endpoint_empty_before_first_search(monkeypatch):
+    import src.api.routes.memory as mem
+    from src.api.jwt_auth import TokenInfo
+    conn = sqlite3.connect(":memory:")  # no table yet
+    monkeypatch.setattr(mem, "_get_conn", lambda: conn)
+    out = mem.task_search_corpus(limit=10, workspace_id="ws1",
+                                 info=TokenInfo(workspace_id="ws1", scopes=("*",), sub="u1"))
+    assert out["total"] == 0
+    assert "hint" in out
+
+
 def test_endpoint_delegates_to_run_task_search(monkeypatch):
     """The REST wrapper just builds opts and delegates — smoke that the wiring holds."""
     import src.api.routes.memory as mem
