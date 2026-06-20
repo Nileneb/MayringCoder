@@ -61,6 +61,16 @@ NOISE_QUERY_PATTERNS = (
     "reranker rollback%", "_rerank candidates%", "fix bug",
     "reasons probe%", "smoke watcher%", "smoke reasons probe%",
     "smoke check %",
+    # WHY(2026-06-20): manuelle Latenz-/Diagnose-Probes (von curl /memory/search
+    # beim Debuggen) trugen KEINEN "smoke "-Prefix → rutschten durch und stellten
+    # 60% des 30-Tage-Fensters (Messung 2026-06-20) → Modell lernte Zufalls-Token-
+    # Muster (auc 0.66, degenerierte v-Weights). Diese synthetischen Familien raus.
+    # Künftige Probes SOLLEN "smoke "-Prefix tragen, dann reicht das erste Muster.
+    "parallel hook sim%", "num parallel verify%", "steady state probe%",
+    "chroma warmup probe%", "plugin memory injection recovery%",
+    "realistic cadence probe%", "distinct internal probe%", "clean parallel %",
+    "warmup %", "postdeploy verify%",
+    "memory retrieval reranker vector scoring%",
 )
 
 

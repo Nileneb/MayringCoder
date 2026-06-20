@@ -86,6 +86,38 @@ def test_noise_queries_are_filtered_out(tmp_path):
     assert rows[0]["query"] == "real user question"
 
 
+def test_synthetic_probe_queries_are_filtered_out(tmp_path):
+    """2026-06-20: manual latency/diagnose probes (no 'smoke ' prefix) were 60%
+    of the 30d window and poisoned training. The exporter must drop these
+    synthetic families too, keeping only the genuine user query."""
+    from tools.export_retrieval_dataset import export
+
+    conn = _build_db(tmp_path / "memory.db")
+    feats = {"chk_a": {"v": 0.5, "s": 0.3, "r": 0.8, "a": 0.0}}
+    _insert_event(conn, "wie schauts aus?", ["chk_a"], feats)
+    for probe in (
+        "parallel hook sim r3 lens1 unique theta iota",
+        "num parallel verify probe 8 distinct epsilon zeta",
+        "steady state probe 7 distinct words alpha beta",
+        "chroma warmup probe 24 17624",
+        "plugin memory injection recovery check 8",
+        "realistic cadence probe 6 unique words gamma delta",
+        "distinct internal probe 3 reranker lock ingest unique",
+        "clean parallel r3 lens1 unique kappa lambda mu",
+        "warmup 11",
+        "postdeploy verify token cache latency probe 2 unique",
+        "memory retrieval reranker vector scoring pipeline attempt-17",
+    ):
+        _insert_event(conn, probe, ["chk_a"], feats)
+    conn.commit(); conn.close()
+
+    out = tmp_path / "ds.jsonl"
+    n = export(tmp_path / "memory.db", out, days=30, negative_mode="unlabeled")
+    rows = [json.loads(l) for l in out.read_text().splitlines()]
+    assert n == len(rows) == 1
+    assert rows[0]["query"] == "wie schauts aus?"
+
+
 def test_features_drop_sf_and_sl(tmp_path):
     """sf and sl were the target-leakage culprits in v2 — they MUST not
     appear in exported feature dicts. (sf is computed from chunk_feedback
