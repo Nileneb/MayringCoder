@@ -184,9 +184,18 @@ def run_task_search(
         return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
                 for r in sr.get("results", []) if r.get("chunk_id")]
 
+    extra: dict[str, Any] = {}
     if anchor_only:
-        chunks = retrieve_fn(task)
+        # one search; pass the FULL run_search response through (results +
+        # prompt_context) so the inject hook can render + persist exactly like a
+        # normal /memory/search, with source_id intact for the Stop-hook feedback.
+        sr = run_search(task, conn, chroma, ollama_url, opts, char_budget)
+        results = sr.get("results", [])
+        chunks = [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
+                  for r in results if r.get("chunk_id")]
         questions, halted_by, loops = [task], "anchor_only", 0
+        extra = {"results": results, "prompt_context": sr.get("prompt_context", ""),
+                 "diagnostics": sr.get("diagnostics", {})}
     else:
         loop = run_task_loop(task, retrieve_fn, ollama_url, think=think,
                              max_loops=max_loops, budget_s=budget_s, max_q=max_q)
@@ -208,7 +217,7 @@ def run_task_search(
         pass  # corpus logging is best-effort; never fail the search
 
     return {"task": task, "questions": questions, "halted_by": halted_by,
-            "loops": loops, "chunks": chunks}
+            "loops": loops, "chunks": chunks, **extra}
 
 
 def run_ingest(
