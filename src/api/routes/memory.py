@@ -265,6 +265,7 @@ def _task_search_sync(request: TaskSearchRequest, workspace_id: str, info: Token
         char_budget=request.char_budget, max_loops=request.max_loops,
         budget_s=request.budget_s, max_q=request.max_q,
         think=request.think, already_task=request.already_task,
+        anchor_only=request.anchor_only,
     )
     return {"workspace_id": workspace_id, **out}
 

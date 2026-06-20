@@ -119,6 +119,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
         max_loops: int = 2,
         max_q: int = 4,
         already_task: bool = False,
+        anchor_only: bool = False,
         workspace_id: str | None = None,
     ) -> dict:
         """Task-anchored Mythos retrieval — use for DEEP/multi-facet questions where
@@ -155,7 +156,7 @@ def register_memory_tools(mcp: FastMCP) -> None:
                 query, _get_conn(), _get_chroma(),
                 os.getenv("OLLAMA_URL", "http://localhost:11434"),
                 opts, char_budget=char_budget, max_loops=max_loops,
-                max_q=max_q, already_task=already_task,
+                max_q=max_q, already_task=already_task, anchor_only=anchor_only,
             )
         except Exception as exc:
             return {"error": str(exc), "task": "", "questions": [], "chunks": []}

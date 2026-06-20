@@ -161,13 +161,18 @@ def run_task_search(
     max_q: int = 4,
     think: bool = False,
     already_task: bool = False,
+    anchor_only: bool = False,
 ) -> dict[str, Any]:
-    """Task-anchored Mythos retrieval (the live loop), shared by REST + MCP.
+    """Task-anchored Mythos retrieval, shared by REST + MCP.
 
-    Distills the prompt to a task anchor, fans it into sub-questions, searches
-    each via run_search, halts on the semantic criterion (all_answered/no_progress)
-    or the cap/budget backstop, and logs the clean corpus row. Returns
-    {task, questions, halted_by, loops, chunks}."""
+    Distills the prompt to a task anchor, then either:
+      - anchor_only=True  → ONE search with the task (hot-path safe, ~7s): the
+        +13pp task-anchor win without the decomposition loop. This is what the
+        UserPromptSubmit inject uses (replaces the 3 redundant same-query lenses;
+        the full loop measured 12-15s, too slow for the 9s budget).
+      - anchor_only=False → fan the task into sub-questions and loop until
+        answered/no-progress (act-path depth, via the MCP tool).
+    Both log the clean corpus row. Returns {task, questions, halted_by, loops, chunks}."""
     import json as _json
     from tools.sufficiency_gate import derive_task, run_task_loop
 
@@ -179,17 +184,22 @@ def run_task_search(
         return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
                 for r in sr.get("results", []) if r.get("chunk_id")]
 
-    loop = run_task_loop(task, retrieve_fn, ollama_url, think=think,
-                         max_loops=max_loops, budget_s=budget_s, max_q=max_q)
-    chunks = loop["final_chunks"]
+    if anchor_only:
+        chunks = retrieve_fn(task)
+        questions, halted_by, loops = [task], "anchor_only", 0
+    else:
+        loop = run_task_loop(task, retrieve_fn, ollama_url, think=think,
+                             max_loops=max_loops, budget_s=budget_s, max_q=max_q)
+        chunks = loop["final_chunks"]
+        questions, halted_by, loops = loop["questions"], loop["halted_by"], loop["loops"]
 
     try:
         ensure_task_search_log(conn)
         conn.execute(
             "INSERT INTO task_search_log (workspace_id, raw_query, task, questions, "
             "halted_by, loops, n_chunks, chunk_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (workspace_id, query, task, _json.dumps(loop["questions"]),
-             loop["halted_by"], loop["loops"], len(chunks),
+            (workspace_id, query, task, _json.dumps(questions),
+             halted_by, loops, len(chunks),
              _json.dumps([c["chunk_id"] for c in chunks]),
              _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())),
         )
@@ -197,8 +207,8 @@ def run_task_search(
     except Exception:
         pass  # corpus logging is best-effort; never fail the search
 
-    return {"task": task, "questions": loop["questions"],
-            "halted_by": loop["halted_by"], "loops": loop["loops"], "chunks": chunks}
+    return {"task": task, "questions": questions, "halted_by": halted_by,
+            "loops": loops, "chunks": chunks}
 
 
 def run_ingest(

@@ -44,6 +44,35 @@ def test_task_search_logs_corpus(monkeypatch):
     assert n_chunks >= 1
 
 
+def test_anchor_only_one_search_no_loop(monkeypatch):
+    """anchor_only: derive_task + ONE search, NO decomposition — hot-path mode.
+    decompose/is_answered must NOT be called; still logs the corpus row."""
+    conn = sqlite3.connect(":memory:")
+    searches = {"n": 0}
+
+    def _search(q, *a, **k):
+        searches["n"] += 1
+        return {"results": [{"chunk_id": "c1", "text": "t"}]}
+
+    import tools.sufficiency_gate as sg
+
+    def _no_decompose(*a, **k):
+        raise AssertionError("decompose must NOT run in anchor_only mode")
+
+    monkeypatch.setattr(ms, "run_search", _search)
+    monkeypatch.setattr(sg, "derive_task", lambda prompt, url=None, **k: "the task")
+    monkeypatch.setattr(sg, "decompose_questions", _no_decompose)
+
+    out = ms.run_task_search("raw prompt", conn, object(), "http://ollama",
+                             {"workspace_id": "ws1"}, anchor_only=True)
+    assert out["task"] == "the task"
+    assert out["halted_by"] == "anchor_only"
+    assert out["questions"] == ["the task"]
+    assert searches["n"] == 1  # exactly one search, no fan-out
+    rows = conn.execute("SELECT halted_by FROM task_search_log").fetchall()
+    assert rows[0][0] == "anchor_only"
+
+
 def test_already_task_skips_distillation(monkeypatch):
     conn = sqlite3.connect(":memory:")
 

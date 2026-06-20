@@ -121,6 +121,9 @@ class TaskSearchRequest(BaseModel):
     think: bool = False
     # skip distillation when the caller already passes a clean task as `query`
     already_task: bool = False
+    # anchor_only: derive the task + ONE search, NO decomposition loop. Hot-path
+    # safe (~7s) — what the UserPromptSubmit inject uses. Default False = full loop.
+    anchor_only: bool = False
 
 
 class MemoryPutRequest(BaseModel):
