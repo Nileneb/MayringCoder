@@ -101,6 +101,28 @@ class MemorySearchRequest(BaseModel):
     session_id: str | None = None
 
 
+class TaskSearchRequest(BaseModel):
+    """Task-anchored, question-decomposition search (the Mythos loop, live).
+
+    The raw prompt is distilled to a TASK (the retrieval anchor); the task is
+    fanned into sub-questions; each is searched and the loop halts on the
+    semantic criterion (all_answered / no_progress) or the deterministic backstop
+    (cap / budget). Act-path only — never the per-prompt inject hot path."""
+    query: str
+    repo: str | None = None
+    project: str | None = None
+    scope: str | None = None
+    top_k: int = 8
+    char_budget: int = 6000
+    # loop bounds (ACT backstop; the semantic halt usually fires first)
+    max_loops: int = 2
+    budget_s: float = 25.0
+    max_q: int = 4
+    think: bool = False
+    # skip distillation when the caller already passes a clean task as `query`
+    already_task: bool = False
+
+
 class MemoryPutRequest(BaseModel):
     source_id: str | None = None
     source_type: str = "repo_file"
