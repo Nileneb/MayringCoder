@@ -259,6 +259,11 @@ def _task_search_sync(request: TaskSearchRequest, workspace_id: str, info: Token
         opts["scope_key"] = request.scope.strip()
     if request.project:
         opts["project_id"] = request.project.strip()
+    if request.session_id:
+        opts["session_id"] = request.session_id.strip()
+    if request.category_hint:
+        opts["category_hint"] = [c.lower().strip() for c in request.category_hint
+                                 if c and c.strip()]
 
     out = run_task_search(
         request.query, _get_conn(), _get_chroma(), _OLLAMA_URL, opts,

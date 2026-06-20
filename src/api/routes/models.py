@@ -124,6 +124,10 @@ class TaskSearchRequest(BaseModel):
     # anchor_only: derive the task + ONE search, NO decomposition loop. Hot-path
     # safe (~7s) — what the UserPromptSubmit inject uses. Default False = full loop.
     anchor_only: bool = False
+    # Recency-Lane: the running session's id, forwarded to the underlying search so
+    # the session thread stays guaranteed-visible ("nie wieder out of context").
+    session_id: str | None = None
+    category_hint: list[str] | None = None
 
 
 class MemoryPutRequest(BaseModel):
