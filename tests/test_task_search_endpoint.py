@@ -20,6 +20,9 @@ def _patch_pieces(monkeypatch, *, run_search=None, derive=None,
     import tools.sufficiency_gate as sg
     monkeypatch.setattr(sg, "derive_task", derive or (lambda prompt, url=None, **k: "clean task"))
     monkeypatch.setattr(sg, "decompose_questions", decompose or (lambda t, *a, **k: ["q1", "q2"]))
+    # full-loop path fuses derive+decompose into one call (~1.5s win)
+    monkeypatch.setattr(sg, "derive_and_decompose",
+                        lambda prompt, url=None, **k: ("clean task", ["q1", "q2"]))
     monkeypatch.setattr(sg, "is_answered", answered or (lambda q, ch, *a, **k: True))
 
 
@@ -235,8 +238,8 @@ def test_run_task_search_uses_http_fanout_when_bearer_present(monkeypatch):
 
     import tools.sufficiency_gate as sg
     monkeypatch.setattr(ms, "run_search", _no_inprocess)
-    monkeypatch.setattr(sg, "derive_task", lambda prompt, url=None, **k: "the task")
-    monkeypatch.setattr(sg, "decompose_questions", lambda t, *a, **k: ["qa", "qb"])
+    monkeypatch.setattr(sg, "derive_and_decompose",
+                        lambda prompt, url=None, **k: ("the task", ["qa", "qb"]))
     monkeypatch.setattr(sg, "is_answered", lambda q, ch, *a, **k: True)
 
     out = ms.run_task_search(
@@ -285,8 +288,8 @@ def test_kill_switch_forces_in_process(monkeypatch):
 
     import tools.sufficiency_gate as sg
     monkeypatch.setattr(ms, "run_search", _search)
-    monkeypatch.setattr(sg, "derive_task", lambda prompt, url=None, **k: "task")
-    monkeypatch.setattr(sg, "decompose_questions", lambda t, *a, **k: ["qa"])
+    monkeypatch.setattr(sg, "derive_and_decompose",
+                        lambda prompt, url=None, **k: ("task", ["qa"]))
     monkeypatch.setattr(sg, "is_answered", lambda q, ch, *a, **k: True)
 
     ms.run_task_search("raw prompt about x", conn, object(), "http://ollama",

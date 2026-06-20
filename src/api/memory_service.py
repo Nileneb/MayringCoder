@@ -268,10 +268,22 @@ def run_task_search(
         answered/no-progress (act-path depth, via the MCP tool).
     Both log the clean corpus row. Returns {task, questions, halted_by, loops, chunks}."""
     import json as _json
-    from tools.sufficiency_gate import derive_task, run_task_loop
+    from tools.sufficiency_gate import derive_task, derive_and_decompose, run_task_loop
 
     workspace_id = opts.get("workspace_id", "default")
-    task = query.strip() if already_task else derive_task(query, ollama_url)
+    # Task derivation, by mode:
+    #  - already_task: the query IS the task (recap/clean caller) → no LLM call.
+    #  - anchor_only: only the task is needed (no loop) → derive_task alone.
+    #  - full loop: fuse derive+decompose into ONE gemma call (~1.5s saved vs the
+    #    separate derive_task + in-loop decompose). pre_questions feeds the loop so
+    #    it skips its own decompose.
+    pre_questions: list[str] | None = None
+    if already_task:
+        task = query.strip()
+    elif anchor_only:
+        task = derive_task(query, ollama_url)
+    else:
+        task, pre_questions = derive_and_decompose(query, ollama_url, max_q=max_q)
 
     # Sub-question retrieval, two modes (act-path only; anchor_only never loops):
     #  - HTTP fanout (retrieve_url + bearer given): POST to our own /memory/search
@@ -312,7 +324,7 @@ def run_task_search(
     else:
         loop = run_task_loop(task, retrieve_fn, ollama_url, think=think,
                              max_loops=max_loops, budget_s=budget_s, max_q=max_q,
-                             parallelism=_par)
+                             parallelism=_par, questions=pre_questions)
         chunks = loop["final_chunks"]
         questions, halted_by, loops = loop["questions"], loop["halted_by"], loop["loops"]
 

@@ -191,6 +191,76 @@ def test_derive_task_extracts(monkeypatch):
     assert sg.derive_task("JAAAA mach den reranker") == "Reranker aktivieren"
 
 
+def test_derive_and_decompose_one_call(monkeypatch):
+    """Fused distill+decompose: ONE gemma call returns task AND sub-questions."""
+    import httpx
+    calls = {"n": 0}
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self):
+            calls["n"] += 1
+            return {"message": {"content":
+                '{"task": "Reranker aktivieren", "questions": ["wie active sync", "wie rollback"]}'}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R())
+    task, qs = sg.derive_and_decompose("JAAAA mach den reranker scharf")
+    assert task == "Reranker aktivieren"
+    assert qs == ["wie active sync", "wie rollback"]
+    assert calls["n"] == 1  # the whole point: one call, not two
+
+
+def test_derive_and_decompose_caps_max_q(monkeypatch):
+    import httpx
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self): return {"message": {"content":
+            '{"task": "t", "questions": ["a", "b", "c", "d", "e"]}'}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R())
+    _, qs = sg.derive_and_decompose("prompt", max_q=3)
+    assert qs == ["a", "b", "c"]
+
+
+def test_derive_and_decompose_fail_safe(monkeypatch):
+    """On error → (raw prompt, []) so the loop seeds with the raw prompt, never worse."""
+    import httpx
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(
+        httpx.ConnectError("x")))
+    task, qs = sg.derive_and_decompose("  the raw prompt  ")
+    assert task == "the raw prompt"
+    assert qs == []
+
+
+def test_loop_uses_passed_questions_skips_decompose():
+    """run_task_loop with questions=[...] uses them directly and never decomposes
+    (the fused-call path). Task is still seeded as the first query."""
+    seen = []
+
+    def _decompose_boom(t):
+        raise AssertionError("decompose must NOT run when questions are passed")
+
+    out = sg.run_task_loop(
+        "the task", lambda q: (seen.append(q), [_chunk(q)])[1],
+        questions=["facet a", "facet b"],
+        decompose_fn=_decompose_boom, parallelism=1,  # deterministic side-effect order
+        answered_fn=lambda q, ch: True, max_loops=1)
+    # seeded task + the two passed facets were all searched, in order
+    assert seen == ["the task", "facet a", "facet b"]
+    assert out["questions"] == ["the task", "facet a", "facet b"]
+
+
+def test_loop_empty_questions_means_single_shot_on_task():
+    """questions=[] (fused fail-safe) → loop runs single-shot on the seeded task."""
+    seen = []
+    out = sg.run_task_loop(
+        "only the task", lambda q: (seen.append(q), [_chunk(q)])[1],
+        questions=[], answered_fn=lambda q, ch: True, max_loops=1)
+    assert seen == ["only the task"]
+    assert out["questions"] == ["only the task"]
+
+
 def test_judge_answered_batch_parses_index_map(monkeypatch):
     import httpx
 

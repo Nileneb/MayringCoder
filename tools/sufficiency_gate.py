@@ -68,6 +68,18 @@ beantwortet ist. Streng: answered=true NUR wenn die Chunks die Frage konkret bea
 
 Antworte mit STRIKTEM JSON: {"answered": true|false}"""
 
+DERIVE_DECOMPOSE_RUBRIC = """Du verarbeitest einen rohen Chat-Prompt in EINEM Schritt:
+
+1. TASK: Destilliere den Prompt zu EINER praezisen, abgeschlossenen Aufgabe, die als
+   Suchanker fuers Memory taugt. Ignoriere Emotion/Fuellwoerter ("JAAAA", "mach mal",
+   Flueche) — extrahiere die SACHLICHE Arbeitseinheit. Enthaelt der Prompt keine
+   sachliche Aufgabe, gib task="" und questions=[] zurueck.
+2. QUESTIONS: Zerlege die Aufgabe in die Teilfragen, die man ans Memory stellen muss,
+   um sie vollstaendig zu loesen. Je Frage ein konkreter Suchstring. 2 bis 4 Fragen,
+   keine Redundanz, NICHT die Aufgabe woertlich wiederholen (sie wird separat gesucht).
+
+Antworte mit STRIKTEM JSON: {"task": "praezise Aufgabe", "questions": ["frage 1", "frage 2"]}"""
+
 
 def _ollama_url(explicit: str | None = None) -> str:
     return (explicit or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
@@ -104,6 +116,30 @@ def derive_task(prompt: str, ollama_url: str | None = None,
     except Exception as exc:  # noqa: BLE001 — degrade to raw prompt, logged
         _log.warning("task distillation failed (%s) — using raw prompt", exc)
         return (prompt or "").strip()
+
+
+def derive_and_decompose(prompt: str, ollama_url: str | None = None,
+                         model: str | None = None, max_q: int = 4,
+                         timeout: float = _DEFAULT_TIMEOUT) -> tuple[str, list[str]]:
+    """Distill a raw prompt into BOTH the task anchor AND its sub-questions in ONE
+    gemma call — replaces the sequential derive_task + decompose_questions (~1.5s
+    saved on the act-path, the cheapest latency win after the HTTP fanout).
+
+    Fail-safe: on error / empty task → (raw prompt, []) — the loop then seeds with
+    the raw prompt and runs single-shot on it, never worse than the old fail path.
+    Returns (task, sub_questions); the loop adds the task itself as the seed query,
+    so sub_questions are the BROADENING facets only."""
+    url = _ollama_url(ollama_url)
+    raw = (prompt or "").strip()
+    try:
+        data = _chat_json(url, model or _DEFAULT_MODEL, DERIVE_DECOMPOSE_RUBRIC,
+                          raw[:1500], timeout=timeout)
+        task = str(data.get("task") or "").strip() or raw
+        qs = [str(q).strip() for q in (data.get("questions") or []) if str(q).strip()][:max_q]
+        return task, qs
+    except Exception as exc:  # noqa: BLE001 — degrade to raw prompt + no facets, logged
+        _log.warning("derive+decompose failed (%s) — raw prompt, no sub-questions", exc)
+        return raw, []
 
 
 def decompose_questions(task: str, ollama_url: str | None = None,
@@ -313,6 +349,7 @@ def run_task_loop(
     max_q: int = 4,
     seed_with_task: bool = True,
     parallelism: int = 4,
+    questions: list[str] | None = None,
     decompose_fn: Callable[[str], list[str]] | None = None,
     answered_fn: Callable[..., bool] | None = None,
     clock: Callable[[], float] | None = None,
@@ -326,6 +363,9 @@ def run_task_loop(
     Why this beats single-shot: a task fans out into several targeted queries →
     broader, more precise recall than one raw query. Halt is defined against the
     TASK (closeable), not a goal (never finished)."""
+    # Pre-decomposed sub-questions (from the fused derive_and_decompose, ONE call)
+    # take precedence — skip the loop's own decompose. None = decompose here (the
+    # already_task path + tests). decompose_fn stays the test-injection seam.
     decompose = decompose_fn or (lambda t: decompose_questions(
         t, ollama_url, model=model, max_q=max_q))
 
@@ -343,12 +383,12 @@ def run_task_loop(
     # Without the seed the loop discards the (good) task-anchor retrieval and relies
     # only on gemma's sub-questions, which drift → recall drops below single-shot.
     # The task query is the primary anchor; decomposition only broadens it.
-    sub = decompose(task)
-    questions: list[str] = []
+    sub = list(questions) if questions is not None else decompose(task)
+    ordered: list[str] = []
     for q in ([task] if seed_with_task else []) + sub:
-        if q and q not in questions:
-            questions.append(q)
-    open_qs = list(questions)
+        if q and q not in ordered:
+            ordered.append(q)
+    open_qs = list(ordered)
     chunks: list[dict] = []
     seen: set = set()
     trace: list[dict] = []
@@ -374,13 +414,13 @@ def run_task_loop(
         open_qs = still_open
 
         if not open_qs:
-            return _task_result(chunks, questions, trace, "all_answered", loops)
+            return _task_result(chunks, ordered, trace, "all_answered", loops)
         if loops >= max_loops:
-            return _task_result(chunks, questions, trace, "cap", loops)
+            return _task_result(chunks, ordered, trace, "cap", loops)
         if (now() - start) > budget_s:
-            return _task_result(chunks, questions, trace, "budget", loops)
+            return _task_result(chunks, ordered, trace, "budget", loops)
         if round_fresh == 0:
-            return _task_result(chunks, questions, trace, "no_progress", loops)
+            return _task_result(chunks, ordered, trace, "no_progress", loops)
         loops += 1
 
 
