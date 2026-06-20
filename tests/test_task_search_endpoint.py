@@ -122,6 +122,12 @@ def test_corpus_endpoint_shows_rows(monkeypatch):
     assert out["recent"][0]["n_questions"] == 2
     assert out["recent"][0]["halted_by"] == "anchor_only"
 
+    # REGRESSION: the endpoint must NOT close the (thread-local, persistent) conn —
+    # closing it poisoned the next request on that worker thread → "Cannot operate
+    # on a closed database" 500s. The same conn must still be usable afterwards.
+    still_alive = conn.execute("SELECT COUNT(*) FROM task_search_log").fetchone()[0]
+    assert still_alive == 1
+
 
 def test_corpus_endpoint_empty_before_first_search(monkeypatch):
     import src.api.routes.memory as mem

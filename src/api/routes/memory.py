@@ -314,22 +314,23 @@ def task_search_corpus(
     aggregate stats. This is the live test surface — every UserPromptSubmit that
     runs the anchor_only inject writes a row here. Workspace-scoped, read-only."""
     import json as _json
+    # NEVER close this conn: _get_conn() is a PERSISTENT thread-local (dependencies
+    # §5.2) reused across every request on the worker thread. Closing it here
+    # poisoned the next request on that thread → "Cannot operate on a closed
+    # database" 500s (regression from the corpus endpoint's original finally-close).
     conn = _get_conn()
     try:
-        try:
-            rows = conn.execute(
-                "SELECT raw_query, task, questions, halted_by, n_chunks, created_at "
-                "FROM task_search_log WHERE workspace_id = ? "
-                "ORDER BY id DESC LIMIT ?", (workspace_id, max(1, min(limit, 200)))
-            ).fetchall()
-            agg = conn.execute(
-                "SELECT COUNT(*), AVG(n_chunks) FROM task_search_log WHERE workspace_id = ?",
-                (workspace_id,)).fetchone()
-        except sqlite3.OperationalError:
-            return {"total": 0, "recent": [], "hint": "no task-anchored searches yet — "
-                    "run /plugin update to 1.3.5 + reload, then send a prompt"}
-    finally:
-        conn.close()
+        rows = conn.execute(
+            "SELECT raw_query, task, questions, halted_by, n_chunks, created_at "
+            "FROM task_search_log WHERE workspace_id = ? "
+            "ORDER BY id DESC LIMIT ?", (workspace_id, max(1, min(limit, 200)))
+        ).fetchall()
+        agg = conn.execute(
+            "SELECT COUNT(*), AVG(n_chunks) FROM task_search_log WHERE workspace_id = ?",
+            (workspace_id,)).fetchone()
+    except sqlite3.OperationalError:
+        return {"total": 0, "recent": [], "hint": "no task-anchored searches yet — "
+                "run /plugin update to 1.3.5 + reload, then send a prompt"}
     recent = [{
         "raw_query": r[0][:120], "task": r[1], "n_questions": len(_json.loads(r[2] or "[]")),
         "halted_by": r[3], "n_chunks": r[4], "at": r[5],
