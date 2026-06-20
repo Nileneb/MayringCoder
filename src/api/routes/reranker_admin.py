@@ -1246,12 +1246,18 @@ def _clean_eval_compute(k: int = 5) -> dict:
         import span_judge as _sj
     from mayring_core.memory.reranker_v2 import _load_model, score_v2, list_reranker_versions
 
+    import sqlite3 as _sqlite3
     try:
         conn = _memory_db_conn()
     except Exception as exc:  # no DB (fresh install / test env) → no evidence
         _log.warning("clean-eval: memory.db unavailable (%s) — no quality evidence", exc)
         return {}
     try:
+        # WHY(2026-06-20): a fresh/empty DB (CI, new install) lacks span_judge_cache /
+        # context_feedback_log → OperationalError. That legitimately means "no claude
+        # labels yet → cannot judge quality" → return {} (the gate then fail-soft does
+        # NOT block). Catching the missing-table here, not at connect, was the bug that
+        # failed 4 activation tests against a fresh CI DB.
         h2q: dict[str, str] = {}
         for (q,) in conn.execute(
                 "SELECT DISTINCT query FROM context_feedback_log WHERE query != ''"):
@@ -1282,6 +1288,9 @@ def _clean_eval_compute(k: int = 5) -> dict:
                      for cid in rels if isinstance(stage.get(cid), dict)]
             if len(pairs) >= 2:
                 eval_queries.append({"query": query, "pairs": pairs})
+    except _sqlite3.OperationalError as exc:  # missing table = no labels yet
+        _log.warning("clean-eval: %s — no quality evidence, gate fail-soft", exc)
+        return {}
     finally:
         conn.close()
 

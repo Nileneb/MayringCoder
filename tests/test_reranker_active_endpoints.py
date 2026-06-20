@@ -134,6 +134,29 @@ def test_gate_v1_always_allowed(monkeypatch, tmp_path):
     assert result == {"active": ["v1"]}
 
 
+def test_clean_eval_fail_soft_on_missing_table(monkeypatch):
+    """A fresh/empty memory.db (CI, new install) lacks span_judge_cache /
+    context_feedback_log → OperationalError. The gate must treat that as 'no
+    evidence' and return {} (fail-soft), NOT crash. Regression for the 4 CI
+    activation-test failures (no such table: span_judge_cache)."""
+    import sqlite3
+    empty = sqlite3.connect(":memory:")  # no tables at all
+    monkeypatch.setattr(ra, "_memory_db_conn", lambda: empty)
+    assert ra._clean_eval_scores() == {}
+
+
+def test_set_active_survives_empty_db(monkeypatch, tmp_path):
+    """End-to-end: activating a version against an empty DB must not 500 on the
+    quality gate — it fail-softs to the existence/format check."""
+    import sqlite3
+    monkeypatch.setenv("MAYRING_CACHE_DIR", str(tmp_path))
+    (tmp_path / "rerank_v3.json").write_text('{"weights":{"v":1.1}}')
+    monkeypatch.setattr(ra, "_memory_db_conn", lambda: sqlite3.connect(":memory:"))
+    info = _admin()
+    result = _run(ra.set_reranker_active(ra.RerankerActiveReq(versions=["v3"]), info=info))
+    assert result == {"active": ["v3"]}
+
+
 def test_versions_active_flag_matches_serving_sot(monkeypatch, tmp_path):
     """The per-version active flag MUST reflect rerank_active.json (the serving SoT),
     not rerank_default.txt (legacy). Regression for the v4-active=True display lie."""
