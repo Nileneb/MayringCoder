@@ -384,13 +384,32 @@ def _stage_timing_sync(n: int, workspace_id: str, info: TokenInfo) -> dict:
     def _eff(seq: float, con: float) -> float:
         return round(seq / con, 2) if con else 0.0
 
+    # Candidate stage (the suspected real bulk, ~2.3s/search): scope_filter →
+    # bulk-load → symbolic-score the WHOLE candidate set. CPU-bound Python loop;
+    # parallelism across the 4 uvicorn workers is capped by core count.
+    from mayring_core.memory.retrieval import _scope_filter, _tokenize, _symbolic_score
+    from mayring_core.memory.store import get_chunks_bulk
+    conn = _get_conn()
+    probe_q = "device registry write routing cap nginx allowlist reranker active version sync"
+    t0 = _t.perf_counter()
+    cand_ids = _scope_filter(conn, workspace_id=workspace_id, user_id=info.sub,
+                             org_ids=info.org_ids)
+    scope_s = _t.perf_counter() - t0
+    t0 = _t.perf_counter(); cand_chunks = get_chunks_bulk(conn, cand_ids); load_s = _t.perf_counter() - t0
+    qt = _tokenize(probe_q)
+    t0 = _t.perf_counter(); [_symbolic_score(c, qt) for c in cand_chunks]; score_s = _t.perf_counter() - t0
+
     return {
         "n": n,
+        "host": {"cpu_count": os.cpu_count(), "loadavg": [round(x, 2) for x in os.getloadavg()]},
         "embed": {"sequential_total_s": round(embed_seq, 3), "concurrent_total_s": round(embed_con, 3),
                   "speedup": _eff(embed_seq, embed_con), "per_call_s": [round(x, 3) for x in embed_calls]},
         "chroma": {"sequential_total_s": round(chroma_seq, 3), "concurrent_total_s": round(chroma_con, 3),
                    "speedup": _eff(chroma_seq, chroma_con), "per_call_s": [round(x, 3) for x in chroma_calls]},
-        "hint": "speedup≈n → server parallelises; speedup≈1 → that stage serialises (= bottleneck)",
+        "candidate": {"count": len(cand_ids), "scope_filter_s": round(scope_s, 3),
+                      "bulk_load_s": round(load_s, 3), "symbolic_score_s": round(score_s, 3)},
+        "hint": "speedup≈n → server parallelises; speedup≈1 → serialises. candidate.* is "
+                "the in-worker CPU bulk; parallelism capped by host.cpu_count.",
     }
 
 
