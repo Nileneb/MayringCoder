@@ -169,3 +169,105 @@ def test_trace_records_each_verdict():
     assert len(out["trace"]) == 2
     assert out["trace"][0]["sufficient"] is False
     assert out["trace"][1]["sufficient"] is True
+
+
+# --- derive_task / decompose: fail-safe ---
+
+def test_derive_task_falls_back_to_raw_prompt(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(
+        httpx.ConnectError("x")))
+    assert sg.derive_task("JAAAA mach den reranker") == "JAAAA mach den reranker"
+
+
+def test_derive_task_extracts(monkeypatch):
+    import httpx
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self): return {"message": {"content": '{"task": "Reranker aktivieren"}'}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R())
+    assert sg.derive_task("JAAAA mach den reranker") == "Reranker aktivieren"
+
+
+def test_decompose_falls_back_to_task(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(
+        httpx.ConnectError("x")))
+    assert sg.decompose_questions("Reranker aktivieren") == ["Reranker aktivieren"]
+
+
+# --- run_task_loop: question-decomposition + semantic halt ---
+
+def test_task_loop_all_answered():
+    decompose = lambda t: ["q1", "q2"]
+    answered = lambda q, ch: True  # both answered immediately
+    out = sg.run_task_loop("task", lambda q: [_chunk(q)], "http://ollama",
+                           decompose_fn=decompose, answered_fn=answered,
+                           seed_with_task=False)
+    assert out["halted_by"] == "all_answered"
+    assert out["questions"] == ["q1", "q2"]
+    # collected one chunk per question
+    assert {c["chunk_id"] for c in out["final_chunks"]} == {"q1", "q2"}
+
+
+def test_task_loop_seeds_with_task_query():
+    """The task itself is the first query (primary anchor); sub-questions only
+    broaden. Without this the loop discards the good task-anchor retrieval."""
+    decompose = lambda t: ["q1"]
+    answered = lambda q, ch: True
+    out = sg.run_task_loop("the-task", lambda q: [_chunk(q)], "http://ollama",
+                           decompose_fn=decompose, answered_fn=answered)
+    assert out["questions"][0] == "the-task"
+    assert "the-task" in {c["chunk_id"] for c in out["final_chunks"]}
+
+
+def test_task_loop_collects_from_all_questions():
+    """Each sub-question fans out its own retrieval → broader recall than one query."""
+    decompose = lambda t: ["qa", "qb"]
+    answered = lambda q, ch: True
+    catalog = {"qa": [_chunk("a1"), _chunk("a2")], "qb": [_chunk("b1")]}
+    out = sg.run_task_loop("task", lambda q: catalog[q], "http://ollama",
+                           decompose_fn=decompose, answered_fn=answered,
+                           seed_with_task=False)
+    assert {c["chunk_id"] for c in out["final_chunks"]} == {"a1", "a2", "b1"}
+
+
+def test_task_loop_halts_no_progress():
+    decompose = lambda t: ["q1"]
+    answered = lambda q, ch: False  # never answered
+    out = sg.run_task_loop("task", lambda q: [_chunk("only")], "http://ollama",
+                           decompose_fn=decompose, answered_fn=answered, max_loops=5)
+    assert out["halted_by"] == "no_progress"  # round 2 brings nothing fresh
+
+
+def test_task_loop_halts_cap():
+    decompose = lambda t: ["q1"]
+    answered = lambda q, ch: False
+    n = {"i": 0}
+
+    def retrieve(q):
+        n["i"] += 1
+        return [_chunk(f"c{n['i']}")]  # always fresh
+
+    out = sg.run_task_loop("task", retrieve, "http://ollama",
+                           decompose_fn=decompose, answered_fn=answered, max_loops=2)
+    assert out["halted_by"] == "cap"
+    assert out["loops"] == 2
+
+
+def test_task_loop_halts_budget():
+    decompose = lambda t: ["q1"]
+    answered = lambda q, ch: False
+    ticks = iter([0.0, 999.0, 999.0, 999.0])
+    n = {"i": 0}
+
+    def retrieve(q):
+        n["i"] += 1
+        return [_chunk(f"c{n['i']}")]
+
+    out = sg.run_task_loop("task", retrieve, "http://ollama",
+                           decompose_fn=decompose, answered_fn=answered,
+                           max_loops=9, budget_s=20.0, clock=lambda: next(ticks))
+    assert out["halted_by"] == "budget"

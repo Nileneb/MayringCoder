@@ -50,9 +50,94 @@ _DEFAULT_MODEL = "gemma4:e4b"
 _DEFAULT_TIMEOUT = 30.0
 _KEEP_ALIVE = "30m"
 
+TASK_DISTILL_RUBRIC = """Du destillierst einen rohen Chat-Prompt zu EINER praezisen,
+abgeschlossenen Aufgabe (Task), die als Suchanker fuers Memory taugt. Ignoriere
+Emotion/Fuellwoerter ("JAAAA", "mach mal", Flueche) — extrahiere die SACHLICHE
+Arbeitseinheit. Wenn der Prompt keine sachliche Aufgabe enthaelt, gib "" zurueck.
+
+Antworte mit STRIKTEM JSON: {"task": "praezise Aufgabe als Suchstring, oder \\"\\""}"""
+
+DECOMPOSE_RUBRIC = """Du zerlegst eine Aufgabe in die Teilfragen, die man ans Memory
+stellen muss, um sie vollstaendig zu loesen. Je Frage ein konkreter Suchstring.
+2 bis 4 Fragen, keine Redundanz.
+
+Antworte mit STRIKTEM JSON: {"questions": ["frage 1", "frage 2", ...]}"""
+
+ANSWERED_RUBRIC = """Du pruefst, ob eine FRAGE durch die gegebenen CHUNKS ausreichend
+beantwortet ist. Streng: answered=true NUR wenn die Chunks die Frage konkret beantworten.
+
+Antworte mit STRIKTEM JSON: {"answered": true|false}"""
+
 
 def _ollama_url(explicit: str | None = None) -> str:
     return (explicit or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+
+
+def _chat_json(url: str, model: str, system: str, user: str,
+               think: bool = False, timeout: float = _DEFAULT_TIMEOUT) -> dict:
+    """One format:json chat turn → parsed dict. Raises on transport/parse error
+    (callers decide the fail-safe). Shared by the task/decompose/answered judges."""
+    body = {
+        "model": model,
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "stream": False, "format": "json", "think": bool(think),
+        "options": {"num_predict": 512, "temperature": 0}, "keep_alive": _KEEP_ALIVE,
+    }
+    resp = httpx.post(f"{url}/api/chat", json=body, timeout=timeout)
+    resp.raise_for_status()
+    content = (resp.json().get("message", {}) or {}).get("content", "")
+    return _loads_lenient(content)
+
+
+def derive_task(prompt: str, ollama_url: str | None = None,
+                model: str | None = None, timeout: float = _DEFAULT_TIMEOUT) -> str:
+    """Distill a raw prompt into a precise task string for use as the retrieval
+    anchor. Fail-safe: on error / empty → return the raw prompt (never worse than
+    the status quo, which IS the raw prompt)."""
+    url = _ollama_url(ollama_url)
+    try:
+        data = _chat_json(url, model or _DEFAULT_MODEL, TASK_DISTILL_RUBRIC,
+                          (prompt or "").strip()[:1500], timeout=timeout)
+        task = str(data.get("task") or "").strip()
+        return task or (prompt or "").strip()
+    except Exception as exc:  # noqa: BLE001 — degrade to raw prompt, logged
+        _log.warning("task distillation failed (%s) — using raw prompt", exc)
+        return (prompt or "").strip()
+
+
+def decompose_questions(task: str, ollama_url: str | None = None,
+                        model: str | None = None, max_q: int = 4,
+                        timeout: float = _DEFAULT_TIMEOUT) -> list[str]:
+    """Break a task into the sub-questions to ask the memory. Fail-safe: on error
+    → [task] (a single question = the task itself)."""
+    url = _ollama_url(ollama_url)
+    try:
+        data = _chat_json(url, model or _DEFAULT_MODEL, DECOMPOSE_RUBRIC,
+                          (task or "").strip()[:1500], timeout=timeout)
+        qs = data.get("questions") or []
+        qs = [str(q).strip() for q in qs if str(q).strip()][:max_q]
+        return qs or [task.strip()]
+    except Exception as exc:  # noqa: BLE001 — degrade to the task itself, logged
+        _log.warning("question decomposition failed (%s) — using task as sole question", exc)
+        return [(task or "").strip()]
+
+
+def is_answered(question: str, chunks: list[dict], ollama_url: str | None = None,
+                model: str | None = None, think: bool = False,
+                timeout: float = _DEFAULT_TIMEOUT) -> bool:
+    """Does the chunk set answer `question`? Fail-safe: error → True (don't loop
+    forever on a broken judge)."""
+    url = _ollama_url(ollama_url)
+    try:
+        data = _chat_json(url, model or _DEFAULT_MODEL, ANSWERED_RUBRIC,
+                          "FRAGE: " + (question or "") + "\n\nCHUNKS:\n"
+                          + "\n".join(f"[{i}] {_chunk_text(c)}" for i, c in enumerate(chunks)),
+                          think=think, timeout=timeout)
+        return bool(data.get("answered", True))
+    except Exception as exc:  # noqa: BLE001 — fail-safe, logged
+        _log.warning("answered-judge failed (%s) — treating as answered", exc)
+        return True
 
 
 def _chunk_text(c: dict) -> str:
@@ -168,3 +253,79 @@ def run_sufficiency_loop(
 def _result(chunks: list[dict], trace: list[dict], halted_by: str, loops: int) -> dict:
     return {"final_chunks": chunks, "trace": trace,
             "halted_by": halted_by, "loops": loops}
+
+
+def run_task_loop(
+    task: str,
+    retrieve_fn: Callable[[str], list[dict]],
+    ollama_url: str | None = None,
+    *,
+    model: str | None = None,
+    think: bool = False,
+    max_loops: int = 3,
+    budget_s: float = 30.0,
+    max_q: int = 4,
+    seed_with_task: bool = True,
+    decompose_fn: Callable[[str], list[str]] | None = None,
+    answered_fn: Callable[..., bool] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> dict:
+    """Task-anchored, question-decomposition retrieval loop (the user's redesign):
+    break the TASK into sub-questions, ask each to the memory, keep going until
+    every question is answered OR no new info arrives. The SEMANTIC halt
+    (all_answered / no_progress) leads; the deterministic bounds (cap, budget) are
+    the backstop against non-convergence (OpenMythos' 'drift into noise').
+
+    Why this beats single-shot: a task fans out into several targeted queries →
+    broader, more precise recall than one raw query. Halt is defined against the
+    TASK (closeable), not a goal (never finished)."""
+    decompose = decompose_fn or (lambda t: decompose_questions(
+        t, ollama_url, model=model, max_q=max_q))
+    answered = answered_fn or (lambda q, ch: is_answered(
+        q, ch, ollama_url, model=model, think=think))
+    now = clock or time.monotonic
+    start = now()
+
+    # WHY(2026-06-20 eval): seed with the TASK query itself, then ADD sub-questions.
+    # Without the seed the loop discards the (good) task-anchor retrieval and relies
+    # only on gemma's sub-questions, which drift → recall drops below single-shot.
+    # The task query is the primary anchor; decomposition only broadens it.
+    sub = decompose(task)
+    questions: list[str] = []
+    for q in ([task] if seed_with_task else []) + sub:
+        if q and q not in questions:
+            questions.append(q)
+    open_qs = list(questions)
+    chunks: list[dict] = []
+    seen: set = set()
+    trace: list[dict] = []
+    loops = 0
+
+    while True:
+        round_fresh = 0
+        for q in open_qs:
+            for c in retrieve_fn(q):
+                if c["chunk_id"] not in seen:
+                    seen.add(c["chunk_id"])
+                    chunks.append(c)
+                    round_fresh += 1
+        still_open = [q for q in open_qs if not answered(q, chunks)]
+        trace.append({"loop": loops, "open_before": len(open_qs),
+                      "open_after": len(still_open), "fresh_chunks": round_fresh})
+        open_qs = still_open
+
+        if not open_qs:
+            return _task_result(chunks, questions, trace, "all_answered", loops)
+        if loops >= max_loops:
+            return _task_result(chunks, questions, trace, "cap", loops)
+        if (now() - start) > budget_s:
+            return _task_result(chunks, questions, trace, "budget", loops)
+        if round_fresh == 0:
+            return _task_result(chunks, questions, trace, "no_progress", loops)
+        loops += 1
+
+
+def _task_result(chunks, questions, trace, halted_by, loops) -> dict:
+    return {"final_chunks": chunks, "questions": questions, "trace": trace,
+            "halted_by": halted_by, "loops": loops,
+            "open_questions": [t for t in (trace[-1:] or [{}])][0].get("open_after", 0)}
