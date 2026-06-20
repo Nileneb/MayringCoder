@@ -1168,6 +1168,101 @@ def span_judge_ingest(
     return {"ingested": written}
 
 
+def _dcg(gains: list[float]) -> float:
+    import math
+    return sum(g / math.log2(i + 2) for i, g in enumerate(gains))
+
+
+def _ndcg_at_k(ranked_rels: list[float], k: int) -> float:
+    """Graded nDCG@k: ranked_rels = Claude relevance in MODEL-ranked order."""
+    dcg = _dcg(ranked_rels[:k])
+    idcg = _dcg(sorted(ranked_rels, reverse=True)[:k])
+    return (dcg / idcg) if idcg > 0 else 0.0
+
+
+@router.get("/stats/admin/reranker-clean-eval")
+def reranker_clean_eval(
+    k: int = 5,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Leakage-free reranker eval: rank each query's chunks by every model and
+    score nDCG@k against CLAUDE's relevance labels (span_judge_cache claude-prewarm),
+    NOT the recency-leaked was_referenced label. This is the honest "is model X
+    better than v5" measure — the offline auc/p@1 from training reward the very
+    recency leakage that crippled v5's served vector weight. Read-only; admin."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    import json as _json
+    try:
+        from tools import span_judge as _sj
+    except ImportError:
+        import span_judge as _sj
+    from mayring_core.memory.reranker_v2 import _load_model, score_v2, list_reranker_versions
+
+    conn = _memory_db_conn()
+    try:
+        h2q: dict[str, str] = {}
+        for (q,) in conn.execute(
+                "SELECT DISTINCT query FROM context_feedback_log WHERE query != ''"):
+            h2q.setdefault(_sj.query_hash(q), q)
+        # claude relevance per query_hash → {chunk_id: rel}
+        claude: dict[str, dict[str, float]] = {}
+        for qh, cid, score in conn.execute(
+                "SELECT query_hash, chunk_id, score FROM span_judge_cache "
+                "WHERE model = 'claude-prewarm'"):
+            claude.setdefault(qh, {})[cid] = float(score)
+        # latest stage_scores per query (the feature dict the reranker sees)
+        eval_queries: list[dict] = []
+        for qh, rels in claude.items():
+            query = h2q.get(qh)
+            if not query or len(rels) < 2:  # need ≥2 chunks to rank
+                continue
+            row = conn.execute(
+                "SELECT stage_scores FROM context_feedback_log "
+                "WHERE query = ? AND stage_scores != '{}' "
+                "ORDER BY captured_at DESC LIMIT 1", (query,)).fetchone()
+            if not row:
+                continue
+            try:
+                stage = _json.loads(row[0])
+            except (TypeError, ValueError):
+                continue
+            pairs = [(cid, rels[cid], stage.get(cid))
+                     for cid in rels if isinstance(stage.get(cid), dict)]
+            if len(pairs) >= 2:
+                eval_queries.append({"query": query, "pairs": pairs})
+    finally:
+        conn.close()
+
+    if not eval_queries:
+        return {"error": "no claude-labelled queries with stage_scores + ≥2 chunks",
+                "hint": "run span-judge prewarm ingest first"}
+
+    versions = [v["version"] for v in list_reranker_versions()]
+    out: dict[str, float] = {}
+    n_pairs = sum(len(q["pairs"]) for q in eval_queries)
+    for ver in versions:
+        model = _load_model(ver) if ver != "v1" else None
+        ndcgs: list[float] = []
+        for q in eval_queries:
+            if model is not None:
+                scored = [(score_v2(st, model), rel) for _cid, rel, st in q["pairs"]]
+            else:  # v1 baseline: rank by raw vector stage-score
+                scored = [(float(st.get("v", 0.0)), rel) for _cid, rel, st in q["pairs"]]
+            scored.sort(key=lambda t: t[0], reverse=True)
+            ndcgs.append(_ndcg_at_k([rel for _s, rel in scored], k))
+        out[ver] = round(sum(ndcgs) / len(ndcgs), 4) if ndcgs else 0.0
+    ranked = sorted(out.items(), key=lambda t: t[1], reverse=True)
+    return {
+        "metric": f"clean_ndcg_at_{k}_vs_claude",
+        "eval_queries": len(eval_queries),
+        "eval_pairs": n_pairs,
+        "by_version": out,
+        "best": ranked[0][0] if ranked else None,
+        "ranking": ranked,
+    }
+
+
 @router.post("/stats/admin/reranker-rollout-decision")
 def reranker_rollout_decision(
     info: TokenInfo = Depends(get_token_info),
