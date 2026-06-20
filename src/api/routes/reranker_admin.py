@@ -1319,6 +1319,114 @@ def _clean_eval_scores(k: int = 5) -> dict[str, float]:
     return _clean_eval_compute(k).get("by_version", {})
 
 
+def _sufficiency_agreement(eval_queries: list[dict], judge_fn,
+                           rel_threshold: float = 0.6) -> dict:
+    """Does gemma's sufficiency verdict agree with the Claude labels?
+
+    Ground-truth proxy: a query is OBJECTIVELY sufficient if at least one of its
+    chunks has Claude relevance ≥ rel_threshold (there is a real primary source);
+    otherwise objectively insufficient (only tangential chunks). gemma judges the
+    same chunk set. We report agreement + the two error directions:
+      * false_pass = gemma says sufficient but objectively NOT → dangerous (the
+        gate would let weak context through without a re-retrieval loop).
+      * false_loop = gemma says insufficient but objectively yes → wasted loop.
+    eval_queries: [{"query": str, "chunks": [{"chunk_id","text"}], "rels": [float]}].
+    judge_fn(query, chunks) → {"sufficient": bool, ...} (injected for tests)."""
+    n = len(eval_queries)
+    if not n:
+        return {}
+    agree = false_pass = false_loop = obj_suff = gemma_suff = 0
+    for q in eval_queries:
+        objective = max(q["rels"], default=0.0) >= rel_threshold
+        verdict = judge_fn(q["query"], q["chunks"])
+        gemma = bool(verdict.get("sufficient"))
+        obj_suff += int(objective)
+        gemma_suff += int(gemma)
+        if gemma == objective:
+            agree += 1
+        elif gemma and not objective:
+            false_pass += 1
+        else:
+            false_loop += 1
+    return {
+        "eval_queries": n,
+        "agreement": round(agree / n, 4),
+        "false_pass_rate": round(false_pass / n, 4),
+        "false_loop_rate": round(false_loop / n, 4),
+        "objective_sufficient": obj_suff,
+        "gemma_sufficient": gemma_suff,
+        "rel_threshold": rel_threshold,
+    }
+
+
+@router.get("/stats/admin/sufficiency-eval")
+def sufficiency_eval(
+    rel_threshold: float = 0.6,
+    limit: int = 40,
+    think: bool = False,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Outcome proof for the Mythos sufficiency gate: how well does gemma's
+    sufficient/insufficient verdict track the Claude relevance labels? Makes one
+    gemma call per claude-labelled query (bounded by `limit`; read-only, ACT path
+    only — never the hot path). Empty → no claude labels yet."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    import sqlite3 as _sqlite3
+    try:
+        from tools import span_judge as _sj
+        from tools.sufficiency_gate import judge_sufficiency
+    except ImportError:
+        import span_judge as _sj
+        from sufficiency_gate import judge_sufficiency
+
+    try:
+        conn = _memory_db_conn()
+    except Exception as exc:
+        _log.warning("sufficiency-eval: memory.db unavailable (%s)", exc)
+        return {"error": "memory.db unavailable"}
+    try:
+        h2q: dict[str, str] = {}
+        for (q,) in conn.execute(
+                "SELECT DISTINCT query FROM context_feedback_log WHERE query != ''"):
+            h2q.setdefault(_sj.query_hash(q), q)
+        rows = conn.execute(
+            "SELECT s.query_hash, s.chunk_id, s.score, c.text "
+            "FROM span_judge_cache s JOIN chunks c ON c.chunk_id = s.chunk_id "
+            "WHERE s.model = 'claude-prewarm'").fetchall()
+    except _sqlite3.OperationalError as exc:
+        _log.warning("sufficiency-eval: %s — no claude labels", exc)
+        return {"error": "no claude labels yet"}
+    finally:
+        conn.close()
+
+    by_q: dict[str, dict] = {}
+    for qh, cid, score, text in rows:
+        query = h2q.get(qh)
+        if not query or not text:
+            continue
+        e = by_q.setdefault(qh, {"query": query, "chunks": [], "rels": []})
+        e["chunks"].append({"chunk_id": cid, "text": text})
+        e["rels"].append(float(score))
+    eval_queries = [e for e in by_q.values() if len(e["chunks"]) >= 1][:max(1, limit)]
+    if not eval_queries:
+        return {"error": "no claude-labelled queries with chunk text"}
+
+    url = _ollama_url_for_eval()
+    res = _sufficiency_agreement(
+        eval_queries,
+        lambda q, ch: judge_sufficiency(q, ch, url, think=think),
+        rel_threshold=rel_threshold,
+    )
+    res["metric"] = "gemma_sufficiency_vs_claude_labels"
+    return res
+
+
+def _ollama_url_for_eval() -> str:
+    import os as _os
+    return _os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+
+
 @router.get("/stats/admin/reranker-clean-eval")
 def reranker_clean_eval(
     k: int = 5,
