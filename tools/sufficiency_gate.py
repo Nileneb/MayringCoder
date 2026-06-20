@@ -140,6 +140,40 @@ def is_answered(question: str, chunks: list[dict], ollama_url: str | None = None
         return True
 
 
+ANSWERED_BATCH_RUBRIC = """Du pruefst fuer MEHRERE Fragen, ob jede durch die gegebenen
+CHUNKS ausreichend beantwortet ist. Streng: answered=true NUR wenn die Chunks die
+jeweilige Frage konkret beantworten.
+
+Antworte mit STRIKTEM JSON, ein Eintrag pro Frage-Index:
+{"answered": {"0": true|false, "1": true|false, ...}}"""
+
+
+def judge_answered_batch(questions: list[str], chunks: list[dict],
+                         ollama_url: str | None = None, model: str | None = None,
+                         think: bool = False, timeout: float = _DEFAULT_TIMEOUT) -> list[bool]:
+    """ONE LLM call judging ALL questions against the chunk set — replaces N
+    parallel is_answered calls. Quarters the gemma load per loop round (4 calls →
+    1) and cuts the variance the per-call queueing caused. Returns one bool per
+    question (index-aligned). Fail-safe: error / missing index → True (treat as
+    answered, never loop forever on a broken judge)."""
+    if not questions:
+        return []
+    url = _ollama_url(ollama_url)
+    listing = "\n".join(f"[{i}] {q}" for i, q in enumerate(questions))
+    chunks_txt = "\n".join(f"({j}) {_chunk_text(c)}" for j, c in enumerate(chunks))
+    try:
+        data = _chat_json(url, model or _DEFAULT_MODEL, ANSWERED_BATCH_RUBRIC,
+                          "FRAGEN:\n" + listing + "\n\nCHUNKS:\n" + chunks_txt,
+                          think=think, timeout=timeout)
+        ans = data.get("answered") or {}
+        if isinstance(ans, list):  # tolerate [bool,...] instead of {idx:bool}
+            ans = {str(i): v for i, v in enumerate(ans)}
+        return [bool(ans.get(str(i), True)) for i in range(len(questions))]
+    except Exception as exc:  # noqa: BLE001 — fail-safe, logged
+        _log.warning("batch answered-judge failed (%s) — treating all as answered", exc)
+        return [True] * len(questions)
+
+
 def _chunk_text(c: dict) -> str:
     return (c.get("text") or "").strip()
 
@@ -294,8 +328,14 @@ def run_task_loop(
     TASK (closeable), not a goal (never finished)."""
     decompose = decompose_fn or (lambda t: decompose_questions(
         t, ollama_url, model=model, max_q=max_q))
-    answered = answered_fn or (lambda q, ch: is_answered(
-        q, ch, ollama_url, model=model, think=think))
+
+    def _answered_round(qs: list[str], ch: list[dict]) -> list[bool]:
+        # ONE batched gemma call by default (4 judges → 1, quarters the load).
+        # An injected answered_fn (tests) is kept per-question for fine control.
+        if answered_fn is not None:
+            return _parallel_map(lambda q: answered_fn(q, ch), qs, parallelism)
+        return judge_answered_batch(qs, ch, ollama_url, model=model, think=think)
+
     now = clock or time.monotonic
     start = now()
 
@@ -327,7 +367,7 @@ def run_task_loop(
                     seen.add(c["chunk_id"])
                     chunks.append(c)
                     round_fresh += 1
-        answers = _parallel_map(lambda q: answered(q, chunks), open_qs, parallelism)
+        answers = _answered_round(open_qs, chunks)
         still_open = [q for q, a in zip(open_qs, answers) if not a]
         trace.append({"loop": loops, "open_before": len(open_qs),
                       "open_after": len(still_open), "fresh_chunks": round_fresh})

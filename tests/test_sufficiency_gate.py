@@ -191,6 +191,55 @@ def test_derive_task_extracts(monkeypatch):
     assert sg.derive_task("JAAAA mach den reranker") == "Reranker aktivieren"
 
 
+def test_judge_answered_batch_parses_index_map(monkeypatch):
+    import httpx
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self): return {"message": {"content":
+            '{"answered": {"0": true, "1": false, "2": true}}'}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R())
+    out = sg.judge_answered_batch(["q0", "q1", "q2"], [_chunk("a")])
+    assert out == [True, False, True]
+
+
+def test_judge_answered_batch_fail_safe(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(
+        httpx.ConnectError("x")))
+    # error → all answered (never loop forever)
+    assert sg.judge_answered_batch(["q0", "q1"], [_chunk("a")]) == [True, True]
+
+
+def test_judge_answered_batch_missing_index_defaults_true(monkeypatch):
+    import httpx
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self): return {"message": {"content": '{"answered": {"0": false}}'}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R())
+    # index 1 missing → defaults True (fail-safe)
+    assert sg.judge_answered_batch(["q0", "q1"], [_chunk("a")]) == [False, True]
+
+
+def test_loop_uses_batch_judge_when_no_answered_fn(monkeypatch):
+    """Without an injected answered_fn the loop makes ONE batched judge call per
+    round (not N) — the gemma-load reduction."""
+    calls = {"n": 0}
+
+    def _fake_batch(qs, ch, *a, **k):
+        calls["n"] += 1
+        return [True] * len(qs)  # all answered → halt after one round
+
+    monkeypatch.setattr(sg, "judge_answered_batch", _fake_batch)
+    out = sg.run_task_loop("the-task", lambda q: [_chunk(q)], "http://o",
+                           decompose_fn=lambda t: ["qa", "qb"])  # no answered_fn
+    assert out["halted_by"] == "all_answered"
+    assert calls["n"] == 1  # ONE batched call for all 3 questions, not 3
+
+
 def test_decompose_falls_back_to_task(monkeypatch):
     import httpx
     monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(
