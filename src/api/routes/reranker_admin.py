@@ -208,7 +208,8 @@ def training_data_counts(
 
 
 async def _run_train_subprocess(
-    job_id: str, days: int, span_judge: bool = False
+    job_id: str, days: int, span_judge: bool = False,
+    span_judge_max_calls: int | None = None,
 ) -> None:
     """Spawn export → train as a subprocess so the API stays responsive."""
     state = _TRAIN_JOBS[job_id]
@@ -241,7 +242,13 @@ async def _run_train_subprocess(
         # SPAN_JUDGE_MAX_CALLS caps fresh judge calls so a retrain can never hammer
         # unboundedly (backstop next to Claude pre-warm + cooldown). All via GitHub env.
         env["OLLAMA_CLOUD_PRIMARY_RATIO"] = os.getenv("SPAN_JUDGE_CLOUD_RATIO", "1.0")
-        env["SPAN_JUDGE_MAX_CALLS"] = os.getenv("SPAN_JUDGE_MAX_CALLS", "400")
+        # WHY(Pfad-A claude-teacher): max_calls=0 lässt den Export NUR die
+        # vorgewärmten Claude-Labels (span_judge_cache) nutzen — keine frischen
+        # Ollama-Calls → der schwache ministral-3:3b kann v nicht mehr vergiften
+        # (v7: v=-3.26). Override pro Job; ohne Override der 400-Backstop.
+        _mc = span_judge_max_calls if span_judge_max_calls is not None \
+            else int(os.getenv("SPAN_JUDGE_MAX_CALLS", "400"))
+        env["SPAN_JUDGE_MAX_CALLS"] = str(_mc)
         env["SPAN_JUDGE_TIMEOUT"] = os.getenv("SPAN_JUDGE_TIMEOUT", "45")
         env["SPAN_JUDGE_COOLDOWN_EVERY"] = os.getenv("SPAN_JUDGE_COOLDOWN_EVERY", "15")
         env["SPAN_JUDGE_COOLDOWN_SECONDS"] = os.getenv("SPAN_JUDGE_COOLDOWN_SECONDS", "2.5")
@@ -341,6 +348,7 @@ async def trigger_train_reranker(
     info: TokenInfo = Depends(get_token_info),
     days: int = 30,
     span_judge: bool = False,
+    span_judge_max_calls: int | None = None,
 ) -> dict:
     """Kick off the export + train pipeline. Admin scope only.
 
@@ -362,12 +370,14 @@ async def trigger_train_reranker(
         "status": "queued",
         "days": days,
         "span_judge": span_judge,
+        "span_judge_max_calls": span_judge_max_calls,
         "queued_at": time.time(),
     }
     _save_train_job(job_id)  # persist before the task starts so a GET on any worker finds it
-    asyncio.create_task(_run_train_subprocess(job_id, days, span_judge))
+    asyncio.create_task(
+        _run_train_subprocess(job_id, days, span_judge, span_judge_max_calls))
     return {"job_id": job_id, "status": "queued", "days": days,
-            "span_judge": span_judge}
+            "span_judge": span_judge, "span_judge_max_calls": span_judge_max_calls}
 
 
 @router.get("/stats/admin/train-reranker/{job_id}")
@@ -1092,6 +1102,70 @@ async def label_advisor(
     conn.commit()
     return {"processed": len(rows), "advised": advised,
             "next_after": max_rowid, "has_more": len(rows) == lim}
+
+
+def _memory_db_conn():
+    """Fresh sqlite3 connection to the prod memory.db with Row factory + a
+    busy timeout — the span-judge prewarm helpers (and the export) expect
+    name-indexed rows and tolerate the live API holding WAL write locks."""
+    import sqlite3
+    from mayring_core.config import CACHE_DIR
+    conn = sqlite3.connect(str(CACHE_DIR / "memory.db"), timeout=15.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+@router.get("/stats/admin/span-judge/uncached-pairs")
+def span_judge_uncached_pairs(
+    days: int = 7,
+    limit: int = 300,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Emit the uncached (query, chunk) pairs Claude should judge as the strong
+    teacher for the reranker (Pfad A). Mirrors ``tools/span_judge_prewarm.py
+    --dump`` but server-side so it runs against the prod memory.db without a
+    host exec. The caller judges each batch per span_judge.RELEVANCE_RUBRIC and
+    POSTs the scores back to /span-judge/ingest; the next --span-judge retrain
+    then reads those Claude labels cache-first instead of the weak Ollama judge
+    (ministral-3:3b poisoned v7: v=-3.26). Admin-only; read-only."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from tools.span_judge_prewarm import dump
+    lim = max(0, min(limit, 600))
+    conn = _memory_db_conn()
+    try:
+        batches = dump(conn, days, lim)
+    finally:
+        conn.close()
+    n_pairs = sum(len(b["chunks"]) for b in batches)
+    return {"window_days": days, "limit": lim, "batches": len(batches),
+            "pairs": n_pairs, "data": batches}
+
+
+class SpanJudgeIngestReq(BaseModel):
+    scores: list[dict]
+
+
+@router.post("/stats/admin/span-judge/ingest")
+def span_judge_ingest(
+    body: SpanJudgeIngestReq,
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Write Claude's relevance scores into span_judge_cache tagged
+    'claude-prewarm' (Pfad A). Body: {"scores": [{"query": str,
+    "scores": {chunk_id: 0..1}}, ...]}. Idempotent (INSERT OR REPLACE per
+    (query_hash, chunk_id)). Admin-only."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    from tools.span_judge_prewarm import ingest
+    conn = _memory_db_conn()
+    try:
+        written = ingest(conn, body.scores)
+    finally:
+        conn.close()
+    _log.info("span-judge prewarm ingest: %d scores by workspace=%s",
+              written, info.workspace_id)
+    return {"ingested": written}
 
 
 @router.post("/stats/admin/reranker-rollout-decision")
