@@ -49,8 +49,9 @@ def test_healthy_data_writes_model(tmp_path):
     assert out_path.exists()
     model = json.loads(out_path.read_text())
     assert model["weights"]["v"] >= 0
-    # s (symbolic) ist seit 2026-06-05 kein v2-Feature mehr (kollinear zu v, gedroppt)
-    assert "s" not in model["weights"]
+    # WHY(2026-06-20): s (symbolic) wieder lernbares Feature — Clean-Eval zeigte,
+    # das s-lose Feature-Set fiel UNTER die Vektor-Baseline; v3 (mit s) gewann.
+    assert model["weights"]["s"] >= 0
 
 
 def test_rejects_negative_vector_weight(tmp_path):

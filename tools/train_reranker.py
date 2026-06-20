@@ -59,7 +59,12 @@ DEFAULT_OUT = CACHE_DIR / "rerank_v2.json"
 # im stage-Dict → das gelernte re-Gewicht lief immer auf re=0 (trainiert-aber-nie-genutzt).
 # Schlimmer: re trainierte negativ (-0.67) → Loader rejected das ganze v2-Modell →
 # v2 ging NIE live (0 v2-Traffic 2026-05-28). Ohne re kann v2 endlich laden.
-FEATURES = ("v", "r", "a", "pt")
+# WHY(2026-06-20 clean-eval): `s` (symbolic) 2026-06-XX gedroppt (7b1269e, Multikollin
+# v↔s) — aber die leakage-freie Clean-Eval (nDCG vs Claude-Labels) zeigt: v3, das
+# EINZIGE Modell das `s` hat (s=1.31), schlägt ALLE s-losen Nachfolger UND die
+# Vektor-Baseline. s-Drop war der Fehler. Wieder drin; Ridge C=0.1 + das v/s-Gate
+# (negativ→Reject) fangen die Multikollinearität ab.
+FEATURES = ("v", "s", "r", "a", "pt")
 MIN_ROWS = 50
 MIN_POSITIVES = 10
 
