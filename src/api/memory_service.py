@@ -1,6 +1,7 @@
 """Shared memory search and ingest logic used by server.py and mcp.py."""
 from __future__ import annotations
 
+import re as _re
 import time as _time
 from collections import deque
 from typing import Any
@@ -11,6 +12,33 @@ from mayring_core.memory.schema import Source
 
 # Brain visualization: recent search activations (ring buffer, shared in-process)
 _RECENT_ACTIVATIONS: deque[dict] = deque(maxlen=200)
+
+# Standalone trivial prompts (greeting/ack/test) — whole-string match only, so
+# "ok lass uns X bauen" still counts as real work.
+_TRIVIAL_RE = _re.compile(
+    r"^(ping|ok|okay|k|ja|nein|test|hi|hallo|hey|danke|thx|thanks|yes|no|"
+    r"stop|weiter|los|go|fertig|done)[\s!?.]*$", _re.I)
+_MIN_QUERY_LEN = 8
+
+
+def _is_corpus_worthy(raw_query: str | None, task: str | None) -> bool:
+    """Should this (raw_query → task) pair enter the finetune corpus?
+
+    Gates LOGGING only (never the search). Rejects trivial/test prompts, too-short
+    queries, empty tasks, and rows where distillation extracted nothing (task ==
+    raw → derive_task fell back to the raw prompt). Keeps the corpus clean so the
+    judge finetune learns from real tasks, not 'ping'."""
+    rq = (raw_query or "").strip()
+    t = (task or "").strip()
+    if len(rq) < _MIN_QUERY_LEN:
+        return False
+    if not t:
+        return False
+    if _TRIVIAL_RE.match(rq):
+        return False
+    if t.lower() == rq.lower():  # no real distillation happened
+        return False
+    return True
 
 
 def run_search(
@@ -202,19 +230,24 @@ def run_task_search(
         chunks = loop["final_chunks"]
         questions, halted_by, loops = loop["questions"], loop["halted_by"], loop["loops"]
 
-    try:
-        ensure_task_search_log(conn)
-        conn.execute(
-            "INSERT INTO task_search_log (workspace_id, raw_query, task, questions, "
-            "halted_by, loops, n_chunks, chunk_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (workspace_id, query, task, _json.dumps(questions),
-             halted_by, loops, len(chunks),
-             _json.dumps([c["chunk_id"] for c in chunks]),
-             _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())),
-        )
-        conn.commit()
-    except Exception:
-        pass  # corpus logging is best-effort; never fail the search
+    # Corpus hygiene: only log real (prompt → task) pairs. Trivial/test prompts
+    # and no-op distillations would poison the finetune corpus — the exact failure
+    # mode this whole effort fixed. The search itself already ran; we just don't
+    # record junk.
+    if _is_corpus_worthy(query, task):
+        try:
+            ensure_task_search_log(conn)
+            conn.execute(
+                "INSERT INTO task_search_log (workspace_id, raw_query, task, questions, "
+                "halted_by, loops, n_chunks, chunk_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (workspace_id, query, task, _json.dumps(questions),
+                 halted_by, loops, len(chunks),
+                 _json.dumps([c["chunk_id"] for c in chunks]),
+                 _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())),
+            )
+            conn.commit()
+        except Exception:
+            pass  # corpus logging is best-effort; never fail the search
 
     return {"task": task, "questions": questions, "halted_by": halted_by,
             "loops": loops, "chunks": chunks, **extra}

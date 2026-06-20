@@ -94,7 +94,9 @@ def test_corpus_log_failure_does_not_break_search(monkeypatch):
             raise sqlite3.OperationalError("locked")
         def commit(self): ...
 
-    out = ms.run_task_search("x", _BadConn(), object(), "http://ollama",
+    # corpus-worthy query so the INSERT (and the simulated failure) actually fire
+    out = ms.run_task_search("eine echte lange testfrage zum reranker",
+                             _BadConn(), object(), "http://ollama",
                              {"workspace_id": "ws1"})
     assert "chunks" in out  # search still returns despite log failure
 
