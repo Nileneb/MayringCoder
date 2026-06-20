@@ -341,6 +341,69 @@ def task_search_corpus(
     }
 
 
+def _stage_timing_sync(n: int, workspace_id: str, info: TokenInfo) -> dict:
+    """Isolate the search-pipeline contention (the 43%-parallel-efficiency probe):
+    time the embed stage (→ GPU host) and the chroma stage (→ chroma server) each
+    SEQUENTIALLY then CONCURRENTLY (in-process threads; both stages are HTTP I/O so
+    the GIL is released → this measures SERVER-side parallelism, exactly what prod's
+    4 worker processes hit). speedup = sequential_total / concurrent_total: ≈n means
+    the server parallelises, ≈1 means it serialises = the bottleneck to fix."""
+    import time as _t
+    from concurrent.futures import ThreadPoolExecutor
+    from mayring_core.providers import embed_texts
+    from mayring_core.memory.retrieval import build_chroma_where
+
+    n = max(2, min(n, 8))
+    queries = [f"stage timing probe {i} reranker memory device registry nginx deploy {i}"
+               for i in range(n)]
+    chroma = _get_chroma()
+    where = build_chroma_where(workspace_id, info.sub, info.org_ids)
+
+    def _embed_one(q: str) -> float:
+        t = _t.perf_counter(); embed_texts([q], _OLLAMA_URL); return _t.perf_counter() - t
+
+    t0 = _t.perf_counter(); [_embed_one(q) for q in queries]; embed_seq = _t.perf_counter() - t0
+    t0 = _t.perf_counter()
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        embed_calls = list(ex.map(_embed_one, queries))
+    embed_con = _t.perf_counter() - t0
+
+    embs = [embed_texts([q], _OLLAMA_URL)[0] for q in queries]
+
+    def _query_one(emb: list) -> float:
+        t = _t.perf_counter()
+        chroma.query(query_embeddings=[emb], n_results=16, where=where, include=["distances"])
+        return _t.perf_counter() - t
+
+    t0 = _t.perf_counter(); [_query_one(e) for e in embs]; chroma_seq = _t.perf_counter() - t0
+    t0 = _t.perf_counter()
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        chroma_calls = list(ex.map(_query_one, embs))
+    chroma_con = _t.perf_counter() - t0
+
+    def _eff(seq: float, con: float) -> float:
+        return round(seq / con, 2) if con else 0.0
+
+    return {
+        "n": n,
+        "embed": {"sequential_total_s": round(embed_seq, 3), "concurrent_total_s": round(embed_con, 3),
+                  "speedup": _eff(embed_seq, embed_con), "per_call_s": [round(x, 3) for x in embed_calls]},
+        "chroma": {"sequential_total_s": round(chroma_seq, 3), "concurrent_total_s": round(chroma_con, 3),
+                   "speedup": _eff(chroma_seq, chroma_con), "per_call_s": [round(x, 3) for x in chroma_calls]},
+        "hint": "speedup≈n → server parallelises; speedup≈1 → that stage serialises (= bottleneck)",
+    }
+
+
+@router.get("/stats/admin/stage-timing")
+async def stage_timing(
+    n: int = 4,
+    workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Diagnostic: which search stage (embed/chroma) serialises under concurrency."""
+    return await run_in_threadpool(_stage_timing_sync, n, workspace_id, info)
+
+
 def _memory_search_sync(
     request: MemorySearchRequest, workspace_id: str, info: TokenInfo
 ) -> dict:
