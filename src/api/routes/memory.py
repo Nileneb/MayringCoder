@@ -244,31 +244,8 @@ async def memory_search(
     return await run_in_threadpool(_memory_search_sync, request, workspace_id, info)
 
 
-def _ensure_task_search_log(conn) -> None:
-    """The clean finetune corpus: every task-anchored search logs (raw_query →
-    task → sub-questions → halt → chunks). MayringCoder-local table (not a
-    core-memory concern) so no mayring-core migration is needed."""
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS task_search_log (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            workspace_id  TEXT NOT NULL,
-            raw_query     TEXT NOT NULL,
-            task          TEXT NOT NULL,
-            questions     TEXT NOT NULL DEFAULT '[]',
-            halted_by     TEXT NOT NULL DEFAULT '',
-            loops         INTEGER NOT NULL DEFAULT 0,
-            n_chunks      INTEGER NOT NULL DEFAULT 0,
-            chunk_ids     TEXT NOT NULL DEFAULT '[]',
-            created_at    TEXT NOT NULL
-        )"""
-    )
-    conn.commit()
-
-
 def _task_search_sync(request: TaskSearchRequest, workspace_id: str, info: TokenInfo) -> dict:
-    import json as _json
-    import time as _time
-    from tools.sufficiency_gate import derive_task, run_task_loop
+    from src.api.memory_service import run_task_search
 
     opts: dict[str, Any] = {
         "top_k": request.top_k,
@@ -283,49 +260,13 @@ def _task_search_sync(request: TaskSearchRequest, workspace_id: str, info: Token
     if request.project:
         opts["project_id"] = request.project.strip()
 
-    # 1. distill the raw prompt to a TASK (the retrieval anchor) — unless the
-    # caller already passes a clean task (e.g. derived from the session recap).
-    task = request.query.strip() if request.already_task else derive_task(
-        request.query, _OLLAMA_URL)
-
-    # 2. retrieve_fn = the real hybrid search, one call per sub-question
-    def retrieve_fn(q: str) -> list[dict]:
-        sr = _run_search(q, _get_conn(), _get_chroma(), _OLLAMA_URL, opts, request.char_budget)
-        return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
-                for r in sr.get("results", []) if r.get("chunk_id")]
-
-    # 3. task-anchored, question-decomposition loop (semantic halt + backstop)
-    loop = run_task_loop(
-        task, retrieve_fn, _OLLAMA_URL,
-        think=request.think, max_loops=request.max_loops,
+    out = run_task_search(
+        request.query, _get_conn(), _get_chroma(), _OLLAMA_URL, opts,
+        char_budget=request.char_budget, max_loops=request.max_loops,
         budget_s=request.budget_s, max_q=request.max_q,
+        think=request.think, already_task=request.already_task,
     )
-    chunks = loop["final_chunks"]
-
-    # 4. log the clean corpus (raw_query → task → questions → halt → chunks)
-    try:
-        conn = _get_conn()
-        _ensure_task_search_log(conn)
-        conn.execute(
-            "INSERT INTO task_search_log (workspace_id, raw_query, task, questions, "
-            "halted_by, loops, n_chunks, chunk_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (workspace_id, request.query, task, _json.dumps(loop["questions"]),
-             loop["halted_by"], loop["loops"], len(chunks),
-             _json.dumps([c["chunk_id"] for c in chunks]),
-             _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())),
-        )
-        conn.commit()
-    except Exception as exc:  # corpus logging is best-effort, never fail the search
-        logging.getLogger(__name__).warning("task_search_log insert skipped: %s", exc)
-
-    return {
-        "workspace_id": workspace_id,
-        "task": task,
-        "questions": loop["questions"],
-        "halted_by": loop["halted_by"],
-        "loops": loop["loops"],
-        "chunks": chunks,
-    }
+    return {"workspace_id": workspace_id, **out}
 
 
 @router.post("/memory/task-search")

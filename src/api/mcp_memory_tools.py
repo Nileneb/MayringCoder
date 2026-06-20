@@ -111,6 +111,56 @@ def register_memory_tools(mcp: FastMCP) -> None:
             return {"error": str(exc), "results": [], "prompt_context": ""}
 
     @mcp.tool()
+    def task_search_memory(
+        query: str,
+        repo: str | None = None,
+        top_k: int = 8,
+        char_budget: int = 6000,
+        max_loops: int = 2,
+        max_q: int = 4,
+        already_task: bool = False,
+        workspace_id: str | None = None,
+    ) -> dict:
+        """Task-anchored Mythos retrieval — use for DEEP/multi-facet questions where
+        a single query misses scattered context. Distills the prompt into a precise
+        TASK (the retrieval anchor — strips emotion/filler that drags conversational
+        junk up), fans it into sub-questions, searches each, and halts when every
+        question is answered or no new info arrives. Measured +20pp recall over a
+        raw-prompt search. Logs the clean (prompt→task→questions→chunks) corpus.
+
+        Prefer this over search_memory when the prompt is vague/emotional or the
+        answer spans several aspects. For a single precise lookup, search_memory is
+        cheaper (one call vs. the loop).
+
+        Args:
+            query: Natural-language prompt (raw is fine — it gets distilled).
+            already_task: True if `query` is already a clean task (e.g. from a recap)
+                → skip distillation.
+        Returns:
+            {task, questions, halted_by, loops, chunks}
+        """
+        try:
+            from mayring_core.memory.schema import canonicalize_url
+            from src.api.memory_service import run_task_search
+            ws = _enforce_tenant(workspace_id)
+            opts = {
+                "repo": canonicalize_url(repo) if repo else repo,
+                "top_k": top_k,
+                "include_text": True,
+                "workspace_id": ws,
+                "user_id": _effective_user_id(),
+                "org_ids": _effective_org_ids(),
+            }
+            return run_task_search(
+                query, _get_conn(), _get_chroma(),
+                os.getenv("OLLAMA_URL", "http://localhost:11434"),
+                opts, char_budget=char_budget, max_loops=max_loops,
+                max_q=max_q, already_task=already_task,
+            )
+        except Exception as exc:
+            return {"error": str(exc), "task": "", "questions": [], "chunks": []}
+
+    @mcp.tool()
     def ingest_status(job_id: str, workspace_id: str | None = None) -> dict:
         """Poll the status of a repo-ingest job (returned by `ingest()` for repo URLs).
 

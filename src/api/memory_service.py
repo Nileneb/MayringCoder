@@ -126,6 +126,81 @@ def run_search(
     return response
 
 
+def ensure_task_search_log(conn) -> None:
+    """The clean finetune corpus: every task-anchored search logs
+    (raw_query → task → sub-questions → halt → chunks). MayringCoder-local table
+    (not a core-memory concern) so no mayring-core migration is needed. Shared by
+    the REST endpoint and the MCP tool so there is ONE corpus writer."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS task_search_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id  TEXT NOT NULL,
+            raw_query     TEXT NOT NULL,
+            task          TEXT NOT NULL,
+            questions     TEXT NOT NULL DEFAULT '[]',
+            halted_by     TEXT NOT NULL DEFAULT '',
+            loops         INTEGER NOT NULL DEFAULT 0,
+            n_chunks      INTEGER NOT NULL DEFAULT 0,
+            chunk_ids     TEXT NOT NULL DEFAULT '[]',
+            created_at    TEXT NOT NULL
+        )"""
+    )
+    conn.commit()
+
+
+def run_task_search(
+    query: str,
+    conn: Any,
+    chroma: Any,
+    ollama_url: str,
+    opts: dict[str, Any],
+    *,
+    char_budget: int = 6000,
+    max_loops: int = 2,
+    budget_s: float = 25.0,
+    max_q: int = 4,
+    think: bool = False,
+    already_task: bool = False,
+) -> dict[str, Any]:
+    """Task-anchored Mythos retrieval (the live loop), shared by REST + MCP.
+
+    Distills the prompt to a task anchor, fans it into sub-questions, searches
+    each via run_search, halts on the semantic criterion (all_answered/no_progress)
+    or the cap/budget backstop, and logs the clean corpus row. Returns
+    {task, questions, halted_by, loops, chunks}."""
+    import json as _json
+    from tools.sufficiency_gate import derive_task, run_task_loop
+
+    workspace_id = opts.get("workspace_id", "default")
+    task = query.strip() if already_task else derive_task(query, ollama_url)
+
+    def retrieve_fn(q: str) -> list[dict]:
+        sr = run_search(q, conn, chroma, ollama_url, opts, char_budget)
+        return [{"chunk_id": r.get("chunk_id", ""), "text": r.get("text", "") or ""}
+                for r in sr.get("results", []) if r.get("chunk_id")]
+
+    loop = run_task_loop(task, retrieve_fn, ollama_url, think=think,
+                         max_loops=max_loops, budget_s=budget_s, max_q=max_q)
+    chunks = loop["final_chunks"]
+
+    try:
+        ensure_task_search_log(conn)
+        conn.execute(
+            "INSERT INTO task_search_log (workspace_id, raw_query, task, questions, "
+            "halted_by, loops, n_chunks, chunk_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (workspace_id, query, task, _json.dumps(loop["questions"]),
+             loop["halted_by"], loop["loops"], len(chunks),
+             _json.dumps([c["chunk_id"] for c in chunks]),
+             _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())),
+        )
+        conn.commit()
+    except Exception:
+        pass  # corpus logging is best-effort; never fail the search
+
+    return {"task": task, "questions": loop["questions"],
+            "halted_by": loop["halted_by"], "loops": loop["loops"], "chunks": chunks}
+
+
 def run_ingest(
     source_dict: dict[str, Any],
     content: str,
