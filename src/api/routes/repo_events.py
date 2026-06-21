@@ -194,7 +194,9 @@ def _handle_event(conn, workspace_id: str, req: RepoEventRequest) -> dict:
     """Shared event handling for both the OIDC /repo-events and the HMAC webhook.
     Workspace is decided by the CALLER (OIDC: resolve-from-repo; webhook: watch-record)."""
     if req.event_type == "push":
-        job_id = enqueue_populate(req.repo, workspace_id)
+        # WHY(lost-update guard): carry the pushed commit sha so the populate can
+        # detect HEAD moving past it during the (long) ingest and re-ingest once.
+        job_id = enqueue_populate(req.repo, workspace_id, head_sha=req.sha)
         return {"ok": True, "action": "populate", "job_id": job_id, "workspace_id": workspace_id}
 
     hook_type = "repo_ci" if req.event_type == "workflow_run" else "repo_security"

@@ -35,6 +35,43 @@ _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 from mayring_core import config as _config
 
+import logging as _logging
+
+_log = _logging.getLogger(__name__)
+
+
+def _resolve_head_sha(repo: str) -> str | None:
+    """Latest commit sha on the repo's default branch via the GitHub API.
+
+    WHY(lost-update guard): a populate clones HEAD-at-start and runs for minutes;
+    rapid pushes during that window get swallowed by enqueue_populate's debounce
+    (they reuse the running job-id), so their commits silently never re-ingest.
+    Comparing start-vs-end HEAD lets us re-ingest once when the window moved.
+    Fail-soft (returns None) — a missing token / network hiccup must not break the
+    populate; the miss is logged, never silenced."""
+    import json as _json
+    import urllib.request
+    import urllib.error
+    try:
+        from src.api.routes.projects import canonical_repo_ref
+        canon = canonical_repo_ref(repo) or repo
+        slug = canon.split("github.com/", 1)[-1].strip("/")
+        owner_name = "/".join(slug.split("/")[:2])
+        if owner_name.count("/") != 1 or not all(owner_name.split("/")):
+            return None
+        url = f"https://api.github.com/repos/{owner_name}/commits?per_page=1"
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+        tok = os.getenv("GITHUB_TOKEN")
+        if tok:
+            req.add_header("Authorization", f"Bearer {tok}")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = _json.loads(r.read())
+        if isinstance(data, list) and data:
+            return data[0].get("sha")
+    except Exception as exc:  # noqa: BLE001 — fail-soft, but log (never silence)
+        _log.warning("lost-update guard: HEAD-sha lookup failed for %r: %s", repo, exc)
+    return None
+
 
 # WHY(#54, #55, multi-tenant): jeder subprocess der via _run_checker_job
 # läuft, MUSS --workspace-id mitbekommen. Seit dem Identity-Refactor
@@ -61,9 +98,30 @@ async def _run_with_v2_postingest(
     v2.0 jobs are tracked under ``_JOBS[job_id]["v2_jobs"]`` so callers can
     poll their status without a separate lookup.
     """
+    # Lost-update guard (snapshot): the commit sha that TRIGGERED this populate,
+    # carried from the push webhook (req.sha → enqueue_populate(head_sha=...)). No
+    # network call here — it's already on the job record. Skipped for guard-spawned
+    # follow-ups (bounds the chain to one re-ingest) and for manual /populate (no sha).
+    job_rec = _JOBS.get(job_id, {})
+    is_populate = "--populate-memory" in args
+    is_followup = job_rec.get("source") == "lost-update-followup"
+    trigger_sha = job_rec.get("head_sha") if (is_populate and not is_followup) else None
+
     await _run_checker_job(job_id, args, workspace_id)
     if _JOBS.get(job_id, {}).get("status") != "done" or not repo:
         return
+
+    # Lost-update guard (check): one GitHub call AFTER the (minutes-long) ingest —
+    # off the critical path. If HEAD moved past the triggering commit, the debounce
+    # swallowed those pushes → re-ingest once on the new HEAD.
+    if trigger_sha:
+        end_sha = await asyncio.to_thread(_resolve_head_sha, repo)
+        if end_sha and end_sha != trigger_sha:
+            _log.info("lost-update guard: %s HEAD %s→%s during populate %s — re-ingesting",
+                      repo, trigger_sha[:8], end_sha[:8], job_id)
+            enqueue_populate(repo, workspace_id,
+                             extra_args=["--force-reingest"],
+                             source="lost-update-followup")
 
     v2_jobs: dict[str, str] = {}
 
@@ -247,7 +305,7 @@ async def trigger_issues_ingest(
 
 
 def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None = None,
-                     source: str = "") -> str:
+                     source: str = "", head_sha: str | None = None) -> str:
     """Enqueue a repo re-ingest (populate + v2-chain) and return the job id.
     Debounce: if a populate job for the same repo is still running in this
     workspace, reuse it instead of spawning a storm (rapid pushes).
@@ -283,7 +341,7 @@ def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None 
     # atomically; a different uvicorn worker reading _load_jobs() sees it for
     # cross-worker debounce.  Post-tagging after make_job left repo absent from
     # jobs_state.json, defeating the entire cross-worker dedup.
-    job_id = _make_job(workspace_id, repo=repo, source=source)
+    job_id = _make_job(workspace_id, repo=repo, source=source, head_sha=head_sha)
     asyncio.create_task(_run_with_v2_postingest(job_id, args, workspace_id, repo))
     return job_id
 

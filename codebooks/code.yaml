@@ -3,6 +3,11 @@
 # Glob-Syntax (* = Segment, ** = beliebig tief) oder re:... für Regex.
 # ---------------------------------------------------------------------------
 exclude_patterns:
+  # ZWECK (rescoped 2026-06-21): KEIN Relevanz-/Rausch-Filter mehr — Ranking macht
+  # die Query-Zeit-Suche (bge-m3 + Reranker + Projekt-Scoping + Cosine-Schwelle).
+  # Hier bleibt NUR, was sich nicht sinnvoll einbetten lässt (Binär), generiert/
+  # fremd ist (vendored, Lock, Build) oder geheim (env). Menschlich geschriebener
+  # Text/Code (Blade, Views, Markdown, Docs, Config, Migrations) wird INGESTET.
   # 1. Build-Artefakte & kompilierter Code
   - "*/dist/*"
   - "*/build/*"
@@ -46,25 +51,9 @@ exclude_patterns:
   - "*/.generated/*"
   - "*/auto-generated/*"
 
-  # 5. Dokumentation & Markdown — kein Code, keine Analyse nötig
-  - "README*"
-  - "readme*"
-  - "CHANGELOG*"
-  - "changelog*"
-  - "CONTRIBUTING*"
-  - "contributing*"
-  - "LICENSE*"
-  - "license*"
-  - "NOTICE*"
-  - "AUTHORS*"
-  - "SECURITY*"
-  - "CODE_OF_CONDUCT*"
-  - "*.md"
-  - "*.rst"
-  - "*.txt"
-  - "*/docs/*"
-  - "*/doc/*"
-  - "*/.github/*"
+  # 5. (ENTFERNT 2026-06-21) README/Markdown/docs/.github waren RELEVANZ-Filter.
+  #    Das übernimmt jetzt die Suche — Specs/Docs/Markdown sind oft DER beste
+  #    Kontext und werden ingestet + zur Query-Zeit gerankt, nicht hart gecuttet.
 
   # 6. Binärdateien & Medien (Bilder werden via Vision-Pipeline verarbeitet)
   - "*.ico"
@@ -119,17 +108,9 @@ exclude_patterns:
   - "*/.docusaurus/*"
   - "*/_site/*"
 
-  # 9. Laravel: generierte / boilerplate Dateien — Parse-Fehler ohne Mehrwert
-  # Blade-Templates sind HTML+PHP-Mix, kein reiner Code
-  - "*.blade.php"
-  - "*/resources/views/*"
-  # Migrationen: SQL-Boilerplate, Schema-Definitionen ohne Logik
-  - "*/database/migrations/*"
-  # Factories & Seeders: Test-Fixtures, kein Produktionscode
-  - "*/database/factories/*"
-  - "*/database/seeders/*"
-  # Konfigurationsdateien: meist nur Arrays/Konstanten
-  - "config/*.php"
+  # 9. Laravel (ENTFERNT 2026-06-21 die Relevanz-Cuts: Blade/Views/Migrations/
+  #    Factories/Seeders/config.php sind DEIN Code → ingesten, Suche rankt).
+  #    Es bleiben NUR Secrets — die gehören NIE in einen durchsuchbaren Store.
   - "*.env"
   - ".env*"
   - "*.env.example"

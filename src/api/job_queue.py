@@ -79,7 +79,8 @@ _POPULATE_PROGRESS_RE = re.compile(
 _STAGE_RE = re.compile(r"\[STAGE\]\s+(?P<name>\S+)\s+(?P<detail>.*)")
 
 
-def make_job(workspace_id: str, repo: str | None = None, source: str = "") -> str:
+def make_job(workspace_id: str, repo: str | None = None, source: str = "",
+             head_sha: str | None = None) -> str:
     job_id = str(uuid.uuid4())[:8]
     record: dict = {
         "job_id": job_id,
@@ -92,6 +93,11 @@ def make_job(workspace_id: str, repo: str | None = None, source: str = "") -> st
         "source": source,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
+    if head_sha is not None:
+        # WHY(lost-update guard): the commit sha that triggered this populate. The
+        # ingest clones HEAD-at-run; if HEAD moved past this sha during the (long)
+        # run, debounce swallowed those pushes → re-ingest once. See jobs.py.
+        record["head_sha"] = head_sha
     if repo is not None:
         # WHY(repo-watching): include repo BEFORE _save_jobs so any worker that
         # reads the shared file sees it for cross-worker debounce.

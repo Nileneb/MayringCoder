@@ -141,3 +141,56 @@ class TestPostIngestV2Chain:
                       {"repo": "https://github.com/a/b", "state": "open"})
         assert r.status_code == 200
         assert "v2_jobs" in srv._JOBS[r.json()["job_id"]]
+
+
+class TestLostUpdateGuard:
+    """A populate clones HEAD-at-run; rapid pushes during the (long) ingest get
+    swallowed by the debounce. The guard re-ingests once when HEAD moved past the
+    triggering commit. See jobs.py / repo_events.py."""
+
+    def _run_populate_chain(self, monkeypatch, *, trigger_sha, head_now, source=""):
+        import asyncio
+        from src.api.routes import jobs as J
+        from src.api import job_queue as Q
+
+        async def _fake_checker(job_id, args, workspace_id):
+            Q._JOBS[job_id]["status"] = "done"
+
+        monkeypatch.setattr(J, "_run_checker_job", _fake_checker)
+        monkeypatch.setattr(J, "_resolve_head_sha", lambda repo: head_now)
+
+        followups: list[str] = []
+
+        def _spy_enqueue(repo, ws, extra_args=None, source="", head_sha=None):
+            followups.append(source)
+            return "spy-followup"
+
+        job_id = Q.make_job("default", repo="https://github.com/a/b",
+                            source=source, head_sha=trigger_sha)
+        monkeypatch.setattr(J, "enqueue_populate", _spy_enqueue)
+        asyncio.run(J._run_with_v2_postingest(
+            job_id, ["--populate-memory"], "default", "https://github.com/a/b"))
+        return followups
+
+    def test_reingest_on_sha_mismatch(self, monkeypatch):
+        followups = self._run_populate_chain(
+            monkeypatch, trigger_sha="oldsha", head_now="newsha")
+        assert followups == ["lost-update-followup"]
+
+    def test_no_reingest_on_sha_match(self, monkeypatch):
+        followups = self._run_populate_chain(
+            monkeypatch, trigger_sha="samesha", head_now="samesha")
+        assert followups == []
+
+    def test_followup_does_not_recurse(self, monkeypatch):
+        # a guard-spawned follow-up must NOT spawn another, even if HEAD moved
+        followups = self._run_populate_chain(
+            monkeypatch, trigger_sha="oldsha", head_now="newsha",
+            source="lost-update-followup")
+        assert followups == []
+
+    def test_manual_populate_without_sha_skips_guard(self, monkeypatch):
+        # manual /populate carries no triggering sha → no guard, no network call
+        followups = self._run_populate_chain(
+            monkeypatch, trigger_sha=None, head_now="whatever")
+        assert followups == []
