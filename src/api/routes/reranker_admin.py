@@ -893,7 +893,10 @@ def cat_match_debug(
         from mayring_core.memory.store import get_chroma_collection
         from mayring_core.memory.ingestion.mayring_process import derive_query_category_ids
         url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        model = os.getenv("MAYRING_EMBED_MODEL", "nomic-embed-text")
+        # Single source: explicit override → central config.EMBEDDING_MODEL. Never a
+        # nomic literal (must match the live store dim, else this diagnostic lies).
+        from mayring_core.config import EMBEDDING_MODEL as _CORE_EMBED_MODEL
+        model = os.getenv("MAYRING_EMBED_MODEL") or _CORE_EMBED_MODEL
         col = get_chroma_collection("codebook_categories")
         out["chroma_codebook_count"] = col.count()
         qemb = (embed_batch(url, model, [query], timeout=60) or [None])[0]
