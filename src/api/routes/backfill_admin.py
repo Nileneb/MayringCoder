@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from src.api.admin_backfill_chroma_metadata import backfill_repo_source_class_metadata
 from src.api.admin_backfill_chroma_visibility import backfill_visibility_metadata
 from src.api.auth import get_token_info
 from src.api.dependencies import get_chroma as _chroma
@@ -40,4 +41,23 @@ async def backfill_chroma_visibility(info: TokenInfo = Depends(get_token_info)) 
 
     n = await asyncio.get_event_loop().run_in_executor(None, _run)
     logger.info("chroma visibility backfill stamped %d chunks", n)
+    return {"backfilled": n}
+
+
+@router.post("/stats/admin/backfill-chroma-metadata")
+async def backfill_chroma_metadata(info: TokenInfo = Depends(get_token_info)) -> dict:
+    """Stamp repo + source_class into existing Chroma metadata (repo-scoping-
+    hardfilter + reference-doc-layer). Reads from SQLite `sources`. Idempotent,
+    admin-gated, safe to re-run. Run once after deploying schema v28."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    collection = _chroma()
+    if collection is None:
+        raise HTTPException(status_code=503, detail="chroma collection unavailable")
+
+    def _run() -> int:
+        return backfill_repo_source_class_metadata(_conn(), collection)
+
+    n = await asyncio.get_event_loop().run_in_executor(None, _run)
+    logger.info("chroma repo+source_class backfill stamped %d chunks", n)
     return {"backfilled": n}

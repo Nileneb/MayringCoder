@@ -99,6 +99,12 @@ class MemorySearchRequest(BaseModel):
     # überlebt. So bleibt "was ich gerade tat" sichtbar, auch bei schwacher
     # semantischer Ähnlichkeit. None = keine Recency-Lane (unveränderte Suche).
     session_id: str | None = None
+    # reference-doc-layer (2026-06-21): external reference corpora (Unity docs)
+    # are DEFAULT-EXCLUDED. include_reference=True lets them back into the
+    # candidate pool for this query; reference_only=True searches ONLY the
+    # reference layer (the /reference/search route sets this).
+    include_reference: bool = False
+    reference_only: bool = False
 
 
 class TaskSearchRequest(BaseModel):
@@ -152,6 +158,13 @@ class MemoryPutRequest(BaseModel):
     # it (no silent default). Optional/None for other source_types
     # (= workspace-global). Always type-prefixed: "<type>:<id>".
     scope: str | None = None
+    # reference-doc-layer (2026-06-21): mark an external reference corpus so it
+    # is default-excluded from retrieval. "code" (default) | "reference".
+    source_class: str = "code"
+    # Repos this reference corpus is eligible for — chunks get linked via
+    # chunk_project_links so the corpus auto-surfaces when one of these is the
+    # active project ("Unity-Docs nur bei Battlefield"). Ignored for code.
+    link_repos: list[str] | None = None
 
 
 class LogEvent(BaseModel):

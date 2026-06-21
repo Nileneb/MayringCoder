@@ -1,6 +1,6 @@
 # Spec: Repo-Scoping Hard-Filter im Retrieval (Kandidaten-Auswahl)
 
-**Datum:** 2026-06-21 · **Repo:** mayring-core (PR) · **Status:** einfache Spec für frische Session
+**Datum:** 2026-06-21 · **Repo:** mayring-core (PR) · **Status:** ✅ UMGESETZT 2026-06-21 (Ansatz 1, mayring-core PR#57: repo in Chroma-Metadata + build_chroma_where-Hardfilter; SQL _scope_filter ist die Korrektheitsgrenze). OFFEN: Chroma-Metadata-Backfill live (`/stats/admin/backfill-chroma-metadata`).
 
 ## Problem (gemessen 2026-06-21)
 Eine `repo_slug`-gescopte Suche (`/memory/search {repo_slug: "app.linn.games"}`) liefert trotzdem Chunks aus *fremden* Repos (z.B. MayringCoder `tools/smoke_test_production.py`). Wurzel:

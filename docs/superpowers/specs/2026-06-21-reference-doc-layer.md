@@ -1,6 +1,6 @@
 # Spec: Reference-Doc-Layer (Cross-Repo-Dokus ohne Memory-Verrauschen)
 
-**Datum:** 2026-06-21 · **Repo:** mayring-core + MayringCoder · **Status:** einfache Spec für frische Session
+**Datum:** 2026-06-21 · **Repo:** mayring-core + MayringCoder · **Status:** ✅ UMGESETZT 2026-06-21 (mayring-core PR#57; MayringCoder source_class-Ingest + /reference/search + Backfill-Endpoint). OFFEN: Migration v28 + `/stats/admin/backfill-chroma-metadata` einmal live laufen lassen.
 
 ## Problem
 Externe Referenz-Dokus (Unity 6.3 Docs = 3495 Chunks, ~33% des Korpus, source_type=note) überstrahlten JEDE 3D/Graphics-Query und begruben den eigenen Code. Interim 2026-06-21: per `/stats/admin/deactivate-source-prefix {prefix:"unity-docs:"}` deaktiviert (reversibel, is_active=0). User-Wunsch: Dauerlösung — Dokus **verrauschen nie**, sind aber **IMMER da wenn WIRKLICH gebraucht**.

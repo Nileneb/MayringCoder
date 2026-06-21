@@ -245,6 +245,23 @@ async def memory_search(
     return await run_in_threadpool(_memory_search_sync, request, workspace_id, info)
 
 
+@router.post("/reference/search")
+async def reference_search(
+    request: MemorySearchRequest,
+    workspace_id: str = Depends(get_workspace),
+    info: TokenInfo = Depends(get_token_info),
+) -> dict:
+    """Search ONLY the reference layer (source_class='reference').
+
+    reference-doc-layer (2026-06-21): external reference corpora (e.g. Unity docs)
+    are default-excluded from /memory/search so they never drown own code. This
+    route is the explicit way to query them — it forces reference_only regardless
+    of the request body. Same synchronous threadpool path as /memory/search.
+    """
+    request.reference_only = True
+    return await run_in_threadpool(_memory_search_sync, request, workspace_id, info)
+
+
 def _task_search_sync(request: TaskSearchRequest, workspace_id: str,
                       info: TokenInfo, bearer: str | None = None) -> dict:
     from src.api.memory_service import run_task_search
@@ -466,6 +483,11 @@ def _memory_search_sync(
         if request.session_id:
             # Recency-Lane: Session-Thread garantiert sichtbar (siehe retrieval._session_recency_ids)
             opts["session_id"] = request.session_id.strip()
+        # reference-doc-layer: external reference docs are default-excluded; opt in.
+        if request.include_reference:
+            opts["include_reference"] = True
+        if request.reference_only:
+            opts["reference_only"] = True
 
         # WHY(2026-05-11, task-categorization + perf-fix): nur der schnelle
         # embedding-sim-check inline (~50-150ms) — KEIN mistral im hot path
@@ -659,6 +681,9 @@ def memory_put(
             "repo": request.repo,
             "path": request.path,
         }
+        # reference-doc-layer: external reference corpora are default-excluded.
+        if request.source_class and request.source_class != "code":
+            source_dict["source_class"] = request.source_class
         if scope is not None:
             source_dict["scope_key"] = scope
         if request.visibility:
@@ -754,6 +779,26 @@ def memory_put(
                              _OLLAMA_URL, _model("text"),
                              {"categorize": request.categorize, "task": request.task},
                              workspace_id)
+
+        # reference-doc-layer: link a reference corpus to the repos it serves, so
+        # it auto-surfaces only when one of them is the active project ("Unity-Docs
+        # nur bei Battlefield"). Fail-soft — a linking error must not 5xx the ingest.
+        if request.source_class == "reference" and request.link_repos:
+            try:
+                from mayring_core.memory.store import (
+                    get_chunks_by_source, link_chunk_to_project,
+                )
+                _sid = result.get("source_id") or source_dict.get("source_id")
+                _conn_link = _get_conn()
+                for _chunk in get_chunks_by_source(_conn_link, _sid, active_only=True):
+                    for _repo in request.link_repos:
+                        link_chunk_to_project(
+                            _conn_link, _chunk.chunk_id, _repo,
+                            source="reference-ingest", workspace_id=workspace_id,
+                        )
+            except Exception as _exc:
+                _log.warning("reference repo-linking failed repos=%r: %s",
+                             request.link_repos, _exc)
 
         if source_dict.get("source_type") == "paper":
             _threading.Thread(
