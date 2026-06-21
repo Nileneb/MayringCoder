@@ -26,6 +26,18 @@ class PurgeRequest(BaseModel):
     workspace_id: str
 
 
+class PurgeSourceTypeRequest(BaseModel):
+    source_type: str
+
+
+# WHY(corpus-noise 2026-06-21): source_types that are pure operational noise — never
+# code or recall — and may be bulk-deactivated. log_event = internal app logger lines
+# (e.g. "vector stage: chroma returned 4 hits") that were ingested as searchable chunks
+# and polluted code retrieval (2193 of them). Safelist-gated so a typo can never nuke
+# repo_file / note / conversation_summary.
+_PURGEABLE_NOISE_TYPES = {"log_event"}
+
+
 def _is_admin(info: TokenInfo) -> bool:
     return bool(getattr(info, "is_admin", False)) or "*" in (info.scopes or ())
 
@@ -66,4 +78,39 @@ async def purge_smoke_projects_route(info: TokenInfo = Depends(get_token_info)) 
     result = await asyncio.get_event_loop().run_in_executor(
         None, lambda: purge_smoke_projects(_conn()))
     logger.info("purged smoke projects: %s", result)
+    return result
+
+
+@router.post("/stats/admin/purge-source-type")
+async def purge_source_type_route(
+    body: PurgeSourceTypeRequest, info: TokenInfo = Depends(get_token_info)
+) -> dict:
+    """Deactivate (is_active=0) every active chunk of a pure-noise source_type
+    across ALL workspaces. Safelist-gated to _PURGEABLE_NOISE_TYPES (422 otherwise)
+    so it can never touch repo_file/note/etc. Retrieval filters is_active=1, so the
+    chunks vanish from results immediately; run /stats/admin/reconcile-chroma after
+    to drop the now-dead vectors from the index."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    if body.source_type not in _PURGEABLE_NOISE_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"source_type {body.source_type!r} not in purgeable noise safelist "
+                   f"{sorted(_PURGEABLE_NOISE_TYPES)}")
+
+    def _run() -> dict:
+        from mayring_core.memory.store import deactivate_chunks_by_source
+        conn = _conn()
+        rows = conn.execute(
+            "SELECT DISTINCT ch.source_id FROM chunks ch "
+            "JOIN sources s ON ch.source_id = s.source_id "
+            "WHERE ch.is_active = 1 AND s.source_type = ?",
+            (body.source_type,),
+        ).fetchall()
+        deactivated = sum(deactivate_chunks_by_source(conn, r[0]) for r in rows)
+        return {"source_type": body.source_type,
+                "sources": len(rows), "deactivated": deactivated}
+
+    result = await asyncio.get_event_loop().run_in_executor(None, _run)
+    logger.info("purged noise source_type %s: %s", body.source_type, result)
     return result
