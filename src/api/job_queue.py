@@ -55,6 +55,57 @@ def _save_jobs() -> None:
 _JOBS: dict[str, dict] = _load_jobs()
 
 
+# WHY(zombie-debounce 2026-06-21): a populate/analyze job whose process died
+# mid-run (deploy/restart/crash) keeps status "started" forever in jobs_state.json
+# — nothing flips it. enqueue_populate's debounce then reuses that dead job for
+# every new push, so re-ingest silently stops. Real case: an app.linn.games populate
+# stuck "started" at pct 100 since 2026-06-13 blocked ALL re-ingest for 8 days.
+# Any populate older than this is treated as dead: not reused, and reaped on startup.
+STALE_JOB_SECONDS = int(os.getenv("MAYRING_STALE_JOB_SECONDS", str(2 * 3600)))
+
+
+def job_age_seconds(started_at: str | None) -> float | None:
+    """Age of a job from its ISO started_at, or None if unparseable/missing."""
+    if not started_at:
+        return None
+    try:
+        ts = datetime.fromisoformat(started_at)
+    except (ValueError, TypeError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def is_job_alive(j: dict) -> bool:
+    """True if the job is worth reusing for debounce: running and not stale-dead.
+    A missing/unparseable started_at is treated as alive (don't reap on bad data)."""
+    if j.get("status") not in ("started", "running"):
+        return False
+    age = job_age_seconds(j.get("started_at"))
+    return age is None or age <= STALE_JOB_SECONDS
+
+
+def reconcile_stale_jobs() -> int:
+    """Mark every 'started'/'running' job older than STALE_JOB_SECONDS as 'error'.
+    Run on startup: a restart reloads jobs_state.json with dead jobs frozen at
+    'started', and they'd block debounce forever. Returns the number reaped."""
+    reaped = 0
+    for jid, j in {**_load_jobs(), **_JOBS}.items():
+        if j.get("status") in ("started", "running"):
+            age = job_age_seconds(j.get("started_at"))
+            if age is not None and age > STALE_JOB_SECONDS:
+                j["status"] = "error"
+                j["output"] = ((j.get("output") or "")
+                               + "\n[reconcile] marked failed — stale/orphaned "
+                                 "(process died mid-run; status never flipped)")
+                _JOBS[jid] = j
+                reaped += 1
+    if reaped:
+        _save_jobs()
+    return reaped
+
+
 # tqdm default format example:
 #   "Chunks embedden:  45%|████▌     | 9/20 [00:05<00:06,  1.74chunk/s]"
 # Wir matchen: label, percent, current, total (optional: rate).

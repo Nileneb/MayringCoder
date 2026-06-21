@@ -328,6 +328,23 @@ async def _prewarm_token_cache() -> None:
     threading.Thread(target=_warm, name="token-prewarm", daemon=True).start()
 
 
+@app.on_event("startup")
+async def _reap_stale_jobs() -> None:
+    """Reap orphaned 'started' jobs whose process died mid-run (deploy/restart/crash).
+    WHY(zombie-debounce 2026-06-21): jobs_state.json froze a populate at 'started' for
+    8 days, and enqueue_populate's debounce reused it → all re-ingest silently stopped.
+    On boot we mark anything older than STALE_JOB_SECONDS as failed so debounce is free."""
+    import logging
+    try:
+        from src.api.job_queue import reconcile_stale_jobs
+        n = reconcile_stale_jobs()
+        if n:
+            logging.getLogger(__name__).warning(
+                "startup: reaped %d stale/orphaned job(s) frozen at 'started'", n)
+    except Exception as exc:  # noqa: BLE001 — best-effort; debounce staleness still guards
+        logging.getLogger(__name__).warning("startup: stale-job reconcile skipped (%s)", exc)
+
+
 @app.on_event("shutdown")
 async def _stop_pi_queue() -> None:
     from mayring_pi_agent.pi_queue import get_pi_queue

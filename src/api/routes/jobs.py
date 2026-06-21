@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.api.auth import get_workspace
 from src.api.job_queue import (
     get_job as _get_job,
+    is_job_alive as _is_job_alive,
     make_job as _make_job,
     python_exe as _python_exe,
     run_checker_job as _run_checker_job,
@@ -321,9 +322,12 @@ def enqueue_populate(repo: str, workspace_id: str, extra_args: list[str] | None 
     # catch jobs started by other uvicorn workers (API-Concurrency-Fix 2026-05-24).
     merged = {**_load_jobs(), **_JOBS}
     for j in merged.values():
+        # WHY(zombie-debounce 2026-06-21): only reuse a job that is genuinely ALIVE.
+        # A dead populate frozen at "started" (process died mid-run) must NOT block a
+        # fresh re-ingest — is_job_alive() rejects jobs older than STALE_JOB_SECONDS.
         if (j.get("workspace_id") == workspace_id
                 and j.get("repo") == repo
-                and j.get("status") in ("started", "running")):
+                and _is_job_alive(j)):
             return j["job_id"]
     # --memory-categorize: ohne diesen Flag setzt run_populate_memory() in
     # _opts ein `categorize=False`, wodurch ingest() mayring_categorize
