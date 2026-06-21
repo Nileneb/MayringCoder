@@ -26,9 +26,12 @@ class TestModelRouterDefaults:
             assert task in router2._routes
 
     def test_resolve_vision_returns_configured_model(self):
+        # Model names live ONLY in model_routes.yaml now (no hardcoded _DEFAULTS literal);
+        # with no yaml the route is empty, so configure it explicitly and assert resolve reads it.
         with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
             router = ModelRouter("http://localhost:11434")
+        router._routes["vision"].model = "qwen2.5vl:3b"
         assert router.resolve("vision") == "qwen2.5vl:3b"
 
     def test_resolve_empty_model_returns_fallback_not_env(self, monkeypatch):
@@ -56,7 +59,11 @@ class TestModelRouterAvailability:
     def _make_router(self) -> ModelRouter:
         with patch("mayring_core.model_router._CONFIG_PATH") as mock_path:
             mock_path.exists.return_value = False
-            return ModelRouter("http://localhost:11434")
+            router = ModelRouter("http://localhost:11434")
+        # No hardcoded _DEFAULTS model literals anymore → configure the vision route
+        # explicitly (the yaml is the single source; here we stand in for it).
+        router._routes["vision"].model = "qwen2.5vl:3b"
+        return router
 
     def test_is_available_true_when_model_in_ollama(self):
         router = self._make_router()
