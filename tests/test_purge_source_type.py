@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from mayring_core.memory import store
 from mayring_core.memory.schema import Chunk, Source
-from src.api.routes.purge_admin import _PURGEABLE_NOISE_TYPES
+from src.api.routes.purge_admin import _PURGEABLE_NOISE_TYPES, _DEACTIVATABLE_REFERENCE_PREFIXES
 
 
 def _seed(conn, source_id, source_type, chunk_id):
@@ -46,3 +46,31 @@ def test_safelist_excludes_code_and_recall_types():
     assert "log_event" in _PURGEABLE_NOISE_TYPES
     for protected in ("repo_file", "note", "conversation_summary", "knowledge", "agent_result"):
         assert protected not in _PURGEABLE_NOISE_TYPES
+
+
+def _deactivate_prefix(conn, prefix: str) -> int:
+    from mayring_core.memory.store import deactivate_chunks_by_source
+    rows = conn.execute("SELECT DISTINCT source_id FROM chunks WHERE is_active=1 AND source_id LIKE ?",
+                        (prefix + "%",)).fetchall()
+    return sum(deactivate_chunks_by_source(conn, r[0]) for r in rows)
+
+
+def test_deactivate_source_prefix_only_matching(tmp_path):
+    conn = store.init_memory_db(tmp_path / "m.db")
+    _seed(conn, "unity-docs:6.3:webgl2", "note", "c-u1")
+    _seed(conn, "unity-docs:6.3:tilemaps", "note", "c-u2")
+    _seed(conn, "repo:x:scene.js", "repo_file", "c-code")
+    _seed(conn, "note:user-architecture", "note", "c-realnote")
+
+    deactivated = _deactivate_prefix(conn, "unity-docs:")
+
+    assert deactivated == 2
+    act = lambda cid: conn.execute("SELECT is_active FROM chunks WHERE chunk_id=?", (cid,)).fetchone()[0]
+    assert act("c-u1") == 0 and act("c-u2") == 0
+    assert act("c-code") == 1 and act("c-realnote") == 1  # code + real note untouched
+
+
+def test_reference_prefix_safelist_is_narrow():
+    assert "unity-docs:" in _DEACTIVATABLE_REFERENCE_PREFIXES
+    for forbidden in ("repo:", "conversation:", "note:", "", "%"):
+        assert forbidden not in _DEACTIVATABLE_REFERENCE_PREFIXES

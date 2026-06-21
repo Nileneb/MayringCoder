@@ -30,12 +30,24 @@ class PurgeSourceTypeRequest(BaseModel):
     source_type: str
 
 
+class DeactivateSourcePrefixRequest(BaseModel):
+    prefix: str
+
+
 # WHY(corpus-noise 2026-06-21): source_types that are pure operational noise — never
 # code or recall — and may be bulk-deactivated. log_event = internal app logger lines
 # (e.g. "vector stage: chroma returned 4 hits") that were ingested as searchable chunks
 # and polluted code retrieval (2193 of them). Safelist-gated so a typo can never nuke
 # repo_file / note / conversation_summary.
 _PURGEABLE_NOISE_TYPES = {"log_event"}
+
+# WHY(reference-doc-noise 2026-06-21): bulk external reference dumps (framework docs)
+# stored as plain chunks DROWN the user's own code in retrieval — 3495 unity-docs:*
+# chunks (~33% of the corpus) out-scored every repo's code on any 3D/WebGL query.
+# Deactivation is reversible (is_active=0). Prefix-safelisted so only known reference
+# corpora can be bulk-deactivated. Long-term these belong in a scoped reference layer
+# (see docs/superpowers spec) — this endpoint is the interim + the management hook.
+_DEACTIVATABLE_REFERENCE_PREFIXES = {"unity-docs:"}
 
 
 def _is_admin(info: TokenInfo) -> bool:
@@ -113,4 +125,41 @@ async def purge_source_type_route(
 
     result = await asyncio.get_event_loop().run_in_executor(None, _run)
     logger.info("purged noise source_type %s: %s", body.source_type, result)
+    return result
+
+
+@router.post("/stats/admin/deactivate-source-prefix")
+async def deactivate_source_prefix_route(
+    body: DeactivateSourcePrefixRequest, info: TokenInfo = Depends(get_token_info)
+) -> dict:
+    """Deactivate (is_active=0) every active chunk whose source_id starts with a
+    known reference-doc prefix (e.g. 'unity-docs:'). REVERSIBLE — flips is_active,
+    does not delete. Safelist-gated to _DEACTIVATABLE_REFERENCE_PREFIXES (422 else)
+    so it can never touch repo:/conversation:/note authored content broadly.
+
+    WHY: bulk framework-doc dumps stored as plain chunks drown the user's own code
+    in retrieval. Until a scoped reference layer exists, this lifts them out of the
+    default candidate pool. Run /admin/reconcile-chroma?dry_run=false after to drop
+    the dead vectors. Restore = re-ingest, or flip is_active back."""
+    if not _is_admin(info):
+        raise HTTPException(status_code=403, detail="admin scope required")
+    if body.prefix not in _DEACTIVATABLE_REFERENCE_PREFIXES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"prefix {body.prefix!r} not in reference safelist "
+                   f"{sorted(_DEACTIVATABLE_REFERENCE_PREFIXES)}")
+
+    def _run() -> dict:
+        from mayring_core.memory.store import deactivate_chunks_by_source
+        conn = _conn()
+        rows = conn.execute(
+            "SELECT DISTINCT source_id FROM chunks "
+            "WHERE is_active = 1 AND source_id LIKE ?",
+            (body.prefix + "%",),
+        ).fetchall()
+        deactivated = sum(deactivate_chunks_by_source(conn, r[0]) for r in rows)
+        return {"prefix": body.prefix, "sources": len(rows), "deactivated": deactivated}
+
+    result = await asyncio.get_event_loop().run_in_executor(None, _run)
+    logger.info("deactivated reference prefix %s: %s", body.prefix, result)
     return result
