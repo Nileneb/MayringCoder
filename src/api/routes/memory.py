@@ -543,8 +543,15 @@ def memory_log_event(
     conn = _get_conn()
     chroma = _get_chroma()
     for ev in batch.events:
+        # WHY(corpus-noise 2026-06-21): ONLY severe events become searchable memory
+        # chunks. Routine INFO/WARNING were ingested too → 2193 internal log lines
+        # (e.g. "vector stage: chroma returned 4 hits but 0 in candidates") polluted
+        # code retrieval. That is noise, not recall; the triage-dedup below only ever
+        # needed severe signatures. Non-severe events are dropped here.
+        if ev.level.upper() not in severe_levels:
+            continue
         sig = ev.error_signature or _signature_for_event(ev)
-        # 1. Ingest as memory chunk
+        # 1. Ingest as memory chunk (severe only)
         source_id = f"log:{batch.service}:{sig}:{ev.ts}"
         content = (
             f"[{ev.ts}] {ev.level} [{ev.logger}] {ev.msg}"
@@ -563,10 +570,7 @@ def memory_log_event(
             _log.warning("log-event ingest failed: %s", exc)
             continue
 
-        # 2. Trigger-decision für severe levels
-        if ev.level.upper() not in severe_levels:
-            continue
-
+        # 2. Trigger-decision (already severe at this point)
         # Memory-Injection-check: existiert eine Analyse für diese
         # signature? Wenn ja → kein neuer Agent.
         analyses_ws = f"{workspace_id}:analyses"
