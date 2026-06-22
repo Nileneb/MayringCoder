@@ -817,22 +817,43 @@ def _norm_repo(r: str) -> str:
     return s.strip("/")
 
 
-def _supersede_stale_reds(items: list[dict]) -> None:
+def _latest_ci_success(conn) -> dict[tuple[str, str], str]:
+    """MAX(fired_at) je (norm_repo, workflow) über ALLE repo_ci-success-Events.
+
+    WHY(stale-ampel-window 2026-06-22): die alte Auflösung las nur die zurückgegebene
+    Seite (LIMIT 50–500). Lag der auflösende Success außerhalb der Top-N (viele Events
+    dazwischen), blieb das Rot rot — exakt der reale "immer noch rot"-Pfad, sobald ein Repo
+    > ~50 hook_events hat. Diese Full-Table-Query macht die Auflösung LIMIT-unabhängig.
+    Normalisierung in Python (nicht SQL), weil _norm_repo Präfixe/.git strippt; die zwei
+    Roh-Repo-Formate werden post-hoc auf denselben key gemerged (max behalten)."""
+    rows = conn.execute(
+        "SELECT json_extract(payload,'$.repo'), json_extract(payload,'$.workflow'), MAX(fired_at) "
+        "FROM hook_events "
+        "WHERE hook_type='repo_ci' "
+        "AND lower(COALESCE(json_extract(payload,'$.conclusion'),''))='success' "
+        "GROUP BY json_extract(payload,'$.repo'), json_extract(payload,'$.workflow')"
+    ).fetchall()
+    out: dict[tuple[str, str], str] = {}
+    for repo, wf, fired in rows:
+        if not fired:
+            continue
+        key = (_norm_repo(repo or ""), wf or "")
+        if key not in out or fired > out[key]:
+            out[key] = fired
+    return out
+
+
+def _supersede_stale_reds(items: list[dict], latest_success: dict[tuple[str, str], str]) -> None:
     """Downgrade a CI red that a LATER success for the same (repo, workflow) resolved.
 
     WHY(stale-ampel 2026-06-08): classify_notification rates each event by its own
     conclusion, so a fixed-then-green workflow still showed its old red rows — the user
     saw "2 red" in the Ampel while open_red was already 0 and live CI was green. Mutates
-    `items` in place. Expects fired_at DESC order (first success per key = newest)."""
+    `items` in place. `latest_success` kommt LIMIT-unabhängig aus _latest_ci_success()."""
     # WHY(format-drift 2026-06-13): dieselben CI-Events kommen in ZWEI Repo-Formaten an
     # ('https://github.com/Owner/x' via repo-watch, 'Owner/x' via Webhook) — der rohe
     # String-Match ließ rote Zeilen des jeweils anderen Formats für immer rot stehen.
     # → über _norm_repo matchen (gleiche Kanonisierung wie der projects-Join).
-    latest_success: dict[tuple[str, str], str] = {}
-    for n in items:
-        if n.get("type") == "repo_ci" and str(n.get("conclusion", "")).lower() == "success":
-            latest_success.setdefault((_norm_repo(n.get("repo", "")), n.get("workflow", "")),
-                                      n.get("fired_at") or "")
     for n in items:
         if n.get("urgency") == "red" and n.get("type") == "repo_ci":
             succ = latest_success.get((_norm_repo(n.get("repo", "")), n.get("workflow", "")))
@@ -908,7 +929,7 @@ def notifications(
             "seen": bool(seen),
             "acked": bool(acked),
         })
-    _supersede_stale_reds(items)
+    _supersede_stale_reds(items, _latest_ci_success(conn))
     if only_open:
         items = [n for n in items if not n["acked"]]
     items.sort(key=lambda n: URGENCY_ORDER.get(n["urgency"], 9))  # stable → fired DESC bleibt

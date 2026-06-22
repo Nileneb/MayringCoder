@@ -672,6 +672,8 @@ def test_supersede_matches_across_repo_url_formats():
          "repo": "Nileneb/app.linn.games",
          "workflow": "Build & Push Images", "fired_at": "2026-06-12T16:58:27+00:00"},
     ]
-    dashboard._supersede_stale_reds(items)
+    latest = {(dashboard._norm_repo(n["repo"]), n["workflow"]): n["fired_at"]
+              for n in items if n["conclusion"] == "success"}
+    dashboard._supersede_stale_reds(items, latest)
     assert all(n["urgency"] == "green" for n in items), items
     assert items[1].get("superseded") and items[2].get("superseded")
