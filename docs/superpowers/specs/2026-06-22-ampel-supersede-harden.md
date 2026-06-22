@@ -1,6 +1,6 @@
 # Spec: Ampel-Supersede härten (#42 — der „echte Punkt" am stale Rot)
 
-**Datum:** 2026-06-22 · **Repos:** MayringCoder (api) + ggf. mayring-core (PR, falls Resolution in core wandert) · **Status:** 🟡 GEPLANT
+**Datum:** 2026-06-22 · **Repos:** MayringCoder (api) · **Status:** ✅ UMGESETZT 2026-06-22 (Ansatz 1, MayringCoder `ae75bfa`: `_latest_ci_success(conn)` Full-Table-MAX je (norm_repo,workflow) → `_supersede_stale_reds(items, latest)` LIMIT-unabhängig; +Tests LIMIT-Unabhängigkeit & Format-Drift, 37/37 grün). OFFEN: Prod-Deploy (tests-gated) + In-App-Screenshot-Verifikation.
 **Verbunden mit:** Issue #42 (notification_state + classify, MERGED+DEPLOYED), [[project_notifications_ampel_center]], [[project_igio_session_coherence_audit]]
 
 ## Auslöser (gemessen 2026-06-22)
