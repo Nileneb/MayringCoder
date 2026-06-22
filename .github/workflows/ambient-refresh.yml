@@ -41,10 +41,24 @@ jobs:
           fi
           QS="repo_slug=${REPO}"
           if [ -n "${WS}" ]; then QS="${QS}&workspace_id=${WS}"; fi
-          # Synchronous (one LLM call, ~10-40s). Long timeout for the generate step.
-          response=$(curl -sS -m 120 -X POST \
-            "https://mcp.linn.games/stats/ambient-refresh?${QS}" \
-            -H "Authorization: Bearer $MCP_SERVICE_TOKEN")
+          # Synchronous one-LLM-call endpoint. A cold/saturated GPU host can push a
+          # single generate well past 2min, so 120s was too tight (curl-28 on
+          # 2026-06-22). Give it 300s and retry once — the first call warms the
+          # model, the retry then completes fast. Job budget is 15min (above).
+          response=""
+          for attempt in 1 2 3; do
+            if response=$(curl -sS -m 300 -X POST \
+              "https://mcp.linn.games/stats/ambient-refresh?${QS}" \
+              -H "Authorization: Bearer $MCP_SERVICE_TOKEN"); then
+              break
+            fi
+            echo "::warning::ambient-refresh attempt ${attempt} failed (likely cold/slow LLM), retrying"
+            sleep 10
+          done
+          if [ -z "$response" ]; then
+            echo "::error::ambient-refresh failed after 3 attempts"
+            exit 1
+          fi
           echo "result: $response"
           chars=$(echo "$response" | python3 -c \
             'import json,sys; print(json.load(sys.stdin).get("chars",0))')
