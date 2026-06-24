@@ -116,9 +116,17 @@ def _vision_metadata(path: Path) -> Optional[dict]:
     return get_image_metadata(path)
 
 
+def _record_proposal(*args, **kwargs) -> int:
+    # Late-import keeps the web stack out of the boot path; core calls this via the
+    # provider registry so mayring_core never imports src.api directly (#267-di).
+    from src.api.routes.codebooks import record_proposal
+    return record_proposal(*args, **kwargs)
+
+
 def setup_providers() -> None:
     from mayring_core import providers
 
     providers.register_embedder(_embed)
     providers.register_generator(_generate)
     providers.register_vision(_vision_caption, _vision_metadata)
+    providers.register_proposal_recorder(_record_proposal)

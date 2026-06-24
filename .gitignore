@@ -28,6 +28,8 @@ benchmarks/training_data/
 *.egg-info/
 
 # Test artifacts
+.coverage
+htmlcov/
 wiki/ws-test*/
 wiki/ws-orph/
 wiki/ws-sparse/

@@ -25,9 +25,9 @@ ROOT = Path(__file__).parent.parent
 EXEMPT_FILES = {
     "src/api/web_ui_helpers.py",
     "src/api/web_ui.py",
-    "src/api/web_ui_tabs.py",
-    "src/api/web_ui_tabs_b.py",
-    "src/api/web_ui_tabs_c.py",
+    "src/api/web_ui_tabs_data.py",
+    "src/api/web_ui_tabs_analysis.py",
+    "src/api/web_ui_tabs_feedback.py",
     "src/api/templates",
 }
 

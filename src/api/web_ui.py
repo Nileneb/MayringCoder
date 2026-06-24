@@ -39,17 +39,17 @@ from src.api.web_ui_helpers import (
     _do_feedback, refresh_jwt, _do_search,
     _do_ingest, _do_ingest_conversation, _get_conn, _api_post,
 )
-from src.api.web_ui_tabs import (
+from src.api.web_ui_tabs_data import (
     build_memory_tab,
     build_ingest_tab,
     build_training_tab,
 )
-from src.api.web_ui_tabs_b import (
+from src.api.web_ui_tabs_analysis import (
     build_analyse_tab,
     build_duel_tab,
     build_settings_tab,
 )
-from src.api.web_ui_tabs_c import build_feedback_tab
+from src.api.web_ui_tabs_feedback import build_feedback_tab
 
 try:
     import httpx as _httpx

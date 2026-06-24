@@ -26,7 +26,7 @@ if [ -z "${SECOND_OPINION_MODEL:-}" ]; then
     echo "Second-Opinion-Modell (Enter = überspringen, Name oder Nummer eingeben):" >&2
     # Verfügbare Modelle zur Orientierung anzeigen
     "$PYTHON" -c "
-from src.model_selector import fetch_ollama_models
+from mayring_core.model_selector import fetch_ollama_models
 import os, sys
 models = fetch_ollama_models(os.getenv('OLLAMA_URL', 'http://localhost:11434'))
 if models:
@@ -38,7 +38,7 @@ if models:
         # Zahl eingegeben → in Modellnamen umwandeln
         if echo "$_so_input" | grep -qE '^[0-9]+$'; then
             SECOND_OPINION_MODEL=$("$PYTHON" -c "
-from src.model_selector import fetch_ollama_models
+from mayring_core.model_selector import fetch_ollama_models
 import os, sys
 models = fetch_ollama_models(os.getenv('OLLAMA_URL', 'http://localhost:11434')) or []
 idx = int('$_so_input') - 1
