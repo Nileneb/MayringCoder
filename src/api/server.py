@@ -302,33 +302,6 @@ async def _start_pi_queue() -> None:
 
 
 @app.on_event("startup")
-async def _prewarm_token_cache() -> None:
-    """Pre-warm this worker's symbolic-score token cache so its first searches don't
-    pay the ~3.95s cold re-tokenisation of the whole workspace (stage-timing
-    2026-06-21). Runs in a daemon thread → never delays worker readiness or /health;
-    best-effort (lazy per-query warming still covers any miss). MAYRING_PREWARM_TOKENS=0
-    disables it."""
-    if os.getenv("MAYRING_PREWARM_TOKENS", "1").lower() in ("0", "false", "no"):
-        return
-    import threading
-
-    def _warm() -> None:
-        import logging
-        import time as _time
-        log = logging.getLogger(__name__)
-        try:
-            from src.api.memory_service import prewarm_token_cache
-            t0 = _time.monotonic()
-            n = prewarm_token_cache(_get_conn())
-            log.info("token-cache prewarm: %d chunks in %.1fs (pid=%d)",
-                     n, _time.monotonic() - t0, os.getpid())
-        except Exception as exc:  # noqa: BLE001 — best-effort; lazy warming still works
-            log.warning("token-cache prewarm skipped (%s)", exc)
-
-    threading.Thread(target=_warm, name="token-prewarm", daemon=True).start()
-
-
-@app.on_event("startup")
 async def _reap_stale_jobs() -> None:
     """Reap orphaned 'started' jobs whose process died mid-run (deploy/restart/crash).
     WHY(zombie-debounce 2026-06-21): jobs_state.json froze a populate at 'started' for

@@ -746,7 +746,10 @@ def test_search_no_rationale_when_wiki_db_missing(tmp_path):
             source_id="src::cli",
             chunk_level="function",
             ordinal=0,
-            text="x = 1",
+            # WHY(v29 FTS-Lane): Kandidat wird man über die Keyword-Lane (bm25)
+            # oder die Vektorstufe — der alte Vollscan des Scopes ist weg. Ohne
+            # Chroma (hier None) braucht der Chunk also Query-Overlap.
+            text="slug regex helper",
             text_hash="sha256:t",
             category_labels=["api"],
             created_at="2026-04-08T10:00:00+00:00",

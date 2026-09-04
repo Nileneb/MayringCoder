@@ -103,31 +103,6 @@ def _is_corpus_worthy(raw_query: str | None, task: str | None) -> bool:
     return True
 
 
-def prewarm_token_cache(conn: Any, *, batch: int = 2000) -> int:
-    """Populate the per-process symbolic-score token cache (_CHUNK_TOKENS) for every
-    active chunk, so the first searches a worker serves don't pay the cold
-    re-tokenisation of the whole workspace.
-
-    WHY(stage-timing 2026-06-21): the cache is per-uvicorn-worker. Measured cold
-    worker = 3.95s for the symbolic stage over ~10k chunks vs 0.075s warm. Under
-    --workers 4, ~1-in-4 queries hit a cold worker → a 3.95s spike that silently
-    blew the UserPromptSubmit hook's 9-12s budget and dropped memory injection.
-    Pre-warming on startup makes every search warm from the first query. Loads in
-    batches so peak memory stays bounded (full Chunk objects are text-heavy).
-    Returns the number of chunks warmed."""
-    from mayring_core.memory.retrieval import _chunk_token_set
-    from mayring_core.memory.store import get_chunks_bulk
-
-    ids = [r[0] for r in conn.execute(
-        "SELECT chunk_id FROM chunks WHERE is_active = 1").fetchall()]
-    warmed = 0
-    for i in range(0, len(ids), batch):
-        for c in get_chunks_bulk(conn, ids[i:i + batch]):
-            _chunk_token_set(c)
-            warmed += 1
-    return warmed
-
-
 def run_search(
     query: str,
     conn: Any,
