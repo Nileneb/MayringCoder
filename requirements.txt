@@ -4,7 +4,7 @@ python-dotenv
 pyyaml
 chromadb
 redis
-mcp
+mcp<2  # WHY(mcp 2.0 2026-09): FastMCP zu MCPServer umbenannt, Migration separat
 Pillow
 PyJWT
 anthropic
