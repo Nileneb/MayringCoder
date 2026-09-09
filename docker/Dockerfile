@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -U pip "setuptools>=83" && pip install --no-cache-dir -r requirements.txt
 
 # mayring-core shared library (memory, llm routing, identity, ollama client).
 # Eigenes Repo seit #267, als vendor/mayring-core-Submodul eingebunden. Editable
